@@ -27,7 +27,7 @@ MSWEA_CONFIGURED=true uv run mini --model "$MODEL_NAME" \
 
 `MODEL_CLASS` 可选 `litellm`、`litellm_response` 等 mini 已有适配器，需与所选服务兼容。启动后输入任务，让 mini 根据项目目标、规划和验收反馈逐步构建自身 Harness。
 
-进行无人交互的 RSI 冷启动时，配置本地 `.env` 后执行：
+进行容器化、无人交互的 RSI 冷启动时，先按[部署说明](docs/rsi-cold-start.md)准备容器与本地 `.env`，再执行：
 
 ```bash
 bash scripts/start-rsi.sh

@@ -11,6 +11,9 @@ requires-python = ">=3.11"
 dependencies = [
     "mini-swe-agent==2.4.6",
     "litellm[mcp]==1.106.6",
+    "fastapi==0.162.0",
+    "uvicorn==0.54.0",
+    "httpx==0.28.1",
 ]
 
 [dependency-groups]
@@ -30,3 +33,4 @@ extend-exclude = ["third_party"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+asyncio_default_fixture_loop_scope = "function"
