@@ -2,6 +2,64 @@
 
 冷启动使用独立容器工作区。宿主保留模型认证、SSH 和作业分配权限，通过固定 gateway 转发模型请求及远程作业。研究与自进化逻辑由容器中的 Agent 产生。
 
+## 架构与代码入口
+
+当前运行分布在两台机器上，可以按四个执行单元理解：
+
+| 执行单元 | 职责 | 代码入口 |
+| --- | --- | --- |
+| 本地宿主 | 启动固定的初始 mini loop、准备工作区、保存轨迹；gateway 转发候选模型请求和远程作业 | [`launch.py`](../runtime/local/launch.py)、[`host_gateway.py`](../runtime/local/host_gateway.py) |
+| 本地构建容器 | 执行初始 mini 的 Bash 动作，读写本轮副本；运行 Agent 自主产生的候选 Harness 和后继会话 | [`Dockerfile`](../runtime/local/Dockerfile)、第三方 `DockerEnvironment` |
+| 远程宿主 controller | 核对作业归属、分配 GPU、启动和管理作业容器、取回产物 | [`remote_jobs.py`](../runtime/remote/remote_jobs.py) |
+| 远程作业容器 | 使用镜像中的 A3 接口运行仿真、渲染、训练或评估，写入自己的作业目录 | [`Dockerfile`](../runtime/remote/Dockerfile) |
+
+```mermaid
+flowchart LR
+    subgraph Local[本地机器]
+        Initial[固定初始 mini loop]
+        Build[独立构建容器与候选 Harness]
+        Gateway[宿主 gateway]
+        Initial -->|Bash 动作与结果| Build
+        Build -->|候选模型请求与作业请求| Gateway
+    end
+    Provider[模型服务]
+    Initial --> Provider
+    Gateway --> Provider
+    subgraph Remote[执行服务器]
+        Controller[宿主 controller]
+        Job[独立作业容器与 A3]
+        Controller -->|分配资源并管理执行| Job
+    end
+    Gateway -->|SSH 与 JSON 协议| Controller
+```
+
+初始 mini loop 在本地宿主调用模型，其 Bash 动作通过 `DockerEnvironment` 在构建容器内执行。
+候选 Harness 的代码在容器中运行，通过 gateway 请求模型或计算资源。
+例如，一次仿真任务由容器提交命令和输入文件，gateway 根据本轮令牌补入实验身份，
+再经 SSH 调用远程 controller。controller 返回作业标识，调用方随后查询状态并取回产物。
+controller 按请求启动；运行中的作业由独立 watcher 跟踪，无需另开常驻 HTTP 服务。
+
+`runtime/local/` 与 `runtime/remote/` 的源码在同一个仓库中维护，分别部署到相应宿主。
+远程 controller 的代码路径由 `A3_REMOTE_CONTROLLER` 指定，可直接指向服务器上的本仓库 checkout。
+`A3_REMOTE_RUN_ROOT` 指定作业、元数据和资源锁的存储位置；这些运行数据保持 Git 忽略。
+同一执行端的所有 controller 必须共用这一存储根目录，不能随候选版本或实验分别创建资源锁。
+Docker 镜像由执行端的 Docker 管理，通过配置的镜像名称引用。
+服务器推荐使用本仓库的固定部署 checkout：controller 从 `runtime/remote/` 运行，
+作业数据放在 `artifacts/remote-runtime/`，构建材料放在 `artifacts/image-build/`。
+部署与迁移步骤见[远程作业说明](../runtime/remote/README.md)。
+
+## 容器粒度与执行开销
+
+本地构建容器在整次冷启动中复用，初始 mini 的每条 Bash 动作通过 `docker exec` 在其中执行。
+当前实现不会为每个 Agent step 或 Git 分支重新创建本地容器，也没有自动为并行候选分配独立构建容器。
+后续并行候选如何组织由研究 Harness 决定，并分别满足权限和隔离验收。
+
+远程 controller 当前每次 `submit` 创建一个作业容器，多个作业复用已有镜像。
+一次作业可以在同一进程内执行多个 episode、seed 或连续实验步骤，避免把每个微小动作都变成一次提交。
+作业结束后释放 GPU 租约；已退出容器保留日志，工作区和元数据保留供复核。
+运行时间应分别记录 SSH 和调度、容器启动、依赖或模型加载、实际计算，按占比决定后续优化。
+常驻 worker 或容器池可以后续评估；当前阶段沿用独立作业，避免在 Agent 思考期间持续占用 GPU。
+
 ## 准备与启动
 
 安装依赖及 submodule 后，构建本地镜像：

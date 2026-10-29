@@ -6,10 +6,27 @@
 
 执行端需要 Linux、Python 3.10+、Docker Engine；GPU 作业还需要 NVIDIA Container Toolkit。已有 A3 项目应在 `.venv` 中提供可用的 Python 环境，并在 `.runtime/ffmpeg` 中提供兼容的 FFmpeg。
 
-使用部署配置指定路径和镜像：
+在服务器 checkout 本仓库，与本地使用相同的部署提交。controller 直接从 `runtime/remote/` 运行。
+服务器仅运行 controller 时使用系统 Python 标准库，无需安装本地模型服务依赖或执行 `uv sync`。
+需要运行 mini 的一端再初始化 submodule 并安装相应依赖。
+
+在服务器仓库根目录设置部署变量，个人路径与镜像名称保存在 Git 忽略的配置中：
 
 ```bash
-python3 prepare_image.py \
+export JOB_ROOT="$PWD/artifacts/remote-runtime"
+export CONTROLLER="$PWD/runtime/remote/remote_jobs.py"
+export RUNTIME_IMAGE='<runtime-image>'
+```
+
+本地 `.env` 中的 `A3_REMOTE_CONTROLLER`、`A3_REMOTE_RUN_ROOT`、`A3_REMOTE_IMAGE` 分别填写
+这三个变量在服务器上的值。`artifacts/remote-runtime/` 保存作业元数据、独立实验工作区和共享资源锁，
+不进入 Git。镜像由服务器 Docker 管理，Git 更新源码时保留现有镜像与运行数据。
+
+需要构建镜像时，指定已有 A3 checkout 和尚未存在的构建目录：
+
+```bash
+export BUILD_CONTEXT="$PWD/artifacts/image-build/runtime"
+python3 runtime/remote/prepare_image.py \
   --project "$A3_PROJECT" \
   --context "$BUILD_CONTEXT" \
   --image "$RUNTIME_IMAGE"
@@ -17,14 +34,19 @@ python3 prepare_image.py \
 
 构建目录必须尚未存在，并与原项目位于同一文件系统，以便用硬链接准备依赖包。脚本复制项目资源、Python 环境和解释器，并在镜像内重建 editable 安装引用。项目凭据、Git 元数据、数据集、实验输出和模型权重均不进入镜像。构建需要为 Python 环境和 Docker 构建层预留空间；基底为 `python:3.12-slim`，补充 EGL/OpenGL 系统库。
 
-将 `remote_jobs.py` 部署到实验工作区之外。同一执行端的所有控制器进程必须共享 `--root` 和资源配置，统一管理作业数和 GPU 锁。容器只获得自己的工作区。
+服务器部署 checkout 位于候选实验工作区之外，候选代码不能修改它。
+同一执行端的所有控制器进程必须共享 `--root` 和资源配置，统一管理作业数和 GPU 锁。容器只获得自己的工作区。
+
+迁移已有部署前，停止提交新作业并等待已有作业及 watcher 结束；完整迁移资源根目录，保留其中的
+`jobs/`、`experiments/` 和 `locks/`，再统一切换所有调用方的路径。迁移后检查历史产物仍可读取，
+并验证提交、状态查询与归属拒绝。恢复运行前停用旧 controller 入口，避免出现两套独立资源锁。
 
 ## JSON 协议
 
 每次调用从 stdin 读取一个 JSON 对象，向 stdout 输出一个 JSON 对象：
 
 ```bash
-printf '{}' | python3 remote_jobs.py \
+printf '{}' | python3 "$CONTROLLER" \
   --root "$JOB_ROOT" --image "$RUNTIME_IMAGE" health
 ```
 
@@ -58,7 +80,7 @@ watcher 保存退出状态并终止超时作业。取消操作移除容器，覆
 
 ```bash
 python -m pytest runtime/remote/test_remote_jobs.py
-python3 verify_remote.py \
+python3 runtime/remote/verify_remote.py \
   --controller "$CONTROLLER" --root "$JOB_ROOT" \
   --image "$RUNTIME_IMAGE" --output "$VERIFICATION_REPORT"
 ```
