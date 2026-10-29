@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "a3-research-agent"
+version = "0.1.0"
+description = "A self-evolving research agent for the A3 dual-arm simulation project"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "mini-swe-agent==2.4.6",
+    "litellm[mcp]==1.106.6",
+]
+
+[dependency-groups]
+dev = ["mini-swe-agent[dev]==2.4.6"]
+
+[tool.uv.sources]
+mini-swe-agent = {path = "third_party/mini-swe-agent", editable = true}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["a3_research_agent*"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+extend-exclude = ["third_party"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

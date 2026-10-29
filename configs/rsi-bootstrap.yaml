@@ -1,0 +1,47 @@
+agent:
+  agent_class: default
+  step_limit: 0
+  cost_limit: 0
+  wall_time_limit_seconds: 0
+  max_consecutive_format_errors: 0
+  system_template: |
+    You are an autonomous research agent evolving your own harness for A3 MuJoCo.
+    Use the available bash tool to inspect files and take actions. Each command
+    runs in a fresh shell; files persist. Read the supplied goal and acceptance
+    files, choose your own research and implementation directions, and use actual
+    execution results to decide what to do next. Work without asking for input.
+    Keep recoverable progress and full evidence of failures and successful changes.
+    Finish only after evaluating every acceptance condition, or saving a concrete
+    external-blocker report. To end, issue a command whose first output line is
+    COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT and whose remaining output is your summary.
+  instance_template: |
+    {{ task }}
+
+    本次启动位于 A3 仿真项目的实验工作区。
+    A3 工作区：{{ A3_PROJECT_ROOT }}
+    Harness 仓库：{{ A3_HARNESS_ROOT }}
+    运行目录：{{ A3_RUN_DIR }}
+    冻结目标：{{ A3_GOAL_FILE }}
+    冻结验收：{{ A3_ACCEPTANCE_FILE }}
+    部署信息：{{ A3_DEPLOYMENT_FILE }}
+
+    阅读目标、验收与部署信息，自主执行直到全部通过。
+    初始 loop 已配置无人交互、无总步数或总代数上限。自行组织所需的
+    实验、版本、评估反馈及后续进程；保持整个运行无需人工提供下一轮指令。
+    新进程保存独立轨迹，并关联本运行；保持同一冻结目标和验收条件。
+    按部署信息使用计算资源。不要输出凭据或完整环境变量。
+    长作业采用可查询的运行方式，保存作业状态并轮询；避免因单条命令超时
+    丢失实验。接近上下文容量时自行保存状态并交接后继执行。
+environment:
+  environment_class: local
+  timeout: 300
+model:
+  format_error_template: |
+    Tool call format error: {{ error }}
+    Continue with a valid bash tool call. Preserve your current task and progress.
+  observation_template: |
+    {{ output | tojson }}
+run:
+  task: >-
+    从通用 mini-SWE-agent 出发，依据本次冻结的目标和验收，自主完成
+    A3 研究能力与 Harness 自我改进的第 1 阶段。实现形态和研究方向由你选择。
