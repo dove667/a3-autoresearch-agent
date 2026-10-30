@@ -22,7 +22,9 @@ from minisweagent.agents import get_agent
 from minisweagent.environments.docker import DockerEnvironment
 from minisweagent.models import get_model, get_model_class
 
+from runtime.local.candidate_runtime import CandidateRuntime
 from runtime.local.host_gateway import create_app
+from runtime.local.isolation_fixture import IsolationFixtures
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -99,15 +101,33 @@ def remote_call(operation: str, payload: dict) -> dict:
     return json.loads(result.stdout)
 
 
-def prepare_workspace(workspace: Path, a3: Path) -> None:
+def prepare_workspace(workspace: Path, a3: Path, harness: Path = ROOT) -> None:
     snapshot_checkout(a3, workspace / "a3")
-    snapshot_checkout(ROOT, workspace / "harness")
+    snapshot_checkout(harness, workspace / "harness")
     (workspace / "run").mkdir()
     (workspace / "harness/AGENTS.md").write_text(
         "本次在独立容器中冷启动。模型和作业均经宿主 gateway 转发。\n"
         "不得尝试获得宿主凭据或改变资源分配。专项研究逻辑由你实现。\n"
         "读取 /run/input/goal.md 与 /run/input/acceptance.md。\n"
+        "宿主提供候选执行与双身份验收入口，先读 /run/input/execution.md。\n"
     )
+
+
+def freeze_inputs(inputs: Path, parent: Path | None = None) -> None:
+    source = parent / "inputs" if parent else ROOT / "evals"
+    hashes = json.loads((parent / "startup.json").read_text())["inputs"] if parent else {}
+    for name in ("goal.md", "acceptance.md"):
+        content = (source / name).read_bytes()
+        if parent and hashlib.sha256(content).hexdigest() != hashes.get(name):
+            raise ValueError(f"Frozen input hash mismatch: {name}")
+    for name in ("goal.md", "acceptance.md"):
+        shutil.copy2(source / name, inputs / name)
+    if parent:
+        (inputs / "parent-run.json").write_text(json.dumps({"run_id": parent.name}, indent=2))
+        blocker = parent / "workspace/run/blocker.md"
+        if blocker.is_file():
+            shutil.copy2(blocker, inputs / "previous-blocker.md")
+    shutil.copy2(ROOT / "runtime/local/README.md", inputs / "execution.md")
 
 
 def validate_remote_health(response: dict) -> None:
@@ -118,6 +138,12 @@ def validate_remote_health(response: dict) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check", action="store_true")
+    parser.add_argument(
+        "--verify-deployment", action="store_true", help="Run a bounded agent readiness check"
+    )
+    parser.add_argument(
+        "--resume-from", type=Path, help="Continue a saved run with its frozen goals"
+    )
     args = parser.parse_args()
     load_dotenv(os.environ.get("A3_RSI_ENV_FILE", ROOT / ".env"), override=True)
     required = (
@@ -151,24 +177,35 @@ def main() -> None:
         )
         return
     run_id = "run-" + uuid.uuid4().hex
-    run = ROOT / "artifacts/rsi" / run_id
+    kind = "deployment-checks" if args.verify_deployment else "rsi"
+    run = ROOT / "artifacts" / kind / run_id
     inputs, workspace = run / "inputs", run / "workspace"
     inputs.mkdir(parents=True, mode=0o700)
     workspace.mkdir()
-    prepare_workspace(workspace, a3)
-    for name in ("goal.md", "acceptance.md"):
-        shutil.copy2(ROOT / "evals" / name, inputs / name)
+    parent = args.resume_from.resolve() if args.resume_from else None
+    prepare_workspace(workspace, a3, parent / "workspace/harness" if parent else ROOT)
+    freeze_inputs(inputs, parent)
     shutil.copy2(ROOT / "configs/rsi-bootstrap.yaml", inputs / "bootstrap.yaml")
+    public_a3 = run / "public/a3"
+    public_a3.parent.mkdir()
+    snapshot_checkout(a3, public_a3)
     token = secrets.token_urlsafe(32)
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
         port = probe.getsockname()[1]
+    endpoint = f"http://host.docker.internal:{port}"
+    sandbox = CandidateRuntime(
+        root=run / "candidates", image=image, inputs=inputs, public_a3=public_a3, endpoint=endpoint
+    )
+    fixtures = IsolationFixtures(remote_call, run / "fixtures")
     app = create_app(
         model_name=os.environ["MODEL_NAME"],
         sessions={token: run_id},
         forward_model=litellm.responses,
         remote_call=remote_call,
         usage_log=run / "model-usage.jsonl",
+        sandbox=sandbox,
+        fixtures=fixtures,
     )
     server = uvicorn.Server(
         uvicorn.Config(app, host="0.0.0.0", port=port, log_level="warning", access_log=False)
@@ -181,7 +218,6 @@ def main() -> None:
         time.sleep(0.05)
     if not server.started:
         raise RuntimeError("Gateway failed to start")
-    endpoint = f"http://host.docker.internal:{port}"
     (inputs / "deployment.json").write_text(
         json.dumps(
             {
@@ -200,11 +236,42 @@ def main() -> None:
                 "model_api_key": "$A3_GATEWAY_TOKEN",
                 "remote_a3": "/opt/a3",
                 "remote_workspace": "/workspace",
+                "sessions": {
+                    "create": "POST /sessions {command: [...], files: {relative_path: text}}",
+                    "status": "GET /sessions/{session_id}",
+                    "cancel": "DELETE /sessions/{session_id}",
+                    "artifact": "GET /sessions/{session_id}/artifacts?path=relative_path",
+                    "workspace": "/workspace",
+                    "public_a3": "/opt/a3 (read-only source; simulation runs in remote jobs)",
+                    "identity": "host-injected independent identity; no parent token or workspace",
+                    "max_active": 2,
+                },
+                "isolation_fixture": {
+                    "create": "POST /fixtures/isolation",
+                    "verify": "GET /fixtures/isolation/{fixture_id}",
+                    "close": "DELETE /fixtures/isolation/{fixture_id}",
+                    "scope": "peer identity and sentinel remain host-owned; only peer job ID is shared",
+                },
+                "remote_limits": {"cpus": 2, "memory": "8g", "max_jobs": 2, "timeout_seconds": 900},
+                "execution_guide": "/run/input/execution.md",
+                "parent_run": parent.name if parent else None,
             },
             indent=2,
         )
     )
     config = yaml.safe_load((ROOT / "configs/rsi-bootstrap.yaml").read_text())
+    if args.verify_deployment:
+        config["agent"].update(
+            system_template=(
+                "You are checking deployment readiness only. Follow the task without user input. "
+                "Do not run the full research task. Save evidence, then submit using a bash command "
+                "whose first output line is COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT."
+            ),
+            step_limit=24,
+            wall_time_limit_seconds=600,
+        )
+        config["run"]["task"] = (ROOT / "runtime/local/readiness-task.md").read_text()
+    (inputs / "bootstrap.yaml").write_text(yaml.safe_dump(config, allow_unicode=True))
     env = None
     os.environ.update(MSWEA_GLOBAL_CALL_LIMIT="0", MSWEA_GLOBAL_COST_LIMIT="0")
     try:
@@ -266,6 +333,8 @@ def main() -> None:
                     "mini_commit": git(ROOT / "third_party/mini-swe-agent", "rev-parse", "HEAD"),
                     "container_id": env.container_id,
                     "model": os.environ["MODEL_NAME"],
+                    "parent_run": parent.name if parent else None,
+                    "mode": kind,
                 },
                 indent=2,
             )
@@ -279,13 +348,31 @@ def main() -> None:
         }
         agent.run(config["run"]["task"], **template_vars)
     finally:
-        if env is not None and env.container_id:
-            subprocess.run(
-                ["docker", "rm", "-f", env.container_id], capture_output=True, check=False
-            )
-            env.container_id = None
-        server.should_exit = True
-        thread.join(timeout=10)
+        app.state.begin_shutdown()
+        cleanup_errors = []
+        try:
+            for label, cleanup in (
+                ("gateway resources", app.state.close_resources),
+                ("candidate containers", sandbox.close),
+                ("peer fixtures", fixtures.close),
+            ):
+                try:
+                    cleanup()
+                except Exception:  # noqa: BLE001 — preserve cleanup evidence and continue
+                    cleanup_errors.append(label)
+            if cleanup_errors:
+                (run / "cleanup-errors.json").write_text(json.dumps(cleanup_errors))
+                print("Cleanup requires review: " + ", ".join(cleanup_errors), flush=True)
+        finally:
+            try:
+                if env is not None and env.container_id:
+                    subprocess.run(
+                        ["docker", "rm", "-f", env.container_id], capture_output=True, check=False
+                    )
+                    env.container_id = None
+            finally:
+                server.should_exit = True
+                thread.join(timeout=10)
 
 
 if __name__ == "__main__":
