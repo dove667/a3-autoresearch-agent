@@ -56,9 +56,40 @@ def create_app(
     log_lock = threading.Lock()
     session_lock = threading.RLock()
     children: dict[str, dict] = {}
+    scope_parents: dict[str, str] = {}
     jobs: dict[str, set[str]] = {}
     root_owners = set(sessions.values())
     app.state.closing = False
+
+    def session_event(event, session_id):
+        record = children[session_id]
+        entry = {
+            "event": event,
+            "session_id": session_id,
+            "parent": record["parent"],
+            "time": time.time(),
+        }
+        with log_lock, usage_log.with_name("session-events.jsonl").open("a") as stream:
+            stream.write(json.dumps(entry) + "\n")
+
+    def descendants(session_id):
+        by_parent: dict[str, list[str]] = {}
+        for candidate, record in children.items():
+            by_parent.setdefault(record["parent"], []).append(candidate)
+        branch, pending = [], [session_id]
+        while pending:
+            candidate = pending.pop()
+            branch.append(candidate)
+            pending.extend(by_parent.get(children[candidate]["owner"], []))
+        return branch
+
+    def manages(experiment, record):
+        ancestor = record["parent"]
+        while ancestor:
+            if ancestor == experiment:
+                return True
+            ancestor = scope_parents.get(ancestor)
+        return False
 
     def accepting_resources():
         if app.state.closing:
@@ -85,23 +116,24 @@ def create_app(
 
     def close_child(session_id):
         with session_lock:
-            record = children[session_id]
-            sessions.pop(record["token"], None)
             errors = []
-            for descendant, other in list(children.items()):
-                if other["parent"] == record["owner"]:
-                    try:
-                        close_child(descendant)
-                    except RuntimeError:
-                        errors.append("descendant " + descendant)
-            errors.extend(close_owner_resources(record["owner"]))
-            try:
-                result = sandbox.cancel(record["owner"], session_id)
-            except Exception:  # noqa: BLE001 — retain parent management record for retry
-                errors.append("candidate " + session_id)
+            for candidate in reversed(descendants(session_id)):
+                record = children[candidate]
+                if record["closed"]:
+                    continue
+                sessions.pop(record["token"], None)
+                candidate_errors = close_owner_resources(record["owner"])
+                try:
+                    sandbox.cancel(record["owner"], candidate)
+                except Exception:  # noqa: BLE001 — retain ancestor management for retry
+                    candidate_errors.append("candidate " + candidate)
+                if not candidate_errors:
+                    record["closed"] = True
+                    session_event("closed", candidate)
+                errors.extend(candidate_errors)
             if errors:
                 raise RuntimeError("Cleanup pending: " + ", ".join(errors))
-            return result
+            return {"session_id": session_id, "status": "closed"}
 
     def close_resources():
         begin_shutdown()
@@ -141,7 +173,7 @@ def create_app(
 
     def child(authorization, session_id):
         record = children.get(session_id)
-        if record is None or record["parent"] != owner(authorization):
+        if record is None or not manages(owner(authorization), record):
             raise HTTPException(403, "Candidate session is not accessible")
         return record
 
@@ -160,8 +192,31 @@ def create_app(
             except Exception:
                 sessions.pop(token, None)
                 raise
-            children[result["session_id"]] = {"parent": parent, "owner": scope, "token": token}
+            children[result["session_id"]] = {
+                "parent": parent,
+                "owner": scope,
+                "token": token,
+                "closed": False,
+            }
+            scope_parents[scope] = parent
+            session_event("created", result["session_id"])
             return result
+
+    @app.get("/sessions")
+    def list_sessions(authorization: Annotated[str | None, Header()] = None):
+        experiment = owner(authorization)
+        with session_lock:
+            return {
+                "sessions": [
+                    {
+                        "session_id": candidate,
+                        "parent": record["parent"],
+                        "closed": record["closed"],
+                    }
+                    for candidate, record in children.items()
+                    if manages(experiment, record)
+                ]
+            }
 
     @app.get("/sessions/{session_id}")
     def session_status(session_id: str, authorization: Annotated[str | None, Header()] = None):
@@ -169,9 +224,22 @@ def create_app(
         return deployment_call(sandbox.status, record["owner"], session_id)
 
     @app.delete("/sessions/{session_id}")
-    def cancel_session(session_id: str, authorization: Annotated[str | None, Header()] = None):
+    def cancel_session(
+        session_id: str,
+        cascade: bool = False,
+        authorization: Annotated[str | None, Header()] = None,
+    ):
         with session_lock:
             child(authorization, session_id)
+            open_descendants = [
+                candidate
+                for candidate in descendants(session_id)
+                if candidate != session_id and not children[candidate]["closed"]
+            ]
+            if open_descendants and not cascade:
+                raise HTTPException(
+                    409, {"reason": "descendants_open", "sessions": open_descendants}
+                )
             return deployment_call(close_child, session_id)
 
     @app.get("/sessions/{session_id}/artifacts")

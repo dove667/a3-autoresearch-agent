@@ -238,13 +238,16 @@ def main() -> None:
                 "remote_workspace": "/workspace",
                 "sessions": {
                     "create": "POST /sessions {command: [...], files: {relative_path: text}}",
+                    "list": "GET /sessions (managed descendants and parent relationships)",
                     "status": "GET /sessions/{session_id}",
                     "cancel": "DELETE /sessions/{session_id}",
+                    "cancel_branch": "DELETE /sessions/{session_id}?cascade=true",
                     "artifact": "GET /sessions/{session_id}/artifacts?path=relative_path",
                     "workspace": "/workspace",
                     "public_a3": "/opt/a3 (read-only source; simulation runs in remote jobs)",
                     "identity": "host-injected independent identity; no parent token or workspace",
                     "max_active": 2,
+                    "lifecycle": "Process exit preserves descendants; explicit branch cancel or run shutdown reclaims them",
                 },
                 "isolation_fixture": {
                     "create": "POST /fixtures/isolation",

@@ -23,7 +23,7 @@ def app_client(tmp_path, **options):
     return TestClient(
         create_app(
             model_name="provider/model",
-            sessions={"parent-token": "parent"},
+            sessions=options.pop("identities", {"parent-token": "parent"}),
             forward_model=lambda **kwargs: {"output": []},
             remote_call=options.pop("remote", lambda operation, payload: payload),
             usage_log=tmp_path / "usage.jsonl",
@@ -164,6 +164,9 @@ class NestedSandboxBackend:
         self.active.discard(session_id)
         return {"status": "closed"}
 
+    def status(self, owner, session_id):
+        return {"status": "running" if session_id in self.active else "closed"}
+
 
 def test_parent_close_reclaims_descendants_remote_jobs_and_peer_fixtures(tmp_path):
     from runtime.local.isolation_fixture import IsolationFixtures
@@ -188,7 +191,7 @@ def test_parent_close_reclaims_descendants_remote_jobs_and_peer_fixtures(tmp_pat
     second_auth = {"Authorization": "Bearer " + backend.tokens[second]}
     client.post("/fixtures/isolation", headers=second_auth)
     client.post("/jobs", headers=second_auth, json={"command": ["true"]})
-    assert client.delete("/sessions/" + first, headers=parent).status_code == 200
+    assert client.delete("/sessions/" + first + "?cascade=true", headers=parent).status_code == 200
     assert not backend.active
     assert not fixtures.records
     assert any(
@@ -196,6 +199,51 @@ def test_parent_close_reclaims_descendants_remote_jobs_and_peer_fixtures(tmp_pat
     )
     for auth in (first_auth, second_auth):
         assert client.post("/jobs", headers=auth, json={"command": ["true"]}).status_code == 401
+
+
+def test_default_close_preserves_descendants_and_ancestor_can_supervise_them(tmp_path):
+    backend = NestedSandboxBackend()
+    client = app_client(tmp_path, sandbox=backend)
+    root_auth = {"Authorization": "Bearer parent-token"}
+    first = client.post("/sessions", headers=root_auth, json={"command": ["true"]}).json()[
+        "session_id"
+    ]
+    first_auth = {"Authorization": "Bearer " + backend.tokens[first]}
+    second = client.post("/sessions", headers=first_auth, json={"command": ["true"]}).json()[
+        "session_id"
+    ]
+    response = client.delete("/sessions/" + first, headers=root_auth)
+    assert response.status_code == 409
+    assert backend.active == {first, second}
+    assert client.get("/sessions/" + second, headers=root_auth).status_code == 200
+    nodes = client.get("/sessions", headers=root_auth).json()["sessions"]
+    assert {node["session_id"] for node in nodes} == {first, second}
+    assert next(node for node in nodes if node["session_id"] == second)["parent"] == first
+    assert (
+        client.delete("/sessions/" + first + "?cascade=true", headers=root_auth).status_code == 200
+    )
+    assert not backend.active
+    events = (tmp_path / "session-events.jsonl").read_text()
+    assert first in events and second in events
+    assert all(token not in events for token in backend.tokens.values())
+
+
+def test_ancestor_supervision_does_not_grant_sibling_or_unrelated_access(tmp_path):
+    backend = NestedSandboxBackend()
+    client = app_client(
+        tmp_path, sandbox=backend, identities={"parent-token": "parent", "other-token": "other"}
+    )
+    parent = {"Authorization": "Bearer parent-token"}
+    first = client.post("/sessions", headers=parent, json={"command": ["true"]}).json()[
+        "session_id"
+    ]
+    second = client.post("/sessions", headers=parent, json={"command": ["true"]}).json()[
+        "session_id"
+    ]
+    for token, target in ((backend.tokens[first], second), ("other-token", first)):
+        auth = {"Authorization": "Bearer " + token}
+        assert client.get("/sessions/" + target, headers=auth).status_code == 403
+        assert client.get("/sessions", headers=auth).json()["sessions"] == []
 
 
 def test_shutdown_blocks_new_resources_and_keeps_failed_cleanup_retryable(tmp_path):
