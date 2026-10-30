@@ -11,6 +11,10 @@ from typing import Annotated
 from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
+from runtime.local.candidate_runtime import CandidateCapacityError
+from runtime.local.comparison_checks import check_comparison
+from runtime.local.gateway_diagnostics import CURRENT_REQUEST, GatewayDiagnostics
+
 
 class JobRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -23,6 +27,20 @@ class SessionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     command: list[str] = Field(min_length=1, max_length=256)
     files: dict[str, str] = Field(default_factory=dict)
+    version_id: str | None = None
+    parent_version: str | None = None
+
+
+class VersionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    files: dict[str, str]
+    parent_version: str | None = None
+
+
+class ComparisonRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    baseline: dict
+    candidate: dict
 
 
 MODEL_FIELDS = {
@@ -51,8 +69,11 @@ def create_app(
     usage_log: Path,
     sandbox=None,
     fixtures=None,
+    versions=None,
 ) -> FastAPI:
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
+    diagnostics = GatewayDiagnostics(usage_log.with_name("gateway-events.jsonl"))
+    diagnostics.attach(app)
     log_lock = threading.Lock()
     session_lock = threading.RLock()
     children: dict[str, dict] = {}
@@ -68,6 +89,7 @@ def create_app(
             "session_id": session_id,
             "parent": record["parent"],
             "time": time.time(),
+            "version_id": record.get("version_id"),
         }
         with log_lock, usage_log.with_name("session-events.jsonl").open("a") as stream:
             stream.write(json.dumps(entry) + "\n")
@@ -156,6 +178,9 @@ def create_app(
         token = (authorization or "").removeprefix("Bearer ")
         for expected, experiment in tuple(sessions.items()):
             if secrets.compare_digest(token, expected):
+                request = CURRENT_REQUEST.get()
+                if request is not None:
+                    request["experiment_id"] = experiment
                 return experiment
         raise HTTPException(401, "Invalid experiment token")
 
@@ -166,7 +191,18 @@ def create_app(
             raise HTTPException(403, "Resource is not accessible") from None
         except ValueError:
             raise HTTPException(422, "Invalid workspace file or input size") from None
-        except Exception:  # noqa: BLE001 — do not expose Docker or transport details
+        except CandidateCapacityError as error:
+            diagnostics.error("candidate_capacity", error)
+            raise HTTPException(
+                409,
+                {
+                    "reason": "candidate_capacity",
+                    "max_active": 2,
+                    "retry_after_seconds": 2,
+                },
+            ) from None
+        except Exception as error:  # noqa: BLE001 — do not expose Docker or transport details
+            diagnostics.error("deployment", error)
             raise HTTPException(
                 409, "Deployment operation failed; check available resources"
             ) from None
@@ -188,7 +224,25 @@ def create_app(
             token = secrets.token_urlsafe(32)
             sessions[token] = scope
             try:
-                result = deployment_call(sandbox.create, scope, body.command, body.files, token)
+                if body.version_id and (body.files or body.parent_version):
+                    raise HTTPException(422, "Choose version_id or files with parent_version")
+                version_id = body.version_id
+                if versions is not None:
+                    if hasattr(sandbox, "check_capacity"):
+                        deployment_call(sandbox.check_capacity)
+                    if version_id is None:
+                        previous = body.parent_version or children.get(parent, {}).get("version_id")
+                        version_id = deployment_call(versions.create, parent, body.files, previous)[
+                            "version_id"
+                        ]
+                    deployment_call(versions.grant, parent, scope, version_id)
+                    result = deployment_call(
+                        sandbox.create_version, scope, body.command, token, version_id
+                    )
+                elif version_id:
+                    raise HTTPException(503, "Candidate versions are not configured")
+                else:
+                    result = deployment_call(sandbox.create, scope, body.command, body.files, token)
             except Exception:
                 sessions.pop(token, None)
                 raise
@@ -197,6 +251,7 @@ def create_app(
                 "owner": scope,
                 "token": token,
                 "closed": False,
+                "version_id": result.get("version_id"),
             }
             scope_parents[scope] = parent
             session_event("created", result["session_id"])
@@ -212,11 +267,33 @@ def create_app(
                         "session_id": candidate,
                         "parent": record["parent"],
                         "closed": record["closed"],
+                        "version_id": record["version_id"],
                     }
                     for candidate, record in children.items()
                     if manages(experiment, record)
                 ]
             }
+
+    @app.post("/versions")
+    def save_version(body: VersionRequest, authorization: Annotated[str | None, Header()] = None):
+        with session_lock:
+            accepting_resources()
+            experiment = owner(authorization)
+            if versions is None:
+                raise HTTPException(503, "Candidate versions are not configured")
+            return deployment_call(versions.create, experiment, body.files, body.parent_version)
+
+    @app.get("/versions")
+    def list_versions(authorization: Annotated[str | None, Header()] = None):
+        experiment = owner(authorization)
+        if versions is None:
+            raise HTTPException(503, "Candidate versions are not configured")
+        return {"versions": versions.list(experiment)}
+
+    @app.post("/checks/comparison")
+    def comparison(body: ComparisonRequest, authorization: Annotated[str | None, Header()] = None):
+        owner(authorization)
+        return check_comparison(body.baseline, body.candidate)
 
     @app.get("/sessions/{session_id}")
     def session_status(session_id: str, authorization: Annotated[str | None, Header()] = None):
@@ -249,6 +326,18 @@ def create_app(
         record = child(authorization, session_id)
         return deployment_call(sandbox.artifact, record["owner"], session_id, path)
 
+    @app.get("/sessions/{session_id}/versions")
+    def descendant_versions(session_id: str, authorization: Annotated[str | None, Header()] = None):
+        record = child(authorization, session_id)
+        if versions is None:
+            raise HTTPException(503, "Candidate versions are not configured")
+        experiment = owner(authorization)
+        with session_lock:
+            saved = versions.list(record["owner"])
+            for version in saved:
+                versions.grant(record["owner"], experiment, version["version_id"])
+            return {"versions": saved}
+
     @app.post("/fixtures/isolation")
     def create_fixture(authorization: Annotated[str | None, Header()] = None):
         with session_lock:
@@ -269,10 +358,19 @@ def create_app(
     def remote(operation: str, payload: dict) -> dict:
         try:
             result = remote_call(operation, payload)
-        except Exception:  # noqa: BLE001 — never return provider or SSH credential details
+        except Exception as error:  # noqa: BLE001 — never return provider or SSH credential details
+            diagnostics.error("remote_transport", error)
             raise HTTPException(502, "Remote controller unavailable") from None
         if result.get("status") == "error":
+            request = CURRENT_REQUEST.get()
+            if request is not None:
+                request.update(error_layer="remote_controller", error_type="ControllerError")
             raise HTTPException(400, result["error"])
+        if result.get("status") == "resource_busy":
+            request = CURRENT_REQUEST.get()
+            if request is not None:
+                request["wait_reason"] = result.get("reason", "remote_capacity")
+                request["retry_after_seconds"] = result.get("retry_after_seconds")
         return result
 
     @app.get("/health")
@@ -300,7 +398,8 @@ def create_app(
         try:
             response = forward_model(model=model_name, **arguments)
             data = response.model_dump(mode="json") if hasattr(response, "model_dump") else response
-        except Exception:  # noqa: BLE001 — never return provider or SSH credential details
+        except Exception as error:  # noqa: BLE001 — never return provider or SSH credential details
+            diagnostics.error("model_provider", error)
             raise HTTPException(502, "Model forwarding failed") from None
         entry = {
             "experiment_id": experiment,

@@ -9,6 +9,10 @@ from pathlib import Path, PurePosixPath
 ACTIVE_STATES = {"created", "running", "restarting", "paused"}
 
 
+class CandidateCapacityError(RuntimeError):
+    """No free local candidate slot; callers may poll before retrying."""
+
+
 def workspace_path(root: Path, name: str) -> Path:
     relative = PurePosixPath(name)
     if (
@@ -36,9 +40,19 @@ def write_candidate_files(root: Path, files: dict[str, str]) -> None:
 
 
 class CandidateRuntime:
-    def __init__(self, *, root: Path, image: str, inputs: Path, public_a3: Path, endpoint: str):
+    def __init__(
+        self,
+        *,
+        root: Path,
+        image: str,
+        inputs: Path,
+        public_a3: Path,
+        endpoint: str,
+        versions=None,
+    ):
         self.root, self.image, self.inputs = root, image, inputs
         self.public_a3, self.endpoint = public_a3, endpoint
+        self.versions = versions
         self.records: dict[str, dict] = {}
         self.lock = threading.RLock()
         self.root.mkdir(parents=True, exist_ok=True)
@@ -63,7 +77,17 @@ class CandidateRuntime:
             self.docker("inspect", "--format", "{{json .State}}", record["container_id"])
         )
 
-    def create(self, owner: str, command: list[str], files: dict[str, str], token: str) -> dict:
+    def create_version(self, owner: str, command: list[str], token: str, version_id: str) -> dict:
+        workspace = self.versions.checkout(owner, version_id, owner)
+        try:
+            return self.create(
+                owner, command, {}, token, workspace=workspace, version_id=version_id
+            )
+        except Exception:
+            self.versions.release(owner)
+            raise
+
+    def check_capacity(self) -> None:
         with self.lock:
             active = sum(
                 self.state(record)["Status"] in ACTIVE_STATES
@@ -71,11 +95,29 @@ class CandidateRuntime:
                 if not record.get("closed")
             )
             if active >= 2:
-                raise RuntimeError("Candidate concurrency resources are busy")
+                raise CandidateCapacityError("Candidate concurrency resources are busy")
+
+    def create(
+        self,
+        owner: str,
+        command: list[str],
+        files: dict[str, str],
+        token: str,
+        *,
+        workspace: Path | None = None,
+        version_id: str | None = None,
+    ) -> dict:
+        with self.lock:
+            self.check_capacity()
             session_id = owner
             directory = self.root / session_id
-            workspace = directory / "workspace"
-            workspace.mkdir(parents=True, exist_ok=False)
+            directory.mkdir(parents=True, exist_ok=False)
+            if workspace is None:
+                workspace = directory / "workspace"
+                workspace.mkdir()
+            else:
+                # Host-only link preserves the historical artifact lookup path.
+                (directory / "workspace").symlink_to(workspace, target_is_directory=True)
             write_candidate_files(workspace, files)
             environment = {
                 "A3_GATEWAY_URL": self.endpoint,
@@ -122,6 +164,7 @@ class CandidateRuntime:
                 "container_id": container,
                 "command": command,
                 "closed": False,
+                "version_id": version_id,
             }
             self.records[session_id] = record
             (directory / "session.json").write_text(json.dumps(record, indent=2))
@@ -130,7 +173,7 @@ class CandidateRuntime:
             except Exception:
                 self.cancel(owner, session_id)
                 raise
-            return {"session_id": session_id, "status": "created"}
+            return {"session_id": session_id, "status": "created", "version_id": version_id}
 
     def status(self, owner: str, session_id: str) -> dict:
         with self.lock:

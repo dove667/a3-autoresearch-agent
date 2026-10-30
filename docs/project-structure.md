@@ -6,7 +6,7 @@
 .
 ├── src/a3_research_agent/   Python 包与后续稳定接口
 ├── runtime/
-│   ├── local/             本地启动器、Gateway、候选执行与恢复
+│   ├── local/             本地启动器、Gateway、候选版本、协议检查与恢复
 │   └── remote/            远程作业 Controller、镜像构建与验证入口
 ├── harnesses/              SWE Agent 生成的候选源码快照与来源
 ├── configs/                通用启动配置
@@ -24,7 +24,7 @@
 | 目录 | 负责什么 | Git 管理 |
 | --- | --- | --- |
 | `src/a3_research_agent/` | 项目 Python 包；当前稳定部署实现仍位于 `runtime/` | 是 |
-| `runtime/local/` | Host 固定的模型转发、身份与权限、候选生命周期、冷启动和恢复 | 是 |
+| `runtime/local/` | Host 固定的模型转发、身份与权限、候选生命周期、Git 版本、协议检查、诊断、冷启动和恢复 | 是 |
 | `runtime/remote/` | 按归属运行远程 Docker 作业、分配资源、构建执行镜像 | 是 |
 | `harnesses/` | 保存 SWE Agent 已生成的完整候选源码、选择状态与来源记录 | 是 |
 | `configs/`、`evals/` | 通用配置与当前能力目标；每次运行另存冻结副本 | 是 |
@@ -60,18 +60,22 @@ artifacts/rsi/run-*/
 │   └── run/                Agent 写入的实验记录与最终材料
 ├── public/a3/              后继候选可读的 A3 基线
 ├── candidates/             各后继的源码、轨迹和实验产物
+├── versions/               Host Git 对象、候选元数据与独立 worktree
 ├── fixtures/               受控隔离检查记录
 ├── recovery/               如有接续，保存传入的历史材料
 ├── trajectory.json         初始 mini 轨迹
 ├── model-usage.jsonl        Gateway 模型调用记录
-└── session-events.jsonl     Host 记录的后继关系与生命周期
+├── session-events.jsonl     Host 记录的后继关系与生命周期
+└── gateway-events.jsonl     请求开始、结束、错误类别与耗时
 ```
+
+新的候选工作区实际位于 `versions/worktrees/<session_id>/source/`，`candidates/<session_id>/workspace` 是 Host 便捷链接。Docker 只挂载 source/；Git 元数据留在其父目录，不在挂载范围内。即刻修改要由 Agent 显式提交才能形成新版本。
 
 历史 `run-*` 内的文件用于复核，保持原样。运行结束后，由候选维护流程提取有价值的源码、说明和来源记录，原始日志仍留在原目录。恢复入口继续读取原路径。
 
 ## 候选源码与报告
 
-`harnesses/phase-one/` 是冷启动生成的源码快照，详细状态见其 README。这里的保留版本仍依赖 Gateway、当次输入与交接材料，尚未打包为独立产品入口。第二阶段的逐候选 commit、并行 worktree 与评测绑定方案见[开发路线](roadmap.md)。
+`harnesses/phase-one/` 是冷启动生成的源码快照，详细状态见其 README。这里的保留版本通过 run.json 显式加载，Host 为其提供新身份、Gateway 与冻结输入。候选 commit 和独立 worktree 已由 Host 提供；评测绑定、版本选择和搜索策略由 Agent 使用这些接口组织，见[开发路线](roadmap.md)。
 
 报告采用 Data 插件的工程结构：业务正文与图表放在 `src/content/`，审阅数据放在 `src/data.json`，共享 runtime 与构建校验文件保持插件原样。Data 的机器级预览服务状态留在仓库外。报告工程不复制进冷启动执行工作区。
 

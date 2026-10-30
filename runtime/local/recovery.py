@@ -47,7 +47,13 @@ def stage_recovery(parent: Path, destination: Path) -> dict:
     ]
     for candidate in sorted((parent / "candidates").glob("*")):
         if not candidate.is_symlink():
-            sources.append((candidate / "workspace", Path("candidates") / candidate.name))
+            workspace = candidate / "workspace"
+            if workspace.is_symlink():
+                expected = parent / "versions/worktrees" / candidate.name / "source"
+                if workspace.resolve() != expected.resolve() or not expected.is_dir():
+                    continue
+                workspace = expected
+            sources.append((workspace, Path("candidates") / candidate.name))
     evidence = []
     parsed = {}
     for source, prefix in sources:

@@ -14,6 +14,7 @@ import time
 import uuid
 from pathlib import Path
 
+import httpx
 import litellm
 import uvicorn
 import yaml
@@ -23,6 +24,8 @@ from minisweagent.environments.docker import DockerEnvironment
 from minisweagent.models import get_model, get_model_class
 
 from runtime.local.candidate_runtime import CandidateRuntime
+from runtime.local.candidate_versions import CandidateVersions
+from runtime.local.harness_package import load_harness_package
 from runtime.local.host_gateway import create_app
 from runtime.local.isolation_fixture import IsolationFixtures
 from runtime.local.recovery import stage_recovery
@@ -119,6 +122,12 @@ def prepare_workspace(workspace: Path, a3: Path, harness: Path = ROOT) -> None:
     )
 
 
+def bootstrap_source(parent: Path | None) -> Path:
+    if parent and (parent / "workspace/harness/.git").exists():
+        return parent / "workspace/harness"
+    return ROOT
+
+
 def freeze_inputs(inputs: Path, parent: Path | None = None) -> None:
     source = parent / "inputs" if parent else ROOT / "evals"
     hashes = json.loads((parent / "startup.json").read_text())["inputs"] if parent else {}
@@ -150,7 +159,13 @@ def main() -> None:
     parser.add_argument(
         "--resume-from", type=Path, help="Continue a saved run with its frozen goals"
     )
+    parser.add_argument(
+        "--run-harness", type=Path, help="Run a manifest package with a fresh candidate identity"
+    )
     args = parser.parse_args()
+    if args.run_harness and (args.resume_from or args.verify_deployment):
+        parser.error("--run-harness cannot be combined with --resume-from or --verify-deployment")
+    package = load_harness_package(args.run_harness.resolve()) if args.run_harness else None
     load_dotenv(os.environ.get("A3_RSI_ENV_FILE", ROOT / ".env"), override=True)
     required = (
         "MODEL_NAME",
@@ -183,7 +198,9 @@ def main() -> None:
         )
         return
     run_id = "run-" + uuid.uuid4().hex
-    kind = "deployment-checks" if args.verify_deployment else "rsi"
+    kind = (
+        "deployment-checks" if args.verify_deployment else "retained-harness" if package else "rsi"
+    )
     run_root = ROOT / "artifacts"
     run_root /= "validation/deployment" if args.verify_deployment else "rsi"
     run = run_root / run_id
@@ -191,7 +208,10 @@ def main() -> None:
     inputs.mkdir(parents=True, mode=0o700)
     workspace.mkdir()
     parent = args.resume_from.resolve() if args.resume_from else None
-    prepare_workspace(workspace, a3, parent / "workspace/harness" if parent else ROOT)
+    if package:
+        (workspace / "run").mkdir()
+    else:
+        prepare_workspace(workspace, a3, bootstrap_source(parent))
     freeze_inputs(inputs, parent)
     if parent:
         stage_recovery(parent, run / "recovery")
@@ -214,8 +234,14 @@ def main() -> None:
         probe.bind(("127.0.0.1", 0))
         port = probe.getsockname()[1]
     endpoint = f"http://host.docker.internal:{port}"
+    versions = CandidateVersions(run / "versions")
     sandbox = CandidateRuntime(
-        root=run / "candidates", image=image, inputs=inputs, public_a3=public_a3, endpoint=endpoint
+        root=run / "candidates",
+        image=image,
+        inputs=inputs,
+        public_a3=public_a3,
+        endpoint=endpoint,
+        versions=versions,
     )
     fixtures = IsolationFixtures(remote_call, run / "fixtures")
     app = create_app(
@@ -226,6 +252,7 @@ def main() -> None:
         usage_log=run / "model-usage.jsonl",
         sandbox=sandbox,
         fixtures=fixtures,
+        versions=versions,
     )
     server = uvicorn.Server(
         uvicorn.Config(app, host="0.0.0.0", port=port, log_level="warning", access_log=False)
@@ -257,7 +284,7 @@ def main() -> None:
                 "remote_a3": "/opt/a3",
                 "remote_workspace": "/workspace",
                 "sessions": {
-                    "create": "POST /sessions {command: [...], files: {relative_path: text}}",
+                    "create": "POST /sessions {command: [...], files: {...}} or {command: [...], version_id: ...}",
                     "list": "GET /sessions (managed descendants and parent relationships)",
                     "status": "GET /sessions/{session_id}",
                     "cancel": "DELETE /sessions/{session_id}",
@@ -269,6 +296,13 @@ def main() -> None:
                     "max_active": 2,
                     "lifecycle": "Process exit preserves descendants; explicit branch cancel or run shutdown reclaims them",
                 },
+                "versions": {
+                    "save": "POST /versions {files: {...}, parent_version: optional version_id}",
+                    "list": "GET /versions (only explicitly authorized versions)",
+                    "storage": "Host commits and worktrees; Docker receives only its source directory",
+                },
+                "comparison": "POST /checks/comparison {baseline: evidence, candidate: evidence}",
+                "diagnostics": "Host gateway-events.jsonl; response header X-Request-ID",
                 "isolation_fixture": {
                     "create": "POST /fixtures/isolation",
                     "verify": "GET /fixtures/isolation/{fixture_id}",
@@ -298,6 +332,60 @@ def main() -> None:
     env = None
     os.environ.update(MSWEA_GLOBAL_CALL_LIMIT="0", MSWEA_GLOBAL_COST_LIMIT="0")
     try:
+        if package:
+            command, files = package
+            headers = {"Authorization": "Bearer " + token}
+            with httpx.Client(
+                base_url=f"http://127.0.0.1:{port}", headers=headers, timeout=90
+            ) as client:
+                response = client.post("/sessions", json={"command": command, "files": files})
+                response.raise_for_status()
+                session = response.json()
+                (run / "startup.json").write_text(
+                    json.dumps(
+                        {
+                            "run_id": run_id,
+                            "mode": kind,
+                            "package": str(args.run_harness),
+                            "session_id": session["session_id"],
+                            "version_id": session["version_id"],
+                            "inputs": {
+                                name: hashlib.sha256((inputs / name).read_bytes()).hexdigest()
+                                for name in ("goal.md", "acceptance.md")
+                            },
+                        },
+                        indent=2,
+                    )
+                )
+                (run.parent / "latest-run.txt").write_text(str(run) + "\n")
+                print(f"Run directory: {run}", flush=True)
+                while True:
+                    response = client.get("/sessions/" + session["session_id"])
+                    response.raise_for_status()
+                    status = response.json()
+                    (run / "retained-status.json").write_text(json.dumps(status))
+                    children = client.get("/sessions")
+                    children.raise_for_status()
+                    active = []
+                    for child in children.json()["sessions"]:
+                        if child["closed"]:
+                            continue
+                        current = client.get("/sessions/" + child["session_id"])
+                        current.raise_for_status()
+                        if current.json()["status"] in {
+                            "running",
+                            "created",
+                            "restarting",
+                            "paused",
+                        }:
+                            active.append(child["session_id"])
+                    if not active:
+                        print(f"Retained session exited: {status.get('exit_code')}", flush=True)
+                        if status.get("exit_code") not in (0, None):
+                            raise RuntimeError("Retained Harness exited unsuccessfully")
+                        break
+                    time.sleep(2)
+            return
         env = DockerEnvironment(
             image=image,
             cwd="/workspace/a3",
