@@ -25,6 +25,7 @@ from minisweagent.models import get_model, get_model_class
 from runtime.local.candidate_runtime import CandidateRuntime
 from runtime.local.host_gateway import create_app
 from runtime.local.isolation_fixture import IsolationFixtures
+from runtime.local.recovery import stage_recovery
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -185,6 +186,18 @@ def main() -> None:
     parent = args.resume_from.resolve() if args.resume_from else None
     prepare_workspace(workspace, a3, parent / "workspace/harness" if parent else ROOT)
     freeze_inputs(inputs, parent)
+    if parent:
+        stage_recovery(parent, run / "recovery")
+        (inputs / "parent-run.json").write_text(
+            json.dumps(
+                {
+                    "run_id": parent.name,
+                    "recovery_index": "/run/recovery/index.json",
+                    "instruction": "Inspect saved code, reflections and real results before choosing what to resume. Old sessions and credentials are not reusable.",
+                },
+                indent=2,
+            )
+        )
     shutil.copy2(ROOT / "configs/rsi-bootstrap.yaml", inputs / "bootstrap.yaml")
     public_a3 = run / "public/a3"
     public_a3.parent.mkdir()
@@ -294,6 +307,11 @@ def main() -> None:
                 f"type=bind,src={workspace},dst=/workspace",
                 "--mount",
                 f"type=bind,src={inputs},dst=/run/input,readonly",
+                *(
+                    ["--mount", f"type=bind,src={run / 'recovery'},dst=/run/recovery,readonly"]
+                    if parent
+                    else []
+                ),
             ],
             env={
                 "GIT_CONFIG_COUNT": "1",

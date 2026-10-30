@@ -74,3 +74,85 @@ def test_successor_keeps_frozen_goals_and_links_previous_blocker(tmp_path):
     (previous / "inputs/acceptance.md").write_text("Changed acceptance")
     with pytest.raises(ValueError, match="Frozen"):
         freeze_inputs(inputs, previous)
+
+
+def test_recovery_preserves_generated_code_and_evidence_without_old_auth(tmp_path):
+    from runtime.local.recovery import stage_recovery
+
+    previous = tmp_path / "previous"
+    (previous / "workspace/run").mkdir(parents=True)
+    (previous / "workspace/run/reflection.md").write_text("Measured failure and hypothesis")
+    candidate = previous / "candidates/child/workspace"
+    candidate.mkdir(parents=True)
+    (candidate / "agent.py").write_text("VERSION = 2\n")
+    (candidate / "result.json").write_text('{"score": 0, "api_key": "old-secret-token"}')
+    (candidate / "partial.json").write_text('{"message": "old-secret-token"')
+    (candidate / ".env").write_text("PRIVATE_AUTH")
+    (candidate / "link").symlink_to(tmp_path)
+    (previous / "trajectory.json").write_text(
+        json.dumps(
+            {
+                "info": {
+                    "exit_status": "InternalServerError",
+                    "config": {"environment": {"env": {"A3_GATEWAY_TOKEN": "old-secret-token"}}},
+                },
+                "messages": [
+                    {"role": "system", "content": "Use bash"},
+                    {
+                        "object": "response",
+                        "output": [
+                            {"type": "reasoning", "encrypted_content": "ENCRYPTED"},
+                            {
+                                "type": "function_call",
+                                "name": "bash",
+                                "arguments": '{"command":"echo READY"}',
+                            },
+                        ],
+                    },
+                ],
+            }
+        )
+    )
+    history = tmp_path / "recovery"
+    index = stage_recovery(previous, history)
+    assert index["parent_run"] == "previous"
+    assert (history / "candidates/child/agent.py").read_text() == "VERSION = 2\n"
+    assert (history / "bootstrap/reflection.md").read_text() == "Measured failure and hypothesis"
+    assert not (history / "candidates/child/.env").exists()
+    assert not (history / "candidates/child/link").exists()
+    all_text = "".join(p.read_text() for p in history.rglob("*") if p.is_file())
+    assert "old-secret-token" not in all_text
+    assert "ENCRYPTED" not in all_text
+    assert "READY" in all_text
+    (candidate / "agent.py").write_text("VERSION = 3\n")
+    assert (history / "candidates/child/agent.py").read_text() == "VERSION = 2\n"
+
+
+def test_recovery_survives_partial_root_and_child_trajectories(tmp_path):
+    from runtime.local.recovery import stage_recovery
+
+    previous = tmp_path / "previous"
+    (previous / "workspace/run").mkdir(parents=True)
+    (previous / "trajectory.json").write_text('{"messages": [')
+    (previous / "workspace/run/notes.md").write_text("Saved progress")
+    candidate = previous / "candidates/child/workspace"
+    candidate.mkdir(parents=True)
+    (candidate / "agent.py").write_text("VERSION = 2\n")
+    (candidate / "trajectory.jsonl").write_text(
+        json.dumps(
+            {
+                "api_key": "old-child-secret",
+                "output": [{"type": "reasoning", "encrypted_content": "ENCRYPTED"}],
+                "event": "model",
+            }
+        )
+        + '\n{"unfinished":'
+    )
+    history = tmp_path / "recovery"
+    index = stage_recovery(previous, history)
+    assert index["warnings"]
+    assert (history / "candidates/child/agent.py").read_text() == "VERSION = 2\n"
+    exported = (history / "candidates/child/trajectory.jsonl").read_text()
+    assert "old-child-secret" not in exported
+    assert "ENCRYPTED" not in exported
+    assert "model" in exported
