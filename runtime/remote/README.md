@@ -25,7 +25,7 @@ export RUNTIME_IMAGE='<runtime-image>'
 需要构建镜像时，指定已有 A3 checkout 和尚未存在的构建目录：
 
 ```bash
-export BUILD_CONTEXT="$PWD/artifacts/image-build/runtime"
+export BUILD_CONTEXT="$PWD/artifacts/deployment/builds/runtime"
 python3 runtime/remote/prepare_image.py \
   --project "$A3_PROJECT" \
   --context "$BUILD_CONTEXT" \
@@ -79,7 +79,7 @@ watcher 保存退出状态并终止超时作业。取消操作移除容器，覆
 ## 验证
 
 ```bash
-python -m pytest runtime/remote/test_remote_jobs.py
+python -m pytest tests/runtime/test_remote_jobs.py
 python3 runtime/remote/verify_remote.py \
   --controller "$CONTROLLER" --root "$JOB_ROOT" \
   --image "$RUNTIME_IMAGE" --output "$VERIFICATION_REPORT"

@@ -48,7 +48,7 @@ controller 按请求启动；运行中的作业由独立 watcher 跟踪，无需
 同一执行端的所有 controller 必须共用这一存储根目录，不能随候选版本或实验分别创建资源锁。
 Docker 镜像由执行端的 Docker 管理，通过配置的镜像名称引用。
 服务器推荐使用本仓库的固定部署 checkout：controller 从 `runtime/remote/` 运行，
-作业数据放在 `artifacts/remote-runtime/`，构建材料放在 `artifacts/image-build/`。
+作业数据放在 `artifacts/remote-runtime/`，构建材料放在 `artifacts/deployment/builds/`。
 部署与迁移步骤见[远程作业说明](../runtime/remote/README.md)。
 
 ## 容器粒度与执行开销
@@ -90,7 +90,7 @@ bash scripts/start-rsi.sh --verify-deployment
 ```
 
 该模式由真实 mini 自行编写临时程序，调用独立候选、模型、A3 作业和双身份验收入口。
-检查限 24 次模型调用与 600 秒，结果写入 `artifacts/deployment-checks/`，不改变正式 RSI 的运行上限或最近运行指针，
+检查限 24 次模型调用与 600 秒，结果写入 `artifacts/validation/deployment/`，不改变正式 RSI 的运行上限或最近运行指针，
 也不代表 Policy 与 Harness 研究验收通过。
 
 接续已有运行时，保留其冻结目标、验收和候选代码，并创建独立后继轨迹：
@@ -108,7 +108,7 @@ bash scripts/start-rsi.sh --resume-from "$(cat artifacts/rsi/latest-run.txt)"
 
 ## 工作区与权限
 
-启动器复制 A3 和 Harness 的 Git 工作区，包括可提交的当前修改，排除 Git 忽略的个人配置与凭据；第三方源码拥有独立 Git 历史。容器从 A3 工作目录开始，只挂载本轮副本和只读目标输入。宿主初始 mini 运行器保持固定，候选代码只能在容器内加载。
+启动器复制 A3 和 Harness 的 Git 工作区，包括可提交的当前修改，排除 Git 忽略的个人配置、凭据与 `reports/` 展示工程；第三方源码拥有独立 Git 历史。容器从 A3 工作目录开始，只挂载本轮副本和只读目标输入。宿主初始 mini 运行器保持固定，候选代码只能在容器内加载。
 
 模型转发固定使用宿主配置的模型服务，当前 gateway 提供 Responses 接口。容器使用本轮专属访问令牌，不持有上游认证或 SSH 凭据。正式研究入口的工具形态由 Agent 根据目标产生。
 
@@ -125,6 +125,8 @@ bash scripts/start-rsi.sh --resume-from "$(cat artifacts/rsi/latest-run.txt)"
 默认资源策略面向正常实验之间的误操作隔离。宿主、镜像、挂载、controller 根目录和资源参数由部署方控制，不交给候选代码修改。目标与验收见 [goal.md](../evals/goal.md) 和 [acceptance.md](../evals/acceptance.md)。
 
 ## 记录与复核
+
+项目目录职责与源码归档规则见[目录职责与产物管理](project-structure.md)。候选源码快照在 `harnesses/`，网页报告工程在 `reports/`。
 
 每次启动在 Git 忽略的 `artifacts/rsi/` 下创建独立目录。`inputs/` 保存冻结目标、验收、配置和容器可用入口；`workspace/` 保存候选仓库与子会话产物；`startup.json` 记录起点及输入摘要；`trajectory.json` 保存初始 mini 轨迹；`model-usage.jsonl` 保存经 gateway 转发的调用用量。后继执行保存独立轨迹。
 

@@ -8,6 +8,13 @@ __pycache__/
 .env.*
 !.env.example
 /AGENTS.md
-artifacts/
+/artifacts/*
+!/artifacts/README.md
+/reports/**/dist/
+/reports/**/output/
+/reports/**/.playwright-cli/
+/reports/**/.openai/
+/reports/**/.data-app-offline/
+/reports/**/node_modules/
 build/
 dist/

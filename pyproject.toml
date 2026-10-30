@@ -29,7 +29,7 @@ include = ["a3_research_agent*"]
 [tool.ruff]
 target-version = "py311"
 line-length = 100
-extend-exclude = ["third_party"]
+extend-exclude = ["third_party", "harnesses", "reports"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -47,6 +47,36 @@ def test_snapshot_keeps_edits_but_excludes_host_secrets(tmp_path):
     assert (source / "module.py").read_text() == "VERSION = 2\n"
 
 
+def test_snapshot_excludes_tracked_and_untracked_report_projects(tmp_path):
+    source, candidate = tmp_path / "source", tmp_path / "candidate"
+    make_repository(source)
+    reports = source / "reports"
+    reports.mkdir()
+    (reports / "tracked.html").write_text("Presentation source")
+    subprocess.run(["git", "-C", str(source), "add", "reports"], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(source),
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "commit",
+            "-qm",
+            "Report source",
+        ],
+        check=True,
+    )
+    (reports / "draft.html").write_text("Untracked presentation draft")
+
+    snapshot_checkout(source, candidate)
+
+    assert not (candidate / "reports").exists()
+    assert (candidate / "module.py").is_file()
+
+
 def test_snapshot_preserves_deleted_tracked_files(tmp_path):
     source, candidate = tmp_path / "source", tmp_path / "candidate"
     make_repository(source)

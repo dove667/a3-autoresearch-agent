@@ -38,6 +38,9 @@ def snapshot_checkout(source: Path, destination: Path) -> None:
     subprocess.run(
         ["git", "clone", "--quiet", "--no-local", str(source), str(destination)], check=True
     )
+    report_checkout = destination / "reports"
+    if report_checkout.is_dir():
+        shutil.rmtree(report_checkout)
     files = (
         subprocess.check_output(
             [
@@ -55,6 +58,8 @@ def snapshot_checkout(source: Path, destination: Path) -> None:
         .split("\0")
     )
     for name in filter(None, files):
+        if Path(name).parts[0] == "reports":
+            continue
         src, dst = source / name, destination / name
         if not src.exists() and dst.is_file():
             dst.unlink()
@@ -179,7 +184,9 @@ def main() -> None:
         return
     run_id = "run-" + uuid.uuid4().hex
     kind = "deployment-checks" if args.verify_deployment else "rsi"
-    run = ROOT / "artifacts" / kind / run_id
+    run_root = ROOT / "artifacts"
+    run_root /= "validation/deployment" if args.verify_deployment else "rsi"
+    run = run_root / run_id
     inputs, workspace = run / "inputs", run / "workspace"
     inputs.mkdir(parents=True, mode=0o700)
     workspace.mkdir()

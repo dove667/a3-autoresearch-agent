@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-MODULE_PATH = Path(__file__).with_name("remote_jobs.py")
+MODULE_PATH = Path(__file__).resolve().parents[2] / "runtime/remote/remote_jobs.py"
 
 
 def load_runtime():

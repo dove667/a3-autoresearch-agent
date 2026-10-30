@@ -39,5 +39,8 @@ bash scripts/start-rsi.sh
 
 ## 项目文档
 
+- [目录职责与产物管理](docs/project-structure.md)
 - [开发路线与实现状态](docs/roadmap.md)
+- [SWE Agent 生成的 Harness 快照](harnesses/README.md)
+- [报告工程](reports/README.md)
 - [第三方依赖说明](third_party/README.md)

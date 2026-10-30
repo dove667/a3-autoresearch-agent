@@ -22,7 +22,17 @@
 
 接入训练、检查点与模型评测，让 Agent 自主联合优化机器人 Policy 的任务表现和 Harness 的实验效率。评价纳入 GPU 时间、模型调用成本和达到目标成绩所需实验次数。
 
+### 候选代码版本与并行执行（计划）
+
+每个确定的 Harness 候选对应一个不可变 commit，正在修改的并行候选使用独立 Git worktree。候选记录包含父版本、auto research 假设与选择状态；每次评测绑定具体 commit、实验条件和结果。同一代码版本可以运行多次评测，候选版本树与运行会话树分别记录。
+
+Host 管理共享 Git 仓库和 worktree，将获授权的候选源码交给对应 Docker 执行；共享 Git 对象库不直接暴露给各实验。代码版本、运行会话与 Controller 资源分配相互关联，便于复跑、回退、分叉和资源回收。
+
+当前候选仍通过独立目录中的完整源码与轨迹追溯，尚未实现逐候选 commit 和 worktree 管理。该能力列入第二阶段规划，具体实现由 SWE Agent 推进。
+
 ## 代码与文档归属
+
+完整目录职责见[项目结构](project-structure.md)。SWE Agent 已生成的源码快照归档到 `harnesses/`；网页报告工程位于 `reports/`；原始运行、验证和部署材料分别保存在 `artifacts/rsi/`、`artifacts/validation/`、`artifacts/deployment/`。
 
 本项目源码、配置、测试和文档分别放在 `src/a3_research_agent/`、`configs/`、`tests/` 和 `docs/`。配置与测试目录随实现按需新增。仿真物理、任务计分和资源文件在独立的 `a3_dual_arm_sim` 仓库中维护。
 
