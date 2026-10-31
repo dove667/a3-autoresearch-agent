@@ -12,7 +12,7 @@
 ├── tests/runtime/          本地和远程基础设施的回归测试
 ├── scripts/                薄启动入口
 ├── third_party/            固定版本的 mini-SWE-agent submodule
-├── reports/                Data 网页报告工程与审阅后的展示数据
+├── reports/                可选的本地报告工程，不纳入 Git
 ├── docs/                   环境指南、架构、路线与历史设计
 └── artifacts/              本地运行档案、验证记录和部署材料
 ```
@@ -25,7 +25,7 @@
 | `runtime/remote/` | 按归属运行远程 Docker 作业、分配资源、构建执行镜像 | 是 |
 | `configs/`、`evals/` | 通用配置与当前能力目标；每次运行另存冻结副本 | 是 |
 | `tests/runtime/` | 验证固定部署逻辑，不承担 A3 自身的开发测试 | 是 |
-| `reports/` | 面向读者的报告工程；审阅后的数据与图像和正文一起维护 | 源码是，构建输出否 |
+| `reports/` | 可选的本地报告工程，保存展示用正文、数据与图像 | 否 |
 | `third_party/` | 第三方原始源码与独立 Git 历史 | submodule |
 
 人类提前准备固定基础设施和评估条件。专项 auto research Harness、Policy 候选、记忆、反思与选择由 SWE Agent 产生，保存在对应运行中；改进候选形成新版本，原始运行材料持续保留。项目从源码 checkout 运行，`pyproject.toml` 管理依赖与工具配置，固定执行实现集中在 `runtime/`。
@@ -78,6 +78,8 @@ artifacts/rsi/run-*/
 生成代码随 run 保存。运行使用 `versions/` 记录候选 commit，并以独立 worktree 执行；`retained.json` 定位 Agent 明确选择的结果。下一轮显式传入选定 run 目录即可加载，无需另外维护一份人工源码归档。评测绑定、版本选择和搜索策略由 Agent 使用 Host 接口组织，见[开发路线](roadmap.md)。
 
 报告采用 Data 插件的工程结构：业务正文与图表放在 `src/content/`，审阅数据放在 `src/data.json`，共享 runtime 与构建校验文件保持插件原样。Data 的机器级预览服务状态留在仓库外。报告工程不复制进冷启动执行工作区。
+
+整个 `reports/` 目录仅保留在本地，由 `.gitignore` 排除；克隆仓库后不会获得报告工程。公开文档不链接本地报告文件。
 
 ## 迁移与清理约定
 

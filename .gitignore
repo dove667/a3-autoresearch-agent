@@ -10,11 +10,7 @@ __pycache__/
 /AGENTS.md
 /artifacts/*
 !/artifacts/README.md
-/reports/**/dist/
-/reports/**/output/
-/reports/**/.playwright-cli/
-/reports/**/.openai/
-/reports/**/.data-app-offline/
-/reports/**/node_modules/
+/report/
+/reports/
 build/
 dist/

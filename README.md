@@ -78,5 +78,4 @@ $$
 - [环境配置](docs/setup.md)：依赖、模型适配器、认证与 A3 执行环境。
 - [目录职责](docs/project-structure.md)：源码、候选、报告和运行产物分别存在哪里。
 - [开发路线与实现状态](docs/roadmap.md)
-- [报告工程](reports/README.md)
 - [第三方依赖说明](third_party/README.md)

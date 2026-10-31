@@ -34,7 +34,7 @@ Host 也提供比较协议差异检查和脱敏请求诊断。记忆模块新增
 
 ## 代码与文档归属
 
-完整目录职责见[项目结构](project-structure.md)。SWE Agent 生成的代码与原始运行材料共同保存在 `artifacts/rsi/`；网页报告工程位于 `reports/`；验证和部署材料分别保存在 `artifacts/validation/`、`artifacts/deployment/`。
+完整目录职责见[项目结构](project-structure.md)。SWE Agent 生成的代码与原始运行材料共同保存在 `artifacts/rsi/`；可选网页报告工程在本地 `reports/` 维护并由 Git 忽略；验证和部署材料分别保存在 `artifacts/validation/`、`artifacts/deployment/`。
 
 本项目固定基础设施、配置、测试和文档分别放在 `runtime/`、`configs/`、`tests/` 和 `docs/`。仿真物理、任务计分和资源文件在独立的 `a3_dual_arm_sim` 仓库中维护。
 
