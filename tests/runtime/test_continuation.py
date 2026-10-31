@@ -82,28 +82,29 @@ def test_selection_rejects_escaped_files_and_missing_version_objects(tmp_path):
         load_run_result(run)
 
 
-def test_resume_retained_run_keeps_executed_harness_when_no_final_selection(tmp_path):
+def test_resume_retained_run_requires_explicit_checkpoint_entry(tmp_path):
     from runtime.local.continuation import resolve_resume_start
 
-    run = tmp_path / "run"
-    versions = CandidateVersions(run / "versions")
-    saved = versions.create("agent", {"old.py": "print('in progress')"})
-    (run / "startup.json").write_text(
+    (tmp_path / "startup.json").write_text(
+        json.dumps({"mode": "retained-harness", "session_id": "agent", "version_id": "v1"})
+    )
+    workspace = tmp_path / "candidates/agent/workspace"
+    workspace.mkdir(parents=True)
+    with pytest.raises(ValueError, match="resume.json"):
+        resolve_resume_start(tmp_path)
+    (workspace / "entry.py").write_text("pass")
+    (workspace / "checkpoint.json").write_text('{"messages": []}')
+    (workspace / "resume.json").write_text(
         json.dumps(
             {
-                "mode": "retained-harness",
-                "version_id": saved["version_id"],
-                "session_id": "agent",
+                "command": ["python", "entry.py", "--resume", "checkpoint.json"],
+                "files": ["entry.py", "checkpoint.json"],
             }
         )
     )
-    session = run / "candidates/agent"
-    session.mkdir(parents=True)
-    (session / "session.json").write_text(json.dumps({"command": ["python", "old.py"]}))
-    start = resolve_resume_start(run)
-    assert start.files == {"old.py": "print('in progress')"}
-    assert start.command == ["python", "old.py"]
-    assert start.previous_run == run
+    start = resolve_resume_start(tmp_path)
+    assert start.command[-2:] == ["--resume", "checkpoint.json"]
+    assert "checkpoint.json" in start.files
 
 
 def test_full_file_capacity_snapshot_is_not_modified_by_restart_context(tmp_path):

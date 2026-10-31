@@ -20,12 +20,12 @@ import litellm
 import uvicorn
 import yaml
 from dotenv import load_dotenv
-from minisweagent.agents import get_agent
 from minisweagent.environments.docker import DockerEnvironment
 from minisweagent.models import get_model, get_model_class
 
 from runtime.local.candidate_runtime import CandidateRuntime
 from runtime.local.candidate_versions import CandidateVersions
+from runtime.local.context_resume import ContextAgent, load_context
 from runtime.local.continuation import (
     publish_run_result,
     resolve_harness_start,
@@ -178,7 +178,14 @@ def freeze_inputs(inputs: Path, parent: Path | None = None) -> None:
         blocker = parent / "workspace/run/blocker.md"
         if blocker.is_file():
             shutil.copy2(blocker, inputs / "previous-blocker.md")
-    shutil.copy2(ROOT / "runtime/local/README.md", inputs / "execution.md")
+    if parent:
+        for name in ("execution.md", "bootstrap.yaml"):
+            content = (source / name).read_bytes()
+            if name in hashes and hashlib.sha256(content).hexdigest() != hashes[name]:
+                raise ValueError(f"Frozen input hash mismatch: {name}")
+            shutil.copy2(source / name, inputs / name)
+    else:
+        shutil.copy2(ROOT / "runtime/local/README.md", inputs / "execution.md")
 
 
 def validate_remote_health(response: dict) -> None:
@@ -211,9 +218,12 @@ def main() -> None:
     args = parser.parse_args()
     if args.run_harness and (args.resume_from or args.verify_deployment):
         parser.error("--run-harness cannot be combined with --resume-from or --verify-deployment")
+    resume_context = None
     start = resolve_harness_start(args.run_harness) if args.run_harness else None
     if args.resume_from:
         start = resolve_resume_start(args.resume_from.resolve())
+        if start is None:
+            resume_context = load_context(args.resume_from.resolve() / "trajectory.json")
     package = (start.command, start.files) if start else None
     load_dotenv(os.environ.get("A3_RSI_ENV_FILE", ROOT / ".env"), override=True)
     required = (
@@ -228,6 +238,10 @@ def main() -> None:
     for key in required:
         if not os.environ.get(key):
             raise SystemExit(f"Missing deployment setting: {key}")
+    if resume_context is not None:
+        previous_startup = json.loads((args.resume_from / "startup.json").read_text())
+        if previous_startup.get("model") != os.environ["MODEL_NAME"]:
+            raise ValueError("Context resume requires the original model")
     a3 = Path(os.environ["A3_PROJECT_ROOT"]).resolve()
     get_model_class(os.environ["MODEL_NAME"], os.environ["MODEL_CLASS"])
     image = os.environ.get("A3_LOCAL_IMAGE", "a3-agent-bootstrap:local")
@@ -257,7 +271,13 @@ def main() -> None:
     inputs.mkdir(parents=True, mode=0o700)
     workspace.mkdir()
     parent = args.resume_from.resolve() if args.resume_from else None
-    prepare_workspace(workspace, a3, bootstrap_source(parent))
+    prepare_workspace(
+        workspace,
+        parent / "workspace/a3" if parent and not package else a3,
+        bootstrap_source(parent),
+    )
+    if parent and not package:
+        shutil.copytree(parent / "workspace/run", workspace / "run", dirs_exist_ok=True)
     freeze_inputs(inputs, parent)
     private_inputs = None
     if start and start.previous_run:
@@ -275,19 +295,8 @@ def main() -> None:
                 indent=2,
             )
         )
-    if parent and start is None:
-        stage_recovery(parent, run / "recovery")
-        (inputs / "parent-run.json").write_text(
-            json.dumps(
-                {
-                    "run_id": parent.name,
-                    "recovery_index": "/run/recovery/index.json",
-                    "instruction": "Inspect saved code, reflections and real results before choosing what to resume. Old sessions and credentials are not reusable.",
-                },
-                indent=2,
-            )
-        )
-    shutil.copy2(ROOT / "configs/rsi-bootstrap.yaml", inputs / "bootstrap.yaml")
+    if not parent:
+        shutil.copy2(ROOT / "configs/rsi-bootstrap.yaml", inputs / "bootstrap.yaml")
     public_a3 = run / "public/a3"
     public_a3.parent.mkdir()
     snapshot_checkout(a3, public_a3)
@@ -383,7 +392,7 @@ def main() -> None:
             indent=2,
         )
     )
-    config = yaml.safe_load((ROOT / "configs/rsi-bootstrap.yaml").read_text())
+    config = yaml.safe_load((inputs / "bootstrap.yaml").read_text())
     if args.verify_deployment:
         config["agent"].update(
             system_template=(
@@ -479,7 +488,12 @@ def main() -> None:
                         "run_id": run_id,
                         "inputs": {
                             name: hashlib.sha256((inputs / name).read_bytes()).hexdigest()
-                            for name in ("goal.md", "acceptance.md", "bootstrap.yaml")
+                            for name in (
+                                "goal.md",
+                                "acceptance.md",
+                                "bootstrap.yaml",
+                                "execution.md",
+                            )
                         },
                         "a3_commit": git(a3, "rev-parse", "HEAD"),
                         "harness_commit": git(ROOT, "rev-parse", "HEAD"),
@@ -512,9 +526,13 @@ def main() -> None:
                 }
             )
             agent_args = {**config["agent"], "output_path": trajectory}
-            agent = get_agent(model, env, agent_args)
-            task = config["run"]["task"]
-            agent.run(task, **template_vars)
+            agent_args.pop("agent_class", None)
+            agent = ContextAgent(model, env, **agent_args)
+            if resume_context is not None:
+                agent.extra_template_vars = {"task": config["run"]["task"], **template_vars}
+                agent.resume(resume_context)
+            else:
+                agent.run(config["run"]["task"], **template_vars)
 
         def save_completed_result() -> None:
             selected = publish_run_result(run, workspace / "run", versions, run_id, None)

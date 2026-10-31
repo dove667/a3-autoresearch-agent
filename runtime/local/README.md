@@ -170,3 +170,9 @@ Git 记录进入本轮 `versions/`。工作区内的即时修改不会自动成�
 文件按 UTF-8 传递，沿用 128 个文件、20 MiB 的限制。Agent 自己选择保留版本和需要的启动状态；Host 只保存快照，并写本轮 `retained.json`。大型或二进制经验材料可保存在历史中，由 Harness 按需恢复。下次外部 `--run-harness <run目录>` 和内部 `/sessions` 使用同一候选执行层，无需人工整理接续包。
 
 从旧运行启动的新主会话可以读取 `/run/input/previous-run.json` 与 `/run/input/history/index.json`。历史来自明确选择的前序运行，已过滤旧认证与私密推理；其中内容按待核查数据处理。仅主会话获得完整只读历史；它创建的子会话使用普通输入，所需材料由主会话显式交接。
+
+## 上下文 checkpoint 与 resume
+
+初始 mini 的 trajectory 原子写入，恢复时直接加载原消息，不重建 system/user 消息，不回注外部审查。冻结的 bootstrap 与执行说明随原目标保留。主动提交的会话不恢复；未保存结果的工具调用拒绝自动重放。
+
+生成的 Harness 用 `resume.json` 声明包含 checkpoint 的源码清单及恢复命令。Host 不把 continuation 入口当作 resume；缺失 checkpoint 入口时拒绝启动。新 Docker 身份不自动取得旧 Gateway scope 或作业权限，此接口不承诺恢复任意进程内存与旧资源身份。

@@ -201,3 +201,7 @@ Agent 自己保存模型消息、工具调用、实验结果、反思和选择�
 对应实现为本地 `launch.py`、`host_gateway.py`、`candidate_runtime.py`、`candidate_versions.py`、`continuation.py` 和 `recovery.py`，远程为 `remote_jobs.py`。完整 HTTP 字段见 [Host 执行接口](../runtime/local/README.md)。
 
 父版本选择以显式来源为准。最近运行指针只用于定位启动记录，不定义搜索父节点；多个合法分支之间的选择由外部调用者或 Harness 搜索策略作出。每轮的 retained.json 记录本轮明确选择的对外结果，不代表所有候选之间的全局最优。
+
+## Context resume
+
+初始 mini 从原始消息与工具结果继续，配置沿用冻结文件；不通过新的任务消息重建旧上下文。生成后的 Harness 通过自身 `resume.json` 入口加载 checkpoint。Host 只启动明确声明的恢复入口，不推断任意程序的内部状态。资源注册表与旧容器身份尚不支持恢复，环境恢复与消息恢复分别记录。

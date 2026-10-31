@@ -50,15 +50,12 @@ def resolve_resume_start(run: Path) -> HarnessStart | None:
     startup = json.loads((run / "startup.json").read_text())
     if startup.get("mode") != "retained-harness":
         return None
-    if (run / "retained.json").is_file():
-        retained = json.loads((run / "retained.json").read_text())
-        if retained.get("status") == "ready":
-            return load_run_result(run)
-    version_id = startup["version_id"]
-    files = CandidateVersions.read_snapshot(run / "versions", version_id)
-    metadata = workspace_path(run, f"candidates/{startup['session_id']}/session.json")
-    command = json.loads(metadata.read_text())["command"]
-    return HarnessStart(command, files, run, version_id)
+    session_id = startup["session_id"]
+    workspace = workspace_path(run, f"candidates/{session_id}/workspace")
+    if not (workspace / "resume.json").is_file():
+        raise ValueError("Harness has no resume.json checkpoint entry; refusing a fresh-context restart")
+    command, files = load_harness_package(workspace, "resume.json")
+    return HarnessStart(command, files, run, startup.get("version_id"))
 
 
 def publish_run_result(

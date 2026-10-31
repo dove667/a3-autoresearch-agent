@@ -100,7 +100,7 @@ def test_successor_keeps_frozen_goals_and_links_previous_blocker(tmp_path):
     (previous / "inputs").mkdir(parents=True)
     (previous / "workspace/run").mkdir(parents=True)
     digests = {}
-    for name in ("goal.md", "acceptance.md"):
+    for name in ("goal.md", "acceptance.md", "bootstrap.yaml", "execution.md"):
         content = f"Frozen {name}"
         (previous / "inputs" / name).write_text(content)
         digests[name] = hashlib.sha256(content.encode()).hexdigest()
