@@ -104,3 +104,41 @@ def test_resume_preserves_tool_results_and_provider_context(tmp_path):
     path = tmp_path / "trajectory.json"
     checkpoint(path, messages)
     assert load_context(path)["messages"] == messages
+
+
+def test_checkpoint_save_writes_private_atomic_file_and_can_be_loaded(tmp_path):
+    path = tmp_path / "run/trajectory.json"
+    agent = ContextAgent(
+        Model(), Environment(), system_template="original", instance_template="task"
+    )
+    agent.messages = [
+        {"role": "system", "content": "original"},
+        {"role": "user", "content": "task"},
+    ]
+    agent.save(path)
+    assert load_context(path)["messages"] == agent.messages
+    assert path.stat().st_mode & 0o777 == 0o600
+    agent.messages.append({"role": "assistant", "content": "new result"})
+    agent.save(path)
+    assert load_context(path)["messages"] == agent.messages
+    assert not path.with_suffix(".json.tmp").exists()
+
+
+def test_fresh_run_persists_initial_model_failure_without_masking_it(tmp_path):
+    model = Model()
+    model.get_template_vars = dict
+    environment = Environment()
+    environment.get_template_vars = dict
+    path = tmp_path / "trajectory.json"
+    agent = ContextAgent(
+        model,
+        environment,
+        system_template="system",
+        instance_template="{{ task }}",
+        output_path=path,
+    )
+    with pytest.raises(ConnectionError, match="controlled stop"):
+        agent.run("initial task")
+    saved = json.loads(path.read_text())
+    assert saved["messages"][1]["content"] == "initial task"
+    assert saved["info"]["exit_status"] == "ConnectionError"

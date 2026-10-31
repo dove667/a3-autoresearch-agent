@@ -40,7 +40,7 @@ class ContextAgent(DefaultAgent):
         if path:
             path.parent.mkdir(parents=True, exist_ok=True)
             temporary = path.with_suffix(path.suffix + ".tmp")
-            with temporary.open("w", opener=lambda p, flags: os.open(p, flags, 0o600)) as stream:
+            with open(temporary, "w", opener=lambda p, flags: os.open(p, flags, 0o600)) as stream:
                 json.dump(data, stream, ensure_ascii=False)
             temporary.replace(path)
         return data
