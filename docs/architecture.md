@@ -204,6 +204,8 @@ Agent 自己保存模型消息、工具调用、实验结果、反思和选择�
 
 ## Context resume
 
+会话正常退出由生成的 Harness 自己实现。Host 的 `POST /sessions/self/stop` 提供仅结束调用进程的固定入口，保留后继、工作区与远程作业，并撤销该会话令牌。Host 不因模型声明完成或写入终态文件而自动停止 Agent。所有 worker 停止后才检查结果和归档；通过此接口主动停止的 session 不会被 resume 重新唤起。
+
 初始 mini 从原始消息与工具结果继续，配置沿用冻结文件；不通过新的任务消息重建旧上下文。生成后的 Harness 通过自身 `resume.json` 入口加载 checkpoint。Host 私有快照保存注册表、身份、作业归属、主身份与 trial，原 run 的排他锁阻止重复启动。中断保留工作区并暂停候选 Docker；恢复接回原进程，退出的主进程才通过 checkpoint 入口在原身份下重启。远程 job 通过原 owner 查询，保留已完成、失败或取消的真实状态。
 
 ## 单主 Agent 的 Harness 演化

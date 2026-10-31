@@ -52,6 +52,11 @@ class TrialDecision(BaseModel):
     evidence: list[str] = Field(default_factory=list, max_length=128)
 
 
+class SessionStopRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    reason: str = Field(min_length=1, max_length=4000)
+
+
 class VersionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     files: dict[str, str]
@@ -116,6 +121,14 @@ def create_app(
         sessions.update(restored_state["sessions"])
         root_owners = set(restored_state["root_owners"])
         children.update(restored_state["children"])
+        # A process stop may finish just before the Gateway checkpoint is written.
+        runtime_records = getattr(sandbox, "records", {})
+        for session_id, record in children.items():
+            if record.get("self_stopped") or runtime_records.get(session_id, {}).get(
+                "self_stopped"
+            ):
+                record["self_stopped"] = True
+                sessions.pop(record["token"], None)
         scope_parents.update(restored_state["scope_parents"])
         jobs.update({key: set(value) for key, value in restored_state["jobs"].items()})
         if evolution and restored_state.get("evolution"):
@@ -294,6 +307,13 @@ def create_app(
             raise HTTPException(403, "Candidate session is not accessible")
         return record
 
+    def own_session(authorization):
+        experiment = owner(authorization)
+        record = children.get(experiment)
+        if record is None or record["owner"] != experiment:
+            raise HTTPException(403, "This identity has no candidate session")
+        return record
+
     @app.post("/sessions")
     def create_session(body: SessionRequest, authorization: Annotated[str | None, Header()] = None):
         if sandbox is None:
@@ -459,9 +479,32 @@ def create_app(
         owner(authorization)
         return check_comparison(body.baseline, body.candidate)
 
+    @app.get("/sessions/self")
+    def self_status(authorization: Annotated[str | None, Header()] = None):
+        record = own_session(authorization)
+        return deployment_call(sandbox.status, record["owner"], record["owner"])
+
+    @app.post("/sessions/self/stop")
+    def stop_self(body: SessionStopRequest, authorization: Annotated[str | None, Header()] = None):
+        with session_lock:
+            record = own_session(authorization)
+            session_id = record["owner"]
+            # This explicit request is terminal. It never decides acceptance or cancels a branch.
+            session_event("self_stop_requested", session_id)
+            result = deployment_call(sandbox.stop, session_id, session_id)
+            record["self_stopped"] = True
+            record["stop_reason"] = body.reason
+            sessions.pop(record["token"], None)
+            session_event("self_stopped", session_id)
+            return result
+
     @app.get("/sessions/{session_id}")
     def session_status(session_id: str, authorization: Annotated[str | None, Header()] = None):
-        record = child(authorization, session_id)
+        record = (
+            own_session(authorization)
+            if session_id == owner(authorization)
+            else child(authorization, session_id)
+        )
         return deployment_call(sandbox.status, record["owner"], session_id)
 
     @app.delete("/sessions/{session_id}")

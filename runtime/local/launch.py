@@ -425,6 +425,8 @@ def launch_run(args, run: Path, a3: Path, image: str, start) -> None:
                         "create": "POST /sessions {command: [...], files: {...}} or {command: [...], version_id: ...}",
                         "list": "GET /sessions (managed descendants and parent relationships)",
                         "status": "GET /sessions/{session_id}",
+                        "self_status": "GET /sessions/self",
+                        "self_stop": "POST /sessions/self/stop {reason: ...}; save checkpoint and evidence first; descendants remain running",
                         "cancel": "DELETE /sessions/{session_id}",
                         "cancel_branch": "DELETE /sessions/{session_id}?cascade=true",
                         "artifact": "GET /sessions/{session_id}/artifacts?path=relative_path",

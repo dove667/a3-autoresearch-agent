@@ -53,6 +53,23 @@ HTTP 422、`reason: artifact_too_large` 和可重试的 `retry_query`，不改�
 同级候选与无关身份不能访问彼此的会话；后代不能管理祖先。
 进程正常退出会保留后继候选的执行与身份，结束的进程不再占活动容器名额。
 
+`GET /sessions/self` 返回调用身份自己的 session 状态，也可用自己的实际 session ID 查询。
+初始 mini 使用提交标记退出；没有候选 Docker 的构建者身份不能调用自身 session 接口。
+
+`POST /sessions/self/stop {"reason":"状态已保存"}` 是候选进程的主动结束入口。
+Host 仅停止调用者自身的 Docker，保存控制台和工作区，不级联终止后继，不取消远程作业。
+这些作业继续受原资源分配和超时约束，并在整轮清理时回收。成功停止后撤销当前会话令牌，
+祖先仍可查询该 session 和后继，后继使用自己的身份继续执行。通过此接口主动结束的 session 不由 resume 自动重启。
+停止失败时返回可重试错误，身份保持可用。请求不能指定其他身份、挂载或级联操作。
+Host 先记录停止意图，再停止进程；若中断留下未确认的停止请求，恢复会明确报错，需先核查实际状态。
+日志归档错误单独记录在 session.json 的 console_archive_error，已确认的停止不会因日志错误而变成可恢复进程。
+
+这是终结操作：先保存证据、记忆、checkpoint、run-outcome.json 和 continuation.json，
+再单独调用，不与其他写入并行。Docker 先收到正常终止信号，五秒内未退出则强制终止；
+调用进程可能在收到 HTTP 响应或保存该工具结果之前结束。Host 的 session-events.jsonl
+记录 self_stop_requested 和成功时的 self_stopped；两者分别表示请求与实际停止。
+需要完整保存最后一次工具结果时，应让生成的 Harness 自行实现正常 return/break。
+
 `DELETE /sessions/{session_id}` 关闭当前候选；若还有未回收后代，返回 HTTP 409 和后代标识，保持分支不变。
 明确放弃整条分支时，使用 `DELETE /sessions/{session_id}?cascade=true`。
 分支取消回收该候选及后继候选、相关远程作业和隔离 fixture，保存控制台输出、移除容器并撤销身份，工作区保留。
@@ -93,7 +110,7 @@ HTTP 422、`reason: artifact_too_large` 和可重试的 `retry_query`，不改�
 
 初始 SWE 只启动一次。它退出后，Host 保持已经启动的后继、Gateway 和资源服务可用，等待所有 worker 停止。Host 不定时重建 Agent，不因未完成或错误重新派发任务，不提供人工审查反馈。后续进程与交接由 SWE 自己安排。
 
-全部 worker 停止或启动器被用户中断后，Host 清理本轮资源。清理失败保存 `cleanup-errors.json` 供复核。外部观察者在运行中只观察和按授权开始/停止循环；实际验收复核等整个系统停止后进行。
+整轮正常完成后 Host 清理资源；启动器中断会暂停候选并保留资源以便恢复。清理失败保存 `cleanup-errors.json` 供复核。外部观察者在运行中只观察和按授权开始/停止循环；实际验收复核等整个系统停止后进行。
 
 ### 整轮结束与未完成交接
 
@@ -116,6 +133,8 @@ HTTP 422、`reason: artifact_too_large` 和可重试的 `retry_query`，不改�
 未完成时可写 `{"status":"continue","reason":"尚未完成的能力与已有进展"}`，或仅保存进展后提交本回合。提交前须自行安排后继；Host 只等待现有后继，不开启新回合。全部 worker 已停止但未完成时，记录 incomplete。
 
 确需人工处理的外部阻塞使用 `status: blocked` 与 `external_blocker`，字段为 `kind`、`requires_human: true`、`reason`、`required_action`、`evidence`。允许的类别是 `authentication`、`permission`、`unavailable_service` 和 `missing_resource`；同样需要可达证据。候选名额、作业等待、无收益候选和待完成验收都应继续处理。
+
+run-outcome.json 声明结果，Host 等待进程实际停止后再读取它。生成的 Harness 应在自己的循环中实现终态退出，或保存状态后调用自身停止接口；写入终态文件不会触发 Host 自动中断或再次派发任务。
 
 ## 候选源码版本
 

@@ -177,8 +177,12 @@ class CandidateRuntime:
             actions = []
             # Validate every required restart before allowing any paused worker to execute.
             for session, record in list(self.records.items()):
+                if record.get("self_stopped"):
+                    continue
                 if record.get("closed") and session != main_owner:
                     continue
+                if record.get("self_stop_requested"):
+                    raise RuntimeError("Unconfirmed self-stop; inspect the session before recovery")
                 try:
                     status = self.state(record)["Status"]
                 except RuntimeError:
@@ -363,6 +367,31 @@ class CandidateRuntime:
                 eof=offset + len(data) >= size,
             )
         return result
+
+    def stop(self, owner: str, session_id: str) -> dict:
+        """End this process while preserving its container, workspace and descendants."""
+        with self.lock:
+            record = self.owned(owner, session_id)
+            if not record.get("self_stopped"):
+                record_path = self.root / session_id / "session.json"
+
+                def save_record():
+                    temporary = record_path.with_suffix(".tmp")
+                    temporary.write_text(json.dumps(record, indent=2))
+                    temporary.replace(record_path)
+
+                record["self_stop_requested"] = True
+                save_record()
+                self.docker("stop", "--timeout", "5", record["container_id"])
+                record["self_stopped"] = True
+                save_record()
+                try:
+                    output = self.docker("logs", record["container_id"], check=False)
+                    (self.root / session_id / "console.log").write_text(output)
+                except (OSError, subprocess.SubprocessError) as error:
+                    record["console_archive_error"] = type(error).__name__
+                    save_record()
+            return {"session_id": session_id, "status": "exited"}
 
     def cancel(self, owner: str, session_id: str) -> dict:
         with self.lock:

@@ -218,7 +218,9 @@ bash scripts/start-rsi.sh --verify-deployment
 
 `model-usage.jsonl` 保存 Gateway 的模型调用用量；`gateway-events.jsonl` 保存请求开始、结束、耗时、状态码和错误层；`session-events.jsonl` 保存父子关系。请求响应的 `X-Request-ID` 可用于关联一次故障。只有请求开始、尚无结束时，先结合模型请求、session 和远程 job 状态判断，不凭短暂日志静止判定卡死。
 
-本地候选名额不足会返回 `candidate_capacity` 和重试间隔；远程 `resource_busy` 表示当前资源不可用。Agent 应查询和等待。终止整次运行会回收本次登记的会话、远程作业与隔离 fixture；未完成清理保存在 `cleanup-errors.json`。运行目录和原始证据继续保留。
+本地候选名额不足会返回 `candidate_capacity` 和重试间隔；远程 `resource_busy` 表示当前资源不可用。Agent 应查询和等待。整轮正常完成会回收登记的会话、远程作业与隔离 fixture；中断启动器会暂停候选、保留状态和资源以便恢复。未完成清理保存在 `cleanup-errors.json`。运行目录和原始证据继续保留。
+
+Agent 写下完成或阻塞说明后，其运行程序还需要实际退出。生成的 Harness 应在自身循环中实现正常退出分支；Host 也提供 `POST /sessions/self/stop`，允许候选保存状态后只结束自己，后继和远程作业继续保留。该终结操作可能在 HTTP 响应返回前结束进程，不能把保存放在调用之后。Host 不根据验收声明自动杀进程，也不自动重启通过此接口结束的 session。接口详见 [Host 执行说明](../runtime/local/README.md#独立候选执行)。
 
 ## 版本快照与独立工作区
 
