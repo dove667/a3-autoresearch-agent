@@ -186,6 +186,10 @@ C 项使用 `/fixtures/isolation` 创建专用异身份作业与哨兵。Agent �
 
 Agent 正常退出后，其后继仍可继续运行。祖先能监督后代，后代不能管理祖先；同级和无关身份不能读取彼此的私有会话。
 
+Host 独立于模型调用，每两秒检查已登记的 worker。确认退出后，先保存控制台日志和退出记录，再自动删除该 worker 的 Docker container。源码、checkpoint、记忆和实验产物存放在 Host 工作区，删除 container 后仍可按原 session ID 查询结果。写入这些文件的时机由 Harness 负责。
+
+container 回收与会话关闭分别管理。自动回收只删除已经停止的 container，保留身份关系和远程作业，不影响其他 worker；日志或记录保存失败时保留 container 并记录错误，Host 继续重试。暂停中的 Docker 不回收。恢复时直接接回暂停的 worker；主进程已退出且具备有效恢复入口时，使用原身份与工作区重新创建 container，已完成的辅助 worker 不重跑。
+
 初始构建者只启动一次。提交后，Host 保持现有后继与 Gateway 可用，仅记录状态并等待所有 worker 退出。Host 不因时间、状态变化、未完成声明或错误重新启动通用构建者；后续执行由 SWE 自己组织。
 
 Agent 用 `run-outcome.json` 保存自己的验收声明。全部 worker 停止后，Host 做声明格式与文件可达性检查并保存保留入口；未完成或归档错误只记录，不触发新的模型调用。实际能力由外部事后复核。

@@ -1,6 +1,6 @@
 # Host提供的执行与验收入口
 
-Version: 0.1.2
+Version: 0.1.3
 
 部署方运行 gateway、容器引擎、模型认证与远程资源调度。候选 Harness 在独立容器内运行，
 通过 HTTP 请求这些固定能力。工具名称、研究逻辑、反思方法和版本选择由 Agent 设计。
@@ -55,16 +55,31 @@ HTTP 422、`reason: artifact_too_large` 和可重试的 `retry_query`，不改�
 同级候选与无关身份不能访问彼此的会话；后代不能管理祖先。
 进程正常退出会保留后继候选的执行与身份，结束的进程不再占活动容器名额。
 
+Host 每两秒检查本轮已登记的 worker；状态查询也会尝试回收已退出的 Docker。
+确认 Docker 已退出后，先将控制台保存为 `candidates/<session_id>/console.log`，
+将退出码、结束状态和保存时间原子落盘到 `session.json`，再删除该 container。
+工作区直接保存在 Host 挂载目录，源码、checkpoint、记忆和产物继续保留；
+Harness 须在退出前完成自己的写入。Host 不生成缺失的 checkpoint，也不替 Agent 判断验收。
+删除后仍能通过原 session ID 查询退出码、近期输出及工作区产物。
+
+container 回收不关闭会话管理关系，不撤销普通退出身份，不取消远程作业、fixture 或后继。
+运行和暂停中的 Docker 保留。日志或退出记录保存失败时不删除 container；
+清理错误记录在 `session.json` 的 `cleanup_error`，单会话状态查询也返回该字段。
+Host 存活期间自动重试，恢复同一 run 后继续处理遗留清理；删除成功后清除此错误。
+container 回收不删除镜像、构建缓存、运行目录或历史证据；这些内容仍需单独管理空间。
+
 `GET /sessions/self` 返回调用身份自己的 session 状态，也可用自己的实际 session ID 查询。
 初始 mini 使用提交标记退出；没有候选 Docker 的构建者身份不能调用自身 session 接口。
 
 `POST /sessions/self/stop {"reason":"状态已保存"}` 是候选进程的主动结束入口。
-Host 仅停止调用者自身的 Docker，保存控制台和工作区，不级联终止后继，不取消远程作业。
+Host 仅停止调用者自身的 Docker，确认退出并保存控制台后自动删除 container，
+保留工作区，不级联终止后继，不取消远程作业。
 这些作业继续受原资源分配和超时约束，并在整轮清理时回收。成功停止后撤销当前会话令牌，
 祖先仍可查询该 session 和后继，后继使用自己的身份继续执行。通过此接口主动结束的 session 不由 resume 自动重启。
 停止失败时返回可重试错误，身份保持可用。请求不能指定其他身份、挂载或级联操作。
 Host 先记录停止意图，再停止进程；若中断留下未确认的停止请求，恢复会明确报错，需先核查实际状态。
-日志归档错误单独记录在 session.json 的 console_archive_error，已确认的停止不会因日志错误而变成可恢复进程。
+日志归档错误记录在 session.json 的 cleanup_error，保留 container 等待重试；
+已确认的停止不会因日志错误而变成可恢复进程。
 
 这是终结操作：先保存证据、记忆、checkpoint、run-outcome.json 和 continuation.json，
 再单独调用，不与其他写入并行。Docker 先收到正常终止信号，五秒内未退出则强制终止；
@@ -206,7 +221,7 @@ Git 记录进入本轮 `versions/`。工作区内的即时修改不会自动成�
 
 初始 mini 的 trajectory 原子写入。恢复保留用户/模型对话与工具结果，部署方 system Prompt 按当前 bootstrap 和共性协议刷新。目标、验收和执行说明采用启动时当前版本，不回注外部审查。主动提交的会话不恢复；未保存结果的工具调用拒绝自动重放。
 
-生成的 Harness 用 `resume.json` 声明包含 checkpoint 的源码清单及恢复命令。Host 不把 continuation 入口当作 resume；缺失 checkpoint 入口时拒绝启动。`--resume-from` 在原 run 目录、时间戳、主身份、工作区和版本库恢复。Host 私有 `.host/state.json` 保存本轮身份令牌、会话与作业注册表、主身份和 trial；Agent Docker 不挂载此目录。恢复沿用原 Gateway 端口与 scope。暂停中的 Docker 直接接回；主进程已退出时，以同一身份在原工作区执行恢复命令，不复制成新的候选。
+生成的 Harness 用 `resume.json` 声明包含 checkpoint 的源码清单及恢复命令。Host 不把 continuation 入口当作 resume；缺失 checkpoint 入口时拒绝启动。`--resume-from` 在原 run 目录、时间戳、主身份、工作区和版本库恢复。Host 私有 `.host/state.json` 保存本轮身份令牌、会话与作业注册表、主身份和 trial；Agent Docker 不挂载此目录。恢复沿用原 Gateway 端口与 scope。暂停中的 Docker 直接接回；主进程已退出时，以同一身份在原工作区执行恢复命令，不复制成新的候选。自动回收的主 container 按相同规则重新创建，先前控制台另存为 `console-resume-*.log`；已完成的其他 worker 不重新执行，通过自身停止接口结束的会话也不自动重启。
 
 中断时暂停本轮候选 Docker、保存 Host 状态并保留远程作业；整轮正常结束仍回收资源。原任务轨迹继续追加，`startup.json` 保持原样，`resume-events.jsonl` 记录每次恢复。run 排他锁拒绝重复启动，端口不可用时明确失败。旧 Host 无私有快照时，仅从已停止运行的 Host 元数据导入原 scope 并轮换本轮令牌；不修改生成代码或模型上下文。已取消的远程 job 不自动重跑。
 

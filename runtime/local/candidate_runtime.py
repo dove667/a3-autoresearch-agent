@@ -2,6 +2,7 @@
 
 import base64
 import json
+import os
 import subprocess
 import threading
 import time
@@ -17,6 +18,10 @@ DEFAULT_ARTIFACT_PAGE_BYTES = 1024 * 1024
 
 class CandidateCapacityError(RuntimeError):
     """No free local candidate slot; callers may poll before retrying."""
+
+
+class CandidateContainerMissingError(RuntimeError):
+    """Docker confirmed that a previously registered container no longer exists."""
 
 
 class ArtifactTooLargeError(ValueError):
@@ -91,6 +96,10 @@ class CandidateRuntime:
             ["docker", *arguments], capture_output=True, text=True, timeout=30, check=False
         )
         if check and result.returncode:
+            if arguments[0] in {"inspect", "rm"} and any(
+                text in result.stderr.lower() for text in ("no such object", "no such container")
+            ):
+                raise CandidateContainerMissingError("Candidate container no longer exists")
             raise RuntimeError("Candidate container operation failed")
         return result.stdout + result.stderr if arguments[0] == "logs" else result.stdout
 
@@ -101,9 +110,84 @@ class CandidateRuntime:
         return record
 
     def state(self, record: dict) -> dict:
+        if record.get("container_removed"):
+            return record["terminal_state"]
         return json.loads(
             self.docker("inspect", "--format", "{{json .State}}", record["container_id"])
         )
+
+    def save_record(self, record: dict) -> None:
+        self.write_durable(
+            self.root / record["owner"] / "session.json", json.dumps(record, indent=2)
+        )
+
+    @staticmethod
+    def write_durable(path: Path, content: str) -> None:
+        """Commit Host evidence before allowing Docker to discard its copy."""
+        temporary = path.with_name(path.name + ".tmp")
+        with temporary.open("w") as stream:
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        temporary.replace(path)
+        directory = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+
+    def archive_and_remove(self, record: dict, state: dict) -> None:
+        """Remove only this stopped container, after saving its exit and console."""
+        if record.get("container_removed"):
+            return
+        if state["Status"] not in {"exited", "dead", "created"}:
+            raise RuntimeError("Cannot archive a container that may still be executing")
+        if not record.get("terminal_state"):
+            # All worker files live on the Host bind mount; no workspace copy is needed.
+            candidate_workspace(self.root, record["owner"]).resolve(strict=True)
+            output = self.docker("logs", record["container_id"])
+            self.write_durable(self.root / record["owner"] / "console.log", output)
+            record["terminal_state"] = state
+            record["exit_saved_at"] = time.time()
+        self.save_record(record)
+        try:
+            self.docker("rm", record["container_id"])
+        except CandidateContainerMissingError:
+            pass
+        record["container_removed"] = True
+        record.pop("cleanup_error", None)
+        self.save_record(record)
+
+    def collect_exit(self, record: dict) -> dict:
+        """Keep exit observable even if archiving or removal needs another attempt."""
+        try:
+            state = self.state(record)
+        except CandidateContainerMissingError:
+            if not record.get("terminal_state"):
+                raise
+            record["container_removed"] = True
+            record.pop("cleanup_error", None)
+            self.save_record(record)
+            return record["terminal_state"]
+        if state["Status"] in {"exited", "dead"}:
+            try:
+                self.archive_and_remove(record, state)
+            except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
+                record["cleanup_error"] = type(error).__name__
+                self.save_record(record)
+        return state
+
+    def reap_exited(self) -> None:
+        """Retry terminal-container cleanup without changing workers or their jobs."""
+        with self.lock:
+            for record in self.records.values():
+                if record.get("closed") or record.get("container_removed"):
+                    continue
+                try:
+                    self.collect_exit(record)
+                except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
+                    record["cleanup_error"] = type(error).__name__
+                    self.save_record(record)
 
     def create_initial(
         self, owner: str, command: list[str], token: str, version_id: str, inputs: Path
@@ -155,7 +239,7 @@ class CandidateRuntime:
         errors = []
         with self.lock:
             for session, record in self.records.items():
-                if record.get("closed"):
+                if record.get("closed") or record.get("container_removed"):
                     continue
                 try:
                     state = self.state(record)["Status"]
@@ -184,11 +268,15 @@ class CandidateRuntime:
                 if record.get("self_stop_requested"):
                     raise RuntimeError("Unconfirmed self-stop; inspect the session before recovery")
                 try:
-                    status = self.state(record)["Status"]
-                except RuntimeError:
+                    status = self.collect_exit(record)["Status"]
+                except CandidateContainerMissingError:
                     status = "missing"
+                if record.get("cleanup_error") and status in {"exited", "dead"}:
+                    raise RuntimeError("Resume requires the pending exit archive to finish first")
+                if status not in ACTIVE_STATES | {"exited", "dead", "missing"}:
+                    raise RuntimeError("Unexpected container state; explicit recovery required")
                 command = None
-                if status not in {"paused", "created", "running"} and session == main_owner:
+                if status in {"exited", "dead", "missing"} and session == main_owner:
                     workspace = candidate_workspace(self.root, session)
                     command, files = load_harness_package(workspace, "resume.json")
                     if "checkpoint.json" in files:
@@ -211,12 +299,13 @@ class CandidateRuntime:
                 actions.append((session, record, status, command))
             for session, record, status, command in actions:
                 if command is not None:
-                    if status != "missing":
-                        logs = self.docker("logs", record["container_id"], check=False)
-                        (self.root / session / f"console-resume-{time.time_ns()}.log").write_text(
-                            logs
-                        )
-                        self.docker("rm", record["container_id"])
+                    if record.get("container_removed"):
+                        archived = self.root / session / "console.log"
+                        if archived.exists():
+                            self.write_durable(
+                                archived.with_name(f"console-resume-{time.time_ns()}.log"),
+                                archived.read_text(),
+                            )
                     self.create(
                         record["owner"],
                         command,
@@ -322,14 +411,25 @@ class CandidateRuntime:
             record = self.owned(owner, session_id)
             if record["closed"]:
                 return {"session_id": session_id, "status": "closed"}
-            state = self.state(record)
-            output = self.docker("logs", "--tail=200", record["container_id"])[-65536:]
-            return {
+            state = self.collect_exit(record)
+            if record.get("terminal_state"):
+                lines = (
+                    (self.root / session_id / "console.log").read_text().splitlines(keepends=True)
+                )
+                output = "".join(lines[-200:])[-65536:]
+            elif state["Status"] in {"exited", "dead"}:
+                output = ""
+            else:
+                output = self.docker("logs", "--tail=200", record["container_id"])[-65536:]
+            result = {
                 "session_id": session_id,
                 "status": state["Status"],
                 "exit_code": state["ExitCode"],
                 "output": output,
             }
+            if record.get("cleanup_error"):
+                result["cleanup_error"] = record["cleanup_error"]
+            return result
 
     def artifact(
         self, owner: str, session_id: str, name: str, offset: int = 0, limit: int | None = None
@@ -369,39 +469,35 @@ class CandidateRuntime:
         return result
 
     def stop(self, owner: str, session_id: str) -> dict:
-        """End this process while preserving its container, workspace and descendants."""
+        """End this process and reclaim its container while preserving its evidence."""
         with self.lock:
             record = self.owned(owner, session_id)
             if not record.get("self_stopped"):
-                record_path = self.root / session_id / "session.json"
-
-                def save_record():
-                    temporary = record_path.with_suffix(".tmp")
-                    temporary.write_text(json.dumps(record, indent=2))
-                    temporary.replace(record_path)
-
                 record["self_stop_requested"] = True
-                save_record()
-                self.docker("stop", "--timeout", "5", record["container_id"])
+                self.save_record(record)
+                if not record.get("container_removed"):
+                    self.docker("stop", "--timeout", "5", record["container_id"])
+                if self.state(record)["Status"] not in {"exited", "dead"}:
+                    raise RuntimeError("Self-stop has not been confirmed by Docker")
                 record["self_stopped"] = True
-                save_record()
-                try:
-                    output = self.docker("logs", record["container_id"], check=False)
-                    (self.root / session_id / "console.log").write_text(output)
-                except (OSError, subprocess.SubprocessError) as error:
-                    record["console_archive_error"] = type(error).__name__
-                    save_record()
+                self.save_record(record)
+            self.collect_exit(record)
             return {"session_id": session_id, "status": "exited"}
 
     def cancel(self, owner: str, session_id: str) -> dict:
         with self.lock:
             record = self.owned(owner, session_id)
             if not record["closed"]:
-                output = self.docker("logs", record["container_id"], check=False)
-                (self.root / session_id / "console.log").write_text(output)
-                self.docker("rm", "-f", record["container_id"])
+                if not record.get("container_removed"):
+                    state = self.collect_exit(record)
+                    if state["Status"] in ACTIVE_STATES - {"created"}:
+                        if state["Status"] == "paused":
+                            self.docker("unpause", record["container_id"])
+                        self.docker("stop", "--timeout", "5", record["container_id"])
+                        state = self.state(record)
+                    self.archive_and_remove(record, state)
                 record["closed"] = True
-                (self.root / session_id / "session.json").write_text(json.dumps(record, indent=2))
+                self.save_record(record)
             return {"session_id": session_id, "status": "closed"}
 
     def close(self) -> None:

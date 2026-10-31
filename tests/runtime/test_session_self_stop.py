@@ -134,11 +134,11 @@ def test_runtime_self_stop_preserves_workspace_and_is_not_resumed(tmp_path, monk
     monkeypatch.setattr(
         runtime, "docker", lambda *args, **kwargs: commands.append(args) or "console"
     )
-    monkeypatch.setattr(runtime, "state", lambda record: {"Status": "running"})
+    monkeypatch.setattr(runtime, "state", lambda record: {"Status": "exited", "ExitCode": 137})
     result = runtime.stop("main", "main")
     assert result["status"] == "exited"
     assert any(command[0] == "stop" for command in commands)
-    assert not any(command[0] == "rm" for command in commands)
+    assert any(command[0] == "rm" for command in commands)
     assert (workspace / "memory.txt").read_text() == "preserve"
     assert (directory / "console.log").read_text() == "console"
     assert json.loads((directory / "session.json").read_text())["self_stopped"] is True
@@ -160,7 +160,7 @@ def test_log_failure_after_stop_does_not_turn_termination_into_restart(tmp_path,
         public_a3=tmp_path,
         endpoint="http://gateway",
     )
-    (tmp_path / "main").mkdir()
+    (tmp_path / "main/workspace").mkdir(parents=True)
     runtime.records["main"] = {"owner": "main", "container_id": "container", "closed": False}
 
     def docker(*args, **kwargs):
@@ -169,10 +169,12 @@ def test_log_failure_after_stop_does_not_turn_termination_into_restart(tmp_path,
         return ""
 
     monkeypatch.setattr(runtime, "docker", docker)
+    monkeypatch.setattr(runtime, "state", lambda record: {"Status": "exited", "ExitCode": 137})
     assert runtime.stop("main", "main")["status"] == "exited"
     saved = json.loads((tmp_path / "main/session.json").read_text())
     assert saved["self_stopped"] is True
-    assert saved["console_archive_error"] == "TimeoutExpired"
+    assert saved["cleanup_error"] == "TimeoutExpired"
+    assert not saved.get("container_removed")
     runtime.resume_sessions({}, "main")
 
 

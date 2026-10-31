@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from runtime.local.candidate_runtime import CandidateRuntime
+from runtime.local.candidate_runtime import CandidateContainerMissingError, CandidateRuntime
 
 
 def test_paused_sessions_reconnect_without_reexecuting_or_changing_identity(tmp_path, monkeypatch):
@@ -74,7 +74,9 @@ def test_missing_main_restarts_at_checkpoint_in_original_workspace(
         )
     )
     runtime.records["main"] = {"owner": "main", "container_id": "lost", "closed": False}
-    monkeypatch.setattr(runtime, "state", lambda record: (_ for _ in ()).throw(RuntimeError()))
+    monkeypatch.setattr(
+        runtime, "state", lambda record: (_ for _ in ()).throw(CandidateContainerMissingError())
+    )
     created = []
     monkeypatch.setattr(runtime, "create", lambda *args, **kwargs: created.append((args, kwargs)))
     runtime.resume_sessions({"same-token": "main"}, "main")
@@ -142,6 +144,8 @@ def test_pending_tool_call_is_not_replayed_after_container_loss(tmp_path, monkey
         )
     )
     runtime.records["main"] = {"owner": "main", "container_id": "lost", "closed": False}
-    monkeypatch.setattr(runtime, "state", lambda record: (_ for _ in ()).throw(RuntimeError()))
+    monkeypatch.setattr(
+        runtime, "state", lambda record: (_ for _ in ()).throw(CandidateContainerMissingError())
+    )
     with pytest.raises(ValueError, match="Unresolved tool"):
         runtime.resume_sessions({"same-token": "main"}, "main")

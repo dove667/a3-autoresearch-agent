@@ -220,6 +220,10 @@ bash scripts/start-rsi.sh --verify-deployment
 
 本地候选名额不足会返回 `candidate_capacity` 和重试间隔；远程 `resource_busy` 表示当前资源不可用。Agent 应查询和等待。整轮正常完成会回收登记的会话、远程作业与隔离 fixture；中断启动器会暂停候选、保留状态和资源以便恢复。未完成清理保存在 `cleanup-errors.json`。运行目录和原始证据继续保留。
 
+已退出的 worker 无需等整轮结束才清理。Host 每两秒检查，并在确认退出、保存控制台与退出记录后自动删除其 container。工作区里的 checkpoint、记忆、源码和产物保留，仍可用原 session ID 查询状态与结果。运行和暂停中的 worker、其他 worker 及远程作业均不受这项回收影响。单个 worker 清理失败时，`candidates/<session_id>/session.json` 与状态接口提供 `cleanup_error`，Host 存活期间自动重试。运行目录和镜像、构建缓存仍需单独管理磁盘空间。
+
+`--resume-from` 可以恢复已经自动删除 container 的主 Agent：Host 根据原工作区的 `resume.json` 重新创建 Docker，沿用原 run、身份、上下文和记忆；已完成的辅助 worker 不重跑。恢复能力依赖 Harness 退出前保存有效 checkpoint，通过自身停止接口明确结束的会话不自动重启。
+
 Agent 写下完成或阻塞说明后，其运行程序还需要实际退出。生成的 Harness 应在自身循环中实现正常退出分支；Host 也提供 `POST /sessions/self/stop`，允许候选保存状态后只结束自己，后继和远程作业继续保留。该终结操作可能在 HTTP 响应返回前结束进程，不能把保存放在调用之后。Host 不根据验收声明自动杀进程，也不自动重启通过此接口结束的 session。接口详见 [Host 执行说明](../runtime/local/README.md#独立候选执行)。
 
 ## 版本快照与独立工作区

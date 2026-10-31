@@ -2,11 +2,12 @@
 
 import hashlib
 import json
+import logging
 import secrets
 import threading
 import time
 from collections.abc import Callable
-from contextlib import nullcontext
+from contextlib import asynccontextmanager, nullcontext
 from pathlib import Path
 from typing import Annotated
 
@@ -112,7 +113,34 @@ def create_app(
     input_versions: InputVersions | None = None,
     operator_token: str | None = None,
 ) -> FastAPI:
-    app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
+    @asynccontextmanager
+    async def lifespan(app):
+        # Poll independently of model calls and Agent status requests, including during H0.
+        stopped = threading.Event()
+
+        def reap_workers():
+            while not stopped.wait(2):
+                try:
+                    sandbox.reap_exited()
+                except Exception as error:  # noqa: BLE001 — retry after Host storage/daemon failures
+                    logging.getLogger(__name__).error(
+                        "Worker container cleanup will retry (%s)", type(error).__name__
+                    )
+
+        reaper = None
+        if sandbox is not None and hasattr(sandbox, "reap_exited"):
+            reaper = threading.Thread(
+                target=reap_workers, name="worker-container-reaper", daemon=True
+            )
+            reaper.start()
+        try:
+            yield
+        finally:
+            stopped.set()
+            if reaper is not None:
+                reaper.join()
+
+    app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
     diagnostics = GatewayDiagnostics(usage_log.with_name("gateway-events.jsonl"))
     diagnostics.attach(app)
     log_lock = threading.Lock()
