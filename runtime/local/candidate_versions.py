@@ -12,7 +12,6 @@ from pathlib import Path, PurePosixPath
 from runtime.local.candidate_runtime import (
     MAX_INPUT_BYTES,
     MAX_INPUT_FILES,
-    write_candidate_files,
 )
 
 
@@ -103,9 +102,9 @@ class CandidateVersions:
                 object_id = self.git(
                     "hash-object",
                     "-w",
-                    "--stdin",
                     "--no-filters",
-                    input_text=path.read_bytes().decode("utf-8"),
+                    "--",
+                    str(path.resolve()),
                 )
             entries.append(f"{mode} {kind} {object_id}\t{path.name}\0")
         return self.git("mktree", "-z", input_text="".join(entries))
@@ -138,11 +137,6 @@ class CandidateVersions:
 
     @staticmethod
     def validate_files(files: dict[str, str]) -> None:
-        if (
-            len(files) > MAX_INPUT_FILES
-            or sum(len(value.encode()) for value in files.values()) > MAX_INPUT_BYTES
-        ):
-            raise ValueError("Candidate input exceeds 128 files or 20 MiB")
         for name in files:
             relative = PurePosixPath(name)
             if (
@@ -161,6 +155,16 @@ class CandidateVersions:
                 raise ValueError("Git control files and environment files cannot be versioned")
 
     def create(self, owner: str, files: dict[str, str], parent: str | None = None) -> dict:
+        """Accept a bounded Agent upload through the Gateway."""
+        if (
+            len(files) > MAX_INPUT_FILES
+            or sum(len(value.encode()) for value in files.values()) > MAX_INPUT_BYTES
+        ):
+            raise ValueError("Candidate input exceeds 128 files or 20 MiB")
+        return self.create_local(owner, files, parent)
+
+    def create_local(self, owner: str, files: dict[str, str], parent: str | None = None) -> dict:
+        """Save Host-loaded local files without applying Agent upload limits."""
         # Version only explicitly submitted source; never scan logs or credentials.
         self.validate_files(files)
         with self.lock:
@@ -171,7 +175,10 @@ class CandidateVersions:
             try:
                 source = staging / "source"
                 source.mkdir()
-                write_candidate_files(source, files)
+                for name, content in files.items():
+                    path = source / name
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(content.encode("utf-8"))
                 # Build Git blobs directly: uploaded ignore rules and attributes cannot alter bytes.
                 tree = self.source_tree(staging)
                 arguments = ["commit-tree", tree, "-m", version_id]

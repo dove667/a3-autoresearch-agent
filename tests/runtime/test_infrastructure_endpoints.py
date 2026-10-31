@@ -1,5 +1,7 @@
 import json
 
+import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from runtime.local.candidate_runtime import CandidateCapacityError
@@ -16,6 +18,43 @@ class VersionSandbox:
         workspace = self.versions.checkout(owner, version_id, owner)
         self.launched.append((owner, token, workspace))
         return {"session_id": owner, "status": "created", "version_id": version_id}
+
+
+def test_host_starts_large_local_package_while_agent_uploads_remain_bounded(tmp_path):
+    versions = CandidateVersions(tmp_path / "versions")
+    backend = VersionSandbox(versions)
+    app = create_app(
+        model_name="provider/model",
+        sessions={"root-token": "root"},
+        forward_model=lambda **kw: {},
+        remote_call=lambda *args: {},
+        usage_log=tmp_path / "usage.jsonl",
+        versions=versions,
+        sandbox=backend,
+        main_owner="root",
+        start_main_session=True,
+    )
+    files = {f"file_{index}.txt": "fixture" for index in range(129)}
+    with TestClient(app) as client:
+        upload = client.post(
+            "/sessions",
+            headers={"Authorization": "Bearer root-token"},
+            json={"command": ["true"], "files": files},
+        )
+        assert upload.status_code >= 400
+        session = app.state.start_local_harness(["true"], files, "Bearer root-token")
+        child, token, workspace = backend.launched[-1]
+        assert session["session_id"] == child
+        assert len(list(workspace.iterdir())) == 129
+        assert (
+            client.get("/evolution", headers={"Authorization": "Bearer root-token"}).json()[
+                "main_owner"
+            ]
+            == child
+        )
+        with pytest.raises(HTTPException) as error:
+            app.state.start_local_harness(["true"], files, "Bearer " + token)
+        assert error.value.status_code == 403
 
 
 def test_saved_version_runs_under_new_identity_and_siblings_cannot_read_it(tmp_path):

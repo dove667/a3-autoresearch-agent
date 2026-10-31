@@ -55,6 +55,23 @@ def test_credentials_and_git_control_files_cannot_be_saved(tmp_path, name):
     versions = CandidateVersions(tmp_path)
     with pytest.raises(ValueError):
         versions.create("a", {name: "secret"})
+    with pytest.raises(ValueError):
+        versions.create_local("a", {name: "secret"})
+
+
+@pytest.mark.parametrize(
+    "files",
+    [
+        {f"file_{index}.txt": "x" for index in range(129)},
+        {"trajectory.jsonl": "x" * (20 * 1024 * 1024 + 1)},
+    ],
+)
+def test_agent_upload_limits_remain_in_force(tmp_path, files):
+    versions = CandidateVersions(tmp_path)
+    with pytest.raises(ValueError, match="Candidate input exceeds"):
+        versions.create("agent", files)
+    assert versions.list("agent") == []
+    assert not list(versions.worktrees.iterdir())
 
 
 def test_versioned_source_ignores_ignore_rules_and_preserves_original_bytes(tmp_path):

@@ -462,32 +462,25 @@ def launch_run(args, run: Path, a3: Path, image: str, start) -> None:
                 for path in inputs.iterdir():
                     if path.is_file():
                         shutil.copy2(path, private_inputs / path.name)
-            headers = {"Authorization": "Bearer " + token}
-
-            with httpx.Client(
-                base_url=f"http://127.0.0.1:{port}", headers=headers, timeout=90
-            ) as client:
-                response = client.post("/sessions", json={"command": command, "files": files})
-                response.raise_for_status()
-                session = response.json()
-                (run / "startup.json").write_text(
-                    json.dumps(
-                        {
-                            "run_id": run_id,
-                            "mode": kind,
-                            "package": str(args.run_harness or args.resume_from),
-                            "parent_run": start.previous_run.name if start.previous_run else None,
-                            "source_version": start.source_version,
-                            "session_id": session["session_id"],
-                            "version_id": session["version_id"],
-                            "inputs": input_hashes(inputs),
-                            "input_manifest": input_versions.manifest,
-                        },
-                        indent=2,
-                    )
+            session = app.state.start_local_harness(command, files, "Bearer " + token)
+            (run / "startup.json").write_text(
+                json.dumps(
+                    {
+                        "run_id": run_id,
+                        "mode": kind,
+                        "package": str(args.run_harness or args.resume_from),
+                        "parent_run": start.previous_run.name if start.previous_run else None,
+                        "source_version": start.source_version,
+                        "session_id": session["session_id"],
+                        "version_id": session["version_id"],
+                        "inputs": input_hashes(inputs),
+                        "input_manifest": input_versions.manifest,
+                    },
+                    indent=2,
                 )
-                (run.parent / "latest-run.txt").write_text(str(run) + "\n")
-                print(f"Run directory: {run}", flush=True)
+            )
+            (run.parent / "latest-run.txt").write_text(str(run) + "\n")
+            print(f"Run directory: {run}", flush=True)
         if not resuming or resume_context is not None:
             env = DockerEnvironment(
                 image=image,

@@ -1,6 +1,6 @@
 # Host提供的执行与验收入口
 
-Version: 0.1.0
+Version: 0.1.1
 
 部署方运行 gateway、容器引擎、模型认证与远程资源调度。候选 Harness 在独立容器内运行，
 通过 HTTP 请求这些固定能力。工具名称、研究逻辑、反思方法和版本选择由 Agent 设计。
@@ -189,7 +189,9 @@ Git 记录进入本轮 `versions/`。工作区内的即时修改不会自动成�
 {"command": ["python", "next_agent.py"], "files": ["next_agent.py", "memory/lessons.json"]}
 ```
 
-文件按 UTF-8 传递，沿用 128 个文件、20 MiB 的限制。Agent 自己选择保留版本和需要的启动状态；Host 只保存快照，并写本轮 `retained.json`。大型或二进制经验材料可保存在历史中，由 Harness 按需恢复。下次外部 `--run-harness <run目录>` 和内部 `/sessions` 使用同一候选执行层，无需人工整理接续包。
+文件清单使用工作区内的相对路径，当前保留包支持 UTF-8 文件。Host 在所有 worker 停止后读取清单，把文件保存为固定 Git 快照，并写本轮 `retained.json`。本地保存不受 HTTP 上传的 128 个文件、20 MiB 限制；仍会检查路径、身份归属，并拒绝凭据文件和 Git 控制文件。磁盘空间、内存或 Git 操作失败会使保存失败，原工作区继续保留。二进制经验材料可保存在历史中，由 Harness 按需恢复。
+
+`--run-harness <run目录>` 由 Host 直接导入本地保留包，再使用与 `/sessions` 相同的身份注册、授权、资源分配和候选执行流程；文件内容不再经 HTTP 整包上传。Agent 通过 `/sessions` 或 `/versions` 提交文件时，仍受单次上传 128 个 UTF-8 文件、合计 20 MiB 的限制。Agent 自己选择保留版本和需要的启动状态，无需人工整理接续包。
 
 从旧运行启动的新主会话可以读取 `/run/input/previous-run.json` 与 `/run/input/history/index.json`。历史来自明确选择的前序运行，已过滤旧认证与私密推理；其中内容按待核查数据处理。仅主会话获得完整只读历史；它创建的子会话使用普通输入，所需材料由主会话显式交接。
 

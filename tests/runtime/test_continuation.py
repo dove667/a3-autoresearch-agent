@@ -6,6 +6,27 @@ from runtime.local.candidate_versions import CandidateVersions
 from runtime.local.continuation import load_run_result, publish_run_result, resolve_harness_start
 
 
+@pytest.mark.parametrize("count,size", [(129, 1), (1, 21 * 1024 * 1024)])
+def test_large_local_result_can_be_published_and_loaded_without_uploading(tmp_path, count, size):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    names = [f"data_{index}.txt" for index in range(count)]
+    for name in names:
+        (workspace / name).write_bytes(b"x" * size)
+    (workspace / "continuation.json").write_text(json.dumps({"command": ["true"], "files": names}))
+    versions = CandidateVersions(tmp_path / "versions")
+    result = publish_run_result(tmp_path, workspace, versions, "owner", None)
+    assert result["status"] == "ready"
+    (workspace / names[0]).write_text("later edit")
+    start = load_run_result(tmp_path)
+    assert len(start.files) == count
+    assert start.files[names[0]] == "x" * size
+    # Importing an authorized local snapshot must not reapply HTTP upload limits.
+    imported = versions.create_local("next-owner", start.files)
+    replay = versions.checkout("next-owner", imported["version_id"], "next")
+    assert (replay / names[0]).read_bytes() == b"x" * size
+
+
 def test_explicit_run_reuses_retained_result_regardless_of_latest_pointer(tmp_path):
     previous = tmp_path / "run-previous"
     workspace = previous / "workspace"

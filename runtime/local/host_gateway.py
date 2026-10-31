@@ -380,6 +380,24 @@ def create_app(
             session_event("created", result["session_id"])
             return result
 
+    def start_local_harness(command: list[str], files: dict[str, str], authorization: str):
+        """Import a local package inside the Host; no unbounded HTTP route is exposed."""
+        with session_lock:
+            accepting_resources()
+            parent = owner(authorization)
+            if parent not in root_owners:
+                raise HTTPException(403, "Local Harness imports require the Host root identity")
+            if versions is None or sandbox is None:
+                raise HTTPException(503, "Candidate execution is not configured")
+            request = SessionRequest(command=command)
+            if hasattr(sandbox, "check_capacity"):
+                deployment_call(sandbox.check_capacity)
+            version = versions.create_local(parent, files)
+            request.version_id = version["version_id"]
+            return create_session(request, authorization)
+
+    app.state.start_local_harness = start_local_harness
+
     def evolution_state():
         if evolution is None or versions is None:
             raise HTTPException(503, "Linear evolution is not configured")

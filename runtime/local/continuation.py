@@ -74,7 +74,7 @@ def publish_run_result(
     declaration = workspace / "continuation.json"
     if declaration.is_file():
         command, files = load_harness_package(workspace, "continuation.json")
-        version = versions.create(owner, files, parent_version)
+        version = versions.create_local(owner, files, parent_version)
         result = {
             "status": "ready",
             "command": command,

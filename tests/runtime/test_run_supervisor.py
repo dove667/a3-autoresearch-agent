@@ -89,7 +89,7 @@ def test_completed_claim_requires_a_versionable_source_manifest(tmp_path, name):
 
 
 @pytest.mark.parametrize("count,size", [(129, 1), (1, 20 * 1024 * 1024 + 1)])
-def test_completed_claim_respects_snapshot_file_and_byte_limits(tmp_path, count, size):
+def test_completed_claim_accepts_local_snapshots_beyond_upload_limits(tmp_path, count, size):
     complete_result(tmp_path)
     names = []
     for index in range(count):
@@ -99,7 +99,7 @@ def test_completed_claim_respects_snapshot_file_and_byte_limits(tmp_path, count,
     (tmp_path / "continuation.json").write_text(
         json.dumps({"command": ["python", names[0]], "files": names})
     )
-    assert evaluate_outcome(tmp_path, tuple("ABCD"))["status"] == "continue"
+    assert evaluate_outcome(tmp_path, tuple("ABCD"))["status"] == "complete"
 
 
 def test_genuine_external_blocker_requires_action_and_evidence(tmp_path):
