@@ -37,16 +37,20 @@ def test_explicit_run_reuses_retained_result_regardless_of_latest_pointer(tmp_pa
     assert start.previous_run == previous
 
 
-def test_legacy_final_entry_is_loaded_without_manually_prepared_package(tmp_path):
-    run = tmp_path / "run-legacy"
+@pytest.mark.parametrize("with_manifest", [False, True])
+def test_unpublished_workspace_files_are_not_a_run_result(tmp_path, with_manifest):
+    run = tmp_path / "run"
     final = run / "workspace/run/final"
     final.mkdir(parents=True)
     (run / "startup.json").write_text("{}")
     (final / "entry.py").write_bytes(b"print('retained')\n")
     (final / "rejected-candidate.py").write_text("raise RuntimeError")
-    start = load_run_result(run)
-    assert start.files == {"entry.py": "print('retained')\n"}
-    assert start.previous_run == run
+    if with_manifest:
+        (final / "run.json").write_text(
+            json.dumps({"command": ["python", "entry.py"], "files": ["entry.py"]})
+        )
+    with pytest.raises(ValueError, match="retained"):
+        load_run_result(run)
 
 
 def test_missing_selection_does_not_guess_newest_candidate_or_restart_from_zero(tmp_path):

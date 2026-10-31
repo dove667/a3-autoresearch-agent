@@ -11,7 +11,7 @@ import socket
 import subprocess
 import threading
 import time
-import uuid
+from datetime import datetime
 from pathlib import Path
 
 import httpx
@@ -35,6 +35,22 @@ from runtime.local.isolation_fixture import IsolationFixtures
 from runtime.local.recovery import stage_recovery
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def create_run_directory(root: Path) -> Path:
+    """Reserve a directory named with the Host's local start time."""
+    root.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().strftime("run-%Y%m%d-%H%M%S-%f")
+    sequence = 1
+    while True:
+        name = timestamp if sequence == 1 else f"{timestamp}-{sequence}"
+        run = root / name
+        try:
+            run.mkdir(mode=0o700)
+        except FileExistsError:
+            sequence += 1
+        else:
+            return run
 
 
 def git(root: Path, *args: str) -> str:
@@ -81,6 +97,20 @@ def snapshot_checkout(source: Path, destination: Path) -> None:
         target = destination / "third_party/mini-swe-agent"
         target.rmdir()
         snapshot_checkout(mini, target)
+    # The selected files and exclusions form this isolated checkout's starting point.
+    if git(destination, "status", "--porcelain"):
+        git(destination, "add", "--all")
+        git(
+            destination,
+            "-c",
+            "core.hooksPath=/dev/null",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "--quiet",
+            "-m",
+            "chore: establish isolated execution baseline",
+        )
 
 
 def remote_call(operation: str, payload: dict) -> dict:
@@ -208,13 +238,13 @@ def main() -> None:
             )
         )
         return
-    run_id = "run-" + uuid.uuid4().hex
     kind = (
         "deployment-checks" if args.verify_deployment else "retained-harness" if package else "rsi"
     )
     run_root = ROOT / "artifacts"
     run_root /= "validation/deployment" if args.verify_deployment else "rsi"
-    run = run_root / run_id
+    run = create_run_directory(run_root)
+    run_id = run.name
     inputs, workspace = run / "inputs", run / "workspace"
     inputs.mkdir(parents=True, mode=0o700)
     workspace.mkdir()

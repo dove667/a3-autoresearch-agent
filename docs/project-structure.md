@@ -43,6 +43,8 @@
 | `reports/<name>/output/` | 报告截图与视觉检查输出 |
 | `.env`、`.venv/` | 本机部署配置和依赖环境 |
 
+run 目录按 Host 本地时间命名，如 `run-20261031-110415-123456`；末段为微秒，发生重名时追加递增序号。正式运行与部署检查使用相同的命名规则。
+
 `artifacts/` 中仅目录说明进入 Git。其余原始日志、工作区副本和部署配置留在本地。不要整体取消忽略；需要分享候选时，从明确选定的 run 与版本导出获授权的材料，需要展示的已审阅数据移交到 `reports/`。
 
 ## 正式运行内部结构
@@ -73,7 +75,7 @@ artifacts/rsi/run-*/
 
 ## 生成代码与报告
 
-生成代码随 run 保存。新运行使用 `versions/` 记录候选 commit，并以独立 worktree 执行；`retained.json` 定位 Agent 明确选择的结果。早期运行的入口保存在 `workspace/run/final/entry.py`。下一轮显式传入选定 run 目录即可加载，无需另外维护一份人工源码归档。评测绑定、版本选择和搜索策略由 Agent 使用 Host 接口组织，见[开发路线](roadmap.md)。
+生成代码随 run 保存。运行使用 `versions/` 记录候选 commit，并以独立 worktree 执行；`retained.json` 定位 Agent 明确选择的结果。下一轮显式传入选定 run 目录即可加载，无需另外维护一份人工源码归档。评测绑定、版本选择和搜索策略由 Agent 使用 Host 接口组织，见[开发路线](roadmap.md)。
 
 报告采用 Data 插件的工程结构：业务正文与图表放在 `src/content/`，审阅数据放在 `src/data.json`，共享 runtime 与构建校验文件保持插件原样。Data 的机器级预览服务状态留在仓库外。报告工程不复制进冷启动执行工作区。
 

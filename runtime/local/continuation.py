@@ -35,15 +35,6 @@ def load_run_result(run: Path) -> HarnessStart:
             raise ValueError("Invalid retained command")
         return HarnessStart(command, files, run, record["version_id"])
 
-    # Compatibility with the existing cold start's final output convention.
-    final = workspace_path(run, "workspace/run/final")
-    if (final / "run.json").is_file():
-        command, files = load_harness_package(final)
-        return HarnessStart(command, files, run)
-    if (final / "entry.py").is_file() and not (final / "entry.py").is_symlink():
-        return HarnessStart(
-            ["python", "entry.py"], {"entry.py": (final / "entry.py").read_bytes().decode()}, run
-        )
     raise ValueError("Previous run has no retained result; refusing to guess or rebuild")
 
 

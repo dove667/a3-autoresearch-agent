@@ -38,11 +38,19 @@ def test_snapshot_keeps_edits_but_excludes_host_secrets(tmp_path):
     (source / "private/key").write_text("PRIVATE_KEY")
     (source / "module.py").write_text("VERSION = 2\n")
     (source / "new.py").write_text("NEW = True\n")
+    source_head = subprocess.check_output(["git", "-C", str(source), "rev-parse", "HEAD"])
+    source_status = subprocess.check_output(["git", "-C", str(source), "status", "--porcelain"])
     snapshot_checkout(source, candidate)
     assert (candidate / "module.py").read_text() == "VERSION = 2\n"
     assert (candidate / "new.py").is_file()
     assert not (candidate / ".env").exists()
     assert not (candidate / "private").exists()
+    assert subprocess.check_output(["git", "-C", str(candidate), "status", "--porcelain"]) == b""
+    assert subprocess.check_output(["git", "-C", str(source), "rev-parse", "HEAD"]) == source_head
+    assert (
+        subprocess.check_output(["git", "-C", str(source), "status", "--porcelain"])
+        == source_status
+    )
     (candidate / "module.py").write_text("VERSION = 3\n")
     assert (source / "module.py").read_text() == "VERSION = 2\n"
 
@@ -75,6 +83,7 @@ def test_snapshot_excludes_tracked_and_untracked_report_projects(tmp_path):
 
     assert not (candidate / "reports").exists()
     assert (candidate / "module.py").is_file()
+    assert subprocess.check_output(["git", "-C", str(candidate), "status", "--porcelain"]) == b""
 
 
 def test_snapshot_preserves_deleted_tracked_files(tmp_path):
@@ -83,6 +92,7 @@ def test_snapshot_preserves_deleted_tracked_files(tmp_path):
     (source / "module.py").unlink()
     snapshot_checkout(source, candidate)
     assert not (candidate / "module.py").exists()
+    assert subprocess.check_output(["git", "-C", str(candidate), "status", "--porcelain"]) == b""
 
 
 def test_successor_keeps_frozen_goals_and_links_previous_blocker(tmp_path):
