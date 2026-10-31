@@ -167,18 +167,13 @@ def main() -> None:
     )
     parser.add_argument(
         "--run-harness",
-        nargs="?",
-        const="latest",
-        help="Continue the latest retained result, or specify a run/package directory",
+        type=Path,
+        help="Start from the retained result of an explicitly selected run/package directory",
     )
     args = parser.parse_args()
     if args.run_harness and (args.resume_from or args.verify_deployment):
         parser.error("--run-harness cannot be combined with --resume-from or --verify-deployment")
-    start = (
-        resolve_harness_start(args.run_harness, ROOT / "artifacts/rsi/latest-run.txt")
-        if args.run_harness
-        else None
-    )
+    start = resolve_harness_start(args.run_harness) if args.run_harness else None
     if args.resume_from:
         start = resolve_resume_start(args.resume_from.resolve())
     package = (start.command, start.files) if start else None

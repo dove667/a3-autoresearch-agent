@@ -22,4 +22,4 @@ bash scripts/start-rsi.sh --run-harness harnesses/phase-one
 ```
 
 从仓库根目录运行，沿用本地 `.env` 部署配置。Host 注入新认证与当前冻结输入，旧凭据不参与启动。
-该入口从归档代码启动，不附带特定运行历史。跨轮继续演化使用 `bash scripts/start-rsi.sh --run-harness`，由启动器读取上一轮明确保留的结果并自动提供历史，详见[教程](../../docs/tutorial.md)。A/B/C/D 正式验收以实际运行证据核对。
+该入口从归档代码启动，不附带特定运行历史。跨轮继续演化使用 `bash scripts/start-rsi.sh --run-harness <run目录>`，由启动器读取上一轮明确保留的结果并自动提供历史，详见[教程](../../docs/tutorial.md)。A/B/C/D 正式验收以实际运行证据核对。

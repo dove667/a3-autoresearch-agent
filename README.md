@@ -42,26 +42,26 @@ $$
 ### 中断恢复：继续原目标
 
 ```bash
-bash scripts/start-rsi.sh --resume-from "$(cat artifacts/rsi/latest-run.txt)"
+bash scripts/start-rsi.sh --resume-from "artifacts/rsi/<run-id>"
 ```
 
-用于网络中断、进程退出等情况。恢复保留原运行的冻结目标、候选代码和历史证据，由 Agent 找回进展继续推进。已进入 Harness 运行模式的任务会加载其保存的 Harness 版本；初始构建过程则通过 mini 接续。
+将 `<run-id>` 替换为要恢复的运行标识，用于网络中断、进程退出等情况。恢复保留原运行的冻结目标、候选代码和历史证据，由 Agent 找回进展继续推进。已进入 Harness 运行模式的任务会加载其保存的 Harness 版本；初始构建过程则通过 mini 接续。
 
 新运行会分配新的 Docker 会话与认证，旧进程内存和模型上下文不会原样恢复。修改 `evals/` 后希望开展新一轮任务，应使用下面的版本迭代入口。
 
-### 版本迭代：从上一轮保留结果出发
+### 版本迭代：明确选择父版本
 
 ```bash
-bash scripts/start-rsi.sh --run-harness
+bash scripts/start-rsi.sh --run-harness "artifacts/rsi/<run-id>"
 ```
 
-默认读取最近运行明确保留的结果，直接加载其中的代码，自动提供历史材料，并冻结当前 `evals/` 作为新目标。上一轮的输出成为下一轮的起点：
+将 `<run-id>` 替换为选定运行的实际标识。启动器读取该运行明确保留的结果，加载代码并自动提供授权历史，冻结当前 `evals/` 作为新目标。被选择的父版本成为本轮起点：
 
 $$
 H_1 \xrightarrow{\text{next run}} H_2 \xrightarrow{\text{next run}} H_3.
 $$
 
-不需要人工整理接续包。需要指定某一轮时，使用 `--run-harness artifacts/rsi/<run-id>`。Agent 在结束前声明保留哪些文件和启动命令；Host 保存快照，后续按这份结果加载，具体协议见[教程](docs/tutorial.md#让本轮结果能够直接用于下一轮)。
+必须显式指定来源目录，不需要人工整理接续包。多个分支都可以保留可用结果，下一轮从哪个分支开始由调用者明确选择；`latest-run.txt` 只记录最近启动的运行，不参与版本选择。Agent 在结束前声明保留哪些文件和启动命令；Host 保存快照，后续按这份结果加载，具体协议见[教程](docs/tutorial.md#让本轮结果能够直接用于下一轮)。
 
 这条命令用于人在运行之间主动发起下一轮。单次无人交互运行中，Agent 也可以通过 `/sessions` 创建并执行后继 Harness；两种入口都使用同一套候选版本、Docker 执行、权限与资源管理。Agent 可以自行推进多代，用户无需为每一代重新执行命令。
 

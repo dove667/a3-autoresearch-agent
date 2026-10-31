@@ -6,7 +6,7 @@ from runtime.local.candidate_versions import CandidateVersions
 from runtime.local.continuation import load_run_result, publish_run_result, resolve_harness_start
 
 
-def test_latest_reuses_explicitly_retained_result_with_changed_code_and_memory(tmp_path):
+def test_explicit_run_reuses_retained_result_regardless_of_latest_pointer(tmp_path):
     previous = tmp_path / "run-previous"
     workspace = previous / "workspace"
     workspace.mkdir(parents=True)
@@ -30,8 +30,8 @@ def test_latest_reuses_explicitly_retained_result_with_changed_code_and_memory(t
     # The selected snapshot stays usable even after workspace edits.
     (workspace / "next.py").write_text("raise RuntimeError('later edit')")
     pointer = tmp_path / "latest-run.txt"
-    pointer.write_text(str(previous))
-    start = resolve_harness_start("latest", pointer)
+    pointer.write_text(str(tmp_path / "some-other-run"))
+    start = resolve_harness_start(previous)
     assert start.command == ["python", "next.py"]
     assert start.files == files
     assert start.previous_run == previous
@@ -117,3 +117,22 @@ def test_full_file_capacity_snapshot_is_not_modified_by_restart_context(tmp_path
     start = load_run_result(run)
     assert start.files == files
     assert versions.create("new-owner", start.files)["file_count"] == 128
+
+
+def test_run_harness_requires_an_explicit_source_before_starting_resources(monkeypatch, tmp_path):
+    import sys
+
+    from runtime.local import launch
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Live deployment must never be used by CLI parsing tests")
+
+    monkeypatch.setattr(sys, "argv", ["launch", "--run-harness"])
+    monkeypatch.setattr(launch, "remote_call", forbidden)
+    monkeypatch.setattr(launch.litellm, "responses", forbidden)
+    monkeypatch.setenv("A3_RSI_ENV_FILE", str(tmp_path / "absent.env"))
+    monkeypatch.setenv("MODEL_NAME", "")
+    monkeypatch.setenv("MODEL_CLASS", "")
+    with pytest.raises(SystemExit) as error:
+        launch.main()
+    assert error.value.code == 2

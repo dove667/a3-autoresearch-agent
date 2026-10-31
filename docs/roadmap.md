@@ -42,4 +42,4 @@ Host 也提供比较协议差异检查和脱敏请求诊断。记忆模块新增
 
 ## 自动接续与文档入口
 
-`--run-harness` 默认读取最近运行保留的快照、自动提供授权历史并采用当前目标；`--resume-from` 保持旧冻结目标并接续保存的代码与进展。保留声明由 Agent 输出，Host 负责机械保存；无需人工组装接续包。详细用法在 [tutorial.md](tutorial.md)，系统执行架构在 [architecture.md](architecture.md)，目录职责仍在 [project-structure.md](project-structure.md)。
+`--run-harness <run目录>` 读取明确选定运行保留的快照、自动提供授权历史并采用当前目标；`--resume-from` 保持旧冻结目标并接续保存的代码与进展。保留声明由 Agent 输出，Host 负责机械保存；无需人工组装接续包。详细用法在 [tutorial.md](tutorial.md)，系统执行架构在 [architecture.md](architecture.md)，目录职责仍在 [project-structure.md](project-structure.md)。

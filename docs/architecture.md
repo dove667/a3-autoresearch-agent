@@ -122,7 +122,7 @@ sequenceDiagram
 
 ## 内部自迭代与外部启动共用执行层
 
-外部 `--run-harness` 会读取上一轮的保留结果，向 Gateway 创建一个新候选 session。Agent 在内部也可以通过自己的工具请求 `/sessions`，上传候选或引用已有版本：
+外部 `--run-harness <run目录>` 会读取明确选定运行的保留结果，向 Gateway 创建一个新候选 session。Agent 在内部也可以通过自己的工具请求 `/sessions`，上传候选或引用已有版本：
 
 $$
 H_k \xrightarrow{\text{run, evaluate, select}} H_{k+1}.
@@ -136,7 +136,7 @@ $$
 
 Agent 在本轮主工作区留下 `continuation.json`，声明启动命令与保留文件。Host 不判断哪条分支得分最高；它机械读取声明，保存固定快照，生成 `retained.json`。
 
-下一轮 `--run-harness` 从该快照读取源码，而非从还可能变化的旧工作区读取。启动器自动准备历史索引，保留来源关系，冻结当前目标，再创建新身份。旧冷启动的 `workspace/run/final/entry.py` 由兼容规则读取；无需人类临时组织材料。
+下一轮 `--run-harness <run目录>` 从所选运行的快照读取源码，而非从还可能变化的旧工作区读取。启动器自动准备历史索引，保留来源关系，冻结当前目标，再创建新身份。旧冷启动的 `workspace/run/final/entry.py` 由兼容规则读取；无需人类临时组织材料。
 
 如果运行中断且尚无最终声明，恢复入口使用该轮已保存的执行起点，提供中间产物供 Harness 找回状态；不会把最后创建的候选当作已被选择的版本。没有明确保留结果时，新一轮版本迭代会报出缺失，而不是悄悄从头构建。
 
@@ -171,3 +171,5 @@ Agent 自己保存模型消息、工具调用、实验结果、反思和选择�
 `gateway-events.jsonl` 的请求关联号帮助区分等待模型、候选容量和远程调用；当前远程调用耗时包含 SSH 与 Controller 处理，尚未完整分拆依赖加载和计算时段。基础设施健康、进程正常退出、A/B/C/D 验收分别核对，实际完成状态来自目标与原始执行证据。
 
 对应实现为本地 `launch.py`、`host_gateway.py`、`candidate_runtime.py`、`candidate_versions.py`、`continuation.py` 和 `recovery.py`，远程为 `remote_jobs.py`。完整 HTTP 字段见 [Host 执行接口](../runtime/local/README.md)。
+
+父版本选择以显式来源为准。最近运行指针只用于定位启动记录，不定义搜索父节点；多个合法分支之间的选择由外部调用者或 Harness 搜索策略作出。每轮的 retained.json 记录本轮明确选择的对外结果，不代表所有候选之间的全局最优。

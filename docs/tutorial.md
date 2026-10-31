@@ -71,13 +71,13 @@ $$
 网络变化或进程异常退出后，先恢复模型连接、Docker 和 SSH，再运行：
 
 ```bash
-bash scripts/start-rsi.sh --resume-from "$(cat artifacts/rsi/latest-run.txt)"
+bash scripts/start-rsi.sh --resume-from "artifacts/rsi/<run-id>"
 ```
 
-也可以明确指定运行目录：
+将 `<run-id>` 替换为实际标识。如果确认最近启动的运行就是恢复对象，也可以显式读取最近运行指针：
 
 ```bash
-bash scripts/start-rsi.sh --resume-from artifacts/rsi/<run-id>
+bash scripts/start-rsi.sh --resume-from "$(cat artifacts/rsi/latest-run.txt)"
 ```
 
 恢复入口核对上一轮冻结目标和验收的摘要，并沿用这两份文件，即使仓库的 `evals/` 已经更新。它导出旧代码、实验报告、反思和可见轨迹，创建接续运行，并记录 `parent_run`。
@@ -91,17 +91,12 @@ bash scripts/start-rsi.sh --resume-from artifacts/rsi/<run-id>
 上一轮完成并保留 $H_1$ 后，可以修改当前 `evals/`，再启动下一轮：
 
 ```bash
-bash scripts/start-rsi.sh --run-harness
+bash scripts/start-rsi.sh --run-harness "artifacts/rsi/<run-id>"
 ```
 
-无参数时读取 `artifacts/rsi/latest-run.txt`。也可以显式选择最近运行，或指定某一轮：
+必须给出选定的运行目录，将 `<run-id>` 替换为实际标识。启动器读取该目录的明确保留结果，创建独立工作区和新身份，自动把授权历史提供给本轮主会话，并使用**当前仓库**的目标与验收。
 
-```bash
-bash scripts/start-rsi.sh --run-harness latest
-bash scripts/start-rsi.sh --run-harness artifacts/rsi/<run-id>
-```
-
-第一条从最近运行读取，第二条从指定运行读取。启动器加载所选运行的保留快照，创建独立工作区和新身份，自动把授权历史提供给本轮主会话，并使用**当前仓库**的目标与验收。
+没有参数的 `--run-harness` 会直接报错。`latest-run.txt` 只记录最近启动的运行，用于查找日志；它不代表最佳版本、验收通过版本或搜索中的父节点。多个分支都有可用结果时，调用者应明确选择本轮的父分支。
 
 $$
 H_1 \xrightarrow[\text{current goals}]{\text{new run}} H_2.
@@ -128,6 +123,18 @@ Agent 在结束前，通过已有文件写入能力留下 `continuation.json`：
 
 没有有效声明时，结果会标记为缺失，下一轮不会用文件时间猜测优胜候选，也不会自动回到通用 Agent。已有早期冷启动的 `workspace/run/final/entry.py` 约定由兼容入口自动识别；该兼容方式不需要人工接续包。
 
+### 多个前驱怎样选择
+
+如果已经有分支 $H_1^{(a)}$ 与 $H_1^{(b)}$，两者都可继续演化，应先选择本轮的前驱 $H_p$，再执行：
+
+$$
+H_{\mathrm{new}} = E(H_p; G_{\mathrm{current}}).
+$$
+
+这里 $E$ 表示一次演化过程，$G_{\mathrm{current}}$ 是本轮目标。时间上最后启动的运行不决定 $H_p$。外部命令中的 run 目录明确定位父运行，其 `retained.json` 再定位固定的 `version_id` 与 commit。
+
+目前每轮发布一个对外保留结果。同轮内部还有其他可用候选时，由 Harness 明确发布需要继续的分支或可启动 manifest；外部启动器不会扫描候选并代选优胜者。自动提供历史是文件传递机制，父版本选择是实验决策。
+
 ### Agent 可以在同一轮内继续迭代
 
 `--run-harness` 是运行之间的外部启动入口。正在执行的 Agent 也可以通过自己的工具请求 `POST /sessions`，加载候选版本并继续执行：
@@ -146,7 +153,7 @@ $$
 | --- | --- |
 | 无参数 | 从通用 mini 开始新的冷启动，冻结当前目标 |
 | `--resume-from <run目录>` | 沿用该轮冻结目标，恢复代码与证据后继续 |
-| `--run-harness [latest或目录]` | 从保留结果或源码 manifest 启动新一轮，冻结当前目标；省略值时为 `latest` |
+| `--run-harness <目录>` | 必须显式指定 run 或源码 manifest 目录；加载该结果并冻结当前目标 |
 | `--check` | 执行部署预检后退出，不启动 Agent；可与 `--run-harness` 一起校验所选起点 |
 | `--verify-deployment` | 运行有界的真实 Agent 部署检查：最多 24 次模型调用、600 秒 |
 | `-h`、`--help` | 显示启动器帮助 |
@@ -155,7 +162,7 @@ $$
 
 ```bash
 bash scripts/start-rsi.sh --help
-bash scripts/start-rsi.sh --check --run-harness
+bash scripts/start-rsi.sh --check --run-harness "artifacts/rsi/<run-id>"
 bash scripts/start-rsi.sh --verify-deployment
 ```
 

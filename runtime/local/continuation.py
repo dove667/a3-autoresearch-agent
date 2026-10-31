@@ -47,9 +47,8 @@ def load_run_result(run: Path) -> HarnessStart:
     raise ValueError("Previous run has no retained result; refusing to guess or rebuild")
 
 
-def resolve_harness_start(target: str, latest_pointer: Path) -> HarnessStart:
-    source = Path(latest_pointer.read_text().strip()) if target == "latest" else Path(target)
-    source = source.resolve()
+def resolve_harness_start(target: str | Path) -> HarnessStart:
+    source = Path(target).resolve()
     if (source / "startup.json").is_file() or (source / "retained.json").is_file():
         return load_run_result(source)
     command, files = load_harness_package(source)
