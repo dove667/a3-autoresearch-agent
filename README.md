@@ -35,7 +35,7 @@ bash scripts/start-rsi.sh
 
 启动通用 mini-SWE-agent，在独立 Docker 工作区中依据 `evals/goal.md` 与 `evals/acceptance.md` 构建并演化 auto research Harness。运行无需逐轮人工确认；Agent 可以自行创建候选、测试和继续迭代。
 
-初始 SWE 只启动一次，自主完成实现、迭代和验收。Host 保持已启动 worker 与服务可用，不重新派发任务。全部 worker 停止后再复核结果，详见[使用教程](docs/tutorial.md)。
+初始 SWE 只启动一次。每代主 Agent 为改动写下验收清单，启动一个新 Harness 候选；拒绝则回收候选，保留则由同一个候选接任主 Agent，原主 Agent 退出。Policy 优化可穿插进行。Host 保活 worker，不重新派发任务。全部 worker 停止后再复核结果，详见[使用教程](docs/tutorial.md)。
 
 运行目录使用 Host 本地时间命名，例如 `artifacts/rsi/run-20261031-110415-123456/`，可直接看出启动日期和时间；末段为微秒。
 
@@ -51,9 +51,9 @@ $$
 bash scripts/start-rsi.sh --resume-from "artifacts/rsi/<run-id>"
 ```
 
-将 `<run-id>` 替换为要恢复的运行标识，用于网络中断、进程退出等情况。恢复保留原运行的冻结目标、候选代码和历史证据，由 Agent 找回进展继续推进。已进入 Harness 运行模式的任务会加载其保存的 Harness 版本；初始构建过程则通过 mini 接续。
+将 `<run-id>` 替换为要恢复的运行标识。初始 mini 直接恢复保存的模型消息和工具结果，沿用冻结配置；已经交接主身份时，使用当前主 Harness 声明的 `resume.json` checkpoint 入口。缺少恢复入口、会话已主动提交或存在结果不明的工具调用时会明确报错。
 
-新运行会分配新的 Docker 会话与认证，旧进程内存和模型上下文不会原样恢复。修改 `evals/` 后希望开展新一轮任务，应使用下面的版本迭代入口。
+新 Docker 与授权身份不会自动恢复旧资源连接；完整限制见[恢复说明](docs/tutorial.md#中断恢复保留原任务继续推进)。修改 `evals/` 后开展新任务，应使用下面的版本迭代入口。
 
 ### 版本迭代：明确选择父版本
 
@@ -69,7 +69,7 @@ $$
 
 必须显式指定来源目录，不需要人工整理接续包。多个分支都可以保留可用结果，下一轮从哪个分支开始由调用者明确选择；`latest-run.txt` 只记录最近启动的运行，不参与版本选择。Agent 在结束前声明保留哪些文件和启动命令；Host 保存快照，后续按这份结果加载，具体协议见[教程](docs/tutorial.md#让本轮结果能够直接用于下一轮)。
 
-这条命令用于人在运行之间主动发起下一轮。单次无人交互运行中，Agent 也可以通过 `/sessions` 创建并执行后继 Harness；两种入口都使用同一套候选版本、Docker 执行、权限与资源管理。Agent 可以自行推进多代，用户无需为每一代重新执行命令。
+这条命令用于人在运行之间主动发起下一轮。单次无人交互运行中，主 Agent 通过 `/evolution/trials` 试运行候选并决定是否交接；两种入口都使用同一套候选版本、Docker 执行、权限与资源管理。Agent 可以自行推进多代，用户无需为每一代重新执行命令。
 
 ## 项目文档
 

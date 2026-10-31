@@ -69,6 +69,7 @@ artifacts/rsi/run-*/
 ├── supervisor-events.jsonl Host 监督与交接事件
 ├── outcome.json            Host 接受的整轮完成或外部阻塞声明
 ├── model-usage.jsonl        Gateway 模型调用记录
+├── evolution.json          当前主身份、改动验收清单和保留/拒绝决定
 ├── session-events.jsonl     Host 记录的后继关系与生命周期
 └── gateway-events.jsonl     请求开始、结束、错误类别与耗时
 ```

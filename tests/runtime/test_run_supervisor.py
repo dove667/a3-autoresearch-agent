@@ -200,3 +200,28 @@ def test_builder_error_preserves_workers_without_retry(tmp_path):
     assert result["builder_error"] == "ConnectionError"
     assert len(calls) == 1
     assert child["status"] == "exited"
+
+
+def test_result_comes_from_final_main_after_all_workers_stop(tmp_path):
+    final = tmp_path / "final-main"
+    final.mkdir()
+    complete_result(final)
+    active = [{"session_id": "new-main", "status": "running"}]
+
+    def wait(seconds):
+        active.clear()
+
+    def select():
+        assert not active
+        return final
+
+    outcome = RunSupervisor(
+        run=tmp_path,
+        workspace=tmp_path,
+        required_checks=tuple("ABCD"),
+        sessions=lambda: list(active),
+        execute_builder=lambda *args: None,
+        wait=wait,
+        result_workspace=select,
+    ).run(initial_builder=False)
+    assert outcome["status"] == "complete"

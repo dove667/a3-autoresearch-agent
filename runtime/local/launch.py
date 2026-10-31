@@ -325,6 +325,8 @@ def main() -> None:
         fixtures=fixtures,
         versions=versions,
         initial_inputs=private_inputs,
+        main_owner=run_id,
+        start_main_session=bool(package),
     )
     server = uvicorn.Server(
         uvicorn.Config(app, host="0.0.0.0", port=port, log_level="warning", access_log=False)
@@ -534,8 +536,17 @@ def main() -> None:
             else:
                 agent.run(config["run"]["task"], **template_vars)
 
+        def result_workspace() -> Path:
+            actor, _ = app.state.result_location()
+            if actor and actor != run_id:
+                return (run / "candidates" / actor / "workspace").resolve()
+            return workspace / "run"
+
         def save_completed_result() -> None:
-            selected = publish_run_result(run, workspace / "run", versions, run_id, None)
+            actor, parent_version = app.state.result_location()
+            selected = publish_run_result(
+                run, result_workspace(), versions, actor or run_id, parent_version
+            )
             if selected["status"] != "ready":
                 raise ValueError("Completed run needs a runnable retained snapshot")
 
@@ -556,6 +567,7 @@ def main() -> None:
                     sessions=lambda: supervised_sessions(client),
                     execute_builder=execute_builder,
                     finalize=save_completed_result,
+                    result_workspace=result_workspace,
                 ).run(initial_builder=not package)
         if args.verify_deployment:
             publish_run_result(run, workspace / "run", versions, run_id, None)

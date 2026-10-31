@@ -48,12 +48,21 @@ def resolve_harness_start(target: str | Path) -> HarnessStart:
 
 def resolve_resume_start(run: Path) -> HarnessStart | None:
     startup = json.loads((run / "startup.json").read_text())
-    if startup.get("mode") != "retained-harness":
+    main_file = run / "evolution.json"
+    main_owner = (
+        json.loads(main_file.read_text()).get("main_owner") if main_file.is_file() else None
+    )
+    if main_owner and main_owner != startup.get("run_id"):
+        session_id = main_owner
+    elif startup.get("mode") == "retained-harness":
+        session_id = startup["session_id"]
+    else:
         return None
-    session_id = startup["session_id"]
     workspace = workspace_path(run, f"candidates/{session_id}/workspace")
     if not (workspace / "resume.json").is_file():
-        raise ValueError("Harness has no resume.json checkpoint entry; refusing a fresh-context restart")
+        raise ValueError(
+            "Harness has no resume.json checkpoint entry; refusing a fresh-context restart"
+        )
     command, files = load_harness_package(workspace, "resume.json")
     return HarnessStart(command, files, run, startup.get("version_id"))
 

@@ -76,6 +76,7 @@ class RunSupervisor:
         execute_builder: Callable[[str, Path], None],
         finalize: Callable[[], None] | None = None,
         wait: Callable[[float], None] = time.sleep,
+        result_workspace: Callable[[], Path] | None = None,
     ):
         self.run_directory = run
         self.workspace = workspace
@@ -84,6 +85,7 @@ class RunSupervisor:
         self.execute_builder = execute_builder
         self.finalize = finalize
         self.wait = wait
+        self.result_workspace = result_workspace
         self.turn = 0
 
     def record(self, phase: str, outcome: dict, sessions: list[dict]) -> None:
@@ -129,6 +131,8 @@ class RunSupervisor:
 
         # Structural checks and snapshot publication happen only after execution ends.
         # Their results never trigger another model call or enter a worker's context.
+        if self.result_workspace is not None:
+            self.workspace = self.result_workspace()
         outcome = evaluate_outcome(self.workspace, self.required_checks)
         if outcome["status"] == "continue":
             outcome = {**outcome, "status": "incomplete"}

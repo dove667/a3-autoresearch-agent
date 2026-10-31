@@ -18,6 +18,7 @@ from runtime.local.candidate_runtime import (
     CandidateCapacityError,
 )
 from runtime.local.comparison_checks import check_comparison
+from runtime.local.evolution import EvolutionState
 from runtime.local.gateway_diagnostics import CURRENT_REQUEST, GatewayDiagnostics
 
 
@@ -34,6 +35,18 @@ class SessionRequest(BaseModel):
     files: dict[str, str] = Field(default_factory=dict)
     version_id: str | None = None
     parent_version: str | None = None
+
+
+class TrialRequest(SessionRequest):
+    baseline_version: str
+    checklist: str = Field(min_length=1, max_length=32000)
+
+
+class TrialDecision(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    retain: StrictBool
+    reason: str = Field(min_length=1, max_length=16000)
+    evidence: list[str] = Field(default_factory=list, max_length=128)
 
 
 class VersionRequest(BaseModel):
@@ -76,6 +89,8 @@ def create_app(
     fixtures=None,
     versions=None,
     initial_inputs: Path | None = None,
+    main_owner: str | None = None,
+    start_main_session: bool = False,
 ) -> FastAPI:
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     diagnostics = GatewayDiagnostics(usage_log.with_name("gateway-events.jsonl"))
@@ -87,6 +102,17 @@ def create_app(
     jobs: dict[str, set[str]] = {}
     root_owners = set(sessions.values())
     app.state.closing = False
+    evolution = (
+        EvolutionState(usage_log.with_name("evolution.json"), main_owner) if main_owner else None
+    )
+
+    def result_location():
+        with session_lock:
+            actor = evolution.main_owner if evolution else main_owner
+            record = children.get(actor, {})
+            return actor, record.get("version_id")
+
+    app.state.result_location = result_location
 
     def session_event(event, session_id):
         record = children[session_id]
@@ -280,8 +306,68 @@ def create_app(
                 "version_id": result.get("version_id"),
             }
             scope_parents[scope] = parent
+            if evolution and start_main_session and len(children) == 1:
+                evolution.main_owner = scope
+                evolution.save()
             session_event("created", result["session_id"])
             return result
+
+    def evolution_state():
+        if evolution is None or versions is None:
+            raise HTTPException(503, "Linear evolution is not configured")
+        return evolution
+
+    @app.get("/evolution")
+    def inspect_evolution(authorization: Annotated[str | None, Header()] = None):
+        actor = owner(authorization)
+        with session_lock:
+            state = evolution_state()
+            if actor not in root_owners and actor != state.main_owner and actor not in state.trials:
+                raise HTTPException(403, "Evolution state is not accessible")
+            if actor in state.trials and actor != state.main_owner:
+                return {"main_owner": state.main_owner, "trial": state.trials[actor]}
+            return state.snapshot()
+
+    @app.post("/evolution/trials")
+    def start_trial(body: TrialRequest, authorization: Annotated[str | None, Header()] = None):
+        with session_lock:
+            state = evolution_state()
+            actor = owner(authorization)
+            deployment_call(state.require_main, actor)
+            if state.pending():
+                raise HTTPException(409, "Decide the current candidate before starting another")
+            deployment_call(versions.owned, actor, body.baseline_version)
+            request = SessionRequest(**body.model_dump(exclude={"baseline_version", "checklist"}))
+            result = create_session(request, authorization)
+            state.register(
+                result["session_id"], body.baseline_version, result["version_id"], body.checklist
+            )
+            return {**result, "role": "candidate_main"}
+
+    @app.post("/evolution/trials/{session_id}/decision")
+    def decide_trial(
+        session_id: str, body: TrialDecision, authorization: Annotated[str | None, Header()] = None
+    ):
+        with session_lock:
+            state = evolution_state()
+            actor = owner(authorization)
+            deployment_call(state.require_main, actor)
+            trial = state.trials.get(session_id)
+            if not trial or trial["status"] != "testing":
+                raise HTTPException(409, "No pending trial with this identity")
+            record = child(authorization, session_id)
+            # The Agent judges the checklist. Host only verifies evidence accessibility.
+            if body.retain:
+                if not body.evidence:
+                    raise HTTPException(422, "Retaining a candidate requires evidence paths")
+                status = deployment_call(sandbox.status, record["owner"], session_id)
+                if status.get("status") != "running":
+                    raise HTTPException(409, "Only a running candidate can take over")
+                for path in body.evidence:
+                    deployment_call(sandbox.artifact, record["owner"], session_id, path)
+            else:
+                deployment_call(close_child, session_id)
+            return state.decide(actor, session_id, body.retain, body.reason, body.evidence)
 
     @app.get("/sessions")
     def list_sessions(

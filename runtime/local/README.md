@@ -176,3 +176,18 @@ Git 记录进入本轮 `versions/`。工作区内的即时修改不会自动成�
 初始 mini 的 trajectory 原子写入，恢复时直接加载原消息，不重建 system/user 消息，不回注外部审查。冻结的 bootstrap 与执行说明随原目标保留。主动提交的会话不恢复；未保存结果的工具调用拒绝自动重放。
 
 生成的 Harness 用 `resume.json` 声明包含 checkpoint 的源码清单及恢复命令。Host 不把 continuation 入口当作 resume；缺失 checkpoint 入口时拒绝启动。新 Docker 身份不自动取得旧 Gateway scope 或作业权限，此接口不承诺恢复任意进程内存与旧资源身份。
+
+## 主身份与候选试运行
+
+`GET /evolution` 返回当前 `main_owner` 与本身份可读的试运行记录。初始 mini 为 H0 主身份；从明确保留版本启动时，加载该版本的 session 为主身份。一次只允许一个待决定的 Harness 候选。
+
+当前主 Agent 自行提出改动、固定验收清单并执行以下协议：
+
+1. `POST /evolution/trials`：包含普通 `/sessions` 的 command 与 files 或 version_id，另加 `baseline_version`（已保存且有权使用的 H0 版本）和 `checklist`（改动的验收清单）。Host 将清单、摘要与两版代码标识固定记录，启动候选 H1；主身份仍属于 H0。主 Agent 负责通过显式文件交接让候选读到清单、任务、记忆和必要状态。
+2. 候选执行清单并保存结果，等待主身份交接。它可查询 `/evolution` 判断自己是否已成为 main；测试完成后须保持进程可交接。候选不能自行保留或拒绝版本，也不能创建下一代主候选。
+3. H0 读取实际结果并自行判断。调用 `POST /evolution/trials/{session_id}/decision`，提供 `retain`、`reason`、`evidence`（候选 workspace 内结果路径）。保留时 Host 检查结果路径可读、候选仍在运行，原子转移主身份，不再启动另一份 H1。清单是否达标、是否值得保留由 H0 决定。
+4. 拒绝时 Host 回收该候选分支，主身份和 H0 版本不变。保留时 H0 保存交接并退出；H1 的同一进程成为新主 Agent，使用已交接的任务状态继续执行。旧主身份不能再次发起试运行或决定。
+
+候选代码在启动时已保存为不可变 Git commit/worktree。保留决定引用这份实际测试版本；未加载的新修改须作为新的试运行，不把文件的即时编辑当成已测试版本。`evolution.json` 保存主身份变化与逐次决定。Host 不生成改动、记忆或专项验收，也不根据收益自动选择版本。
+
+H0 的已保存执行结果可作为基线证据，无需为了每次改动再启动旧版 Agent；主 Agent 须说明清单与已有能力、过程指标的关系，不能只以候选自称成功决定保留。Policy 实验可由当前主 Agent 穿插执行，不切换主身份。普通 `/sessions` 用于辅助 worker，创建普通 worker 不转移主身份。主身份是唯一的决策权限，试运行期间允许 H0 与候选两个进程共存；H0 交接后应自行退出，Host 不在模型调用中途强制杀掉它。主 Agent 须汇总进展并在自己的 workspace 保存最终 run-outcome.json 与 continuation.json；所有 worker 停止后从最终主身份归档。

@@ -219,3 +219,9 @@ bash scripts/start-rsi.sh --verify-deployment
 **commit** 是选定源码的固定快照，由 Host 在本轮私有 Git 仓库中保存。它不会给本项目的开发分支提交，也不会自动 push。**worktree** 是从快照展开的独立工作目录，供一个执行身份读写；创建新 worktree 会继承原代码，同时保留旧目录供复核。
 
 Docker 只挂载自己的源码目录，Git 对象库和其他 worktree 留在 Host。跨轮关系通过 `parent_run`、`source_version` 和保留结果记录，代码版本、会话身份与远程作业标识分别追踪。这个版本层提供复跑与隔离；Agent 如何分工和避免重复实验，仍由后续协调策略决定。
+
+## Harness 试运行与主身份交接
+
+每代主 Agent 先提出 Harness 改动和验收清单，启动一个候选进行实际执行；检查结果后决定保留或拒绝。拒绝回到当前版本，保留则让同一候选进程成为下一代主 Agent，原主 Agent 保存交接后退出。无需人工提供下一轮任务。Policy 优化可以在这些迭代之间进行。
+
+`evolution.json` 记录主身份、冻结清单、候选版本和选择理由。原始轨迹与各 session 代码仍保留在 run 中。主身份交接不等同于故障 resume：新一代的消息和记忆如何承接由 SWE 实现；网络故障恢复则要求显式 checkpoint。详见 [执行协议](../runtime/local/README.md#主身份与候选试运行)。

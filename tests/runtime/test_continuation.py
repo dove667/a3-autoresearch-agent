@@ -141,3 +141,25 @@ def test_run_harness_requires_an_explicit_source_before_starting_resources(monke
     with pytest.raises(SystemExit) as error:
         launch.main()
     assert error.value.code == 2
+
+
+def test_cold_start_resume_selects_promoted_main_checkpoint(tmp_path):
+    from runtime.local.continuation import resolve_resume_start
+
+    (tmp_path / "startup.json").write_text(json.dumps({"mode": "rsi", "run_id": "run-original"}))
+    (tmp_path / "evolution.json").write_text(json.dumps({"main_owner": "candidate-promoted"}))
+    workspace = tmp_path / "candidates/candidate-promoted/workspace"
+    workspace.mkdir(parents=True)
+    (workspace / "entry.py").write_text("pass")
+    (workspace / "checkpoint.json").write_text('{"messages": []}')
+    (workspace / "resume.json").write_text(
+        json.dumps(
+            {
+                "command": ["python", "entry.py", "--resume", "checkpoint.json"],
+                "files": ["entry.py", "checkpoint.json"],
+            }
+        )
+    )
+    start = resolve_resume_start(tmp_path)
+    assert start.command[-1] == "checkpoint.json"
+    assert start.previous_run == tmp_path
