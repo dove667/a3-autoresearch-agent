@@ -54,6 +54,8 @@ a3-sim smoke --steps 20
 
 Linux 无显示器环境可按仿真项目要求设置 `MUJOCO_GL=egl`，并单独验证相机输出。执行 Agent 生成的候选代码前，按[冷启动规划](plans/2026-10-29-a3-harness-cold-start.md)准备容器与可写目录。宿主环境、容器环境和渲染链路分别验收。
 
+远程镜像的构建与验证见[执行端部署](../runtime/remote/README.md)。镜像应包含与 A3 源码一起准备的公共 `docs/` 和 `examples/`。远程作业从 `/workspace` 执行，文档里的 `examples/...` 需改用 `/opt/a3/examples/...` 绝对路径，或采用文档提供的完整 Python 模块入口。部署检查应同时确认参考文件存在、评测入口的 `--help` 可运行；这项环境检查不代表 Policy 实验验收通过。
+
 ## 本地配置与运行产物
 
 个人部署参数、认证信息和日志保存在版本控制之外。项目的 `artifacts/` 按 `rsi/`、`validation/` 和 `deployment/` 分别保存原始运行、验证与部署产物；目录职责见[项目结构](project-structure.md)。含个人资源或使用习惯的 Agent 指引文件应加入 `.gitignore`。提交示例配置时使用相对路径、清晰占位符和通用参数。

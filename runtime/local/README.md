@@ -1,6 +1,6 @@
 # Host提供的执行与验收入口
 
-Version: 0.1.1
+Version: 0.1.2
 
 部署方运行 gateway、容器引擎、模型认证与远程资源调度。候选 Harness 在独立容器内运行，
 通过 HTTP 请求这些固定能力。工具名称、研究逻辑、反思方法和版本选择由 Agent 设计。
@@ -86,6 +86,13 @@ Host 先记录停止意图，再停止进程；若中断留下未确认的停止
 `POST /jobs` 接受 `{"command": [...], "gpu": false, "files": {"probe.py": "..."}}`。
 身份由 gateway 注入。需要 GPU 时设置 `gpu: true`，由同一服务器 controller 分配。
 作业镜像内 A3 位于 `/opt/a3`，Python、仿真与相机依赖已准备好；命令工作目录为 `/workspace`。
+公共参考文件为 `/opt/a3/README.md`、`/opt/a3/docs/workflow_guide.md` 和 `/opt/a3/docs/contracts.md`，示例入口位于 `/opt/a3/examples/`。文档中的 `examples/...` 相对 A3 根目录；在作业工作目录中调用时使用绝对路径，或使用 Python 模块入口。例如检查评测命令：
+
+```json
+{"command": ["python", "-m", "a3_dual_arm_sim.workflows.benchmark_cookie_batch_cli", "--help"], "gpu": false, "files": {}}
+```
+
+等效示例入口为 `["python", "/opt/a3/examples/benchmark_cookie_batch.py", "--help"]`。不要假设存在 `python -m a3` 或包根目录的 `__main__`；参考文档与这些示例随同一 A3 源码准备进镜像。生成后的 Harness 自行组织文档访问和接口知识交接。
 作业根文件系统只读、无网络，只挂载自己的工作区，无 SSH、Docker socket 或 gateway 令牌。
 任务结束后通过 `GET /jobs/{job_id}` 查询状态，通过
 `GET /jobs/{job_id}/artifacts?path=relative_path` 取回产物；取消为 `DELETE /jobs/{job_id}`。

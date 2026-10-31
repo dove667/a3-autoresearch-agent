@@ -69,6 +69,27 @@ def main():
     try:
         records["health"] = call("health", {})
         assert records["health"]["status"] == "ok"
+        reference_owner = f"{prefix}-references"
+        reference_job = submit(
+            reference_owner,
+            """from pathlib import Path
+import subprocess
+for name in ('README.md', 'docs/workflow_guide.md', 'docs/contracts.md', 'examples/benchmark_cookie_batch.py'):
+    assert (Path('/opt/a3') / name).is_file(), name
+commands = [
+    ['python', '-m', 'a3_dual_arm_sim.workflows.benchmark_cookie_batch_cli', '--help'],
+    ['python', '/opt/a3/examples/benchmark_cookie_batch.py', '--help'],
+]
+for command in commands:
+    result = subprocess.run(command, capture_output=True, text=True, timeout=60, check=True)
+    assert '--policy' in result.stdout and '--task' in result.stdout
+print('public references and benchmark entries passed')
+""",
+        )
+        assert reference_job["status"] == "created", reference_job
+        reference_result = finish(reference_owner, reference_job)
+        assert reference_result["status"] == "completed", reference_result
+        records["public_references"] = reference_result
         owner_a, owner_b = f"{prefix}-a", f"{prefix}-b"
         first = submit(
             owner_a,

@@ -34,6 +34,19 @@ python3 runtime/remote/prepare_image.py \
 
 构建目录必须尚未存在，并与原项目位于同一文件系统，以便用硬链接准备依赖包。脚本复制项目资源、Python 环境和解释器，并在镜像内重建 editable 安装引用。项目凭据、Git 元数据、数据集、实验输出和模型权重均不进入镜像。构建需要为 Python 环境和 Docker 构建层预留空间；基底为 `python:3.12-slim`，补充 EGL/OpenGL 系统库。
 
+镜像同时包含该 A3 checkout 的 `README.md`、`docs/` 和 `examples/`。构建前检查工作流指南、动作契约与评测示例入口是否存在，缺失时拒绝构建。更新部署仓库里的准备脚本不会补齐旧镜像；已有部署需要构建新镜像、验证后切换 `A3_REMOTE_IMAGE`，并保留旧镜像供历史运行核对。
+
+### 文档与命令位置
+
+作业从 `/workspace` 开始执行，A3 基线及公共文档位于只读的 `/opt/a3`。A3 文档中的 `examples/...` 使用 A3 根目录作为相对路径；远程作业可使用完整模块名或绝对示例路径：
+
+```bash
+python -m a3_dual_arm_sim.workflows.benchmark_cookie_batch_cli --help
+python /opt/a3/examples/benchmark_cookie_batch.py --help
+```
+
+两条命令应显示同一个评测入口的参数。`python -m a3` 和 `python -m a3_dual_arm_sim` 不是该评测入口。读取文档可使用 Python 标准库或系统已有命令；镜像不保证提供 `rg` 等额外开发工具。生成后的 Harness 自行选择怎样检索文档、保存和交接接口经验。
+
 服务器部署 checkout 位于候选实验工作区之外，候选代码不能修改它。
 同一执行端的所有控制器进程必须共享 `--root` 和资源配置，统一管理作业数和 GPU 锁。容器只获得自己的工作区。
 
@@ -85,4 +98,4 @@ python3 runtime/remote/verify_remote.py \
   --image "$RUNTIME_IMAGE" --output "$VERIFICATION_REPORT"
 ```
 
-集成检查提交临时实验，验证工作区隔离、只读基线、归属拒绝、产物回传、CUDA、EGL 相机、资源限额，以及两个控制器竞争同一张 GPU。退出时取消本次仍在运行的作业。请在存在空闲 GPU 时运行；部署路径和验证记录保存在 ignored artifacts 中。
+集成检查提交临时实验，先检查公共参考文件及模块、示例两种评测入口，再验证工作区隔离、只读基线、归属拒绝、产物回传、CUDA、EGL 相机、资源限额，以及两个控制器竞争同一张 GPU。退出时取消本次仍在运行的作业。请在存在空闲 GPU 时运行；部署路径和验证记录保存在 ignored artifacts 中。

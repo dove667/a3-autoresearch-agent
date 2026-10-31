@@ -6,6 +6,27 @@ import subprocess
 from pathlib import Path
 
 
+def copy_public_references(project: Path, destination: Path) -> None:
+    """Keep public usage instructions and their entry scripts with the A3 baseline."""
+    required = (
+        "README.md",
+        "docs/workflow_guide.md",
+        "docs/contracts.md",
+        "examples/benchmark_cookie_batch.py",
+    )
+    missing = [name for name in required if not (project / name).is_file()]
+    if missing:
+        raise ValueError("Missing A3 reference files: " + ", ".join(missing))
+    destination.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(project / "README.md", destination / "README.md")
+    for name in ("docs", "examples"):
+        shutil.copytree(
+            project / name,
+            destination / name,
+            ignore=shutil.ignore_patterns(".git", ".env", ".env.*", "__pycache__", "*.pyc"),
+        )
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--project", required=True, type=Path)
@@ -17,7 +38,7 @@ def main():
     context.mkdir(parents=True, exist_ok=False)
     shutil.copy2(Path(__file__).with_name("Dockerfile"), context / "Dockerfile")
     baseline = context / "a3"
-    baseline.mkdir()
+    copy_public_references(project, baseline)
     for name in (
         "src",
         "assets",
@@ -25,7 +46,6 @@ def main():
         ".venv",
         "pyproject.toml",
         "setup.py",
-        "README.md",
         "LICENSE",
     ):
         source = project / name
