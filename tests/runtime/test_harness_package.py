@@ -1,5 +1,4 @@
 import json
-from pathlib import Path
 
 import pytest
 
@@ -7,13 +6,19 @@ from runtime.local.harness_package import load_harness_package
 from runtime.local.recovery import stage_recovery
 
 
-def test_retained_package_loads_original_entry_without_old_authentication():
-    root = Path(__file__).resolve().parents[2]
-    directory = root / "harnesses/phase-one"
-    command, files = load_harness_package(directory)
+def test_package_loads_only_explicitly_selected_files(tmp_path):
+    (tmp_path / "entry.py").write_text("print('retained')\n")
+    (tmp_path / "handoff.md").write_text("Read the current frozen task.")
+    (tmp_path / ".env").write_text("PRIVATE_AUTH")
+    (tmp_path / "run.json").write_text(
+        json.dumps({"command": ["python", "entry.py"], "files": ["entry.py", "handoff.md"]})
+    )
+    command, files = load_harness_package(tmp_path)
     assert command == ["python", "entry.py"]
-    assert files["entry.py"].encode() == (directory / "entry.py").read_bytes()
-    assert set(files) == {"entry.py", "handoff.md"}
+    assert files == {
+        "entry.py": "print('retained')\n",
+        "handoff.md": "Read the current frozen task.",
+    }
 
 
 def test_package_manifest_rejects_files_outside_its_directory(tmp_path):

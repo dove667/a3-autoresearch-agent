@@ -2,7 +2,7 @@
 
 ## 当前状态
 
-项目已建立独立 Python 包与依赖管理，mini-SWE-agent 以固定提交的 Git submodule 集成。当前可使用第三方 mini 的交互入口；已准备目标、能力验收和无人交互启动配置，运行时从原始 mini 开始。
+项目通过源码 checkout 与脚本运行，由 `pyproject.toml` 管理依赖，固定执行实现集中在 `runtime/`。mini-SWE-agent 以固定提交的 Git submodule 集成。当前可使用第三方 mini 的交互入口；已准备目标、能力验收和无人交互启动配置，可从原始 mini 冷启动或明确选定的保留 Harness 继续。
 
 已提供冷启动容器、宿主模型转发与远程容器作业控制的部署边界。A3 专用研究工具、轨迹反思与自进化逻辑由运行中的 Agent 产生；能力完成情况按正式研究验收判断。
 
@@ -16,7 +16,7 @@
 
 冷启动采用串行候选探索，保留分支并允许回退，不设总 step 或代数上限。模型调用复用 mini 的多提供商支持；默认执行方式为本地 runtime 通过 SSH 调用远程 GPU 环境，同时规划本地执行后端。
 
-目标与验收分别见 [goal.md](../evals/goal.md) 和 [acceptance.md](../evals/acceptance.md)，无人交互运行见[冷启动说明](rsi-cold-start.md)。具体实现由 Agent 根据反馈决定。
+目标与验收分别见 [goal.md](../evals/goal.md) 和 [acceptance.md](../evals/acceptance.md)，无人交互运行见[使用教程](tutorial.md)。具体实现由 Agent 根据反馈决定。
 
 ## 第二阶段：Policy 与 Harness 联合优化
 
@@ -30,13 +30,13 @@ Host 管理共享 Git 仓库和 worktree，将获授权的候选源码交给对�
 
 Host 已提供逐候选 commit、按身份授权的版本列表、独立 worktree 和全新身份启动入口。它们属于人类提前准备的基础设施。Agent 应显式保存选定源码，并将实际评测、协议、选择与版本关联；跨 Agent 分工、互相发现与避免重复实验的协调策略留待后续设计。
 
-Host 也提供比较协议差异检查和脱敏请求诊断。记忆模块新增为阶段一 D 项，由 SWE Agent 自主实现与验收；历史 A/B/C 记录按当次冻结条件保留。第二阶段 Policy 任务条件与评测设计仍待团队调研，本次不实施。
+Host 也提供比较协议差异检查和脱敏请求诊断。记忆模块新增为阶段一 D 项，由 SWE Agent 自主实现与验收：在当前 session 主动写入值得保存的真实经验，再由新会话检索复用；历史 A/B/C 记录按当次冻结条件保留。第二阶段 Policy 任务条件与评测设计仍待团队调研，本次不实施。
 
 ## 代码与文档归属
 
-完整目录职责见[项目结构](project-structure.md)。SWE Agent 已生成的源码快照归档到 `harnesses/`；网页报告工程位于 `reports/`；原始运行、验证和部署材料分别保存在 `artifacts/rsi/`、`artifacts/validation/`、`artifacts/deployment/`。
+完整目录职责见[项目结构](project-structure.md)。SWE Agent 生成的代码与原始运行材料共同保存在 `artifacts/rsi/`；网页报告工程位于 `reports/`；验证和部署材料分别保存在 `artifacts/validation/`、`artifacts/deployment/`。
 
-本项目源码、配置、测试和文档分别放在 `src/a3_research_agent/`、`configs/`、`tests/` 和 `docs/`。配置与测试目录随实现按需新增。仿真物理、任务计分和资源文件在独立的 `a3_dual_arm_sim` 仓库中维护。
+本项目固定基础设施、配置、测试和文档分别放在 `runtime/`、`configs/`、`tests/` 和 `docs/`。仿真物理、任务计分和资源文件在独立的 `a3_dual_arm_sim` 仓库中维护。
 
 第三方源码及原始文档放在 `third_party/mini-swe-agent/`。项目专属行为优先通过组合与子类实现；需要修改 mini 核心时，在 submodule 中维护独立提交，并确保团队可以取得该提交，具体约定见[第三方依赖说明](../third_party/README.md)。
 

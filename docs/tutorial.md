@@ -46,6 +46,24 @@ bash scripts/start-rsi.sh --check
 
 如果只想先手动体验原始 mini，可运行 `uv run mini`。它是第三方 mini 的交互入口；下面的 RSI 脚本使用无人交互启动配置和受控 Docker 执行环境。
 
+## 长程运行与防休眠
+
+在 macOS 上，`scripts/start-rsi.sh` 自动通过系统自带的 `caffeinate -is` 执行 Agent runtime，覆盖初始运行、恢复与版本迭代，无需安装其他工具。`-i` 防止空闲休眠，`-s` 在接通电源时请求阻止系统休眠；保护随 runtime 退出而释放。脚本允许屏幕自动熄灭，不修改系统的长期电源设置。其他系统继续使用普通执行路径；当前未实现 Windows 防休眠适配。
+
+连续多天运行时，请接通稳定电源、保持笔记本开盖、保留 Docker 与网络连接，并将系统更新重启安排在运行结束之后。`caffeinate` 无法保证断电、强制关机、重启或合盖后的程序继续执行。出现中断时使用 `--resume-from` 找回已保存进展。
+
+前台运行时保持终端开启。希望关闭终端后继续运行，可以显式放入后台：
+
+```bash
+mkdir -p artifacts/rsi
+nohup bash scripts/start-rsi.sh --run-harness "artifacts/rsi/<run-id>" \
+  > artifacts/rsi/launcher.log 2>&1 &
+```
+
+先将 `<run-id>` 替换为明确选定的前驱，再执行；初始运行可去掉 `--run-harness` 参数，恢复则换为 `--resume-from`。`nohup` 处理终端断开，脚本内的 `caffeinate` 处理 macOS 休眠。`launcher.log` 是启动与运行输出，原始证据仍保存在各自 run 目录；不要并发复用同一个启动日志文件。
+
+macOS 可在另一个终端运行 `pmset -g assertions`，检查活动的 `caffeinate` 与防休眠记录。命令和参数的系统说明见本机 `man caffeinate`；Apple 的[电源管理接口说明](https://github.com/apple-oss-distributions/IOKitUser/blob/main/pwr_mgt.subproj/IOPMLib.h)说明了休眠断言的适用范围。
+
 ## 初始运行：从通用 SWE Agent 构建 Harness
 
 先阅读或调整 `evals/goal.md` 和 `evals/acceptance.md`。当前阶段一包含四项：一次 Policy 优化尝试、一次轨迹反思驱动的 Harness 优化、受限执行与跨实验隔离、持久记忆的跨会话检索与实际复用。专项实现由 SWE Agent 决定。
@@ -103,6 +121,8 @@ H_1 \xrightarrow[\text{current goals}]{\text{new run}} H_2.
 $$
 
 从上一轮的 $H_1$ 开始，并不会重新执行 $H_0$ 的通用构建流程。历史材料通过只读索引按需访问；检索、摘要、经验选择和记忆模块由 Agent 自己实现。
+
+已有运行只完成 A/B/C、当前目标新增 D 时，使用这条版本迭代路径：保留旧 Harness 与授权历史，采用当前 A/B/C/D 目标。Agent 自行核对已有证据、补充必要验证，并实现和验收持久记忆。具体职责见[历史归档与 Agent 记忆](architecture.md#历史归档与-agent-记忆的职责)。
 
 `--run-harness` 也接受带 `run.json` 的源码目录，例如归档快照。这适用于首次导入一个可运行版本；自动跨轮接续通常直接使用 run 目录。导入源码目录时不会凭空附带某次历史运行。
 

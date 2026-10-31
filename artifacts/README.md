@@ -7,6 +7,6 @@
 | `deployment/` | 构建材料、迁移清单和部署修复记录 |
 | `remote-runtime/` | 执行端共享的作业状态与资源锁，由部署配置指定 |
 
-这里仅本说明纳入 Git。SWE Agent 生成的可审阅源码在 [`harnesses/`](../harnesses/README.md)，报告工程在 [`reports/`](../reports/README.md)。新增检查记录归入现有分类。
+这里仅本说明纳入 Git。SWE Agent 生成的代码随对应 `rsi/run-*/` 保存；报告工程在 [`reports/`](../reports/README.md)。新增检查记录归入现有分类。
 
 `rsi/latest-run.txt` 指向最近正式运行。不要直接修改历史运行目录中的代码或冻结输入，也不要单独移动正在使用的远程资源锁。目录职责、运行内部结构与清理约定见[项目结构](../docs/project-structure.md)。

@@ -22,14 +22,13 @@ dev = ["mini-swe-agent[dev]==2.4.6"]
 [tool.uv.sources]
 mini-swe-agent = {path = "third_party/mini-swe-agent", editable = true}
 
-[tool.setuptools.packages.find]
-where = ["src"]
-include = ["a3_research_agent*"]
+[tool.setuptools]
+packages = []
 
 [tool.ruff]
 target-version = "py311"
 line-length = 100
-extend-exclude = ["third_party", "harnesses", "reports"]
+extend-exclude = ["third_party", "reports"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

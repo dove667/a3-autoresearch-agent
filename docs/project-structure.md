@@ -1,14 +1,12 @@
 # 目录职责与产物管理
 
-项目将固定基础设施、SWE Agent 生成的候选、原始运行档案与展示报告分别维护。先看项目能力与启动方式可读根目录 README；查看冷启动产生的代码可从 `harnesses/` 进入。
+项目将固定基础设施、原始运行档案与展示报告分别维护。先看项目能力与启动方式可读根目录 README；SWE Agent 生成的代码与运行证据共同保存在对应 run 中。
 
 ```text
 .
-├── src/a3_research_agent/   Python 包与后续稳定接口
 ├── runtime/
 │   ├── local/             本地启动器、Gateway、候选版本、协议检查与恢复
 │   └── remote/            远程作业 Controller、镜像构建与验证入口
-├── harnesses/              SWE Agent 生成的候选源码快照与来源
 ├── configs/                通用启动配置
 ├── evals/                  当前目标与验收标准
 ├── tests/runtime/          本地和远程基础设施的回归测试
@@ -23,16 +21,14 @@
 
 | 目录 | 负责什么 | Git 管理 |
 | --- | --- | --- |
-| `src/a3_research_agent/` | 项目 Python 包；当前稳定部署实现仍位于 `runtime/` | 是 |
 | `runtime/local/` | Host 固定的模型转发、身份与权限、候选生命周期、Git 版本、协议检查、诊断、冷启动和恢复 | 是 |
 | `runtime/remote/` | 按归属运行远程 Docker 作业、分配资源、构建执行镜像 | 是 |
-| `harnesses/` | 保存 SWE Agent 已生成的完整候选源码、选择状态与来源记录 | 是 |
 | `configs/`、`evals/` | 通用配置与当前能力目标；每次运行另存冻结副本 | 是 |
 | `tests/runtime/` | 验证固定部署逻辑，不承担 A3 自身的开发测试 | 是 |
 | `reports/` | 面向读者的报告工程；审阅后的数据与图像和正文一起维护 | 源码是，构建输出否 |
 | `third_party/` | 第三方原始源码与独立 Git 历史 | submodule |
 
-人类提前准备固定基础设施和评估条件。专项 auto research Harness、Policy 候选、反思与选择由 SWE Agent 产生。整理候选快照时保留其原始代码，并记录来源；改进候选形成新版本，原始运行材料持续保留。
+人类提前准备固定基础设施和评估条件。专项 auto research Harness、Policy 候选、记忆、反思与选择由 SWE Agent 产生，保存在对应运行中；改进候选形成新版本，原始运行材料持续保留。项目从源码 checkout 运行，`pyproject.toml` 管理依赖与工具配置，固定执行实现集中在 `runtime/`。
 
 ## 本地生成内容
 
@@ -47,7 +43,7 @@
 | `reports/<name>/output/` | 报告截图与视觉检查输出 |
 | `.env`、`.venv/` | 本机部署配置和依赖环境 |
 
-`artifacts/` 中仅目录说明进入 Git。其余原始日志、工作区副本和部署配置留在本地。不要整体取消忽略；需要分享的候选源码移交到 `harnesses/`，需要展示的已审阅数据移交到 `reports/`。
+`artifacts/` 中仅目录说明进入 Git。其余原始日志、工作区副本和部署配置留在本地。不要整体取消忽略；需要分享候选时，从明确选定的 run 与版本导出获授权的材料，需要展示的已审阅数据移交到 `reports/`。
 
 ## 正式运行内部结构
 
@@ -75,9 +71,9 @@ artifacts/rsi/run-*/
 
 历史 `run-*` 内的文件用于复核，保持原样。运行结束后，由候选维护流程提取有价值的源码、说明和来源记录，原始日志仍留在原目录。恢复入口继续读取原路径。
 
-## 候选源码与报告
+## 生成代码与报告
 
-`harnesses/phase-one/` 是冷启动生成的源码快照，详细状态见其 README。这里的保留版本通过 run.json 显式加载，Host 为其提供新身份、Gateway 与冻结输入。候选 commit 和独立 worktree 已由 Host 提供；评测绑定、版本选择和搜索策略由 Agent 使用这些接口组织，见[开发路线](roadmap.md)。
+生成代码随 run 保存。新运行使用 `versions/` 记录候选 commit，并以独立 worktree 执行；`retained.json` 定位 Agent 明确选择的结果。早期运行的入口保存在 `workspace/run/final/entry.py`。下一轮显式传入选定 run 目录即可加载，无需另外维护一份人工源码归档。评测绑定、版本选择和搜索策略由 Agent 使用 Host 接口组织，见[开发路线](roadmap.md)。
 
 报告采用 Data 插件的工程结构：业务正文与图表放在 `src/content/`，审阅数据放在 `src/data.json`，共享 runtime 与构建校验文件保持插件原样。Data 的机器级预览服务状态留在仓库外。报告工程不复制进冷启动执行工作区。
 
@@ -88,5 +84,7 @@ artifacts/rsi/run-*/
 移动历史档案前先检查活动进程与路径引用，记录旧路径、目标路径和内容校验结果；档案内原有绝对路径保留为当时的历史记录。更改便捷指针和当前使用说明。共享远程资源锁需要单独执行端迁移，不随本地目录整理移动。
 
 清理时先确认保留的候选与原始证据已经独立保存，再决定过期检查和重复工作区的保留周期。源码归档与删除运行证据分开处理。
+
+跨轮接续直接使用选定的原始 run 目录。临时人工组装的交接包与重复源码副本，在确认原始代码和证据完整、自动历史交接可用且无活动引用后可以删除；`artifacts/rsi/` 中的原始档案继续供接续与验收。
 
 启动流程与参数见[使用教程](tutorial.md)，执行单元和调用关系见[系统架构](architecture.md)。`continuation.py` 负责跨轮结果的机械保存与读取；`retained.json` 是运行结果，Agent 的记忆实现仍归属其生成的 Harness。

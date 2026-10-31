@@ -1,4 +1,0 @@
-{
-  "command": ["python", "entry.py"],
-  "files": ["entry.py", "handoff.md"]
-}

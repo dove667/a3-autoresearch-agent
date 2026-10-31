@@ -25,6 +25,8 @@ bash scripts/start-rsi.sh --check
 
 ## 三种运行方式
 
+macOS 上启动脚本会自动使用 `caffeinate -is` 包裹 Agent runtime，在运行期间防止空闲休眠，退出后释放。下列三种启动方式均包含这项保护。长程运行请接通电源、保持开盖，并避免关机或重启；屏幕可以自动熄灭。保持运行、后台执行与检查方法见[长程运行说明](docs/tutorial.md#长程运行与防休眠)。
+
 ### 初始运行：从 SWE Agent 开始
 
 ```bash
@@ -67,11 +69,12 @@ $$
 
 ## 项目文档
 
+完整入口见 [docs/README.md](docs/README.md)。
+
 - [使用教程与完整启动参数](docs/tutorial.md)：准备、初始运行、中断恢复、版本迭代、轨迹查看和故障定位。
 - [系统架构](docs/architecture.md)：两阶段 RSI、运行单元、数据流、版本与身份、执行边界。
 - [环境配置](docs/setup.md)：依赖、模型适配器、认证与 A3 执行环境。
 - [目录职责](docs/project-structure.md)：源码、候选、报告和运行产物分别存在哪里。
 - [开发路线与实现状态](docs/roadmap.md)
-- [SWE Agent 生成的 Harness 快照](harnesses/README.md)
 - [报告工程](reports/README.md)
 - [第三方依赖说明](third_party/README.md)
