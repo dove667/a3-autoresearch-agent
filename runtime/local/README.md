@@ -181,6 +181,15 @@ Git 记录进入本轮 `versions/`。工作区内的即时修改不会自动成�
 
 `GET /evolution` 返回当前 `main_owner` 与本身份可读的试运行记录。初始 mini 为 H0 主身份；从明确保留版本启动时，加载该版本的 session 为主身份。一次只允许一个待决定的 Harness 候选。
 
+创建会话前先确定测试角色：
+
+| 角色 | 入口 | 提前交代与实现 | 完成条件 |
+| --- | --- | --- | --- |
+| 局部功能测试 worker | `POST /sessions` | 测试输入、实际可用工具、期望结果、轮数或停止条件 | 交付局部结果后可正常退出，不转移主身份 |
+| 下一代完整 Harness 候选 | `POST /evolution/trials` | 当前完整 Harness 加本次改动，保留执行循环与已有能力，并交接任务状态、改动及接任清单 | 完成试运行，等待主 Agent 决定，保留后以同一进程继续 auto research |
+
+主 Agent 先验证局部假设，再将有效改动整合进完整 Harness。测试脚本按其局部任务判断；接任候选须具备完整继续执行能力。启动前核对自己提供的源码、工具、文件与任务能够支持验收。模型调用必须实际带上所需 tools；只发空 tools 的连通请求不能覆盖工具执行。主 Agent 向下一代交接两类测试协议。
+
 当前主 Agent 自行提出改动、固定验收清单并执行以下协议：
 
 1. `POST /evolution/trials`：包含普通 `/sessions` 的 command 与 files 或 version_id，另加 `baseline_version`（已保存且有权使用的 H0 版本）和 `checklist`（改动的验收清单）。Host 将清单、摘要与两版代码标识固定记录，启动候选 H1；主身份仍属于 H0。主 Agent 负责通过显式文件交接让候选读到清单、任务、记忆和必要状态。
@@ -191,3 +200,13 @@ Git 记录进入本轮 `versions/`。工作区内的即时修改不会自动成�
 候选代码在启动时已保存为不可变 Git commit/worktree。保留决定引用这份实际测试版本；未加载的新修改须作为新的试运行，不把文件的即时编辑当成已测试版本。`evolution.json` 保存主身份变化与逐次决定。Host 不生成改动、记忆或专项验收，也不根据收益自动选择版本。
 
 H0 的已保存执行结果可作为基线证据，无需为了每次改动再启动旧版 Agent；主 Agent 须说明清单与已有能力、过程指标的关系，不能只以候选自称成功决定保留。Policy 实验可由当前主 Agent 穿插执行，不切换主身份。普通 `/sessions` 用于辅助 worker，创建普通 worker 不转移主身份。主身份是唯一的决策权限，试运行期间允许 H0 与候选两个进程共存；H0 交接后应自行退出，Host 不在模型调用中途强制杀掉它。主 Agent 须汇总进展并在自己的 workspace 保存最终 run-outcome.json 与 continuation.json；所有 worker 停止后从最终主身份归档。
+
+## 固定核心提示词
+
+`configs/rsi-bootstrap.yaml` 仅维护初始 mini 的参数、Bash/提交约定与启动路径。跨代共用的目标职责、执行边界、测试角色、交接和证据要求统一维护在 `configs/prompts/common.md`。
+
+`configs/prompts/common.md` 保存主 Agent 与接任候选共同遵循的核心协议。每轮启动冻结为 `inputs/common-instructions.md`，摘要进入 `startup.json`。初始 mini 的 system 直接加载这份内容；Gateway 在转发当前主身份、待接任候选的每次模型请求时，以同一冻结内容作为 instructions 前缀，保留其专属 instructions、消息和工具定义。主身份来自 Host 记录，候选来自 `/evolution/trials`，不依据模型在提示词里自称的角色。
+
+普通 `/sessions` worker 包括局部测试 Agent，Host 不额外附加核心提示词；其完整提示词由主 Agent 编写。主身份交接后，接任候选继续得到核心协议，旧主身份不再获得新的附加层。部署准备检查不使用这份完整 auto research 协议。
+
+运行中不读取当前仓库的新版本替换冻结文本。resume 沿用原副本并验证摘要；历史运行没有此文件时不补入新协议。Gateway 用量记录中的 `common_instructions_sha256` 标识该次转发使用的核心协议，配合冻结文件可复核有效请求。核心协议规定角色协作和证据要求，模型任务、工具设计、Policy、记忆和具体改动仍由 Agent 决定。

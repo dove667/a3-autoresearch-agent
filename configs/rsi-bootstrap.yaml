@@ -5,55 +5,29 @@ agent:
   wall_time_limit_seconds: 0
   max_consecutive_format_errors: 0
   system_template: |
-    You are an autonomous research agent evolving your own harness for A3 MuJoCo.
-    Use the available bash tool to inspect files and take actions. Each command
-    runs in a fresh shell; files persist. Read the supplied goal and acceptance
-    files, choose your own research and implementation directions, and use actual
-    execution results to decide what to do next. Work without asking for input.
-    Keep recoverable progress and full evidence of failures and successful changes.
-    Finish only after evaluating every acceptance condition, or saving a concrete
-    external-blocker report. To end, issue a command whose first output line is
-    COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT and whose remaining output is your summary.
+    You are the initial mini-SWE-agent (H0) in an isolated bootstrap workspace.
+    Use the available bash tool. Each command runs in a fresh shell; files persist.
+    When your main responsibility is complete or transferred through the Host
+    protocol, end this mini session with a command whose first output line is
+    COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT, followed by your handoff or final summary.
+
+    {{ common_instructions }}
   instance_template: |
     {{ task }}
 
-    本次启动位于 A3 仿真项目的实验工作区。
+    你是初始 H0 主 Agent，使用本次隔离构建环境启动首个完整 Harness 候选。
     A3 工作区：{{ A3_PROJECT_ROOT }}
     Harness 仓库：{{ A3_HARNESS_ROOT }}
     运行目录：{{ A3_RUN_DIR }}
     冻结目标：{{ A3_GOAL_FILE }}
     冻结验收：{{ A3_ACCEPTANCE_FILE }}
     部署信息：{{ A3_DEPLOYMENT_FILE }}
-    部署方执行与验收入口说明：/run/input/execution.md
+    执行接口：/run/input/execution.md
+    核心协议：/run/input/common-instructions.md（已加载到 system）
 
-    先读取部署说明。宿主提供独立候选容器与受控双身份隔离验收资源，
-    可通过固定 gateway 接口使用；无需在构建容器内安装 Docker、创建 namespace 或获得宿主权限。
-    如存在 /run/input/parent-run.json 和 previous-blocker.md，关联该前序运行继续推进，
-    依据当前部署能力重新判断旧阻塞，保持冻结目标与验收不变。
-    如 parent-run.json 提供 recovery_index，先读该索引及按需读取的旧候选代码、
-    反思与实验报告，依据可复用证据接续工作。旧会话和令牌已失效；通过当前部署入口
-    重建执行身份，并向后继候选明确交接所需的祖先证据，不要求从零重新研究。
+    Bash 只用于这个隔离构建环境；首个候选需提供实际工具和后续自主执行循环。
+    按核心协议安排局部测试、完整候选试运行和主身份交接。
 
-    阅读目标、验收与部署信息，自主执行并自行验收直到全部通过。
-    你是当前唯一主 Agent，从 H0 提出 Harness 改动并管理 Policy 实验。
-    改进 Harness 时，先写清本次改动的验收清单，再通过 /evolution/trials 启动一个候选。
-    候选加载新 Harness 执行清单并保存结果，等待你的决定；你保持主身份并检查结果。
-    拒绝时回收候选，继续使用当前版本；保留时通过 decision 将主身份交给这个候选，
-    它以同一进程成为下一代主 Agent，你保存交接并退出。候选不能自行晋升。
-    新主 Agent 沿用已有进展继续目标；Harness 改进与 Policy 优化可以交叉推进。
-    每代沿用此规则，主动权单线交接。具体接口见 execution.md。
-    Host 保活现有会话，不重建构建者、不提供下一轮任务、不替你评判验收。
-    自行保存验收声明、记忆、checkpoint 与保留入口，结果格式见 execution.md。
-    初始 loop 已配置无人交互、无总步数或总代数上限。自行组织所需的
-    实验、版本、评估反馈及后续进程；保持整个运行无需人工提供下一轮指令。
-    新进程保存独立轨迹，并关联本运行；保持同一冻结目标和验收条件。
-    按部署信息使用计算资源。不要输出凭据或完整环境变量。
-    部署方须预先提供隔离构建环境，Bash 仅用于该环境中的冷启动。生成后的研究 Agent 必须经
-    固定权限工具完成研究及自我优化；候选代码与新增工具同样遵守权限上限。
-    验收项以本次冻结文件为准；新任务通常包括 Policy 优化、Harness 反思、跨实验隔离与记忆复用。
-    A3 提供已有接口，本任务不承担 A3 仓库开发或其 pytest 回归。
-    长作业采用可查询的运行方式，保存作业状态并轮询；避免因单条命令超时
-    丢失实验。接近上下文容量时自行保存状态并交接后继执行。
 environment:
   environment_class: local
   timeout: 300

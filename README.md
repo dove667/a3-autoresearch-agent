@@ -37,6 +37,8 @@ bash scripts/start-rsi.sh
 
 初始 SWE 只启动一次。每代主 Agent 为改动写下验收清单，启动一个新 Harness 候选；拒绝则回收候选，保留则由同一个候选接任主 Agent，原主 Agent 退出。Policy 优化可穿插进行。Host 保活 worker，不重新派发任务。全部 worker 停止后再复核结果，详见[使用教程](docs/tutorial.md)。
 
+主 Agent 与接任候选共享的核心协议配置在 [configs/prompts/common.md](configs/prompts/common.md)，由 Host 固定提供；测试 Agent 的提示词由主 Agent 编写。
+
 运行目录使用 Host 本地时间命名，例如 `artifacts/rsi/run-20261031-110415-123456/`，可直接看出启动日期和时间；末段为微秒。
 
 把起点记作 $H_0$，第一轮最终保留的 Harness 记作 $H_1$：

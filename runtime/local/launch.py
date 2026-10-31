@@ -186,6 +186,21 @@ def freeze_inputs(inputs: Path, parent: Path | None = None) -> None:
             shutil.copy2(source / name, inputs / name)
     else:
         shutil.copy2(ROOT / "runtime/local/README.md", inputs / "execution.md")
+    common = source / "common-instructions.md" if parent else ROOT / "configs/prompts/common.md"
+    if common.is_file():
+        content = common.read_bytes()
+        if parent and hashes.get("common-instructions.md") != hashlib.sha256(content).hexdigest():
+            raise ValueError("Frozen input hash mismatch: common-instructions.md")
+        shutil.copy2(common, inputs / "common-instructions.md")
+
+
+def frozen_input_hashes(inputs: Path) -> dict[str, str]:
+    names = ("goal.md", "acceptance.md", "bootstrap.yaml", "execution.md", "common-instructions.md")
+    return {
+        name: hashlib.sha256((inputs / name).read_bytes()).hexdigest()
+        for name in names
+        if (inputs / name).is_file()
+    }
 
 
 def validate_remote_health(response: dict) -> None:
@@ -314,6 +329,10 @@ def main() -> None:
         endpoint=endpoint,
         versions=versions,
     )
+    common_path = inputs / "common-instructions.md"
+    common_instructions = common_path.read_text() if common_path.is_file() else ""
+    if args.verify_deployment:
+        common_instructions = ""  # Readiness checks are test sessions, not main Agents.
     fixtures = IsolationFixtures(remote_call, run / "fixtures")
     app = create_app(
         model_name=os.environ["MODEL_NAME"],
@@ -327,6 +346,7 @@ def main() -> None:
         initial_inputs=private_inputs,
         main_owner=run_id,
         start_main_session=bool(package),
+        common_instructions=common_instructions,
     )
     server = uvicorn.Server(
         uvicorn.Config(app, host="0.0.0.0", port=port, log_level="warning", access_log=False)
@@ -434,10 +454,7 @@ def main() -> None:
                             "source_version": start.source_version,
                             "session_id": session["session_id"],
                             "version_id": session["version_id"],
-                            "inputs": {
-                                name: hashlib.sha256((inputs / name).read_bytes()).hexdigest()
-                                for name in ("goal.md", "acceptance.md")
-                            },
+                            "inputs": frozen_input_hashes(inputs),
                         },
                         indent=2,
                     )
@@ -488,15 +505,7 @@ def main() -> None:
                 json.dumps(
                     {
                         "run_id": run_id,
-                        "inputs": {
-                            name: hashlib.sha256((inputs / name).read_bytes()).hexdigest()
-                            for name in (
-                                "goal.md",
-                                "acceptance.md",
-                                "bootstrap.yaml",
-                                "execution.md",
-                            )
-                        },
+                        "inputs": frozen_input_hashes(inputs),
                         "a3_commit": git(a3, "rev-parse", "HEAD"),
                         "harness_commit": git(ROOT, "rev-parse", "HEAD"),
                         "mini_commit": git(
@@ -517,6 +526,8 @@ def main() -> None:
             for key, value in env.config.env.items()
             if key.startswith("A3_") and key not in ("A3_GATEWAY_TOKEN", "A3_GATEWAY_URL")
         }
+
+        template_vars["common_instructions"] = common_instructions
 
         def execute_builder(reason: str, trajectory: Path) -> None:
             model = get_model(

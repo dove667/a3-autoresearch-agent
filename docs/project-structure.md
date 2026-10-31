@@ -97,3 +97,5 @@ artifacts/rsi/run-*/
 跨轮接续直接使用选定的原始 run 目录。临时人工组装的交接包与重复源码副本，在确认原始代码和证据完整、自动历史交接可用且无活动引用后可以删除；`artifacts/rsi/` 中的原始档案继续供接续与验收。
 
 启动流程与参数见[使用教程](tutorial.md)，执行单元和调用关系见[系统架构](architecture.md)。`continuation.py` 负责跨轮结果的机械保存与读取；`retained.json` 是运行结果，Agent 的记忆实现仍归属其生成的 Harness。
+
+`configs/prompts/common.md` 是主 Agent 与接任候选的核心协议来源，每轮冻结到 `inputs/common-instructions.md`。测试 Agent 和普通 worker 不由 Host 自动加载该协议；其提示词属于主 Agent 的专项实现。

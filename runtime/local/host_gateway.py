@@ -1,5 +1,6 @@
 """Host-owned forwarding boundary for model requests and experiment jobs."""
 
+import hashlib
 import json
 import secrets
 import threading
@@ -91,6 +92,7 @@ def create_app(
     initial_inputs: Path | None = None,
     main_owner: str | None = None,
     start_main_session: bool = False,
+    common_instructions: str = "",
 ) -> FastAPI:
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     diagnostics = GatewayDiagnostics(usage_log.with_name("gateway-events.jsonl"))
@@ -522,6 +524,20 @@ def create_app(
             raise HTTPException(422, "Only client-executed function tools are supported")
         arguments = {key: value for key, value in body.items() if key != "model"}
         arguments.pop("stream", None)
+        with session_lock:
+            trial = evolution.trials.get(experiment, {}) if evolution else {}
+            receives_common = bool(
+                common_instructions
+                and evolution
+                and (experiment == evolution.main_owner or trial.get("status") == "testing")
+            )
+        if receives_common:
+            specific = arguments.get("instructions")
+            if specific is not None and not isinstance(specific, str):
+                raise HTTPException(422, "Instructions must be text")
+            arguments["instructions"] = (
+                common_instructions + "\n\n" + specific if specific else common_instructions
+            )
         if isinstance(arguments.get("input"), str):
             arguments["input"] = [{"role": "user", "content": arguments["input"]}]
         started = time.monotonic()
@@ -537,6 +553,10 @@ def create_app(
             "wall_seconds": time.monotonic() - started,
             "usage": data.get("usage"),
         }
+        if receives_common:
+            entry["common_instructions_sha256"] = hashlib.sha256(
+                common_instructions.encode()
+            ).hexdigest()
         with log_lock:
             usage_log.parent.mkdir(parents=True, exist_ok=True)
             with usage_log.open("a") as stream:
