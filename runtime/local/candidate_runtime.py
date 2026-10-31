@@ -4,9 +4,11 @@ import base64
 import json
 import subprocess
 import threading
+import time
 from pathlib import Path, PurePosixPath
 
 ACTIVE_STATES = {"created", "running", "restarting", "paused"}
+MAX_ACTIVE_CANDIDATES = 5
 MAX_INPUT_FILES = 128
 MAX_INPUT_BYTES = 20 * 1024 * 1024
 MAX_ARTIFACT_BYTES = 32 * 1024 * 1024
@@ -40,6 +42,17 @@ def workspace_path(root: Path, name: str) -> Path:
         if target.is_symlink():
             raise ValueError("Symbolic link paths are not allowed")
     return target
+
+
+def candidate_workspace(root: Path, session: str) -> Path:
+    directory = workspace_path(root, session)
+    workspace = directory / "workspace"
+    if workspace.is_symlink():
+        expected = workspace_path(root.parent, f"versions/worktrees/{session}/source")
+        if workspace.resolve(strict=True) != expected.resolve(strict=True):
+            raise ValueError("Resume workspace must reference its own Host-managed worktree")
+        return expected
+    return workspace_path(directory, "workspace")
 
 
 def write_candidate_files(root: Path, files: dict[str, str]) -> None:
@@ -121,15 +134,99 @@ class CandidateRuntime:
             self.versions.release(owner)
             raise
 
-    def check_capacity(self) -> None:
+    def check_capacity(self, exclude: str | None = None) -> None:
         with self.lock:
             active = sum(
                 self.state(record)["Status"] in ACTIVE_STATES
-                for record in self.records.values()
-                if not record.get("closed")
+                for session, record in self.records.items()
+                if not record.get("closed") and session != exclude
             )
-            if active >= 2:
+            if active >= MAX_ACTIVE_CANDIDATES:
                 raise CandidateCapacityError("Candidate concurrency resources are busy")
+
+    def load_records(self) -> None:
+        for path in self.root.glob("*/session.json"):
+            record = json.loads(path.read_text())
+            if record["owner"] != path.parent.name:
+                raise ValueError("Candidate record identity mismatch")
+            self.records[path.parent.name] = record
+
+    def suspend(self) -> None:
+        errors = []
+        with self.lock:
+            for session, record in self.records.items():
+                if record.get("closed"):
+                    continue
+                try:
+                    state = self.state(record)["Status"]
+                    record["resume_status"] = state
+                    if state == "running":
+                        self.docker("pause", record["container_id"])
+                    (self.root / session / "session.json").write_text(json.dumps(record, indent=2))
+                except (RuntimeError, OSError, ValueError, subprocess.SubprocessError):
+                    errors.append(session)
+        if errors:
+            raise RuntimeError("Candidate suspension pending: " + ", ".join(errors))
+
+    def resume_sessions(self, credentials: dict[str, str], main_owner: str) -> None:
+        from runtime.local.context_resume import require_tool_results
+        from runtime.local.harness_package import load_harness_package
+
+        tokens = {owner: token for token, owner in credentials.items()}
+        with self.lock:
+            actions = []
+            # Validate every required restart before allowing any paused worker to execute.
+            for session, record in list(self.records.items()):
+                if record.get("closed") and session != main_owner:
+                    continue
+                try:
+                    status = self.state(record)["Status"]
+                except RuntimeError:
+                    status = "missing"
+                command = None
+                if status not in {"paused", "created", "running"} and session == main_owner:
+                    workspace = candidate_workspace(self.root, session)
+                    command, files = load_harness_package(workspace, "resume.json")
+                    if "checkpoint.json" in files:
+                        checkpoint = json.loads(files["checkpoint.json"])
+                        messages = (
+                            checkpoint
+                            if isinstance(checkpoint, list)
+                            else (
+                                checkpoint.get("messages") if isinstance(checkpoint, dict) else None
+                            )
+                        )
+                        if isinstance(messages, list) and all(
+                            isinstance(item, dict) for item in messages
+                        ):
+                            require_tool_results(messages)
+                elif status == "missing" and record.get("resume_status") in ACTIVE_STATES:
+                    raise RuntimeError(
+                        "An active worker container is missing; explicit recovery required"
+                    )
+                actions.append((session, record, status, command))
+            for session, record, status, command in actions:
+                if command is not None:
+                    if status != "missing":
+                        logs = self.docker("logs", record["container_id"], check=False)
+                        (self.root / session / f"console-resume-{time.time_ns()}.log").write_text(
+                            logs
+                        )
+                        self.docker("rm", record["container_id"])
+                    self.create(
+                        record["owner"],
+                        command,
+                        {},
+                        tokens[record["owner"]],
+                        workspace=candidate_workspace(self.root, session),
+                        version_id=record.get("version_id"),
+                        inputs=Path(record.get("inputs", str(self.inputs))),
+                        reuse=True,
+                    )
+                elif status == "paused":
+                    self.docker("unpause", record["container_id"])
+                elif status == "created":
+                    self.docker("start", record["container_id"])
 
     def create(
         self,
@@ -141,18 +238,23 @@ class CandidateRuntime:
         workspace: Path | None = None,
         version_id: str | None = None,
         inputs: Path | None = None,
+        reuse: bool = False,
     ) -> dict:
         with self.lock:
-            self.check_capacity()
+            self.check_capacity(exclude=owner if reuse else None)
             session_id = owner
             directory = self.root / session_id
-            directory.mkdir(parents=True, exist_ok=False)
+            directory.mkdir(parents=True, exist_ok=reuse)
             if workspace is None:
                 workspace = directory / "workspace"
                 workspace.mkdir()
             else:
                 # Host-only link preserves the historical artifact lookup path.
-                (directory / "workspace").symlink_to(workspace, target_is_directory=True)
+                link = directory / "workspace"
+                if not reuse:
+                    link.symlink_to(workspace, target_is_directory=True)
+                elif link.resolve() != workspace.resolve():
+                    raise ValueError("Resume must retain the original workspace")
             write_candidate_files(workspace, files)
             environment = {
                 "A3_GATEWAY_URL": self.endpoint,
@@ -200,6 +302,7 @@ class CandidateRuntime:
                 "command": command,
                 "closed": False,
                 "version_id": version_id,
+                "inputs": str(inputs or self.inputs),
             }
             self.records[session_id] = record
             (directory / "session.json").write_text(json.dumps(record, indent=2))

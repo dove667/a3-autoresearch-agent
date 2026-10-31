@@ -130,6 +130,22 @@ def test_candidate_files_and_artifacts_cannot_escape_scope(tmp_path):
         runtime.artifact("other", "unknown", "valid/report.json")
 
 
+def test_candidate_capacity_allows_five_active_sessions(tmp_path, monkeypatch):
+    from runtime.local.candidate_runtime import CandidateCapacityError, CandidateRuntime
+
+    runtime = CandidateRuntime(
+        root=tmp_path, image="image", inputs=tmp_path, public_a3=tmp_path, endpoint="http://gateway"
+    )
+    monkeypatch.setattr(runtime, "state", lambda record: {"Status": record["status"]})
+    runtime.records = {str(i): {"status": "running"} for i in range(4)}
+    runtime.records["finished"] = {"status": "exited"}
+    runtime.records["closed"] = {"status": "running", "closed": True}
+    runtime.check_capacity()
+    runtime.records["fifth"] = {"status": "running"}
+    with pytest.raises(CandidateCapacityError):
+        runtime.check_capacity()
+
+
 def test_closing_candidate_revokes_its_gateway_identity(tmp_path):
     backend = SandboxBackend()
     backend.cancel = lambda owner, session: {"status": "closed"}

@@ -9,6 +9,20 @@ from minisweagent.agents.default import DefaultAgent
 from minisweagent.exceptions import FormatError, InterruptAgentFlow
 
 
+def require_tool_results(messages: list[dict]) -> None:
+    pending = set()
+    for message in messages:
+        output = message.get("output")
+        items = output if isinstance(output, list) else [message]
+        for item in items:
+            if isinstance(item, dict) and item.get("type") == "function_call":
+                pending.add(item["call_id"])
+        if message.get("type") == "function_call_output":
+            pending.discard(message.get("call_id"))
+    if pending or (messages and messages[-1].get("extra", {}).get("actions")):
+        raise ValueError("Unresolved tool execution: reconcile its result before resuming")
+
+
 def load_context(path: Path) -> dict:
     context = json.loads(path.read_text())
     messages = deepcopy(context.get("messages", []))
@@ -19,15 +33,7 @@ def load_context(path: Path) -> dict:
         if status == "Submitted":
             raise ValueError("A submitted session cannot be resumed; select its retained version")
         messages.pop()  # The runtime failure marker is not a model-context message.
-    pending = set()
-    for message in messages:
-        for item in message.get("output", []) if isinstance(message.get("output"), list) else []:
-            if isinstance(item, dict) and item.get("type") == "function_call":
-                pending.add(item["call_id"])
-        if message.get("type") == "function_call_output":
-            pending.discard(message.get("call_id"))
-    if pending or (messages and messages[-1].get("extra", {}).get("actions")):
-        raise ValueError("Unresolved tool execution: reconcile its result before resuming")
+    require_tool_results(messages)
     context["messages"] = messages
     return context
 

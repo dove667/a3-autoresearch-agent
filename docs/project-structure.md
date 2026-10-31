@@ -99,3 +99,5 @@ artifacts/rsi/run-*/
 启动流程与参数见[使用教程](tutorial.md)，执行单元和调用关系见[系统架构](architecture.md)。`continuation.py` 负责跨轮结果的机械保存与读取；`retained.json` 是运行结果，Agent 的记忆实现仍归属其生成的 Harness。
 
 `configs/prompts/common.md` 是主 Agent 与接任候选的核心协议来源，每轮冻结到 `inputs/common-instructions.md`。测试 Agent 和普通 worker 不由 Host 自动加载该协议；其提示词属于主 Agent 的专项实现。
+
+每轮 `.host/` 由 Host 私有维护，保存恢复所需身份与注册表、进程锁；不挂载给 Agent，不作为可分享产物。`resume-events.jsonl` 记录原 run 内的恢复事件。

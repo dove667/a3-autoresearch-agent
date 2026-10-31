@@ -104,13 +104,19 @@ bash scripts/start-rsi.sh --resume-from "artifacts/rsi/<run-id>"
 bash scripts/start-rsi.sh --resume-from "$(cat artifacts/rsi/latest-run.txt)"
 ```
 
-恢复入口沿用旧运行的目标、验收、执行说明和 bootstrap 配置。初始 mini 的恢复加载原 `trajectory.json` 中完整模型消息、工具结果与调用/费用统计，继续下一次模型调用，不重新加入任务或历史索引提示词；保留不透明的 provider 上下文，不把它转成可见摘要。原始轨迹不覆盖。
+恢复直接使用指定的原 run 目录，保持 run ID、时间戳、当前主 Agent 身份、全部工作区文件与版本库。目标、验收、执行说明和 bootstrap 配置继续使用原冻结副本；startup.json 不改写，恢复时间另记在 resume-events.jsonl。初始 mini 加载原 `trajectory.json` 中完整模型消息、工具结果与调用/费用统计，继续下一次模型调用，不重新加入任务或历史索引提示词；保留不透明的 provider 上下文，不把它转成可见摘要。
 
 已主动提交的会话不能用 resume 重新打开；下一代应使用明确保留版本。发现工具请求已发出而结果尚未保存时，恢复会拒绝自动执行，须先查明原请求是否成功，避免重复提交作业。模型配置须与原运行一致，认证由 Host 提供。
 
 SWE 生成的 Harness 自主管理其 checkpoint。它须在主 session 工作区保存 `resume.json`，格式与 `continuation.json` 相同，但 command 必须显式加载 checkpoint，files 包含执行源码、模型消息及必要运行状态。Host 按声明启动；没有恢复入口就报错，不用新上下文启动来冒充恢复。Host 不解析或代写专项记忆与恢复策略。
 
-恢复会建立新 Docker 和授权身份；当前实现不恢复旧 Gateway 的会话注册表、已清理的容器和旧资源权限。模型消息可完整保留，运行环境的资源连接需要 Harness 的恢复入口处理；依赖旧资源身份的任务不能宣称完整环境恢复。不要在原运行仍正常推进时重复启动恢复。
+主会话使用 Git worktree 时，恢复入口只接受指向该 session 自身 worktree 的 Host 工作区链接；其他链接仍被拒绝。
+
+Host 将身份令牌、父子关系、主身份、trial、作业归属和 fixture 记录原子保存到本轮 `.host/state.json`，仅 Host 可读，不挂载进 Agent Docker。恢复使用原 Gateway 端口和授权 scope；暂停中的候选 Docker 直接接回，不重放模型或工具调用。主进程确已退出时，才在同一工作区以同一身份执行其 `resume.json`，其他已完成 worker 不重新运行。
+
+Ctrl-C 中断时暂停候选 Docker，并保留远程作业及其权限；远程作业继续受原时限与资源分配约束。整轮正常结束时仍清理资源。已取消或失败的作业保持真实状态，恢复不会把它变成成功或自动重跑。进程锁阻止两个 Host 同时启动同一个 run；端口被占用或恢复入口缺失时明确报错。
+
+旧版运行没有私有 Host 快照时，只允许从已停止运行的 Host 会话元数据导入原关系与 scope，并轮换丢失的本轮令牌；模型消息、源码和工作区不改写。无法核实原身份或模型时拒绝恢复，不创建新 run。
 
 ## 版本迭代：从已保留的 Harness 开始新任务
 

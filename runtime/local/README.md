@@ -37,7 +37,7 @@ Host创建同级容器，工作目录为 `/workspace`，上传文件写入该目
 其身份由Host独立分配并注入，调用方拿不到子身份令牌。候选容器不挂载构建者或其他候选的目录、令牌和模型认证。
 它只能访问自己的可写工作区、只读 `/run/input` 和只读公共 A3 源码 `/opt/a3`。
 无需在容器内创建 namespace、安装 Docker 或运行嵌套容器。
-固定限制为 2 CPU、2 GiB 内存、256 个进程、512 MiB 临时目录，同时最多两个活动候选容器。
+固定限制为 2 CPU、2 GiB 内存、256 个进程、512 MiB 临时目录，同时最多五个活动候选容器。
 本地镜像提供 mini 和模型客户端；A3 仿真依赖在远程镜像中。
 
 `GET /sessions/{session_id}` 返回状态、退出码和近期输出，Docker 完成状态为 `exited`。
@@ -155,6 +155,7 @@ Git 记录进入本轮 `versions/`。工作区内的即时修改不会自动成�
 每个 Gateway 请求返回 `X-Request-ID`，Host 在 `gateway-events.jsonl` 写开始与结束事件，记录身份、路由模板、状态码、持续时间、错误发生层和异常类别。
 模型请求在等待期间也有开始记录；记录不包含请求正文、令牌或异常原文。`attempt: 1` 表示 Gateway 不自动重试，Agent 发起的重试会产生新请求标识。
 候选名额不足时，HTTP 409 的 `detail.reason` 为 `candidate_capacity`，并给出最大活动数和建议重试间隔。
+每轮最多同时运行 5 个候选或 worker；已退出或已关闭的 session 不占名额。上限在 Host 启动时加载，当前不支持热更新。主身份交接后，旧主 Agent 应退出并释放名额。
 远程 `resource_busy` 会记录容量等待；远程调用总耗时含 SSH 与 Controller 处理，当前尚未分拆模型加载、实际计算等内部耗时。
 
 保留的阶段一 `research` 入口仍使用原有 Gateway 路径清单。接入新增 `/versions` 和 `/checks/comparison` 操作由 SWE Agent 在后续候选中自主完成；Host 已准备好相应授权与检查。
@@ -175,7 +176,9 @@ Git 记录进入本轮 `versions/`。工作区内的即时修改不会自动成�
 
 初始 mini 的 trajectory 原子写入，恢复时直接加载原消息，不重建 system/user 消息，不回注外部审查。冻结的 bootstrap 与执行说明随原目标保留。主动提交的会话不恢复；未保存结果的工具调用拒绝自动重放。
 
-生成的 Harness 用 `resume.json` 声明包含 checkpoint 的源码清单及恢复命令。Host 不把 continuation 入口当作 resume；缺失 checkpoint 入口时拒绝启动。新 Docker 身份不自动取得旧 Gateway scope 或作业权限，此接口不承诺恢复任意进程内存与旧资源身份。
+生成的 Harness 用 `resume.json` 声明包含 checkpoint 的源码清单及恢复命令。Host 不把 continuation 入口当作 resume；缺失 checkpoint 入口时拒绝启动。`--resume-from` 在原 run 目录、时间戳、主身份、工作区和版本库恢复。Host 私有 `.host/state.json` 保存本轮身份令牌、会话与作业注册表、主身份和 trial；Agent Docker 不挂载此目录。恢复沿用原 Gateway 端口与 scope。暂停中的 Docker 直接接回；主进程已退出时，以同一身份在原工作区执行恢复命令，不复制成新的候选。
+
+中断时暂停本轮候选 Docker、保存 Host 状态并保留远程作业；整轮正常结束仍回收资源。原任务轨迹继续追加，`startup.json` 保持原样，`resume-events.jsonl` 记录每次恢复。run 排他锁拒绝重复启动，端口不可用时明确失败。旧 Host 无私有快照时，仅从已停止运行的 Host 元数据导入原 scope 并轮换本轮令牌；不修改生成代码或模型上下文。已取消的远程 job 不自动重跑。
 
 ## 主身份与候选试运行
 

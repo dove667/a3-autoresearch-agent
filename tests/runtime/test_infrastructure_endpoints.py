@@ -119,6 +119,7 @@ def test_busy_candidate_returns_actionable_retry_and_logged_reason(tmp_path):
         "/sessions", headers={"Authorization": "Bearer token"}, json={"command": ["true"]}
     )
     assert response.status_code == 409
+    assert response.json()["detail"]["max_active"] == 5
     assert response.json()["detail"]["retry_after_seconds"] == 2
     assert "candidate_capacity" in (tmp_path / "gateway-events.jsonl").read_text()
 

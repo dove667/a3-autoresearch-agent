@@ -4,7 +4,7 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-from runtime.local.candidate_runtime import workspace_path
+from runtime.local.candidate_runtime import candidate_workspace
 from runtime.local.candidate_versions import CandidateVersions
 from runtime.local.harness_package import load_harness_package
 
@@ -58,7 +58,7 @@ def resolve_resume_start(run: Path) -> HarnessStart | None:
         session_id = startup["session_id"]
     else:
         return None
-    workspace = workspace_path(run, f"candidates/{session_id}/workspace")
+    workspace = candidate_workspace(run / "candidates", session_id)
     if not (workspace / "resume.json").is_file():
         raise ValueError(
             "Harness has no resume.json checkpoint entry; refusing a fresh-context restart"

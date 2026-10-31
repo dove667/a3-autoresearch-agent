@@ -14,6 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
 from runtime.local.candidate_runtime import (
     DEFAULT_ARTIFACT_PAGE_BYTES,
+    MAX_ACTIVE_CANDIDATES,
     MAX_ARTIFACT_BYTES,
     ArtifactTooLargeError,
     CandidateCapacityError,
@@ -21,6 +22,7 @@ from runtime.local.candidate_runtime import (
 from runtime.local.comparison_checks import check_comparison
 from runtime.local.evolution import EvolutionState
 from runtime.local.gateway_diagnostics import CURRENT_REQUEST, GatewayDiagnostics
+from runtime.local.run_state import RunStateStore
 
 
 class JobRequest(BaseModel):
@@ -93,6 +95,8 @@ def create_app(
     main_owner: str | None = None,
     start_main_session: bool = False,
     common_instructions: str = "",
+    state_store: RunStateStore | None = None,
+    restored_state: dict | None = None,
 ) -> FastAPI:
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     diagnostics = GatewayDiagnostics(usage_log.with_name("gateway-events.jsonl"))
@@ -107,6 +111,37 @@ def create_app(
     evolution = (
         EvolutionState(usage_log.with_name("evolution.json"), main_owner) if main_owner else None
     )
+    if restored_state is not None:
+        sessions.clear()
+        sessions.update(restored_state["sessions"])
+        root_owners = set(restored_state["root_owners"])
+        children.update(restored_state["children"])
+        scope_parents.update(restored_state["scope_parents"])
+        jobs.update({key: set(value) for key, value in restored_state["jobs"].items()})
+        if evolution and restored_state.get("evolution"):
+            saved = restored_state["evolution"]
+            evolution.main_owner = saved["main_owner"]
+            evolution.trials = saved["trials"]
+            evolution.transitions = saved["transitions"]
+        if fixtures is not None:
+            fixtures.records = restored_state.get("fixtures", {})
+
+    def save_checkpoint():
+        with session_lock:
+            if state_store is not None:
+                state_store.update(
+                    gateway={
+                        "sessions": dict(sessions),
+                        "root_owners": sorted(root_owners),
+                        "children": children,
+                        "scope_parents": scope_parents,
+                        "jobs": {key: sorted(value) for key, value in jobs.items()},
+                        "evolution": evolution.snapshot() if evolution else None,
+                        "fixtures": fixtures.records if fixtures is not None else {},
+                    }
+                )
+
+    app.state.save_checkpoint = save_checkpoint
 
     def result_location():
         with session_lock:
@@ -127,6 +162,7 @@ def create_app(
         }
         with log_lock, usage_log.with_name("session-events.jsonl").open("a") as stream:
             stream.write(json.dumps(entry) + "\n")
+        save_checkpoint()
 
     def descendants(session_id):
         by_parent: dict[str, list[str]] = {}
@@ -204,6 +240,7 @@ def create_app(
                 errors.extend(close_owner_resources(experiment))
         if errors:
             raise RuntimeError("Deployment cleanup pending: " + ", ".join(errors))
+        save_checkpoint()
 
     app.state.begin_shutdown = begin_shutdown
     app.state.close_resources = close_resources
@@ -241,7 +278,7 @@ def create_app(
                 409,
                 {
                     "reason": "candidate_capacity",
-                    "max_active": 2,
+                    "max_active": MAX_ACTIVE_CANDIDATES,
                     "retry_after_seconds": 2,
                 },
             ) from None
@@ -344,6 +381,7 @@ def create_app(
             state.register(
                 result["session_id"], body.baseline_version, result["version_id"], body.checklist
             )
+            save_checkpoint()
             return {**result, "role": "candidate_main"}
 
     @app.post("/evolution/trials/{session_id}/decision")
@@ -369,7 +407,9 @@ def create_app(
                     deployment_call(sandbox.artifact, record["owner"], session_id, path)
             else:
                 deployment_call(close_child, session_id)
-            return state.decide(actor, session_id, body.retain, body.reason, body.evidence)
+            result = state.decide(actor, session_id, body.retain, body.reason, body.evidence)
+            save_checkpoint()
+            return result
 
     @app.get("/sessions")
     def list_sessions(
@@ -477,7 +517,9 @@ def create_app(
             experiment = owner(authorization)
             if fixtures is None:
                 raise HTTPException(503, "Isolation fixtures are not configured")
-            return deployment_call(fixtures.create, experiment)
+            result = deployment_call(fixtures.create, experiment)
+            save_checkpoint()
+            return result
 
     @app.get("/fixtures/isolation/{fixture_id}")
     def verify_fixture(fixture_id: str, authorization: Annotated[str | None, Header()] = None):
@@ -485,7 +527,10 @@ def create_app(
 
     @app.delete("/fixtures/isolation/{fixture_id}")
     def cancel_fixture(fixture_id: str, authorization: Annotated[str | None, Header()] = None):
-        return deployment_call(fixtures.cancel, owner(authorization), fixture_id)
+        with session_lock:
+            result = deployment_call(fixtures.cancel, owner(authorization), fixture_id)
+            save_checkpoint()
+            return result
 
     def remote(operation: str, payload: dict) -> dict:
         try:
@@ -571,6 +616,7 @@ def create_app(
             result = remote("submit", body.model_dump() | {"experiment_id": experiment})
             if result.get("job_id"):
                 jobs.setdefault(experiment, set()).add(result["job_id"])
+                save_checkpoint()
             return result
 
     @app.get("/jobs/{job_id}")

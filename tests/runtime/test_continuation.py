@@ -163,3 +163,34 @@ def test_cold_start_resume_selects_promoted_main_checkpoint(tmp_path):
     start = resolve_resume_start(tmp_path)
     assert start.command[-1] == "checkpoint.json"
     assert start.previous_run == tmp_path
+
+
+def test_resume_loads_checkpoint_from_host_managed_worktree_link(tmp_path):
+    from runtime.local.continuation import resolve_resume_start
+
+    owner = "candidate-promoted"
+    files = {
+        "entry.py": "pass",
+        "checkpoint.json": '[{"role":"user","content":"existing context"}]',
+        "resume.json": json.dumps(
+            {
+                "command": ["python", "entry.py", "--resume"],
+                "files": ["entry.py", "checkpoint.json"],
+            }
+        ),
+    }
+    versions = CandidateVersions(tmp_path / "versions")
+    version = versions.create(owner, files)
+    worktree = versions.checkout(owner, version["version_id"], owner)
+    directory = tmp_path / "candidates" / owner
+    directory.mkdir(parents=True)
+    (directory / "workspace").symlink_to(worktree, target_is_directory=True)
+    (tmp_path / "startup.json").write_text(json.dumps({"run_id": "original", "mode": "rsi"}))
+    (tmp_path / "evolution.json").write_text(json.dumps({"main_owner": owner}))
+    start = resolve_resume_start(tmp_path)
+    assert start.files["checkpoint.json"] == files["checkpoint.json"]
+    assert start.command == ["python", "entry.py", "--resume"]
+    (directory / "workspace").unlink()
+    (directory / "workspace").symlink_to(tmp_path.parent, target_is_directory=True)
+    with pytest.raises(ValueError, match="worktree"):
+        resolve_resume_start(tmp_path)
