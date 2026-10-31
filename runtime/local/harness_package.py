@@ -6,8 +6,10 @@ from pathlib import Path
 from runtime.local.candidate_runtime import workspace_path
 
 
-def load_harness_package(directory: Path) -> tuple[list[str], dict[str, str]]:
-    manifest = json.loads((directory / "run.json").read_text())
+def load_harness_package(
+    directory: Path, manifest_name: str = "run.json"
+) -> tuple[list[str], dict[str, str]]:
+    manifest = json.loads(workspace_path(directory, manifest_name).read_text())
     command, names = manifest["command"], manifest["files"]
     if not isinstance(command, list) or not command or not all(isinstance(x, str) for x in command):
         raise ValueError("Package command must be a nonempty string array")

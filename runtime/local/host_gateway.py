@@ -70,6 +70,7 @@ def create_app(
     sandbox=None,
     fixtures=None,
     versions=None,
+    initial_inputs: Path | None = None,
 ) -> FastAPI:
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     diagnostics = GatewayDiagnostics(usage_log.with_name("gateway-events.jsonl"))
@@ -236,9 +237,19 @@ def create_app(
                             "version_id"
                         ]
                     deployment_call(versions.grant, parent, scope, version_id)
-                    result = deployment_call(
-                        sandbox.create_version, scope, body.command, token, version_id
-                    )
+                    if initial_inputs is not None and parent in root_owners and not children:
+                        result = deployment_call(
+                            sandbox.create_initial,
+                            scope,
+                            body.command,
+                            token,
+                            version_id,
+                            initial_inputs,
+                        )
+                    else:
+                        result = deployment_call(
+                            sandbox.create_version, scope, body.command, token, version_id
+                        )
                 elif version_id:
                     raise HTTPException(503, "Candidate versions are not configured")
                 else:

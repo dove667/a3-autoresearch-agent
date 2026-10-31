@@ -186,3 +186,55 @@ def test_recovery_survives_partial_root_and_child_trajectories(tmp_path):
     assert "old-child-secret" not in exported
     assert "ENCRYPTED" not in exported
     assert "model" in exported
+
+
+def test_recovery_sanitizes_model_logs_inside_base64_artifacts(tmp_path):
+    import base64
+
+    from runtime.local.recovery import stage_recovery
+
+    previous = tmp_path / "previous"
+    source = previous / "workspace/run"
+    source.mkdir(parents=True)
+    nested = {
+        "api_key": "nested-secret-token",
+        "output": [
+            {"type": "reasoning", "encrypted_content": "PRIVATE_REASONING"},
+            {"type": "function_call", "name": "research", "arguments": "{}"},
+        ],
+        "usage": {"attribution": "PRIVATE_ATTRIBUTION"},
+    }
+    (source / "artifact.json").write_text(
+        json.dumps(
+            {
+                "body": {
+                    "encoding": "base64",
+                    "data": base64.b64encode(json.dumps(nested).encode()).decode(),
+                },
+            }
+        )
+    )
+    history = tmp_path / "history"
+    stage_recovery(previous, history)
+    result = json.loads((history / "bootstrap/artifact.json").read_text())["body"]
+    decoded = base64.b64decode(result["data"]).decode()
+    assert "nested-secret-token" not in decoded
+    assert "PRIVATE_REASONING" not in decoded
+    assert "PRIVATE_ATTRIBUTION" not in decoded
+    assert "function_call" in decoded
+
+
+def test_recovery_preserves_ancestor_binary_evidence_across_private_inputs(tmp_path):
+    from runtime.local.recovery import stage_recovery
+
+    first = tmp_path / "first"
+    old_data = first / "workspace/run/memory.db"
+    old_data.parent.mkdir(parents=True)
+    old_data.write_bytes(b"SQLite format 3\x00\xff\x01")
+    second = tmp_path / "second"
+    stage_recovery(first, second / "private-inputs/history")
+    third = tmp_path / "third"
+    index = stage_recovery(second, third / "private-inputs/history")
+    recovered = third / "private-inputs/history/earlier/bootstrap/memory.db"
+    assert recovered.read_bytes() == old_data.read_bytes()
+    assert any(row["path"] == "earlier/bootstrap/memory.db" for row in index["files"])

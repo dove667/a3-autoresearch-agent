@@ -226,3 +226,37 @@ def test_session_without_explicit_parent_inherits_callers_starting_version(tmp_p
     ).json()
     assert versions.list(backend.launched[0][0])[-1]["parent_version"] == first["version_id"]
     assert second["version_id"] != first["version_id"]
+
+
+def test_only_initial_root_session_receives_private_previous_run_inputs(tmp_path):
+    class PrivateInputSandbox(VersionSandbox):
+        def __init__(self, versions):
+            super().__init__(versions)
+            self.private_receivers = []
+
+        def create_initial(self, owner, command, token, version_id, inputs):
+            self.private_receivers.append(owner)
+            return self.create_version(owner, command, token, version_id)
+
+    versions = CandidateVersions(tmp_path / "versions")
+    backend = PrivateInputSandbox(versions)
+    client = TestClient(
+        create_app(
+            model_name="provider/model",
+            sessions={"token": "parent"},
+            forward_model=lambda **kw: {},
+            remote_call=lambda *args: {},
+            usage_log=tmp_path / "usage.jsonl",
+            versions=versions,
+            sandbox=backend,
+            initial_inputs=tmp_path / "private-inputs",
+        )
+    )
+    parent = {"Authorization": "Bearer token"}
+    initial = client.post(
+        "/sessions", headers=parent, json={"command": ["true"], "files": {}}
+    ).json()
+    child = {"Authorization": "Bearer " + backend.launched[0][1]}
+    client.post("/sessions", headers=child, json={"command": ["true"], "files": {}})
+    client.post("/sessions", headers=parent, json={"command": ["true"], "files": {}})
+    assert backend.private_receivers == [initial["session_id"]]

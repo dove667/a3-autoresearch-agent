@@ -77,11 +77,30 @@ class CandidateRuntime:
             self.docker("inspect", "--format", "{{json .State}}", record["container_id"])
         )
 
-    def create_version(self, owner: str, command: list[str], token: str, version_id: str) -> dict:
+    def create_initial(
+        self, owner: str, command: list[str], token: str, version_id: str, inputs: Path
+    ) -> dict:
+        return self.create_version(owner, command, token, version_id, inputs=inputs)
+
+    def create_version(
+        self,
+        owner: str,
+        command: list[str],
+        token: str,
+        version_id: str,
+        *,
+        inputs: Path | None = None,
+    ) -> dict:
         workspace = self.versions.checkout(owner, version_id, owner)
         try:
             return self.create(
-                owner, command, {}, token, workspace=workspace, version_id=version_id
+                owner,
+                command,
+                {},
+                token,
+                workspace=workspace,
+                version_id=version_id,
+                inputs=inputs,
             )
         except Exception:
             self.versions.release(owner)
@@ -106,6 +125,7 @@ class CandidateRuntime:
         *,
         workspace: Path | None = None,
         version_id: str | None = None,
+        inputs: Path | None = None,
     ) -> dict:
         with self.lock:
             self.check_capacity()
@@ -150,7 +170,7 @@ class CandidateRuntime:
                 "--mount",
                 f"type=bind,src={workspace},dst=/workspace",
                 "--mount",
-                f"type=bind,src={self.inputs},dst=/run/input,readonly",
+                f"type=bind,src={inputs or self.inputs},dst=/run/input,readonly",
                 "--mount",
                 f"type=bind,src={self.public_a3},dst=/opt/a3,readonly",
                 "--workdir=/workspace",

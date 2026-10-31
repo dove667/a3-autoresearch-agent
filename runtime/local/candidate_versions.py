@@ -13,6 +13,37 @@ from runtime.local.candidate_runtime import write_candidate_files
 
 
 class CandidateVersions:
+    @staticmethod
+    def read_snapshot(root: Path, version_id: str) -> dict[str, str]:
+        """Read a saved snapshot without writing to the previous run's repository."""
+        metadata = root / "versions.json"
+        records = json.loads(metadata.read_text()) if metadata.is_file() else {}
+        record = records.get(version_id)
+        if record is None or not re.fullmatch(r"[a-f0-9]{40}", record["commit"]):
+            raise ValueError("No valid retained version")
+
+        def read(*args):
+            return subprocess.check_output(
+                ["git", "--git-dir", str(root / "repository.git"), *args], timeout=30
+            )
+
+        files = {}
+        tree = read("ls-tree", "-rz", record["commit"], "--", "source/")
+        for entry in filter(None, tree.split(b"\0")):
+            metadata, name = entry.split(b"\t", 1)
+            mode, kind, object_id = metadata.decode().split()
+            if mode != "100644" or kind != "blob":
+                raise ValueError("Invalid retained file type")
+            files[name.decode().removeprefix("source/")] = read(
+                "cat-file", "blob", object_id
+            ).decode("utf-8")
+        digest = hashlib.sha256(
+            json.dumps(files, sort_keys=True, ensure_ascii=False).encode()
+        ).hexdigest()
+        if digest != record["source_sha256"]:
+            raise ValueError("Retained source checksum mismatch")
+        return files
+
     def __init__(self, root: Path):
         self.root = root
         self.repository = root / "repository.git"

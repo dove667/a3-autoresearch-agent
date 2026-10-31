@@ -1,4 +1,4 @@
-"""Launch immutable upstream mini against an experiment-only Docker workspace."""
+"""Launch a cold start, resume a run, or continue a retained Harness."""
 
 import argparse
 import hashlib
@@ -25,7 +25,11 @@ from minisweagent.models import get_model, get_model_class
 
 from runtime.local.candidate_runtime import CandidateRuntime
 from runtime.local.candidate_versions import CandidateVersions
-from runtime.local.harness_package import load_harness_package
+from runtime.local.continuation import (
+    publish_run_result,
+    resolve_harness_start,
+    resolve_resume_start,
+)
 from runtime.local.host_gateway import create_app
 from runtime.local.isolation_fixture import IsolationFixtures
 from runtime.local.recovery import stage_recovery
@@ -152,7 +156,9 @@ def validate_remote_health(response: dict) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--check", action="store_true")
+    parser.add_argument(
+        "--check", action="store_true", help="Validate deployment without starting an Agent"
+    )
     parser.add_argument(
         "--verify-deployment", action="store_true", help="Run a bounded agent readiness check"
     )
@@ -160,12 +166,22 @@ def main() -> None:
         "--resume-from", type=Path, help="Continue a saved run with its frozen goals"
     )
     parser.add_argument(
-        "--run-harness", type=Path, help="Run a manifest package with a fresh candidate identity"
+        "--run-harness",
+        nargs="?",
+        const="latest",
+        help="Continue the latest retained result, or specify a run/package directory",
     )
     args = parser.parse_args()
     if args.run_harness and (args.resume_from or args.verify_deployment):
         parser.error("--run-harness cannot be combined with --resume-from or --verify-deployment")
-    package = load_harness_package(args.run_harness.resolve()) if args.run_harness else None
+    start = (
+        resolve_harness_start(args.run_harness, ROOT / "artifacts/rsi/latest-run.txt")
+        if args.run_harness
+        else None
+    )
+    if args.resume_from:
+        start = resolve_resume_start(args.resume_from.resolve())
+    package = (start.command, start.files) if start else None
     load_dotenv(os.environ.get("A3_RSI_ENV_FILE", ROOT / ".env"), override=True)
     required = (
         "MODEL_NAME",
@@ -213,7 +229,23 @@ def main() -> None:
     else:
         prepare_workspace(workspace, a3, bootstrap_source(parent))
     freeze_inputs(inputs, parent)
-    if parent:
+    private_inputs = None
+    if start and start.previous_run:
+        private_inputs = run / "private-inputs"
+        private_inputs.mkdir()
+        stage_recovery(start.previous_run, private_inputs / "history")
+        (private_inputs / "previous-run.json").write_text(
+            json.dumps(
+                {
+                    "run_id": start.previous_run.name,
+                    "source_version": start.source_version,
+                    "history_index": "/run/input/history/index.json",
+                    "goals": "Frozen goal and acceptance are authoritative; historical evidence does not replace them",
+                },
+                indent=2,
+            )
+        )
+    if parent and start is None:
         stage_recovery(parent, run / "recovery")
         (inputs / "parent-run.json").write_text(
             json.dumps(
@@ -253,6 +285,7 @@ def main() -> None:
         sandbox=sandbox,
         fixtures=fixtures,
         versions=versions,
+        initial_inputs=private_inputs,
     )
     server = uvicorn.Server(
         uvicorn.Config(app, host="0.0.0.0", port=port, log_level="warning", access_log=False)
@@ -311,7 +344,11 @@ def main() -> None:
                 },
                 "remote_limits": {"cpus": 2, "memory": "8g", "max_jobs": 2, "timeout_seconds": 900},
                 "execution_guide": "/run/input/execution.md",
-                "parent_run": parent.name if parent else None,
+                "parent_run": start.previous_run.name
+                if start and start.previous_run
+                else parent.name
+                if parent
+                else None,
             },
             indent=2,
         )
@@ -334,6 +371,10 @@ def main() -> None:
     try:
         if package:
             command, files = package
+            if private_inputs:
+                for path in inputs.iterdir():
+                    if path.is_file():
+                        shutil.copy2(path, private_inputs / path.name)
             headers = {"Authorization": "Bearer " + token}
             with httpx.Client(
                 base_url=f"http://127.0.0.1:{port}", headers=headers, timeout=90
@@ -346,7 +387,9 @@ def main() -> None:
                         {
                             "run_id": run_id,
                             "mode": kind,
-                            "package": str(args.run_harness),
+                            "package": str(args.run_harness or args.resume_from),
+                            "parent_run": start.previous_run.name if start.previous_run else None,
+                            "source_version": start.source_version,
                             "session_id": session["session_id"],
                             "version_id": session["version_id"],
                             "inputs": {
@@ -383,6 +426,14 @@ def main() -> None:
                         print(f"Retained session exited: {status.get('exit_code')}", flush=True)
                         if status.get("exit_code") not in (0, None):
                             raise RuntimeError("Retained Harness exited unsuccessfully")
+                        selected = publish_run_result(
+                            run,
+                            (run / "candidates" / session["session_id"] / "workspace").resolve(),
+                            versions,
+                            session["session_id"],
+                            session["version_id"],
+                        )
+                        print(f"Next-run retained result: {selected['status']}", flush=True)
                         break
                     time.sleep(2)
             return
@@ -463,6 +514,7 @@ def main() -> None:
             if key.startswith("A3_") and key not in ("A3_GATEWAY_TOKEN", "A3_GATEWAY_URL")
         }
         agent.run(config["run"]["task"], **template_vars)
+        publish_run_result(run, workspace / "run", versions, run_id, None)
     finally:
         app.state.begin_shutdown()
         cleanup_errors = []

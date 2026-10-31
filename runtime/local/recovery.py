@@ -1,5 +1,6 @@
 """Export a previous run's research artifacts for a fresh execution identity."""
 
+import base64
 import hashlib
 import json
 from pathlib import Path
@@ -13,6 +14,23 @@ AUTH_KEYS = {
     "refresh_token",
 }
 PRIVATE_NAMES = {".git", ".venv", ".ssh", ".config", "__pycache__", "auth.json"}
+
+
+def decoded_text_artifact(value: dict):
+    if value.get("encoding") != "base64" or not isinstance(value.get("data"), str):
+        return None
+    try:
+        text = base64.b64decode(value["data"], validate=True).decode("utf-8")
+    except (ValueError, UnicodeDecodeError):
+        return None
+    try:
+        return "json", json.loads(text)
+    except json.JSONDecodeError:
+        try:
+            rows = [json.loads(line) for line in text.splitlines() if line.strip()]
+            return "jsonl", rows
+        except json.JSONDecodeError:
+            return "text", text
 
 
 def stage_recovery(parent: Path, destination: Path) -> dict:
@@ -30,6 +48,9 @@ def stage_recovery(parent: Path, destination: Path) -> dict:
 
     def collect_auth(value):
         if isinstance(value, dict):
+            artifact = decoded_text_artifact(value)
+            if artifact:
+                collect_auth(artifact[1])
             for key, item in value.items():
                 if key.lower() in AUTH_KEYS and isinstance(item, str) and len(item) >= 8:
                     secrets.add(item)
@@ -43,7 +64,12 @@ def stage_recovery(parent: Path, destination: Path) -> dict:
 
     sources = [
         (parent / "workspace/run", Path("bootstrap")),
-        (parent / "recovery", Path("earlier")),
+        (
+            parent / "private-inputs/history"
+            if (parent / "private-inputs/history").is_dir()
+            else parent / "recovery",
+            Path("earlier"),
+        ),
     ]
     for candidate in sorted((parent / "candidates").glob("*")):
         if not candidate.is_symlink():
@@ -94,10 +120,21 @@ def stage_recovery(parent: Path, destination: Path) -> dict:
 
     def clean(value):
         if isinstance(value, dict):
+            artifact = decoded_text_artifact(value)
+            if artifact:
+                kind, payload = artifact
+                cleaned = clean(payload)
+                if kind == "json":
+                    text = json.dumps(cleaned, ensure_ascii=False)
+                elif kind == "jsonl":
+                    text = "\n".join(json.dumps(row, ensure_ascii=False) for row in cleaned) + "\n"
+                else:
+                    text = cleaned
+                value = {**value, "data": base64.b64encode(text.encode()).decode()}
             return {
                 key: "[REDACTED]" if key.lower() in AUTH_KEYS else clean(item)
                 for key, item in value.items()
-                if key != "encrypted_content"
+                if key not in {"encrypted_content", "attribution"}
             }
         if isinstance(value, list):
             return [
