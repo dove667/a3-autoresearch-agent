@@ -35,7 +35,7 @@ MSWEA_CONFIGURED=true uv run mini --model "$MODEL_NAME" \
 
 `MSWEA_CONFIGURED=true` 跳过首次配置向导，适用于已自行完成认证的环境。`step_limit=0` 表示不设总调用次数上限；成本限制使用 mini 的配置或 `--cost-limit` 参数设置。若所选服务缺少价格映射，可配置 `model.cost_tracking=ignore_errors` ；这时成本数据可能不可用。
 
-当前命令启动第三方 mini 的交互入口，使用其 Bash 工具和逐步确认。无人交互运行使用 [RSI 启动入口](rsi-cold-start.md)，该入口使用独立容器工作区及宿主转发，关闭总步数、总费用与总时长限制，并使用无交互的 DefaultAgent。A3 专用工具、执行后端与自进化入口的实现状态见[开发路线](roadmap.md)。
+当前命令启动第三方 mini 的交互入口，使用其 Bash 工具和逐步确认。无人交互运行使用 [RSI 使用教程](tutorial.md)，该入口使用独立容器工作区及Host 转发，关闭总步数、总费用与总时长限制，并使用无交互的 DefaultAgent。A3 专用工具、执行后端与自进化入口的实现状态见[开发路线](roadmap.md)。
 
 ## 准备仿真环境
 

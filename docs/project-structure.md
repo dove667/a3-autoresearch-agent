@@ -62,7 +62,9 @@ artifacts/rsi/run-*/
 ├── candidates/             各后继的源码、轨迹和实验产物
 ├── versions/               Host Git 对象、候选元数据与独立 worktree
 ├── fixtures/               受控隔离检查记录
-├── recovery/               如有接续，保存传入的历史材料
+├── recovery/               mini 恢复时供构建者读取的历史
+├── private-inputs/         主 Harness 独享的只读输入与跨轮历史
+├── retained.json           Host 保存的明确保留结果及版本标识
 ├── trajectory.json         初始 mini 轨迹
 ├── model-usage.jsonl        Gateway 模型调用记录
 ├── session-events.jsonl     Host 记录的后继关系与生命周期
@@ -86,3 +88,5 @@ artifacts/rsi/run-*/
 移动历史档案前先检查活动进程与路径引用，记录旧路径、目标路径和内容校验结果；档案内原有绝对路径保留为当时的历史记录。更改便捷指针和当前使用说明。共享远程资源锁需要单独执行端迁移，不随本地目录整理移动。
 
 清理时先确认保留的候选与原始证据已经独立保存，再决定过期检查和重复工作区的保留周期。源码归档与删除运行证据分开处理。
+
+启动流程与参数见[使用教程](tutorial.md)，执行单元和调用关系见[系统架构](architecture.md)。`continuation.py` 负责跨轮结果的机械保存与读取；`retained.json` 是运行结果，Agent 的记忆实现仍归属其生成的 Harness。

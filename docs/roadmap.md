@@ -39,3 +39,7 @@ Host 也提供比较协议差异检查和脱敏请求诊断。记忆模块新增
 本项目源码、配置、测试和文档分别放在 `src/a3_research_agent/`、`configs/`、`tests/` 和 `docs/`。配置与测试目录随实现按需新增。仿真物理、任务计分和资源文件在独立的 `a3_dual_arm_sim` 仓库中维护。
 
 第三方源码及原始文档放在 `third_party/mini-swe-agent/`。项目专属行为优先通过组合与子类实现；需要修改 mini 核心时，在 submodule 中维护独立提交，并确保团队可以取得该提交，具体约定见[第三方依赖说明](../third_party/README.md)。
+
+## 自动接续与文档入口
+
+`--run-harness` 默认读取最近运行保留的快照、自动提供授权历史并采用当前目标；`--resume-from` 保持旧冻结目标并接续保存的代码与进展。保留声明由 Agent 输出，Host 负责机械保存；无需人工组装接续包。详细用法在 [tutorial.md](tutorial.md)，系统执行架构在 [architecture.md](architecture.md)，目录职责仍在 [project-structure.md](project-structure.md)。

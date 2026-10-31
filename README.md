@@ -1,45 +1,76 @@
 # A3 Research Agent
 
-面向 A3 MuJoCo 项目的 AutoResearch Agent。
+面向 A3 MuJoCo 的 auto research Agent。从通用 mini-SWE-agent 出发，让 Agent 自己形成调用 A3、运行实验、比较 Policy 和改进自身 Harness 的工作方式。
 
-Agent 初始化自 mini-SWE-agent，作为第三方依赖接入本项目。目标是通过人类预设的测试反馈和评估指标，让 Agent 自主完善自身 Harness，包括工具、实验工作流和持久记忆，并逐步联合优化机械臂 Policy 与实验效率。
+**Policy** 决定机械臂怎样运动；**Harness** 组织模型调用、工具执行、实验记录、记忆和后继运行。人类提前准备目标、验收与受控执行环境，SWE Agent 自己编写并迭代专项实现。阶段一验证 Policy 优化、Harness 轨迹反思、实验隔离与持久记忆；第二阶段面向持续的 Policy 与 Harness 联合优化。
 
-模型接入复用 mini-SWE-agent 的多提供商支持。执行架构默认采用本地 Agent runtime，通过 SSH 在远程 GPU 服务器上运行仿真、渲染和实验；同时规划本地执行方式，供具备兼容 GPU 和渲染环境的机器使用。A3 MuJoCo 项目在独立的 `a3_dual_arm_sim` 仓库中维护。
+模型接入复用 mini-SWE-agent 的多提供商支持。当前执行方案是在本地运行 Agent，通过 SSH 把仿真、渲染和计算任务交给远程 Docker；A3 仿真项目在独立的 `a3_dual_arm_sim` 仓库中维护。
 
-## 安装与启动
+## 安装与准备
 
-需要 Python 3.11+ 和 uv。在项目根目录执行：
+需要 Python 3.11+、uv、可用的模型服务、Docker，以及配置好的 A3 执行端。在仓库根目录安装：
 
 ```bash
 git submodule update --init --recursive
 uv sync --python 3.11
-uv run mini
+cp .env.example .env
 ```
 
-首次运行按向导配置模型服务。已自行完成认证时，可以显式指定模型和适配器启动，将下面的占位符替换为所选服务的配置：
+按[环境配置](docs/setup.md)和[使用教程](docs/tutorial.md)填写 `.env`、准备本地与远程镜像。模型认证由 Host 保管；个人部署参数与运行材料不进入 Git。
 
 ```bash
-export MODEL_NAME="<provider/model>"
-export MODEL_CLASS="<model-adapter>"
-MSWEA_CONFIGURED=true uv run mini --model "$MODEL_NAME" \
-  --model-class "$MODEL_CLASS" -c mini.yaml -c agent.step_limit=0
+bash scripts/build-bootstrap-image.sh
+bash scripts/start-rsi.sh --check
 ```
 
-`MODEL_CLASS` 可选 `litellm`、`litellm_response` 等 mini 已有适配器，需与所选服务兼容。启动后输入任务，让 mini 根据项目目标、规划和验收反馈逐步构建自身 Harness。
+## 三种运行方式
 
-进行容器化、无人交互的 RSI 冷启动时，先按[部署说明](docs/rsi-cold-start.md)准备容器与本地 `.env`，再执行：
+### 初始运行：从 SWE Agent 开始
 
 ```bash
 bash scripts/start-rsi.sh
 ```
 
-目标、验收、Git 工作区和轨迹保存见 [RSI 冷启动说明](docs/rsi-cold-start.md)。
+启动通用 mini-SWE-agent，在独立 Docker 工作区中依据 `evals/goal.md` 与 `evals/acceptance.md` 构建并演化 auto research Harness。运行无需逐轮人工确认；Agent 可以自行创建候选、测试和继续迭代。
 
-模型认证、适配器与成本配置、执行环境准备见[环境配置指南](docs/setup.md)。
+把起点记作 $H_0$，第一轮最终保留的 Harness 记作 $H_1$：
+
+$$
+H_0 \xrightarrow{\text{cold start}} H_1.
+$$
+
+### 中断恢复：继续原目标
+
+```bash
+bash scripts/start-rsi.sh --resume-from "$(cat artifacts/rsi/latest-run.txt)"
+```
+
+用于网络中断、进程退出等情况。恢复保留原运行的冻结目标、候选代码和历史证据，由 Agent 找回进展继续推进。已进入 Harness 运行模式的任务会加载其保存的 Harness 版本；初始构建过程则通过 mini 接续。
+
+新运行会分配新的 Docker 会话与认证，旧进程内存和模型上下文不会原样恢复。修改 `evals/` 后希望开展新一轮任务，应使用下面的版本迭代入口。
+
+### 版本迭代：从上一轮保留结果出发
+
+```bash
+bash scripts/start-rsi.sh --run-harness
+```
+
+默认读取最近运行明确保留的结果，直接加载其中的代码，自动提供历史材料，并冻结当前 `evals/` 作为新目标。上一轮的输出成为下一轮的起点：
+
+$$
+H_1 \xrightarrow{\text{next run}} H_2 \xrightarrow{\text{next run}} H_3.
+$$
+
+不需要人工整理接续包。需要指定某一轮时，使用 `--run-harness artifacts/rsi/<run-id>`。Agent 在结束前声明保留哪些文件和启动命令；Host 保存快照，后续按这份结果加载，具体协议见[教程](docs/tutorial.md#让本轮结果能够直接用于下一轮)。
+
+这条命令用于人在运行之间主动发起下一轮。单次无人交互运行中，Agent 也可以通过 `/sessions` 创建并执行后继 Harness；两种入口都使用同一套候选版本、Docker 执行、权限与资源管理。Agent 可以自行推进多代，用户无需为每一代重新执行命令。
 
 ## 项目文档
 
-- [目录职责与产物管理](docs/project-structure.md)
+- [使用教程与完整启动参数](docs/tutorial.md)：准备、初始运行、中断恢复、版本迭代、轨迹查看和故障定位。
+- [系统架构](docs/architecture.md)：两阶段 RSI、运行单元、数据流、版本与身份、执行边界。
+- [环境配置](docs/setup.md)：依赖、模型适配器、认证与 A3 执行环境。
+- [目录职责](docs/project-structure.md)：源码、候选、报告和运行产物分别存在哪里。
 - [开发路线与实现状态](docs/roadmap.md)
 - [SWE Agent 生成的 Harness 快照](harnesses/README.md)
 - [报告工程](reports/README.md)
