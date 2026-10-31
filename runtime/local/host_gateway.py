@@ -8,10 +8,15 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
-from runtime.local.candidate_runtime import CandidateCapacityError
+from runtime.local.candidate_runtime import (
+    DEFAULT_ARTIFACT_PAGE_BYTES,
+    MAX_ARTIFACT_BYTES,
+    ArtifactTooLargeError,
+    CandidateCapacityError,
+)
 from runtime.local.comparison_checks import check_comparison
 from runtime.local.gateway_diagnostics import CURRENT_REQUEST, GatewayDiagnostics
 
@@ -190,6 +195,16 @@ def create_app(
             return operation(*args)
         except PermissionError:
             raise HTTPException(403, "Resource is not accessible") from None
+        except ArtifactTooLargeError as error:
+            raise HTTPException(
+                422,
+                {
+                    "reason": "artifact_too_large",
+                    "size_bytes": error.size_bytes,
+                    "max_bytes": MAX_ARTIFACT_BYTES,
+                    "retry_query": {"offset": 0, "limit": DEFAULT_ARTIFACT_PAGE_BYTES},
+                },
+            ) from None
         except ValueError:
             raise HTTPException(422, "Invalid workspace file or input size") from None
         except CandidateCapacityError as error:
@@ -269,21 +284,31 @@ def create_app(
             return result
 
     @app.get("/sessions")
-    def list_sessions(authorization: Annotated[str | None, Header()] = None):
+    def list_sessions(
+        authorization: Annotated[str | None, Header()] = None,
+        include_status: bool = False,
+    ):
         experiment = owner(authorization)
         with session_lock:
-            return {
-                "sessions": [
-                    {
-                        "session_id": candidate,
-                        "parent": record["parent"],
-                        "closed": record["closed"],
-                        "version_id": record["version_id"],
-                    }
-                    for candidate, record in children.items()
-                    if manages(experiment, record)
-                ]
-            }
+            result = []
+            for candidate, record in children.items():
+                if not manages(experiment, record):
+                    continue
+                item = {
+                    "session_id": candidate,
+                    "parent": record["parent"],
+                    "closed": record["closed"],
+                    "version_id": record["version_id"],
+                }
+                if include_status:
+                    state = (
+                        deployment_call(sandbox.status, record["owner"], candidate)
+                        if not record["closed"]
+                        else {"status": "closed"}
+                    )
+                    item.update(status=state.get("status"), exit_code=state.get("exit_code"))
+                result.append(item)
+            return {"sessions": result}
 
     @app.post("/versions")
     def save_version(body: VersionRequest, authorization: Annotated[str | None, Header()] = None):
@@ -332,9 +357,17 @@ def create_app(
 
     @app.get("/sessions/{session_id}/artifacts")
     def session_artifact(
-        session_id: str, path: str, authorization: Annotated[str | None, Header()] = None
+        session_id: str,
+        path: str,
+        authorization: Annotated[str | None, Header()] = None,
+        offset: Annotated[int, Query(ge=0)] = 0,
+        limit: Annotated[int | None, Query(ge=1, le=MAX_ARTIFACT_BYTES)] = None,
     ):
         record = child(authorization, session_id)
+        if limit is not None or offset:
+            return deployment_call(
+                sandbox.artifact, record["owner"], session_id, path, offset, limit
+            )
         return deployment_call(sandbox.artifact, record["owner"], session_id, path)
 
     @app.get("/sessions/{session_id}/versions")

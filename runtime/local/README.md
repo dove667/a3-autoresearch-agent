@@ -4,6 +4,21 @@
 通过 HTTP 请求这些固定能力。工具名称、研究逻辑、反思方法和版本选择由 Agent 设计。
 目标和验收以本次只读的 `goal.md`、`acceptance.md` 为准。
 
+## 执行主体与证据归属
+
+初始构建者是启动器在隔离构建工作区运行的 mini-SWE-agent。它通过 Bash 编写候选入口，
+再用 `POST /sessions` 启动独立进程。该入口就是 Agent 生成的候选 Harness；其中的模型经
+自己声明的工具调用 A3、读取结果和选择下一步时，产生的是生成后 Agent 的执行证据。
+按实际入口、模型消息、工具调用、权限和结果判断证据归属；候选在报告中自称 builder
+不会改变这些调用的来源。验收不要求候选再嵌套生成另一层模型进程。
+
+远程 `/jobs` 是执行仿真、相机和评测代码的受控作业。模型调用位于候选进程，通过 Host
+转发；远程作业按部署设计没有模型凭据或网络。候选实际调用受限工具并读取作业结果，
+就是这条执行链，不需要在远程作业中再次运行模型。
+
+候选由模型驱动只说明执行主体成立。A/B/C/D 仍分别需要冻结标准要求的真实能力、
+版本、比较与选择、权限边界和跨会话记忆复用证据；创建会话、命名工具或保存报告均不能单独验收。
+
 ## 请求与权限
 
 gateway 地址和本身份的令牌由 `A3_GATEWAY_URL`、`A3_GATEWAY_TOKEN` 环境变量提供。
@@ -27,7 +42,14 @@ Host创建同级容器，工作目录为 `/workspace`，上传文件写入该目
 
 `GET /sessions/{session_id}` 返回状态、退出码和近期输出，Docker 完成状态为 `exited`。
 `GET /sessions/{session_id}/artifacts?path=relative_path` 返回最多 32 MiB 文件的 Base64 内容。
+大轨迹使用同一接口的 `offset` 和 `limit` 按字节分段读取，例如
+`?path=trajectory.jsonl&offset=0&limit=1048576`。返回 `data`、`offset`、`next_offset`、
+`size_bytes` 与 `eof`；按 `next_offset` 继续读取，先拼接解码后的字节，再解析 UTF-8 或 JSONL。
+每段最多 32 MiB；只给非零 `offset` 时默认读取 1 MiB。未分段请求超大文件会返回
+HTTP 422、`reason: artifact_too_large` 和可重试的 `retry_query`，不改变身份和路径授权。
+`size_bytes` 与 `eof` 反映本次读取时观察到的文件末尾；运行中的轨迹可继续追加，之后可从已保存偏移量继续查询。
 `GET /sessions` 列出调用方可管理的后代及父关系；上级身份可以查询后代状态、取回产物和管理生命周期。
+`GET /sessions?include_status=true` 在同一会话锁下取得列表、状态与退出码，Host 使用此快照判断活动后继，避免并发创建后继时漏记。
 同级候选与无关身份不能访问彼此的会话；后代不能管理祖先。
 进程正常退出会保留后继候选的执行与身份，结束的进程不再占活动容器名额。
 
@@ -69,8 +91,31 @@ Host创建同级容器，工作目录为 `/workspace`，上传文件写入该目
 每个身份同时最多一个 fixture，可清理后重新创建。启动器退出时也会清理本轮 fixture。
 接口成功或Host预检通过不能代替研究 Agent 自己执行 A、B、C 的验收证据。
 
-启动器退出时先停止接受新候选、模型请求、作业和 fixture，再逐项清理本轮资源。
-某项失败仍会继续处理其他资源，并保存 `cleanup-errors.json` 供复核。
+初始 SWE 只启动一次。它退出后，Host 保持已经启动的后继、Gateway 和资源服务可用，等待所有 worker 停止。Host 不定时重建 Agent，不因未完成或错误重新派发任务，不提供人工审查反馈。后续进程与交接由 SWE 自己安排。
+
+全部 worker 停止或启动器被用户中断后，Host 清理本轮资源。清理失败保存 `cleanup-errors.json` 供复核。外部观察者在运行中只观察和按授权开始/停止循环；实际验收复核等整个系统停止后进行。
+
+### 整轮结束与未完成交接
+
+当前构建者使用 `/workspace/run/run-outcome.json` 声明终态。验收细节与证据格式仍由 Agent 组织；这份清单在所有 worker 停止后用于记录结果：
+
+```json
+{
+  "status": "complete",
+  "acceptance": {
+    "A": {"status": "passed", "evidence": ["evidence/policy-report.json"]},
+    "B": {"status": "passed", "evidence": ["evidence/harness-report.md"]},
+    "C": {"status": "passed", "evidence": ["evidence/isolation-report.json"]},
+    "D": {"status": "passed", "evidence": ["evidence/memory-report.md"]}
+  }
+}
+```
+
+验收项取自冻结 `acceptance.md` 的字母标题，所有必需项均为 `passed`、引用文件在本工作区实际存在且非空，并有有效 `continuation.json`，才能声明完成。路径相对 `/workspace/run/`。先将选择的后继证据与入口按授权交接到该目录；Host 不替 Agent 选择候选。Host 检查协议和文件可达性，实际能力仍按冻结标准复核。
+
+未完成时可写 `{"status":"continue","reason":"尚未完成的能力与已有进展"}`，或仅保存进展后提交本回合。提交前须自行安排后继；Host 只等待现有后继，不开启新回合。全部 worker 已停止但未完成时，记录 incomplete。
+
+确需人工处理的外部阻塞使用 `status: blocked` 与 `external_blocker`，字段为 `kind`、`requires_human: true`、`reason`、`required_action`、`evidence`。允许的类别是 `authentication`、`permission`、`unavailable_service` 和 `missing_resource`；同样需要可达证据。候选名额、作业等待、无收益候选和待完成验收都应继续处理。
 
 ## 候选源码版本
 

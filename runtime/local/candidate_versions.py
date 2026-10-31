@@ -9,7 +9,11 @@ import threading
 import uuid
 from pathlib import Path, PurePosixPath
 
-from runtime.local.candidate_runtime import write_candidate_files
+from runtime.local.candidate_runtime import (
+    MAX_INPUT_BYTES,
+    MAX_INPUT_FILES,
+    write_candidate_files,
+)
 
 
 class CandidateVersions:
@@ -132,9 +136,22 @@ class CandidateVersions:
                 record["readers"].append(recipient)
                 self.save()
 
-    def create(self, owner: str, files: dict[str, str], parent: str | None = None) -> dict:
-        # Version only explicitly submitted source; never scan logs or credentials.
+    @staticmethod
+    def validate_files(files: dict[str, str]) -> None:
+        if (
+            len(files) > MAX_INPUT_FILES
+            or sum(len(value.encode()) for value in files.values()) > MAX_INPUT_BYTES
+        ):
+            raise ValueError("Candidate input exceeds 128 files or 20 MiB")
         for name in files:
+            relative = PurePosixPath(name)
+            if (
+                not name
+                or relative.is_absolute()
+                or ".." in relative.parts
+                or relative == PurePosixPath(".")
+            ):
+                raise ValueError("Expected a relative source file")
             if name != PurePosixPath(name).as_posix():
                 raise ValueError("Candidate paths must use canonical relative names")
             if any(
@@ -142,6 +159,10 @@ class CandidateVersions:
                 for part in Path(name).parts
             ):
                 raise ValueError("Git control files and environment files cannot be versioned")
+
+    def create(self, owner: str, files: dict[str, str], parent: str | None = None) -> dict:
+        # Version only explicitly submitted source; never scan logs or credentials.
+        self.validate_files(files)
         with self.lock:
             previous = self.owned(owner, parent)["commit"] if parent else None
             version_id = "version-" + uuid.uuid4().hex

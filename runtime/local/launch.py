@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import secrets
 import shlex
 import shutil
@@ -33,6 +34,7 @@ from runtime.local.continuation import (
 from runtime.local.host_gateway import create_app
 from runtime.local.isolation_fixture import IsolationFixtures
 from runtime.local.recovery import stage_recovery
+from runtime.local.run_supervisor import RunSupervisor
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -184,6 +186,12 @@ def validate_remote_health(response: dict) -> None:
         raise RuntimeError("Remote controller health or protocol check failed")
 
 
+def supervised_sessions(client: httpx.Client) -> list[dict]:
+    response = client.get("/sessions", params={"include_status": "true"})
+    response.raise_for_status()
+    return response.json()["sessions"]
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -249,10 +257,7 @@ def main() -> None:
     inputs.mkdir(parents=True, mode=0o700)
     workspace.mkdir()
     parent = args.resume_from.resolve() if args.resume_from else None
-    if package:
-        (workspace / "run").mkdir()
-    else:
-        prepare_workspace(workspace, a3, bootstrap_source(parent))
+    prepare_workspace(workspace, a3, bootstrap_source(parent))
     freeze_inputs(inputs, parent)
     private_inputs = None
     if start and start.previous_run:
@@ -401,6 +406,7 @@ def main() -> None:
                     if path.is_file():
                         shutil.copy2(path, private_inputs / path.name)
             headers = {"Authorization": "Bearer " + token}
+
             with httpx.Client(
                 base_url=f"http://127.0.0.1:{port}", headers=headers, timeout=90
             ) as client:
@@ -427,41 +433,6 @@ def main() -> None:
                 )
                 (run.parent / "latest-run.txt").write_text(str(run) + "\n")
                 print(f"Run directory: {run}", flush=True)
-                while True:
-                    response = client.get("/sessions/" + session["session_id"])
-                    response.raise_for_status()
-                    status = response.json()
-                    (run / "retained-status.json").write_text(json.dumps(status))
-                    children = client.get("/sessions")
-                    children.raise_for_status()
-                    active = []
-                    for child in children.json()["sessions"]:
-                        if child["closed"]:
-                            continue
-                        current = client.get("/sessions/" + child["session_id"])
-                        current.raise_for_status()
-                        if current.json()["status"] in {
-                            "running",
-                            "created",
-                            "restarting",
-                            "paused",
-                        }:
-                            active.append(child["session_id"])
-                    if not active:
-                        print(f"Retained session exited: {status.get('exit_code')}", flush=True)
-                        if status.get("exit_code") not in (0, None):
-                            raise RuntimeError("Retained Harness exited unsuccessfully")
-                        selected = publish_run_result(
-                            run,
-                            (run / "candidates" / session["session_id"] / "workspace").resolve(),
-                            versions,
-                            session["session_id"],
-                            session["version_id"],
-                        )
-                        print(f"Next-run retained result: {selected['status']}", flush=True)
-                        break
-                    time.sleep(2)
-            return
         env = DockerEnvironment(
             image=image,
             cwd="/workspace/a3",
@@ -477,10 +448,10 @@ def main() -> None:
                 "--mount",
                 f"type=bind,src={workspace},dst=/workspace",
                 "--mount",
-                f"type=bind,src={inputs},dst=/run/input,readonly",
+                f"type=bind,src={private_inputs or inputs},dst=/run/input,readonly",
                 *(
                     ["--mount", f"type=bind,src={run / 'recovery'},dst=/run/recovery,readonly"]
-                    if parent
+                    if (run / "recovery").is_dir()
                     else []
                 ),
             ],
@@ -501,36 +472,28 @@ def main() -> None:
                 "A3_DEPLOYMENT_FILE": "/run/input/deployment.json",
             },
         )
-        model = get_model(
-            config={
-                "model_name": os.environ["MODEL_NAME"],
-                "model_class": os.environ["MODEL_CLASS"],
-                "cost_tracking": os.environ.get("MODEL_COST_TRACKING", "default"),
-                **config.get("model", {}),
-            }
-        )
-        agent_args = config["agent"].copy()
-        agent_args["output_path"] = run / "trajectory.json"
-        agent = get_agent(model, env, agent_args)
-        (run / "startup.json").write_text(
-            json.dumps(
-                {
-                    "run_id": run_id,
-                    "inputs": {
-                        name: hashlib.sha256((inputs / name).read_bytes()).hexdigest()
-                        for name in ("goal.md", "acceptance.md", "bootstrap.yaml")
+        if not package:
+            (run / "startup.json").write_text(
+                json.dumps(
+                    {
+                        "run_id": run_id,
+                        "inputs": {
+                            name: hashlib.sha256((inputs / name).read_bytes()).hexdigest()
+                            for name in ("goal.md", "acceptance.md", "bootstrap.yaml")
+                        },
+                        "a3_commit": git(a3, "rev-parse", "HEAD"),
+                        "harness_commit": git(ROOT, "rev-parse", "HEAD"),
+                        "mini_commit": git(
+                            ROOT / "third_party/mini-swe-agent", "rev-parse", "HEAD"
+                        ),
+                        "container_id": env.container_id,
+                        "model": os.environ["MODEL_NAME"],
+                        "parent_run": parent.name if parent else None,
+                        "mode": kind,
                     },
-                    "a3_commit": git(a3, "rev-parse", "HEAD"),
-                    "harness_commit": git(ROOT, "rev-parse", "HEAD"),
-                    "mini_commit": git(ROOT / "third_party/mini-swe-agent", "rev-parse", "HEAD"),
-                    "container_id": env.container_id,
-                    "model": os.environ["MODEL_NAME"],
-                    "parent_run": parent.name if parent else None,
-                    "mode": kind,
-                },
-                indent=2,
+                    indent=2,
+                )
             )
-        )
         (run.parent / "latest-run.txt").write_text(str(run) + "\n")
         print(f"Run directory: {run}", flush=True)
         template_vars = {
@@ -538,8 +501,46 @@ def main() -> None:
             for key, value in env.config.env.items()
             if key.startswith("A3_") and key not in ("A3_GATEWAY_TOKEN", "A3_GATEWAY_URL")
         }
-        agent.run(config["run"]["task"], **template_vars)
-        publish_run_result(run, workspace / "run", versions, run_id, None)
+
+        def execute_builder(reason: str, trajectory: Path) -> None:
+            model = get_model(
+                config={
+                    "model_name": os.environ["MODEL_NAME"],
+                    "model_class": os.environ["MODEL_CLASS"],
+                    "cost_tracking": os.environ.get("MODEL_COST_TRACKING", "default"),
+                    **config.get("model", {}),
+                }
+            )
+            agent_args = {**config["agent"], "output_path": trajectory}
+            agent = get_agent(model, env, agent_args)
+            task = config["run"]["task"]
+            agent.run(task, **template_vars)
+
+        def save_completed_result() -> None:
+            selected = publish_run_result(run, workspace / "run", versions, run_id, None)
+            if selected["status"] != "ready":
+                raise ValueError("Completed run needs a runnable retained snapshot")
+
+        if args.verify_deployment:
+            execute_builder(config["run"]["task"], run / "trajectory.json")
+        else:
+            required_checks = tuple(
+                re.findall(r"^## ([A-Z])\.", (inputs / "acceptance.md").read_text(), re.MULTILINE)
+            )
+            headers = {"Authorization": "Bearer " + token}
+            with httpx.Client(
+                base_url=f"http://127.0.0.1:{port}", headers=headers, timeout=90
+            ) as client:
+                RunSupervisor(
+                    run=run,
+                    workspace=workspace / "run",
+                    required_checks=required_checks,
+                    sessions=lambda: supervised_sessions(client),
+                    execute_builder=execute_builder,
+                    finalize=save_completed_result,
+                ).run(initial_builder=not package)
+        if args.verify_deployment:
+            publish_run_result(run, workspace / "run", versions, run_id, None)
     finally:
         app.state.begin_shutdown()
         cleanup_errors = []

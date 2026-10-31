@@ -35,6 +35,8 @@ bash scripts/start-rsi.sh
 
 启动通用 mini-SWE-agent，在独立 Docker 工作区中依据 `evals/goal.md` 与 `evals/acceptance.md` 构建并演化 auto research Harness。运行无需逐轮人工确认；Agent 可以自行创建候选、测试和继续迭代。
 
+初始 SWE 只启动一次，自主完成实现、迭代和验收。Host 保持已启动 worker 与服务可用，不重新派发任务。全部 worker 停止后再复核结果，详见[使用教程](docs/tutorial.md)。
+
 运行目录使用 Host 本地时间命名，例如 `artifacts/rsi/run-20261031-110415-123456/`，可直接看出启动日期和时间；末段为微秒。
 
 把起点记作 $H_0$，第一轮最终保留的 Harness 记作 $H_1$：

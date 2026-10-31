@@ -7,10 +7,22 @@ import threading
 from pathlib import Path, PurePosixPath
 
 ACTIVE_STATES = {"created", "running", "restarting", "paused"}
+MAX_INPUT_FILES = 128
+MAX_INPUT_BYTES = 20 * 1024 * 1024
+MAX_ARTIFACT_BYTES = 32 * 1024 * 1024
+DEFAULT_ARTIFACT_PAGE_BYTES = 1024 * 1024
 
 
 class CandidateCapacityError(RuntimeError):
     """No free local candidate slot; callers may poll before retrying."""
+
+
+class ArtifactTooLargeError(ValueError):
+    """The caller must request a bounded page instead of the whole artifact."""
+
+    def __init__(self, size_bytes: int):
+        super().__init__("Artifact exceeds the whole-file response limit")
+        self.size_bytes = size_bytes
 
 
 def workspace_path(root: Path, name: str) -> Path:
@@ -31,7 +43,10 @@ def workspace_path(root: Path, name: str) -> Path:
 
 
 def write_candidate_files(root: Path, files: dict[str, str]) -> None:
-    if len(files) > 128 or sum(len(value.encode()) for value in files.values()) > 20 * 1024 * 1024:
+    if (
+        len(files) > MAX_INPUT_FILES
+        or sum(len(value.encode()) for value in files.values()) > MAX_INPUT_BYTES
+    ):
         raise ValueError("Candidate input exceeds 128 files or 20 MiB")
     targets = [(workspace_path(root, name), content) for name, content in files.items()]
     for path, content in targets:
@@ -209,16 +224,42 @@ class CandidateRuntime:
                 "output": output,
             }
 
-    def artifact(self, owner: str, session_id: str, name: str) -> dict:
+    def artifact(
+        self, owner: str, session_id: str, name: str, offset: int = 0, limit: int | None = None
+    ) -> dict:
         self.owned(owner, session_id)
         path = workspace_path(self.root / session_id / "workspace", name)
-        if not path.is_file() or path.stat().st_size > 32 * 1024 * 1024:
-            raise ValueError("Artifact must be a file of at most 32 MiB")
-        return {
+        if not path.is_file():
+            raise ValueError("Artifact must be a workspace file")
+        paged = limit is not None or offset != 0
+        read_limit = (
+            limit
+            if limit is not None
+            else (DEFAULT_ARTIFACT_PAGE_BYTES if paged else MAX_ARTIFACT_BYTES)
+        )
+        if offset < 0 or not 1 <= read_limit <= MAX_ARTIFACT_BYTES:
+            raise ValueError("Invalid artifact page bounds")
+        size = path.stat().st_size
+        if not paged and size > MAX_ARTIFACT_BYTES:
+            raise ArtifactTooLargeError(size)
+        if offset > size:
+            raise ValueError("Artifact offset exceeds file size")
+        with path.open("rb") as stream:
+            stream.seek(offset)
+            data = stream.read(min(read_limit, size - offset))
+        result = {
             "path": name,
             "encoding": "base64",
-            "data": base64.b64encode(path.read_bytes()).decode(),
+            "data": base64.b64encode(data).decode(),
         }
+        if paged:
+            result.update(
+                offset=offset,
+                next_offset=offset + len(data),
+                size_bytes=size,
+                eof=offset + len(data) >= size,
+            )
+        return result
 
     def cancel(self, owner: str, session_id: str) -> dict:
         with self.lock:

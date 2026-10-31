@@ -36,6 +36,7 @@
 | --- | --- |
 | `artifacts/rsi/run-*/` | 正式冷启动原始档案：冻结输入、独立工作区、候选、轨迹、实验报告与会话事件 |
 | `artifacts/rsi/latest-run.txt` | 最近正式运行的路径，供轨迹浏览与恢复入口读取 |
+| `artifacts/rsi/launch-logs/` | 后台启动时保存的终端日志；正式轨迹与验收证据仍归属各 run |
 | `artifacts/validation/` | 部署、恢复、隔离、预检、安装和报告复核记录；不作为正式验收的替代 |
 | `artifacts/deployment/` | 镜像构建材料、迁移清单、部署修复与目录迁移记录 |
 | `artifacts/remote-runtime/` | 执行端的作业、实验目录与共享资源锁；所有 Controller 必须使用同一配置根目录 |
@@ -64,6 +65,9 @@ artifacts/rsi/run-*/
 ├── private-inputs/         主 Harness 独享的只读输入与跨轮历史
 ├── retained.json           Host 保存的明确保留结果及版本标识
 ├── trajectory.json         初始 mini 轨迹
+├── supervision.json        Host 当前监督阶段与后继状态
+├── supervisor-events.jsonl Host 监督与交接事件
+├── outcome.json            Host 接受的整轮完成或外部阻塞声明
 ├── model-usage.jsonl        Gateway 模型调用记录
 ├── session-events.jsonl     Host 记录的后继关系与生命周期
 └── gateway-events.jsonl     请求开始、结束、错误类别与耗时

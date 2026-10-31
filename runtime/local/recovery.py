@@ -64,6 +64,7 @@ def stage_recovery(parent: Path, destination: Path) -> dict:
 
     sources = [
         (parent / "workspace/run", Path("bootstrap")),
+        (parent / "builder-turns", Path("builder-turns")),
         (
             parent / "private-inputs/history"
             if (parent / "private-inputs/history").is_dir()

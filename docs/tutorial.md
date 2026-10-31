@@ -88,6 +88,8 @@ $$
 
 run ID 使用 Host 系统本地时间，格式为 `run-YYYYMMDD-HHMMSS-ffffff`，最后六位是微秒。例如 `run-20261031-110415-123456` 表示 2026 年 10 月 31 日 11:04:15.123456 启动。创建目录时若仍重名，会追加 `-2`、`-3` 等序号，分别保存并发运行。
 
+初始 SWE 只启动一次，自主组织实现、迭代与验收；需要交接时，由 SWE 自己创建后继并传递状态。Host 保留正在运行的后继和 Gateway，不定时重建 Agent，不因未完成而重派任务。全部 worker 停止后记录结果；未完成如实记录，不自动重新开始。结果字段见 [Host 执行接口](../runtime/local/README.md#整轮结束与未完成交接)。
+
 ## 中断恢复：保留原任务继续推进
 
 网络变化或进程异常退出后，先恢复模型连接、Docker 和 SSH，再运行：
@@ -202,7 +204,9 @@ bash scripts/start-rsi.sh --verify-deployment
 
 方向键切换与滚动，`$` 跳到最后，`R` 重新加载，`q` 退出浏览器。退出浏览器不影响 Agent。
 
-`--run-harness` 跳过初始 mini，因此没有这份顶层轨迹。已生成 Agent 的轨迹格式和名称由其实现决定；默认保留入口写入 `candidates/<session-id>/workspace/trajectory.jsonl`，主 session 标识在 `startup.json` 中。
+`--run-harness` 直接启动指定的保留 Harness，不再额外启动通用 mini。首次冷启动的轨迹为顶层 `trajectory.json`。已生成 Agent 的轨迹格式和名称由其实现决定，通常位于 `candidates/<session-id>/workspace/`，主 session 标识在 `startup.json` 中。
+
+`supervision.json` 保存当前监督阶段、构建回合与后继状态，`supervisor-events.jsonl` 保存阶段变化。`outcome.json` 记录 Host 接受的整轮终态；实际能力仍需回到验收与原始证据复核。
 
 `model-usage.jsonl` 保存 Gateway 的模型调用用量；`gateway-events.jsonl` 保存请求开始、结束、耗时、状态码和错误层；`session-events.jsonl` 保存父子关系。请求响应的 `X-Request-ID` 可用于关联一次故障。只有请求开始、尚无结束时，先结合模型请求、session 和远程 job 状态判断，不凭短暂日志静止判定卡死。
 

@@ -1,3 +1,4 @@
+import hashlib
 import json
 
 import pytest
@@ -62,3 +63,17 @@ def test_manifest_loading_preserves_line_endings(tmp_path):
     )
     _, files = load_harness_package(tmp_path)
     assert files["entry.py"].encode() == content
+
+
+def test_external_host_review_is_not_exported_to_agent(tmp_path):
+    parent = tmp_path / "parent"
+    (parent / "inputs").mkdir(parents=True)
+    digests = {}
+    for name in ("goal.md", "acceptance.md"):
+        (parent / "inputs" / name).write_text("frozen")
+        digests[name] = hashlib.sha256(b"frozen").hexdigest()
+    (parent / "host-review.json").write_text(json.dumps({"inputs": digests}))
+    destination = tmp_path / "recovery"
+    index = stage_recovery(parent, destination)
+    assert not (destination / "host-review.json").exists()
+    assert not any(row["path"] == "host-review.json" for row in index["files"])
