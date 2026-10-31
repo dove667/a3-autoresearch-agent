@@ -71,12 +71,14 @@ class RunSupervisor:
         *,
         run: Path,
         workspace: Path,
-        required_checks: tuple[str, ...],
+        required_checks: tuple[str, ...] | Callable[[], tuple[str, ...]],
         sessions: Callable[[], list[dict]],
         execute_builder: Callable[[str, Path], None],
         finalize: Callable[[], None] | None = None,
         wait: Callable[[float], None] = time.sleep,
         result_workspace: Callable[[], Path] | None = None,
+        input_manifest: Callable[[], dict] | None = None,
+        on_finishing: Callable[[], None] | None = None,
     ):
         self.run_directory = run
         self.workspace = workspace
@@ -86,6 +88,8 @@ class RunSupervisor:
         self.finalize = finalize
         self.wait = wait
         self.result_workspace = result_workspace
+        self.input_manifest = input_manifest
+        self.on_finishing = on_finishing
         self.turn = 0
 
     def record(self, phase: str, outcome: dict, sessions: list[dict]) -> None:
@@ -96,6 +100,8 @@ class RunSupervisor:
             "sessions": sessions,
             "updated_at": time.time(),
         }
+        if self.input_manifest is not None:
+            state["input_manifest"] = outcome.get("input_manifest") or self.input_manifest()
         text = json.dumps(state, ensure_ascii=False, indent=2)
         temporary = self.run_directory / "supervision.tmp"
         temporary.write_text(text)
@@ -131,9 +137,21 @@ class RunSupervisor:
 
         # Structural checks and snapshot publication happen only after execution ends.
         # Their results never trigger another model call or enter a worker's context.
+        if self.on_finishing is not None:
+            self.on_finishing()
         if self.result_workspace is not None:
             self.workspace = self.result_workspace()
-        outcome = evaluate_outcome(self.workspace, self.required_checks)
+        manifest = self.input_manifest() if self.input_manifest is not None else None
+        required_checks = (
+            tuple(manifest["acceptance_checks"])
+            if manifest is not None
+            else self.required_checks()
+            if callable(self.required_checks)
+            else self.required_checks
+        )
+        outcome = evaluate_outcome(self.workspace, required_checks)
+        if manifest is not None:
+            outcome["input_manifest"] = manifest
         if outcome["status"] == "continue":
             outcome = {**outcome, "status": "incomplete"}
         if builder_error:

@@ -4,7 +4,6 @@ import argparse
 import hashlib
 import json
 import os
-import re
 import secrets
 import shlex
 import shutil
@@ -31,6 +30,7 @@ from runtime.local.continuation import (
     resolve_harness_start,
 )
 from runtime.local.host_gateway import create_app
+from runtime.local.input_versions import InputVersions
 from runtime.local.isolation_fixture import IsolationFixtures
 from runtime.local.recovery import stage_recovery
 from runtime.local.run_resume import load_resume_state
@@ -152,10 +152,7 @@ def prepare_workspace(workspace: Path, a3: Path, harness: Path = ROOT) -> None:
     snapshot_checkout(harness, workspace / "harness")
     (workspace / "run").mkdir()
     (workspace / "harness/AGENTS.md").write_text(
-        "本次在独立容器中冷启动。模型和作业均经宿主 gateway 转发。\n"
-        "不得尝试获得宿主凭据或改变资源分配。专项研究逻辑由你实现。\n"
-        "读取 /run/input/goal.md 与 /run/input/acceptance.md。\n"
-        "宿主提供候选执行与双身份验收入口，先读 /run/input/execution.md。\n"
+        (ROOT / "configs/prompts/workspace.md").read_text()
     )
 
 
@@ -165,37 +162,7 @@ def bootstrap_source(parent: Path | None) -> Path:
     return ROOT
 
 
-def freeze_inputs(inputs: Path, parent: Path | None = None) -> None:
-    source = parent / "inputs" if parent else ROOT / "evals"
-    hashes = json.loads((parent / "startup.json").read_text())["inputs"] if parent else {}
-    for name in ("goal.md", "acceptance.md"):
-        content = (source / name).read_bytes()
-        if parent and hashlib.sha256(content).hexdigest() != hashes.get(name):
-            raise ValueError(f"Frozen input hash mismatch: {name}")
-    for name in ("goal.md", "acceptance.md"):
-        shutil.copy2(source / name, inputs / name)
-    if parent:
-        (inputs / "parent-run.json").write_text(json.dumps({"run_id": parent.name}, indent=2))
-        blocker = parent / "workspace/run/blocker.md"
-        if blocker.is_file():
-            shutil.copy2(blocker, inputs / "previous-blocker.md")
-    if parent:
-        for name in ("execution.md", "bootstrap.yaml"):
-            content = (source / name).read_bytes()
-            if name in hashes and hashlib.sha256(content).hexdigest() != hashes[name]:
-                raise ValueError(f"Frozen input hash mismatch: {name}")
-            shutil.copy2(source / name, inputs / name)
-    else:
-        shutil.copy2(ROOT / "runtime/local/README.md", inputs / "execution.md")
-    common = source / "common-instructions.md" if parent else ROOT / "configs/prompts/common.md"
-    if common.is_file():
-        content = common.read_bytes()
-        if parent and hashes.get("common-instructions.md") != hashlib.sha256(content).hexdigest():
-            raise ValueError("Frozen input hash mismatch: common-instructions.md")
-        shutil.copy2(common, inputs / "common-instructions.md")
-
-
-def frozen_input_hashes(inputs: Path) -> dict[str, str]:
+def input_hashes(inputs: Path) -> dict[str, str]:
     names = ("goal.md", "acceptance.md", "bootstrap.yaml", "execution.md", "common-instructions.md")
     return {
         name: hashlib.sha256((inputs / name).read_bytes()).hexdigest()
@@ -224,7 +191,9 @@ def main() -> None:
         "--verify-deployment", action="store_true", help="Run a bounded agent readiness check"
     )
     parser.add_argument(
-        "--resume-from", type=Path, help="Continue a saved run with its frozen goals"
+        "--resume-from",
+        type=Path,
+        help="Continue saved context with current versioned Agent inputs",
     )
     parser.add_argument(
         "--run-harness",
@@ -282,11 +251,10 @@ def launch_run(args, run: Path, a3: Path, image: str, start) -> None:
     store = RunStateStore(run)
     saved = None
     resume_context = None
+    input_versions = InputVersions(ROOT, run)
+    proposed_inputs = input_versions.prepare()
     if resuming:
         startup = json.loads((run / "startup.json").read_text())
-        for name, checksum in startup["inputs"].items():
-            if hashlib.sha256((run / "inputs" / name).read_bytes()).hexdigest() != checksum:
-                raise ValueError(f"Frozen input hash mismatch: {name}")
         saved = load_resume_state(run, store, os.environ["MODEL_NAME"], os.environ["MODEL_CLASS"])
         actor = saved["gateway"]["evolution"]["main_owner"]
         if actor == run.name:
@@ -308,7 +276,6 @@ def launch_run(args, run: Path, a3: Path, image: str, start) -> None:
         )
         if parent and not package:
             shutil.copytree(parent / "workspace/run", workspace / "run", dirs_exist_ok=True)
-        freeze_inputs(inputs, parent)
         private_inputs = None
         if start and start.previous_run:
             private_inputs = run / "private-inputs"
@@ -330,6 +297,7 @@ def launch_run(args, run: Path, a3: Path, image: str, start) -> None:
         public_a3 = run / "public/a3"
         public_a3.parent.mkdir()
         snapshot_checkout(a3, public_a3)
+    input_versions.activate(proposed_inputs, "resume" if resuming else "start")
     public_a3 = run / "public/a3"
     if saved:
         endpoint = saved["endpoint"]
@@ -350,6 +318,7 @@ def launch_run(args, run: Path, a3: Path, image: str, start) -> None:
         model_class=os.environ["MODEL_CLASS"],
         endpoint=endpoint,
         status="starting",
+        operator_token=secrets.token_urlsafe(32),
     )
     versions = CandidateVersions(run / "versions")
     sandbox = CandidateRuntime(
@@ -369,8 +338,7 @@ def launch_run(args, run: Path, a3: Path, image: str, start) -> None:
             and initial_session in sandbox.records
         ):
             sandbox.records[initial_session]["inputs"] = str(private_inputs)
-    common_path = inputs / "common-instructions.md"
-    common_instructions = common_path.read_text() if common_path.is_file() else ""
+    common_instructions = input_versions.model_instructions()[1]
     if args.verify_deployment:
         common_instructions = ""  # Readiness checks are test sessions, not main Agents.
     fixtures = IsolationFixtures(remote_call, run / "fixtures")
@@ -389,6 +357,8 @@ def launch_run(args, run: Path, a3: Path, image: str, start) -> None:
         common_instructions=common_instructions,
         state_store=store,
         restored_state=saved["gateway"] if saved else None,
+        input_versions=None if args.verify_deployment else input_versions,
+        operator_token=store.load()["operator_token"],
     )
     app.state.save_checkpoint()
     server = uvicorn.Server(
@@ -456,6 +426,7 @@ def launch_run(args, run: Path, a3: Path, image: str, start) -> None:
                         "timeout_seconds": 900,
                     },
                     "execution_guide": "/run/input/execution.md",
+                    "input_manifest": "/run/input/input-manifest.json",
                     "parent_run": start.previous_run.name
                     if start and start.previous_run
                     else parent.name
@@ -480,9 +451,7 @@ def launch_run(args, run: Path, a3: Path, image: str, start) -> None:
             step_limit=24,
             wall_time_limit_seconds=600,
         )
-        config["run"]["task"] = (ROOT / "runtime/local/readiness-task.md").read_text()
-    if not resuming:
-        (inputs / "bootstrap.yaml").write_text(yaml.safe_dump(config, allow_unicode=True))
+        config["run"]["task"] = (inputs / "readiness-task.md").read_text()
     env = None
     normal_finish = False
     os.environ.update(MSWEA_GLOBAL_CALL_LIMIT="0", MSWEA_GLOBAL_COST_LIMIT="0")
@@ -511,7 +480,8 @@ def launch_run(args, run: Path, a3: Path, image: str, start) -> None:
                             "source_version": start.source_version,
                             "session_id": session["session_id"],
                             "version_id": session["version_id"],
-                            "inputs": frozen_input_hashes(inputs),
+                            "inputs": input_hashes(inputs),
+                            "input_manifest": input_versions.manifest,
                         },
                         indent=2,
                     )
@@ -563,7 +533,8 @@ def launch_run(args, run: Path, a3: Path, image: str, start) -> None:
                 json.dumps(
                     {
                         "run_id": run_id,
-                        "inputs": frozen_input_hashes(inputs),
+                        "inputs": input_hashes(inputs),
+                        "input_manifest": input_versions.manifest,
                         "a3_commit": git(a3, "rev-parse", "HEAD"),
                         "harness_commit": git(ROOT, "rev-parse", "HEAD"),
                         "mini_commit": git(
@@ -599,6 +570,17 @@ def launch_run(args, run: Path, a3: Path, image: str, start) -> None:
             agent_args = {**config["agent"], "output_path": trajectory}
             agent_args.pop("agent_class", None)
             agent = ContextAgent(model, env, **agent_args)
+            if not args.verify_deployment:
+
+                def current_system():
+                    with input_versions.lock:
+                        latest = yaml.safe_load(input_versions.contents["bootstrap.yaml"])
+                        agent.extra_template_vars["common_instructions"] = (
+                            input_versions.model_instructions()[1]
+                        )
+                        return agent._render_template(latest["agent"]["system_template"])
+
+                agent.system_instruction_provider = current_system
             if resume_context is not None:
                 agent.extra_template_vars = {"task": config["run"]["task"], **template_vars}
                 agent.resume(resume_context)
@@ -630,6 +612,7 @@ def launch_run(args, run: Path, a3: Path, image: str, start) -> None:
                             "run_id": run_id,
                             "main_owner": actor,
                             "max_active": MAX_ACTIVE_CANDIDATES,
+                            "input_manifest": input_versions.manifest,
                         }
                     )
                     + "\n"
@@ -638,9 +621,6 @@ def launch_run(args, run: Path, a3: Path, image: str, start) -> None:
         if args.verify_deployment:
             execute_builder(config["run"]["task"], run / "trajectory.json")
         else:
-            required_checks = tuple(
-                re.findall(r"^## ([A-Z])\.", (inputs / "acceptance.md").read_text(), re.MULTILINE)
-            )
             headers = {"Authorization": "Bearer " + token}
             with httpx.Client(
                 base_url=f"http://127.0.0.1:{port}", headers=headers, timeout=90
@@ -648,11 +628,13 @@ def launch_run(args, run: Path, a3: Path, image: str, start) -> None:
                 outcome = RunSupervisor(
                     run=run,
                     workspace=workspace / "run",
-                    required_checks=required_checks,
+                    required_checks=input_versions.acceptance_checks,
                     sessions=lambda: supervised_sessions(client),
                     execute_builder=execute_builder,
                     finalize=save_completed_result,
                     result_workspace=result_workspace,
+                    input_manifest=lambda: input_versions.manifest,
+                    on_finishing=app.state.begin_shutdown,
                 ).run(initial_builder=not package and (not resuming or resume_context is not None))
         if args.verify_deployment:
             publish_run_result(run, workspace / "run", versions, run_id, None)

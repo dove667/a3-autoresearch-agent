@@ -1,5 +1,7 @@
 # Host提供的执行与验收入口
 
+Version: 0.1.0
+
 部署方运行 gateway、容器引擎、模型认证与远程资源调度。候选 Harness 在独立容器内运行，
 通过 HTTP 请求这些固定能力。工具名称、研究逻辑、反思方法和版本选择由 Agent 设计。
 目标和验收以本次只读的 `goal.md`、`acceptance.md` 为准。
@@ -16,7 +18,7 @@
 转发；远程作业按部署设计没有模型凭据或网络。候选实际调用受限工具并读取作业结果，
 就是这条执行链，不需要在远程作业中再次运行模型。
 
-候选由模型驱动只说明执行主体成立。A/B/C/D 仍分别需要冻结标准要求的真实能力、
+候选由模型驱动只说明执行主体成立。A/B/C/D 仍分别需要版本化标准要求的真实能力、
 版本、比较与选择、权限边界和跨会话记忆复用证据；创建会话、命名工具或保存报告均不能单独验收。
 
 ## 请求与权限
@@ -128,7 +130,7 @@ Host 先记录停止意图，再停止进程；若中断留下未确认的停止
 }
 ```
 
-验收项取自冻结 `acceptance.md` 的字母标题，所有必需项均为 `passed`、引用文件在本工作区实际存在且非空，并有有效 `continuation.json`，才能声明完成。路径相对 `/workspace/run/`。先将选择的后继证据与入口按授权交接到该目录；Host 不替 Agent 选择候选。Host 检查协议和文件可达性，实际能力仍按冻结标准复核。
+验收项取自版本化 `acceptance.md` 的字母标题，所有必需项均为 `passed`、引用文件在本工作区实际存在且非空，并有有效 `continuation.json`，才能声明完成。路径相对 `/workspace/run/`。先将选择的后继证据与入口按授权交接到该目录；Host 不替 Agent 选择候选。Host 检查协议和文件可达性，实际能力仍按版本化标准复核。
 
 未完成时可写 `{"status":"continue","reason":"尚未完成的能力与已有进展"}`，或仅保存进展后提交本回合。提交前须自行安排后继；Host 只等待现有后继，不开启新回合。全部 worker 已停止但未完成时，记录 incomplete。
 
@@ -193,7 +195,7 @@ Git 记录进入本轮 `versions/`。工作区内的即时修改不会自动成�
 
 ## 上下文 checkpoint 与 resume
 
-初始 mini 的 trajectory 原子写入，恢复时直接加载原消息，不重建 system/user 消息，不回注外部审查。冻结的 bootstrap 与执行说明随原目标保留。主动提交的会话不恢复；未保存结果的工具调用拒绝自动重放。
+初始 mini 的 trajectory 原子写入。恢复保留用户/模型对话与工具结果，部署方 system Prompt 按当前 bootstrap 和共性协议刷新。目标、验收和执行说明采用启动时当前版本，不回注外部审查。主动提交的会话不恢复；未保存结果的工具调用拒绝自动重放。
 
 生成的 Harness 用 `resume.json` 声明包含 checkpoint 的源码清单及恢复命令。Host 不把 continuation 入口当作 resume；缺失 checkpoint 入口时拒绝启动。`--resume-from` 在原 run 目录、时间戳、主身份、工作区和版本库恢复。Host 私有 `.host/state.json` 保存本轮身份令牌、会话与作业注册表、主身份和 trial；Agent Docker 不挂载此目录。恢复沿用原 Gateway 端口与 scope。暂停中的 Docker 直接接回；主进程已退出时，以同一身份在原工作区执行恢复命令，不复制成新的候选。
 
@@ -227,8 +229,10 @@ H0 的已保存执行结果可作为基线证据，无需为了每次改动再�
 
 `configs/rsi-bootstrap.yaml` 仅维护初始 mini 的参数、Bash/提交约定与启动路径。跨代共用的目标职责、执行边界、测试角色、交接和证据要求统一维护在 `configs/prompts/common.md`。
 
-`configs/prompts/common.md` 保存主 Agent 与接任候选共同遵循的核心协议。每轮启动冻结为 `inputs/common-instructions.md`，摘要进入 `startup.json`。初始 mini 的 system 直接加载这份内容；Gateway 在转发当前主身份、待接任候选的每次模型请求时，以同一冻结内容作为 instructions 前缀，保留其专属 instructions、消息和工具定义。主身份来自 Host 记录，候选来自 `/evolution/trials`，不依据模型在提示词里自称的角色。
+`configs/prompts/common.md` 保存主 Agent 与接任候选共同遵循的核心协议。每轮启动版本化为 `inputs/common-instructions.md`，摘要进入 `startup.json`。初始 mini 的 system 直接加载这份内容；Gateway 在转发当前主身份、待接任候选的每次模型请求时，以同一版本化内容作为 instructions 前缀，保留其专属 instructions、消息和工具定义。主身份来自 Host 记录，候选来自 `/evolution/trials`，不依据模型在提示词里自称的角色。
 
 普通 `/sessions` worker 包括局部测试 Agent，Host 不额外附加核心提示词；其完整提示词由主 Agent 编写。主身份交接后，接任候选继续得到核心协议，旧主身份不再获得新的附加层。部署准备检查不使用这份完整 auto research 协议。
 
-运行中不读取当前仓库的新版本替换冻结文本。resume 沿用原副本并验证摘要；历史运行没有此文件时不补入新协议。Gateway 用量记录中的 `common_instructions_sha256` 标识该次转发使用的核心协议，配合冻结文件可复核有效请求。核心协议规定角色协作和证据要求，模型任务、工具设计、Policy、记忆和具体改动仍由 Agent 决定。
+启动和 resume 读取仓库当前文件；运行中更换版本需要 Host 操作者预览并确认。每个直接发布的 Agent 输入都有 Version，清单见 `/run/input/input-manifest.json`。其中 revision 是整套输入的快照编号，generation 是发布尝试序号，失败回滚也会递增；由 Host 自动维护。Gateway 用量记录 input_revision、各文件版本与摘要；历史内容保存在 run 的 input-revisions。主 Agent 与接任候选会获得当前目标、验收和共性协议，旧对话作为历史保留。普通 worker 的专属任务仍由主 Agent 提供。
+
+部署方热加载使用 `python -m runtime.local.reload_inputs <run目录>` 预览警告，再加 `--confirm <预览摘要>` 确认。Agent 的令牌无此权限。已发出的模型请求不变，后续请求采用新版本；Agent 连续读取多个输入文件时，前后必须都是 manifest.status=active，且 revision 和 generation 都相同。updating 时等待，标识变化后重新读取。完整版本维护规则见项目 docs/agent-inputs.md。

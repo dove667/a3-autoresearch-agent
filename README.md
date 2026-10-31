@@ -53,7 +53,7 @@ $$
 bash scripts/start-rsi.sh --resume-from "artifacts/rsi/<run-id>"
 ```
 
-将 `<run-id>` 替换为要恢复的运行标识。初始 mini 直接恢复保存的模型消息和工具结果，沿用冻结配置；已经交接主身份时，使用当前主 Harness 声明的 `resume.json` checkpoint 入口。缺少恢复入口、会话已主动提交或存在结果不明的工具调用时会明确报错。
+将 `<run-id>` 替换为要恢复的运行标识。恢复保留模型对话、工具结果和生成的 Harness，通过原 checkpoint 继续；目标、验收和部署方 Prompt 加载启动时的当前版本。缺少恢复入口、会话已主动提交或存在结果不明的工具调用时会明确报错。
 
 恢复沿用原 run 目录、时间戳、主身份、工作区与资源权限，轨迹继续追加。中断会保留可恢复状态；详细行为见[恢复说明](docs/tutorial.md#中断恢复保留原任务继续推进)。修改 `evals/` 后开展新任务，应使用下面的版本迭代入口。
 
@@ -63,7 +63,7 @@ bash scripts/start-rsi.sh --resume-from "artifacts/rsi/<run-id>"
 bash scripts/start-rsi.sh --run-harness "artifacts/rsi/<run-id>"
 ```
 
-将 `<run-id>` 替换为选定运行的实际标识。启动器读取该运行明确保留的结果，加载代码并自动提供授权历史，冻结当前 `evals/` 作为新目标。被选择的父版本成为本轮起点：
+将 `<run-id>` 替换为选定运行的实际标识。启动器读取该运行明确保留的结果，加载代码并自动提供授权历史，版本化当前 `evals/` 作为新目标。被选择的父版本成为本轮起点：
 
 $$
 H_1 \xrightarrow{\text{next run}} H_2 \xrightarrow{\text{next run}} H_3.
@@ -83,3 +83,4 @@ $$
 - [目录职责](docs/project-structure.md)：源码、候选、报告和运行产物分别存在哪里。
 - [开发路线与实现状态](docs/roadmap.md)
 - [第三方依赖说明](third_party/README.md)
+- [Agent 输入版本与热加载](docs/agent-inputs.md)：版本维护、启动记录与确认更新。

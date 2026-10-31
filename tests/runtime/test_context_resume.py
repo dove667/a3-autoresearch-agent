@@ -60,6 +60,23 @@ def test_resume_queries_exact_original_context_without_new_task(tmp_path):
     assert agent.cost == 0.25
 
 
+def test_resume_can_refresh_deployment_system_prompt_and_keep_conversation(tmp_path):
+    messages = [
+        {"role": "system", "content": "old system"},
+        {"role": "user", "content": "original task"},
+        {"role": "assistant", "content": "saved result"},
+    ]
+    path = tmp_path / "trajectory.json"
+    checkpoint(path, messages)
+    model = Model()
+    agent = ContextAgent(model, Environment(), system_template="unused", instance_template="unused")
+    agent.system_instruction_provider = lambda: "current versioned system"
+    with pytest.raises(ConnectionError):
+        agent.resume(load_context(path))
+    assert model.seen[0][0]["content"] == "current versioned system"
+    assert model.seen[0][1:] == messages[1:]
+
+
 def test_resume_refuses_completed_session(tmp_path):
     path = tmp_path / "trajectory.json"
     checkpoint(

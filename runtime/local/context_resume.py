@@ -41,6 +41,15 @@ def load_context(path: Path) -> dict:
 class ContextAgent(DefaultAgent):
     """Keep upstream fresh-run behavior; add explicit saved-context execution."""
 
+    system_instruction_provider = None
+
+    def step(self):
+        if self.system_instruction_provider is not None:
+            self.messages[0] = self.model.format_message(
+                role="system", content=self.system_instruction_provider()
+            )
+        return super().step()
+
     def save(self, path: Path | None, *extra_dicts) -> dict:
         data = super().save(None, *extra_dicts)
         if path:

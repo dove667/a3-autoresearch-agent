@@ -1,16 +1,12 @@
-import hashlib
-import json
 from copy import deepcopy
 from pathlib import Path
 
-import pytest
 import yaml
 from fastapi.testclient import TestClient
 from jinja2 import StrictUndefined, Template
 
 from runtime.local.candidate_versions import CandidateVersions
 from runtime.local.host_gateway import create_app
-from runtime.local.launch import freeze_inputs
 
 
 class Backend:
@@ -98,22 +94,3 @@ def test_initial_system_template_includes_the_same_common_rules():
         common_instructions="FROZEN COMMON"
     )
     assert "FROZEN COMMON" in rendered
-
-
-def test_resume_freezes_common_rules_and_rejects_tampering(tmp_path):
-    parent = tmp_path / "old"
-    (parent / "inputs").mkdir(parents=True)
-    names = ("goal.md", "acceptance.md", "bootstrap.yaml", "execution.md", "common-instructions.md")
-    hashes = {}
-    for name in names:
-        text = "original " + name
-        (parent / "inputs" / name).write_text(text)
-        hashes[name] = hashlib.sha256(text.encode()).hexdigest()
-    (parent / "startup.json").write_text(json.dumps({"inputs": hashes}))
-    target = tmp_path / "new"
-    target.mkdir()
-    freeze_inputs(target, parent)
-    assert (target / "common-instructions.md").read_text() == "original common-instructions.md"
-    (parent / "inputs/common-instructions.md").write_text("modified")
-    with pytest.raises(ValueError, match="hash mismatch"):
-        freeze_inputs(target, parent)

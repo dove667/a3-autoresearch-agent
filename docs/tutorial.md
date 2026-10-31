@@ -72,7 +72,7 @@ macOS 可在另一个终端运行 `pmset -g assertions`，检查活动的 `caffe
 bash scripts/start-rsi.sh
 ```
 
-脚本调用 `runtime/local/launch.py`，创建独立工作区，冻结目标与验收，启动初始 mini。模型可以通过 bash 在构建 Docker 中读写文件、运行程序；生成后的 auto research Agent 使用自己实现的受限工具，并由固定部署边界控制实际权限。
+脚本调用 `runtime/local/launch.py`，创建独立工作区，版本化目标与验收，启动初始 mini。模型可以通过 bash 在构建 Docker 中读写文件、运行程序；生成后的 auto research Agent 使用自己实现的受限工具，并由固定部署边界控制实际权限。
 
 启动器将选定源码复制到独立工作区，包含当前未提交的源码改动，并排除认证、忽略的运行产物与报告工程。它在隔离副本中建立与这些实际文件一致的 Git 基线，让 Agent 从干净的工作区开始；主项目的提交和未提交状态保持原样。
 
@@ -104,7 +104,7 @@ bash scripts/start-rsi.sh --resume-from "artifacts/rsi/<run-id>"
 bash scripts/start-rsi.sh --resume-from "$(cat artifacts/rsi/latest-run.txt)"
 ```
 
-恢复直接使用指定的原 run 目录，保持 run ID、时间戳、当前主 Agent 身份、全部工作区文件与版本库。目标、验收、执行说明和 bootstrap 配置继续使用原冻结副本；startup.json 不改写，恢复时间另记在 resume-events.jsonl。初始 mini 加载原 `trajectory.json` 中完整模型消息、工具结果与调用/费用统计，继续下一次模型调用，不重新加入任务或历史索引提示词；保留不透明的 provider 上下文，不把它转成可见摘要。
+恢复直接使用指定的原 run 目录，保持 run ID、时间戳、当前主 Agent 身份、全部工作区文件与版本库。目标、验收、执行说明和部署方 Prompt 加载启动时仓库当前文件，记录版本号与摘要。startup.json 不改写，恢复时间和输入清单另记在 resume-events.jsonl。初始 mini 保留原 `trajectory.json` 中的用户/模型对话、工具结果与调用/费用统计，刷新部署方 system 消息后继续，不重新加入整套任务；不透明 provider 上下文按原样保留。
 
 已主动提交的会话不能用 resume 重新打开；下一代应使用明确保留版本。发现工具请求已发出而结果尚未保存时，恢复会拒绝自动执行，须先查明原请求是否成功，避免重复提交作业。模型配置须与原运行一致，认证由 Host 提供。
 
@@ -185,9 +185,9 @@ $$
 
 | 参数 | 行为 |
 | --- | --- |
-| 无参数 | 从通用 mini 开始新的冷启动，冻结当前目标 |
-| `--resume-from <run目录>` | 沿用该轮冻结目标，恢复代码与证据后继续 |
-| `--run-harness <目录>` | 必须显式指定 run 或源码 manifest 目录；加载该结果并冻结当前目标 |
+| 无参数 | 从通用 mini 开始新的冷启动，版本化当前目标 |
+| `--resume-from <run目录>` | 保留会话身份、代码和对话；加载启动时当前目标、验收与 Prompt 后继续 |
+| `--run-harness <目录>` | 必须显式指定 run 或源码 manifest 目录；加载该结果并版本化当前目标 |
 | `--check` | 执行部署预检后退出，不启动 Agent；可与 `--run-harness` 一起校验所选起点 |
 | `--verify-deployment` | 运行有界的真实 Agent 部署检查：最多 24 次模型调用、600 秒 |
 | `-h`、`--help` | 显示启动器帮助 |
@@ -234,10 +234,17 @@ Docker 只挂载自己的源码目录，Git 对象库和其他 worktree 留在 H
 
 每代主 Agent 先提出 Harness 改动和验收清单，启动一个完整候选进行实际执行；检查结果后决定保留或拒绝。拒绝回到当前版本，保留则让同一候选进程成为下一代主 Agent，原主 Agent 保存交接后退出。无需人工提供下一轮任务。Policy 优化可以在这些迭代之间进行。
 
-`evolution.json` 记录主身份、冻结清单、候选版本和选择理由。原始轨迹与各 session 代码仍保留在 run 中。主身份交接不等同于故障 resume：新一代的消息和记忆如何承接由 SWE 实现；网络故障恢复则要求显式 checkpoint。详见 [执行协议](../runtime/local/README.md#主身份与候选试运行)。
+`evolution.json` 记录主身份、版本化清单、候选版本和选择理由。原始轨迹与各 session 代码仍保留在 run 中。主身份交接不等同于故障 resume：新一代的消息和记忆如何承接由 SWE 实现；网络故障恢复则要求显式 checkpoint。详见 [执行协议](../runtime/local/README.md#主身份与候选试运行)。
 
 ## 调整核心提示词
 
-`configs/rsi-bootstrap.yaml` 只维护初始 mini 的运行参数、Bash/提交约定和路径；主 Agent 和接任候选共享的核心协议放在 `configs/prompts/common.md`。需要调整共性要求时修改后者，再启动新运行。启动器冻结文件，Host 为这两类身份直接提供同一份内容，下一代不依赖祖先复述。局部测试 Agent 与普通 worker 的完整提示词由主 Agent 编写。
+`configs/rsi-bootstrap.yaml` 只维护初始 mini 的运行参数、Bash/提交约定和路径；主 Agent 和接任候选共享的核心协议放在 `configs/prompts/common.md`。需要调整共性要求时修改后者，再启动新运行。启动器版本化文件，Host 为这两类身份直接提供同一份内容，下一代不依赖祖先复述。局部测试 Agent 与普通 worker 的完整提示词由主 Agent 编写。
 
-修改源文件不会影响已启动或恢复中的旧轮；resume 使用原冻结内容。新一轮生效需要正常启动，不在运行中注入提示词。冻结文件与 Gateway 记录的 `common_instructions_sha256` 可用于复核实际采用的版本。
+编辑源文件不会自动影响已经运行的实验；恢复启动会采用当前版本。运行中可以预览并确认热加载：
+
+```bash
+uv run python -m runtime.local.reload_inputs "artifacts/rsi/<run-id>"
+uv run python -m runtime.local.reload_inputs "artifacts/rsi/<run-id>" --confirm <预览摘要>
+```
+
+警告和确认绑定具体内容，Agent 令牌不能执行更新。版本规则、输入清单和生效边界见 [Agent 输入管理](agent-inputs.md)。

@@ -158,6 +158,27 @@ def test_temporary_capacity_is_not_an_external_blocker(tmp_path):
     assert evaluate_outcome(tmp_path, tuple("ABCD"))["status"] == "continue"
 
 
+def test_final_check_uses_active_input_manifest_and_closes_updates_first(tmp_path):
+    complete_result(tmp_path)
+    phases = []
+
+    def current_inputs():
+        assert phases == ["closing"]
+        return {"revision": "revision-0002", "acceptance_checks": list("ABCDE")}
+
+    result = RunSupervisor(
+        run=tmp_path,
+        workspace=tmp_path,
+        required_checks=tuple("ABCD"),
+        sessions=list,
+        execute_builder=lambda *args: None,
+        input_manifest=current_inputs,
+        on_finishing=lambda: phases.append("closing"),
+    ).run(initial_builder=False)
+    assert result["status"] == "incomplete"
+    assert result["input_manifest"]["revision"] == "revision-0002"
+
+
 def test_retained_session_never_launches_generic_builder(tmp_path):
     child = {"session_id": "retained", "status": "running"}
     calls = []

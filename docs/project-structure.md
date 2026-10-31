@@ -23,7 +23,7 @@
 | --- | --- | --- |
 | `runtime/local/` | Host 固定的模型转发、身份与权限、候选生命周期、Git 版本、协议检查、诊断、冷启动和恢复 | 是 |
 | `runtime/remote/` | 按归属运行远程 Docker 作业、分配资源、构建执行镜像 | 是 |
-| `configs/`、`evals/` | 通用配置与当前能力目标；每次运行另存冻结副本 | 是 |
+| `configs/`、`evals/` | 通用配置与当前能力目标；每次运行另存版本化副本 | 是 |
 | `tests/runtime/` | 验证固定部署逻辑，不承担 A3 自身的开发测试 | 是 |
 | `reports/` | 可选的本地报告工程，保存展示用正文、数据与图像 | 否 |
 | `third_party/` | 第三方原始源码与独立 Git 历史 | submodule |
@@ -34,7 +34,7 @@
 
 | 路径 | 内容与生命周期 |
 | --- | --- |
-| `artifacts/rsi/run-*/` | 正式冷启动原始档案：冻结输入、独立工作区、候选、轨迹、实验报告与会话事件 |
+| `artifacts/rsi/run-*/` | 正式冷启动原始档案：版本化输入、独立工作区、候选、轨迹、实验报告与会话事件 |
 | `artifacts/rsi/latest-run.txt` | 最近正式运行的路径，供轨迹浏览与恢复入口读取 |
 | `artifacts/rsi/launch-logs/` | 后台启动时保存的终端日志；正式轨迹与验收证据仍归属各 run |
 | `artifacts/validation/` | 部署、恢复、隔离、预检、安装和报告复核记录；不作为正式验收的替代 |
@@ -52,7 +52,9 @@ run 目录按 Host 本地时间命名，如 `run-20261031-110415-123456`；末�
 
 ```text
 artifacts/rsi/run-*/
-├── inputs/                 当次冻结的目标、验收与执行条件
+├── inputs/                 当前生效的目标、验收、Prompt 与版本清单
+├── input-revisions/        每次启动和输入切换时的完整历史副本
+├── input-events.jsonl      版本切换记录
 ├── workspace/
 │   ├── a3/                 初始构建 Agent 使用的 A3 副本
 │   ├── harness/            独立项目 Git 工作区
@@ -98,6 +100,6 @@ artifacts/rsi/run-*/
 
 启动流程与参数见[使用教程](tutorial.md)，执行单元和调用关系见[系统架构](architecture.md)。`continuation.py` 负责跨轮结果的机械保存与读取；`retained.json` 是运行结果，Agent 的记忆实现仍归属其生成的 Harness。
 
-`configs/prompts/common.md` 是主 Agent 与接任候选的核心协议来源，每轮冻结到 `inputs/common-instructions.md`。测试 Agent 和普通 worker 不由 Host 自动加载该协议；其提示词属于主 Agent 的专项实现。
+`configs/prompts/common.md` 是主 Agent 与接任候选的核心协议来源，每轮版本化到 `inputs/common-instructions.md`。测试 Agent 和普通 worker 不由 Host 自动加载该协议；其提示词属于主 Agent 的专项实现。
 
 每轮 `.host/` 由 Host 私有维护，保存恢复所需身份与注册表、进程锁；不挂载给 Agent，不作为可分享产物。`resume-events.jsonl` 记录原 run 内的恢复事件。

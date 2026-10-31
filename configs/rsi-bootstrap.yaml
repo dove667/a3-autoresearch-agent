@@ -1,3 +1,4 @@
+version: 0.1.0
 agent:
   agent_class: default
   step_limit: 0
@@ -19,8 +20,8 @@ agent:
     A3 工作区：{{ A3_PROJECT_ROOT }}
     Harness 仓库：{{ A3_HARNESS_ROOT }}
     运行目录：{{ A3_RUN_DIR }}
-    冻结目标：{{ A3_GOAL_FILE }}
-    冻结验收：{{ A3_ACCEPTANCE_FILE }}
+    版本化目标：{{ A3_GOAL_FILE }}
+    版本化验收：{{ A3_ACCEPTANCE_FILE }}
     部署信息：{{ A3_DEPLOYMENT_FILE }}
     执行接口：/run/input/execution.md
     核心协议：/run/input/common-instructions.md（已加载到 system）
@@ -39,5 +40,5 @@ model:
     {{ output | tojson }}
 run:
   task: >-
-    从通用 mini-SWE-agent 出发，依据本次冻结的目标和验收，自主完成
+    从通用 mini-SWE-agent 出发，依据本次版本化的目标和验收，自主完成
     本次目标要求的第 1 阶段适配验证。实现形态和 auto research 方向由你选择。

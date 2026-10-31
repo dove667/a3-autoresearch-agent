@@ -1,10 +1,7 @@
-import hashlib
 import json
 import subprocess
 
-import pytest
-
-from runtime.local.launch import freeze_inputs, snapshot_checkout
+from runtime.local.launch import snapshot_checkout
 
 
 def make_repository(path):
@@ -93,27 +90,6 @@ def test_snapshot_preserves_deleted_tracked_files(tmp_path):
     snapshot_checkout(source, candidate)
     assert not (candidate / "module.py").exists()
     assert subprocess.check_output(["git", "-C", str(candidate), "status", "--porcelain"]) == b""
-
-
-def test_successor_keeps_frozen_goals_and_links_previous_blocker(tmp_path):
-    previous, inputs = tmp_path / "previous", tmp_path / "next/inputs"
-    (previous / "inputs").mkdir(parents=True)
-    (previous / "workspace/run").mkdir(parents=True)
-    digests = {}
-    for name in ("goal.md", "acceptance.md", "bootstrap.yaml", "execution.md"):
-        content = f"Frozen {name}"
-        (previous / "inputs" / name).write_text(content)
-        digests[name] = hashlib.sha256(content.encode()).hexdigest()
-    (previous / "startup.json").write_text(json.dumps({"inputs": digests}))
-    (previous / "workspace/run/blocker.md").write_text("Missing deployment interface")
-    inputs.mkdir(parents=True)
-    freeze_inputs(inputs, previous)
-    assert (inputs / "goal.md").read_text() == "Frozen goal.md"
-    assert (inputs / "previous-blocker.md").read_text() == "Missing deployment interface"
-    assert json.loads((inputs / "parent-run.json").read_text())["run_id"] == "previous"
-    (previous / "inputs/acceptance.md").write_text("Changed acceptance")
-    with pytest.raises(ValueError, match="Frozen"):
-        freeze_inputs(inputs, previous)
 
 
 def test_recovery_preserves_generated_code_and_evidence_without_old_auth(tmp_path):

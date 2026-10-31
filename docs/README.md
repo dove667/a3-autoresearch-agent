@@ -6,7 +6,8 @@
 - [使用教程](tutorial.md)：安装准备、全部启动参数、初始运行、中断恢复、版本迭代、轨迹与故障定位。
 - [系统架构](architecture.md)：两阶段 RSI、运行单元、调用链、版本与身份、权限和资源管理。
 - [目录职责](project-structure.md)：源码、候选、报告和运行产物的存放位置。
-- [能力目标](../evals/goal.md)与[验收标准](../evals/acceptance.md)：每次运行会冻结自己的副本。
+- [能力目标](../evals/goal.md)与[验收标准](../evals/acceptance.md)：启动时采用当前版本并记录内容。
+- [Agent 输入版本与热加载](agent-inputs.md)：版本号维护、恢复加载规则和警告确认。
 - [Host 执行接口](../runtime/local/README.md)：给生成后的 Harness 使用的固定部署能力。
 
 从首次使用开始，先读使用教程；理解运行机制再读系统架构，查找文件归属时读目录职责。

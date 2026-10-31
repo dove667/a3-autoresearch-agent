@@ -1,4 +1,6 @@
-本次仅检查部署准备，不执行正式 RSI，不声明 A/B/C 研究验收通过。
+Version: 0.1.0
+
+本次仅检查部署准备，不执行正式 RSI，不声明 A/B/C auto research 验收通过。
 先阅读 `/run/input/execution.md`、`/run/input/deployment.json` 及已有 previous-blocker.md。
 使用已有 Bash 工具自主编写临时验证程序，确认以下真实链路，不要求人提供下一轮指令：
 

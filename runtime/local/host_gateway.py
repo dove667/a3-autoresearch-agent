@@ -6,6 +6,7 @@ import secrets
 import threading
 import time
 from collections.abc import Callable
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Annotated
 
@@ -22,6 +23,7 @@ from runtime.local.candidate_runtime import (
 from runtime.local.comparison_checks import check_comparison
 from runtime.local.evolution import EvolutionState
 from runtime.local.gateway_diagnostics import CURRENT_REQUEST, GatewayDiagnostics
+from runtime.local.input_versions import InputVersions
 from runtime.local.run_state import RunStateStore
 
 
@@ -55,6 +57,11 @@ class TrialDecision(BaseModel):
 class SessionStopRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     reason: str = Field(min_length=1, max_length=4000)
+
+
+class InputUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    confirm: str = Field(pattern=r"^[0-9a-f]{64}$")
 
 
 class VersionRequest(BaseModel):
@@ -102,6 +109,8 @@ def create_app(
     common_instructions: str = "",
     state_store: RunStateStore | None = None,
     restored_state: dict | None = None,
+    input_versions: InputVersions | None = None,
+    operator_token: str | None = None,
 ) -> FastAPI:
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     diagnostics = GatewayDiagnostics(usage_log.with_name("gateway-events.jsonl"))
@@ -201,7 +210,7 @@ def create_app(
             raise HTTPException(503, "Deployment is shutting down")
 
     def begin_shutdown():
-        with session_lock:
+        with input_versions.lock if input_versions else nullcontext(), session_lock:
             app.state.closing = True
 
     def close_owner_resources(experiment):
@@ -597,6 +606,46 @@ def create_app(
     def health():
         return {"status": "ready"}
 
+    def require_operator(authorization):
+        supplied = (authorization or "").removeprefix("Bearer ")
+        if not operator_token or not secrets.compare_digest(supplied, operator_token):
+            raise HTTPException(403, "Host operator authorization required")
+        if input_versions is None:
+            raise HTTPException(503, "Versioned Agent inputs are not configured")
+
+    def prepare_inputs():
+        try:
+            return input_versions.prepare()
+        except (OSError, ValueError) as error:
+            raise HTTPException(422, str(error)) from None
+
+    @app.get("/control/inputs")
+    def preview_inputs(authorization: Annotated[str | None, Header()] = None):
+        require_operator(authorization)
+        proposal = prepare_inputs()
+        return {
+            "current": input_versions.manifest,
+            "proposed": {key: proposal[key] for key in ("digest", "files")},
+            "warning": "热加载会更新本轮目标、验收和Prompt。已发出的请求仍使用原版本；后续请求使用新版。需确认预览内容摘要后执行。",
+        }
+
+    @app.post("/control/inputs")
+    def reload_inputs(
+        body: InputUpdateRequest, authorization: Annotated[str | None, Header()] = None
+    ):
+        require_operator(authorization)
+        with input_versions.lock:
+            accepting_resources()
+            proposal = prepare_inputs()
+            if not secrets.compare_digest(body.confirm, proposal["digest"]):
+                raise HTTPException(409, "Preview changed; inspect and confirm the current digest")
+            try:
+                return input_versions.activate(proposal, "hot_reload")
+            except OSError:
+                raise HTTPException(
+                    503, "Agent input update failed; inspect Host storage"
+                ) from None
+
     @app.post("/v1/responses")
     def responses(body: dict, authorization: Annotated[str | None, Header()] = None):
         accepting_resources()
@@ -615,16 +664,21 @@ def create_app(
         with session_lock:
             trial = evolution.trials.get(experiment, {}) if evolution else {}
             receives_common = bool(
-                common_instructions
+                (common_instructions or input_versions)
                 and evolution
                 and (experiment == evolution.main_owner or trial.get("status") == "testing")
             )
+        input_manifest, active_common = (
+            input_versions.model_instructions()
+            if input_versions is not None
+            else ({}, common_instructions)
+        )
         if receives_common:
             specific = arguments.get("instructions")
             if specific is not None and not isinstance(specific, str):
                 raise HTTPException(422, "Instructions must be text")
             arguments["instructions"] = (
-                common_instructions + "\n\n" + specific if specific else common_instructions
+                active_common + "\n\n" + specific if specific else active_common
             )
         if isinstance(arguments.get("input"), str):
             arguments["input"] = [{"role": "user", "content": arguments["input"]}]
@@ -642,13 +696,18 @@ def create_app(
             "usage": data.get("usage"),
         }
         if receives_common:
-            entry["common_instructions_sha256"] = hashlib.sha256(
-                common_instructions.encode()
-            ).hexdigest()
+            entry["common_instructions_sha256"] = hashlib.sha256(active_common.encode()).hexdigest()
+        if input_manifest:
+            entry["input_revision"] = input_manifest["revision"]
+            entry["input_versions"] = input_manifest["files"]
         with log_lock:
             usage_log.parent.mkdir(parents=True, exist_ok=True)
             with usage_log.open("a") as stream:
                 stream.write(json.dumps(entry) + "\n")
+        if input_manifest:
+            from fastapi.responses import JSONResponse
+
+            return JSONResponse(data, headers={"X-A3-Input-Revision": input_manifest["revision"]})
         return data
 
     @app.post("/jobs")
