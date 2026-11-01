@@ -1,6 +1,6 @@
 # Agent 输入的版本与加载
 
-Version: 0.1.1
+Version: 0.1.2
 
 目标、验收、Prompt 和执行说明由部署方维护。新启动、`--resume-from` 和 `--run-harness` 都采用启动时仓库里的当前文件，包括未提交的工作区内容。恢复保留原 run、身份、生成的 Harness 和模型对话历史；部署方 system Prompt 与所选阶段协议更新为当前版本。
 
@@ -59,4 +59,6 @@ uv run python -m runtime.local.reload_inputs "artifacts/rsi/<run-id>" --confirm 
 
 `--resume-from <run> --feedback-file <本地文件>` 是独立的可选人工反馈入口，面向已生成 Harness 的主身份。反馈不是目标或计分文件的替换；由固定 0.1.0 封装协议生成 user message，以反馈 ID 和内容 SHA256 追踪每次显式登记。源文件可覆盖，无需用户手动改版本号；封装协议行为变化需递增实现中的 PROTOCOL_VERSION 并同步本节。
 
-具体文本副本、登记/定位/成功转发事件和当前状态保存在 `.host/human-feedback/`，不自动读取或热加载文件。重复提供最近一次同内容文件不产生新的登记。有效历史中的注入位置由完整历史前缀摘要确定，工具调用与结果保持配对；上下文重建时会记录重新定位。模型用量记录中的 human_feedback_ids 标识该请求使用了哪些反馈。没有反馈时原有请求路径保持不变；完整操作和范围见[使用教程](tutorial.md#恢复时加入人类反馈)。
+运行中的 Host 也支持 `python -m runtime.local.reload_feedback <run目录> --feedback-file <本地文件>`。先预览正文、接收主身份和摘要，再以 `--confirm <预览摘要>` 显式登记。摘要绑定内容与主身份；普通 Agent 无权调用。登记不打断已发出的请求和作业，在下一次完整历史请求中投递。
+
+具体文本副本、登记/定位/成功转发事件和当前状态保存在 `.host/human-feedback/`，源文件变化不会自动触发加载。重复提供最近一次同内容文件不产生新的登记。有效历史中的注入位置由完整历史前缀摘要确定，工具调用与结果保持配对；上下文重建时会记录重新定位。模型用量记录中的 human_feedback_ids 标识该请求使用了哪些反馈。没有反馈时原有请求路径保持不变；完整操作和范围见[使用教程](tutorial.md#运行中热加载人类反馈)。

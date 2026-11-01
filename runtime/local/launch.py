@@ -225,7 +225,7 @@ def remote_limits() -> dict:
         else "exclusive",
         "max_gpus": int(os.environ.get("A3_REMOTE_MAX_GPUS", "4")),
         "gpu_memory_mb": int(os.environ.get("A3_REMOTE_GPU_MEMORY_MB", "512")),
-        "gpu_headroom_mb": int(os.environ.get("A3_REMOTE_GPU_HEADROOM_MB", "1024")),
+        "gpu_headroom_mb": int(os.environ.get("A3_REMOTE_GPU_HEADROOM_MB", "2048")),
         "gpu_capacity_mb": int(os.environ.get("A3_REMOTE_GPU_CAPACITY_MB", "0")),
         "storage_scope": "local run files plus new remote data and outputs across all identities in this run",
     }

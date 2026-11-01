@@ -280,7 +280,7 @@ uv run python -m runtime.local.reload_inputs "artifacts/rsi/<run-id>" --confirm 
 
 部署方设置 A3_REMOTE_SHARE_GPUS=1，使用 A3_REMOTE_MAX_GPUS 控制同时使用的物理卡数；A3_REMOTE_MAX_JOBS=0 关闭按作业数量的固定限制。同一卡有余量时可继续接收小作业，运行位置由 Host 选择。
 
-A3_REMOTE_GPU_CAPACITY_MB 与 A3_REMOTE_GPU_HEADROOM_MB 分别设置每卡可预留总额和缓冲。Agent 提交作业时可用 gpu_memory_mb 记录预计峰值，省略时采用 A3_REMOTE_GPU_MEMORY_MB。详细算法与范围见[远程调度说明](../runtime/remote/README.md#显存共享调度)。
+A3_REMOTE_GPU_CAPACITY_MB 与 A3_REMOTE_GPU_HEADROOM_MB 分别设置每卡可预留总额和缓冲，缓冲默认 2048 MiB（2 GiB）。共享模式允许与外部进程同卡，只按实际显存与预留量判断剩余空间；总使用卡数仍受 A3_REMOTE_MAX_GPUS 限制。Agent 提交作业时可用 gpu_memory_mb 记录预计峰值，省略时采用 A3_REMOTE_GPU_MEMORY_MB。详细算法与范围见[远程调度说明](../runtime/remote/README.md#显存共享调度)。
 
 
 ## 第二阶段的大文件交接
@@ -310,3 +310,25 @@ Host 读取当次 UTF-8 文本（最多 64 KiB），保存内容副本、SHA256 
 后续完整历史请求中，Host 在同一个历史边界保留该条反馈，每份有效上下文只有一条该反馈，不在每轮末尾反复追加。再次 resume 不指定文件仍会沿用已经登记的反馈。Harness 压缩或重建上下文时，Host 将反馈重新定位到当前完整历史末尾并记录 reanchored 事件；未完成的工具结果须先对齐。
 
 同一个源文件便于维护，当次副本与事件仍保存在本 run 私有的 `.host/human-feedback/`，恢复与审查依赖这些记录。反馈只绑定登记时的主身份，不自动发给测试 worker 或后继主身份；主 Agent 按任务需要自行交接。原 run、身份和 Agent 的持久记忆保持不变。该人工反馈会影响后续执行，应在实验报告中如实标记人工参与。
+
+## 运行中热加载人类反馈
+
+Host 已运行新版反馈接口时，可以让实验继续执行，通过独立终端把同一个 `human-feedback.md` 中的最新内容送给当前主 Agent。先预览：
+
+```bash
+uv run python -m runtime.local.reload_feedback "artifacts/rsi/<run-id>" \
+  --feedback-file human-feedback.md
+```
+
+命令显示正文、接收身份与摘要，尚不注入。核对后使用显示的摘要确认：
+
+```bash
+uv run python -m runtime.local.reload_feedback "artifacts/rsi/<run-id>" \
+  --feedback-file human-feedback.md --confirm <预览摘要>
+```
+
+正文或主身份变化会使旧摘要失效，须重新预览。操作仅限持有 Host operator 凭据的人类入口；普通 Agent 无权注入。源文件最多 64 KiB UTF-8，覆盖文件本身不会自动发送。Host 已暂停或仍运行旧代码时，需要先按正常流程恢复或重新部署；CLI 不会替你启动实验。
+
+登记后，反馈会出现在当前主 Agent 下一次完整历史模型调用中。已发出的模型请求、工具和远程作业继续执行，不会即时打断。返回 `delivery=next_model_request` 表示登记成功、等待投递；可在 `.host/human-feedback/events.jsonl` 找到对应 `forwarded`，并在 `model-usage.jsonl` 用 `human_feedback_ids` 核对实际成功转发。主身份若在投递前退出或交接，反馈仍保留在原身份的记录中，不自动广播或改发。
+
+内容留档、去重、恢复后沿用、工具结果配对及人工参与记录，与恢复时反馈共用同一机制。

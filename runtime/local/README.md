@@ -1,6 +1,6 @@
 # Host提供的执行与验收入口
 
-Version: 0.1.9
+Version: 0.1.11
 
 部署方运行 gateway、容器引擎、模型认证与远程资源调度。候选 Harness 在独立容器内运行，
 通过 HTTP 请求这些固定能力。工具名称、研究逻辑、反思方法和版本选择由 Agent 设计。
@@ -261,6 +261,10 @@ Host 只加载所选阶段的一份完整 Prompt，不叠加 common 或另一阶
 
 部署方热加载使用 `python -m runtime.local.reload_inputs <run目录>` 预览警告，再加 `--confirm <预览摘要>` 确认。Agent 的令牌无此权限。已发出的模型请求不变，后续请求采用新版本；Agent 连续读取多个输入文件时，前后必须都是 manifest.status=active，且 revision 和 generation 都相同。updating 时等待，标识变化后重新读取。完整版本维护规则见项目 docs/agent-inputs.md。
 
+人类反馈可独立热加载：Host 操作者运行 `python -m runtime.local.reload_feedback <run目录> --feedback-file human-feedback.md`，核对正文、当前主身份和摘要，再增加 `--confirm <预览摘要>`。CLI 将文本发送至 `POST /control/feedback/preview` 与 `POST /control/feedback`，不把 Host 文件路径交给 Gateway 读取。确认摘要同时绑定正文与接收身份；主身份交接或正文变化后须重新预览。Agent 令牌不能调用这两个入口。
+
+反馈在当前主身份下一次完整历史模型请求中作为 user message 加入，沿用 `.host/human-feedback/` 的副本、反馈 ID、摘要、投递事件与用量标记。已发出的请求和作业继续执行；登记成功表示等待投递，后续 `forwarded` 才表示带反馈的模型请求成功返回。源文件不会被自动监视；反馈不广播给其他 worker，也不自动移交给下一代主身份。此操作属于显式人工参与。
+
 ## 远程资产、输出与额度
 
 部署方可配置只读 `/models`、`/datasets`；Agent 根据目录中的实际文件选择模型和数据。远程作业自己的 `/workspace` 与同一 worker 身份持久可写的 `/outputs` 保存在服务器项目的数据目录中。其他身份的输出不挂载，主身份交接不自动授予前任输出访问权；文件、版本或大文件交接须使用 Host 已支持的显式授权途径。
@@ -279,9 +283,13 @@ Host 只加载所选阶段的一份完整 Prompt，不叠加 common 或另一阶
 
 memory_shared 模式允许多个独立 Docker 作业共享同一张 GPU，文件、身份与输出仍各自隔离。Agent 不指定卡号；Host 根据显存余量和整机已使用卡数分配，max_gpus 约束本项目同时使用的物理卡数，max_jobs=0 时不按作业数量阻止新增任务。
 
+共享模式下，`resource_busy` 的 `reason=no_eligible_gpu` 表示本次没有符合准入条件的卡，`gpu_allocation` 给出请求显存、活动卡数，以及逐卡实际占用、可用容量和排除原因；`reason=job_count_limit` 则表示达到作业数量上限。不要把两者都理解为整机没有空闲算力。成功 GPU 提交也返回分配报告。资源判断只描述提交时的快照；稍后可按事实重试，已经在 CPU 上运行的作业不会自动迁移到 GPU。
+
+共享模式按剩余显存接纳任务，允许与外部进程同卡；已有显存占用和 GPU 利用率不会单独触发排除。Host 同时检查本项目活动卡数、每卡预留上限、整卡实际显存和尚未兑现的预留，并保留默认 2 GiB 缓冲。Agent 不能自行更改这些部署限制，也不能控制或回收外部作业。
+
 POST /jobs 可选 gpu_memory_mb，表示预计显存峰值，单位 MiB。未提供时采用部署方的默认预留；小仿真可直接使用默认值，大模型加载/训练应提交合理的峰值估计。Host 同时检查每卡预留总额、实际显存和尚未兑现的预留，扣除缓冲。过大请求返回 resource_unavailable；暂时无余量返回 resource_busy。
 
-新卡需处于空闲状态，已有本项目共享作业的卡可继续接收任务；其他使用者正在占用的卡不会被纳入。此模式共享计算与显存，不提供每作业硬显存隔离。GPU UUID、共享标志和预留量随作业保存；比较运行时间时记录同卡并发条件。
+最多同时使用的物理卡数仅统计本项目作业所在的卡；外部进程不消耗这个名额，其显存计入整卡实际占用。此模式共享计算与显存，不提供每作业硬显存隔离。GPU UUID、共享标志和预留量随作业保存；比较运行时间时记录同卡并发条件。
 
 ## 人类准备的离线模型资源
 

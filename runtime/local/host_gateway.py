@@ -79,6 +79,15 @@ class InputUpdateRequest(BaseModel):
     confirm: str = Field(pattern=r"^[0-9a-f]{64}$")
 
 
+class FeedbackPreviewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    text: str = Field(max_length=65536)
+
+
+class FeedbackUpdateRequest(FeedbackPreviewRequest):
+    confirm: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
 class VersionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     files: dict[str, str]
@@ -722,10 +731,10 @@ def create_app(
         supplied = (authorization or "").removeprefix("Bearer ")
         if not operator_token or not secrets.compare_digest(supplied, operator_token):
             raise HTTPException(403, "Host operator authorization required")
-        if input_versions is None:
-            raise HTTPException(503, "Versioned Agent inputs are not configured")
 
     def prepare_inputs():
+        if input_versions is None:
+            raise HTTPException(503, "Versioned Agent inputs are not configured")
         try:
             return input_versions.prepare()
         except (OSError, ValueError) as error:
@@ -746,6 +755,8 @@ def create_app(
         body: InputUpdateRequest, authorization: Annotated[str | None, Header()] = None
     ):
         require_operator(authorization)
+        if input_versions is None:
+            raise HTTPException(503, "Versioned Agent inputs are not configured")
         with input_versions.lock:
             accepting_resources()
             proposal = prepare_inputs()
@@ -757,6 +768,47 @@ def create_app(
                 raise HTTPException(
                     503, "Agent input update failed; inspect Host storage"
                 ) from None
+
+    def prepare_feedback(text):
+        accepting_resources()
+        if human_feedback is None or evolution is None:
+            raise HTTPException(503, "Human feedback and a main session must be configured")
+        actor = evolution.main_owner
+        if actor not in sessions.values():
+            raise HTTPException(409, "The main session is no longer accepting model requests")
+        try:
+            return human_feedback.preview(text, actor)
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from None
+
+    @app.post("/control/feedback/preview")
+    def preview_feedback(
+        body: FeedbackPreviewRequest, authorization: Annotated[str | None, Header()] = None
+    ):
+        require_operator(authorization)
+        with session_lock:
+            return {
+                **prepare_feedback(body.text),
+                "warning": "确认后反馈将加入当前主 Agent 下一次完整历史模型请求；已发出的请求和正在运行的作业继续执行。此操作属于人工参与。",
+            }
+
+    @app.post("/control/feedback")
+    def reload_feedback(
+        body: FeedbackUpdateRequest, authorization: Annotated[str | None, Header()] = None
+    ):
+        require_operator(authorization)
+        # Serialize confirmation with promotion so feedback cannot silently change recipients.
+        with session_lock:
+            proposal = prepare_feedback(body.text)
+            if not secrets.compare_digest(body.confirm, proposal["digest"]):
+                raise HTTPException(409, "Feedback content or main identity changed; preview again")
+            try:
+                registered = human_feedback.register_content(
+                    body.text.encode("utf-8"), proposal["owner"]
+                )
+            except OSError:
+                raise HTTPException(503, "Feedback update failed; inspect Host storage") from None
+            return {**registered, "owner": proposal["owner"], "delivery": "next_model_request"}
 
     @app.post("/v1/responses")
     def responses(body: dict, authorization: Annotated[str | None, Header()] = None):

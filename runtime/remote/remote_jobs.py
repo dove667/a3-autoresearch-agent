@@ -346,40 +346,85 @@ def container_gpu_memory(job: dict, processes: dict) -> float:
     return sum(processes.get((job["gpu_uuid"], pid), 0) for pid in pids)
 
 
-def select_shared_gpu(store: JobStore, args, jobs: list[dict], memory_mb: int) -> str | None:
-    """Reserve capacity under the scheduler lock; share only project-owned devices."""
+def select_shared_gpu(
+    store: JobStore, args, jobs: list[dict], memory_mb: int, *, diagnostics: dict | None = None
+) -> str | None:
+    """Choose a device under the scheduler lock and explain every admission decision."""
     active_devices = {job["gpu_uuid"] for job in jobs if job.get("gpu_uuid")}
+    report = diagnostics if diagnostics is not None else {}
+    report.update(
+        requested_memory_mb=memory_mb,
+        active_gpu_count=len(active_devices),
+        max_gpus=args.max_gpus,
+        selected_gpu_uuid=None,
+        devices=[],
+    )
     processes = gpu_process_memory()
     allowed = set(args.gpu_ids.split(",")) if args.gpu_ids else None
     candidates = []
     for device in gpu_devices():
         gpu = device["uuid"]
+        decision = {**device, "reason": "eligible"}
+        report["devices"].append(decision)
         if allowed is not None and gpu not in allowed and device["index"] not in allowed:
+            decision["reason"] = "device_not_allowed"
             continue
         occupants = [job for job in jobs if job.get("gpu_uuid") == gpu]
         if any(not job.get("gpu_shared") for job in occupants):
+            decision["reason"] = "exclusive_project_job"
             continue
-        if gpu not in active_devices:
-            if len(active_devices) >= args.max_gpus:
-                continue
-            if device["used_mb"] > 128 or device["utilization"] > 5:
-                continue
+        if gpu not in active_devices and len(active_devices) >= args.max_gpus:
+            decision["reason"] = "physical_device_limit"
+            continue
         probe = GpuLease.try_acquire(store.root / "locks", gpu)
         if probe is None:
+            decision["reason"] = "exclusive_lease_locked"
             continue
         probe.close()
         reserved = sum(job["gpu_memory_mb"] for job in occupants)
         pending = sum(
             max(0, job["gpu_memory_mb"] - container_gpu_memory(job, processes)) for job in occupants
         )
-        capacity = device["total_mb"] - args.gpu_headroom_mb
+        physical_capacity = device["total_mb"] - args.gpu_headroom_mb
+        capacity = physical_capacity
         configured = getattr(args, "gpu_capacity_mb", 0)
         if configured:
             capacity = min(capacity, configured)
-        available = min(capacity - reserved, capacity - device["used_mb"] - pending)
+        available = max(
+            0, min(capacity - reserved, physical_capacity - device["used_mb"] - pending)
+        )
+        decision.update(
+            capacity_mb=capacity,
+            physical_capacity_mb=physical_capacity,
+            reserved_mb=reserved,
+            pending_mb=pending,
+            available_mb=available,
+            headroom_mb=args.gpu_headroom_mb,
+        )
         if available >= memory_mb:
             candidates.append((available, gpu))
-    return max(candidates)[1] if candidates else None
+        else:
+            decision["reason"] = "insufficient_memory"
+    selected = max(candidates)[1] if candidates else None
+    report["selected_gpu_uuid"] = selected
+    for decision in report["devices"]:
+        if decision["uuid"] == selected:
+            decision["reason"] = "selected"
+    return selected
+
+
+def record_scheduler_event(store: JobStore, request: dict, result: dict) -> None:
+    """Save allocation evidence without commands, input files or credentials."""
+    event = {
+        "time": time.time(),
+        "experiment_id": request["experiment_id"],
+        "run_id": request.get("run_id"),
+        "result": result,
+    }
+    with (store.root / "scheduler-events.jsonl").open("a") as stream:
+        stream.write(json.dumps(event) + "\n")
+        stream.flush()
+        os.fsync(stream.fileno())
 
 
 def create_container(store: JobStore, job: dict, args) -> str:
@@ -518,28 +563,59 @@ def submit(store: JobStore, request: dict, args) -> dict:
                     "limit_bytes": limit,
                 }
         if args.max_jobs and count_active_jobs(store) >= args.max_jobs:
-            return {"job_id": None, "status": "resource_busy", "retry_after_seconds": 2}
+            result = {
+                "job_id": None,
+                "status": "resource_busy",
+                "reason": "job_count_limit",
+                "max_jobs": args.max_jobs,
+                "retry_after_seconds": 2,
+            }
+            record_scheduler_event(store, request, result)
+            return result
         gpu_uuid = None
+        allocation = {}
         shared = bool(getattr(args, "share_gpus", False))
         memory_mb = request.get("gpu_memory_mb") or getattr(args, "gpu_memory_mb", 512)
         if request["gpu"]:
             if shared:
                 capacity = getattr(args, "gpu_capacity_mb", 0)
                 if capacity and memory_mb > capacity:
-                    return {
+                    result = {
                         "job_id": None,
                         "status": "resource_unavailable",
                         "reason": "requested GPU memory exceeds the per-device capacity",
                         "gpu_memory_mb": memory_mb,
                         "gpu_capacity_mb": capacity,
                     }
-                gpu_uuid = select_shared_gpu(store, args, active_jobs(store), memory_mb)
+                    record_scheduler_event(store, request, result)
+                    return result
+                gpu_uuid = select_shared_gpu(
+                    store, args, active_jobs(store), memory_mb, diagnostics=allocation
+                )
             else:
                 allowed = set(args.gpu_ids.split(",")) if args.gpu_ids else None
                 gpu_uuid, lease = acquire_gpu(store, allowed)
             if gpu_uuid is None:
-                return {"job_id": None, "status": "resource_busy", "retry_after_seconds": 2}
+                result = {
+                    "job_id": None,
+                    "status": "resource_busy",
+                    "reason": "no_eligible_gpu",
+                    "retry_after_seconds": 2,
+                    **({"gpu_allocation": allocation} if shared else {}),
+                }
+                record_scheduler_event(store, request, result)
+                return result
         try:
+            if request["gpu"]:
+                record_scheduler_event(
+                    store,
+                    request,
+                    {
+                        "status": "gpu_selected",
+                        "gpu_uuid": gpu_uuid,
+                        **({"gpu_allocation": allocation} if allocation else {}),
+                    },
+                )
             job = store.create(
                 request["experiment_id"],
                 request["command"],
@@ -552,6 +628,8 @@ def submit(store: JobStore, request: dict, args) -> dict:
             job["gpu_uuid"] = gpu_uuid
             job["gpu_shared"] = shared and request["gpu"]
             job["gpu_memory_mb"] = memory_mb if request["gpu"] else 0
+            if allocation:
+                job["gpu_allocation"] = allocation
             container_id = create_container(store, job, args)
             job["container_id"] = container_id
             store.save(job)
@@ -585,7 +663,13 @@ def submit(store: JobStore, request: dict, args) -> dict:
                     start_new_session=True,
                     pass_fds=(lease.descriptor,) if lease else (),
                 )
-            return {"job_id": job["job_id"], "status": "created", "gpu_uuid": gpu_uuid}
+            result = {
+                "job_id": job["job_id"],
+                "status": "created",
+                "gpu_uuid": gpu_uuid,
+                **({"gpu_allocation": allocation} if allocation else {}),
+            }
+            return result
         except Exception:
             if container_id:
                 docker(["rm", "-f", container_id], check=False)
@@ -778,7 +862,7 @@ def main() -> None:
     parser.add_argument("--share-gpus", action="store_true")
     parser.add_argument("--max-gpus", type=int, default=4)
     parser.add_argument("--gpu-memory-mb", type=int, default=512)
-    parser.add_argument("--gpu-headroom-mb", type=int, default=1024)
+    parser.add_argument("--gpu-headroom-mb", type=int, default=2048)
     parser.add_argument("--gpu-capacity-mb", type=int, default=0)
     parser.add_argument("--run-storage-bytes", type=int, default=0)
     parser.add_argument("--models-root", type=Path)

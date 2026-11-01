@@ -74,7 +74,7 @@ printf '{}' | python3 "$CONTROLLER" \
 
 受信任的 Gateway 注入 `experiment_id` 和整轮共享的 `run_id`；模型请求不能自行指定这两项。容器客户端提供容器内命令，例如 `["a3-sim", "smoke", "--steps", "20"]`，以及是否需要 GPU 的布尔值。挂载和 Docker 参数由 Host配置决定。`files` 将相对工作区路径映射到 UTF-8 内容；请求最多 20 MiB、128 个文件。
 
-提交先返回 `created`，随后由独立 watcher 启动容器。状态包括 `created`、`running`、`completed`、`failed`、`cancelled`。资源不足时返回 `resource_busy`、空作业标识和重试间隔，该请求不启动容器。
+提交先返回 `created`，随后由独立 watcher 启动容器。状态包括 `created`、`running`、`completed`、`failed`、`cancelled`。资源不足时返回 `resource_busy`、空作业标识和重试间隔，该请求不启动容器。`reason=job_count_limit` 表示作业数量达到上限，`reason=no_eligible_gpu` 表示没有通过准入的 GPU；共享模式还返回 `gpu_allocation` 逐卡判断，避免将所有等待归因为显存不足。
 
 未知作业、缺少归属和归属不匹配统一返回 `PermissionError` JSON。业务错误包含 `status: error`、错误类型和说明，输出后 CLI 退出码为 0；命令行参数错误沿用非零退出码。
 
@@ -115,7 +115,11 @@ python3 runtime/remote/verify_remote.py \
 
 --share-gpus 开启同卡多作业；--max-gpus 限制整机本项目活动物理卡数。--gpu-memory-mb 是每个新作业缺省的显存峰值预留，Agent 可通过 gpu_memory_mb 提供实际预计值；--gpu-capacity-mb 限制每卡总预留（0 表示按设备容量减缓冲），--gpu-headroom-mb 保留显存缓冲，单位均为 MiB。它们由对应的 A3_REMOTE_SHARE_GPUS、A3_REMOTE_MAX_GPUS、A3_REMOTE_GPU_MEMORY_MB、A3_REMOTE_GPU_CAPACITY_MB、A3_REMOTE_GPU_HEADROOM_MB 提供。
 
-调度器读取 nvidia-smi 的实际显存，并用本项目 Docker 的进程归属区分已兑现预留和尚未加载的预留。既不把已加载显存重复相加，也不把新启动作业误认为零占用。每卡预留与实际加待兑现预留都须在容量内；没有空间时等待，已在运行的作业退出后名额自动释放。只将空闲卡加入本项目卡池；池内支持共享，不接管其他使用者的忙碌卡。
+调度器读取 nvidia-smi 的整卡实际显存，并用本项目 Docker 的进程归属区分已兑现预留和尚未加载的预留。外部占用计入整卡实际显存，本项目已加载的预留不重复计算。可用量取两项余量中的较小值：每卡预留上限减去本项目预留总额，以及物理显存减去缓冲、整卡实际占用和尚未兑现的预留。`--gpu-headroom-mb` 默认 2048，即 2 GiB；每卡预留上限与物理缓冲分别计算。没有空间时返回等待，已在运行的作业退出后名额自动释放。
+
+共享模式允许与外部进程同卡，按上述显存余量准入，不设外部占用量或 GPU 利用率门槛。本项目同时使用的物理卡数仍受 --max-gpus 限制；外部进程不计入该卡数，控制器不调整外部进程。独占模式与独占租约仍保留原有约束。
+
+每次共享 GPU 选择产生 `gpu_allocation`，包含请求显存、活动卡数、逐卡观测与判断。逐卡 `reason` 包括 `selected`、`eligible`、`device_not_allowed`、`exclusive_project_job`、`physical_device_limit`、`exclusive_lease_locked` 与 `insufficient_memory`；经过显存计算的条目同时包含 `capacity_mb`（本项目预留容量）、`physical_capacity_mb`（物理显存减缓冲）、`reserved_mb`、`pending_mb` 和 `available_mb`。返回给调用者的报告保存在 GPU 作业元数据中；选择或拒绝还追加到共享根目录 `scheduler-events.jsonl`，不记录命令、上传内容或凭据。诊断写入发生在创建 GPU 容器前，失败时不启动作业。报告对应本次提交时刻，不代表之后仍有相同资源；控制器不自动把 CPU 作业迁移到 GPU。
 
 预留用于准入控制，不是 CUDA 硬显存配额。峰值估计应覆盖模型加载、训练与渲染需要；同卡并发会影响耗时，结果记录应保留共享条件。NVIDIA 指标字段见[官方 nvidia-smi 文档](https://docs.nvidia.com/deploy/nvidia-smi/index.html)。
 

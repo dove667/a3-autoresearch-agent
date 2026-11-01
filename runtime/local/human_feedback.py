@@ -54,13 +54,34 @@ class HumanFeedback:
     def event(self, event: str, identifier: str, **fields) -> None:
         with (self.directory / "events.jsonl").open("a") as stream:
             stream.write(json.dumps({"event": event, "feedback_id": identifier, **fields}) + "\n")
+            stream.flush()
+            os.fsync(stream.fileno())
 
     def register(self, path: Path, owner: str) -> dict:
         with path.open("rb") as stream:
             content = stream.read(MAX_FEEDBACK_BYTES + 1)
+        return self.register_content(content, owner)
+
+    @staticmethod
+    def validate_content(content: bytes) -> str:
         if not content.strip() or len(content) > MAX_FEEDBACK_BYTES:
             raise ValueError("Human feedback must contain 1 to 65536 bytes of UTF-8 text")
-        text = content.decode("utf-8")
+        return content.decode("utf-8")
+
+    @staticmethod
+    def preview(text: str, owner: str) -> dict:
+        content = text.encode("utf-8")
+        HumanFeedback.validate_content(content)
+        proposal = {
+            "protocol_version": PROTOCOL_VERSION,
+            "owner": owner,
+            "sha256": hashlib.sha256(content).hexdigest(),
+            "bytes": len(content),
+        }
+        return {**proposal, "digest": digest(proposal)}
+
+    def register_content(self, content: bytes, owner: str) -> dict:
+        text = self.validate_content(content)
         sha256 = hashlib.sha256(content).hexdigest()
         with self.lock:
             previous = next((x for x in reversed(self.records) if x["owner"] == owner), None)
@@ -80,9 +101,14 @@ class HumanFeedback:
                 "text": text,
                 "registered_at": datetime.now(UTC).isoformat(),
             }
-            self.records.append(record)
-            self.save()
+            # The atomic state file commits registration; failed writes must not queue feedback.
             self.event("registered", identifier, owner=owner, sha256=sha256)
+            self.records.append(record)
+            try:
+                self.save()
+            except OSError:
+                self.records.pop()
+                raise
             return {"feedback_id": identifier, "sha256": sha256, "new": True}
 
     @staticmethod
