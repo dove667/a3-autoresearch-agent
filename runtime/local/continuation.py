@@ -2,7 +2,8 @@
 
 import hashlib
 import json
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from runtime.local.candidate_runtime import candidate_workspace
@@ -16,6 +17,8 @@ class HarnessStart:
     files: dict[str, str]
     previous_run: Path | None = None
     source_version: str | None = None
+    remote_exports: list[str] = field(default_factory=list)
+    source_owner: str | None = None
 
 
 def prepare_fresh_task(start: HarnessStart, task: str) -> tuple[HarnessStart, dict]:
@@ -29,7 +32,7 @@ def prepare_fresh_task(start: HarnessStart, task: str) -> tuple[HarnessStart, di
     files = dict(start.files)
     files["checkpoint.json"] = json.dumps([{"role": "user", "content": task}], ensure_ascii=False)
     return (
-        HarnessStart(start.command.copy(), files, start.previous_run, start.source_version),
+        replace(start, command=start.command.copy(), files=files),
         {
             "mode": "fresh",
             "previous_message_count": len(messages),
@@ -37,6 +40,46 @@ def prepare_fresh_task(start: HarnessStart, task: str) -> tuple[HarnessStart, di
             "initial_message_count": 1,
         },
     )
+
+
+def import_retained_exports(start: HarnessStart | None, recipient: str, remote_call) -> list[str]:
+    """Authorize the explicitly selected retained data before a new main starts."""
+    identifiers = start.remote_exports if start else []
+    if not identifiers:
+        return []
+    if not start.source_owner:
+        raise ValueError("Retained exports have no source owner")
+    verified = remote_call(
+        "exports-check", {"experiment_id": start.source_owner, "export_ids": identifiers}
+    )
+    if verified.get("status") == "error":
+        raise ValueError("Retained exports are not accessible or ready")
+    granted = []
+    try:
+        for identifier in identifiers:
+            result = remote_call(
+                "export-grant",
+                {
+                    "experiment_id": start.source_owner,
+                    "export_id": identifier,
+                    "recipient": recipient,
+                },
+            )
+            if result.get("status") == "error":
+                raise ValueError("Cannot import a retained read-only export")
+            granted.append(identifier)
+    except Exception:
+        for identifier in granted:
+            remote_call(
+                "export-revoke",
+                {
+                    "experiment_id": start.source_owner,
+                    "export_id": identifier,
+                    "recipient": recipient,
+                },
+            )
+        raise
+    return identifiers.copy()
 
 
 def load_run_result(run: Path) -> HarnessStart:
@@ -55,7 +98,14 @@ def load_run_result(run: Path) -> HarnessStart:
             or not all(isinstance(x, str) for x in command)
         ):
             raise ValueError("Invalid retained command")
-        return HarnessStart(command, files, run, record["version_id"])
+        return HarnessStart(
+            command,
+            files,
+            run,
+            record["version_id"],
+            record.get("remote_exports", []),
+            record.get("selected_by"),
+        )
 
     raise ValueError("Previous run has no retained result; refusing to guess or rebuild")
 
@@ -90,12 +140,27 @@ def resolve_resume_start(run: Path) -> HarnessStart | None:
 
 
 def publish_run_result(
-    run: Path, workspace: Path, versions: CandidateVersions, owner: str, parent_version: str | None
+    run: Path,
+    workspace: Path,
+    versions: CandidateVersions,
+    owner: str,
+    parent_version: str | None,
+    *,
+    validate_exports: Callable | None = None,
 ) -> dict:
     """Persist the Agent's explicit selection; never rank candidate versions here."""
     declaration = workspace / "continuation.json"
     if declaration.is_file():
         command, files = load_harness_package(workspace, "continuation.json")
+        remote_exports = json.loads(declaration.read_text()).get("remote_exports", [])
+        if not isinstance(remote_exports, list) or any(
+            not isinstance(x, str) for x in remote_exports
+        ):
+            raise ValueError("remote_exports must be an explicit export ID list")
+        if remote_exports:
+            if validate_exports is None:
+                raise ValueError("Remote exports require Host access validation")
+            validate_exports(remote_exports)
         version = versions.create_local(owner, files, parent_version)
         result = {
             "status": "ready",
@@ -103,6 +168,7 @@ def publish_run_result(
             "version_id": version["version_id"],
             "commit": version["commit"],
             "selected_by": owner,
+            "remote_exports": remote_exports,
         }
     else:
         result = {"status": "missing", "reason": "Agent did not save continuation.json"}

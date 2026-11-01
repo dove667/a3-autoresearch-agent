@@ -14,6 +14,11 @@ import time
 import uuid
 from pathlib import Path, PurePosixPath
 
+if __package__:
+    from .readonly_exports import ReadonlyExports
+else:
+    from readonly_exports import ReadonlyExports
+
 ACTIVE_STATES = {"created", "running", "restarting", "paused"}
 MAX_FILE_BYTES = 32 * 1024 * 1024
 MAX_INPUT_BYTES = 20 * 1024 * 1024
@@ -59,7 +64,15 @@ def write_files(workspace: Path, files: dict) -> None:
 
 
 def validate_submit(request: dict) -> None:
-    if set(request) - {"experiment_id", "run_id", "command", "gpu", "gpu_memory_mb", "files"}:
+    if set(request) - {
+        "experiment_id",
+        "run_id",
+        "command",
+        "gpu",
+        "gpu_memory_mb",
+        "files",
+        "input_exports",
+    }:
         raise ValueError("unknown submit fields")
     owner = request.get("experiment_id")
     if not isinstance(owner, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", owner):
@@ -79,6 +92,14 @@ def validate_submit(request: dict) -> None:
         raise ValueError("gpu_memory_mb must be a positive integer")
     if not isinstance(request.get("files", {}), dict):
         raise TypeError("files must be an object")
+    inputs = request.get("input_exports", [])
+    if (
+        not isinstance(inputs, list)
+        or len(inputs) > 64
+        or any(not isinstance(x, str) for x in inputs)
+        or len(set(inputs)) != len(inputs)
+    ):
+        raise ValueError("input_exports must contain at most 64 export IDs")
 
 
 class JobStore:
@@ -397,6 +418,20 @@ def create_container(store: JobStore, job: dict, args) -> str:
         "max-file=2",
         "--user",
         f"{os.getuid()}:{os.getgid()}",
+        "--env",
+        "USER=agent",
+        "--env",
+        "LOGNAME=agent",
+        "--env",
+        "HOME=/tmp/agent",
+        "--env",
+        "HF_HUB_OFFLINE=1",
+        "--env",
+        "TRANSFORMERS_OFFLINE=1",
+        "--env",
+        "TORCHINDUCTOR_CACHE_DIR="
+        + ("/outputs" if job.get("run_id") else "/workspace")
+        + "/.cache/torchinductor",
         "--workdir",
         "/workspace",
         "--mount",
@@ -411,15 +446,42 @@ def create_container(store: JobStore, job: dict, args) -> str:
             if not source.is_dir() or "," in str(source):
                 raise ValueError("Shared asset root must be a directory without commas")
             arguments += ["--mount", f"type=bind,source={source},target={target},readonly"]
+            if (
+                option == "models_root"
+                and getattr(args, "preserve_models_path", False)
+                and str(source) != target
+            ):
+                arguments += ["--mount", f"type=bind,source={source},target={source},readonly"]
+    cache = getattr(args, "model_cache_root", None)
+    if cache:
+        cache = Path(cache).resolve(strict=True)
+        if not cache.is_dir() or "," in str(cache):
+            raise ValueError("Model cache root must be a directory without commas")
+        arguments += [
+            "--mount",
+            f"type=bind,source={cache},target=/model-cache,readonly",
+            "--env",
+            "HF_HOME=/model-cache/huggingface",
+            "--env",
+            "HF_HUB_CACHE=/model-cache/huggingface/hub",
+            "--env",
+            "TORCH_HOME=/model-cache/torch",
+        ]
+    exports = ReadonlyExports(store.root)
+    for identifier in job.get("input_exports", []):
+        source = exports.data_path(job["experiment_id"], identifier)
+        arguments += ["--mount", f"type=bind,source={source},target=/inputs/{identifier},readonly"]
     if job["gpu_uuid"]:
         arguments += ["--gpus", f"device={job['gpu_uuid']}"]
     return docker([*arguments, args.image, *job["command"]]).stdout.strip()
 
 
-def active_jobs(store: JobStore) -> list[dict]:
+def active_jobs(store: JobStore, *, input_export: str | None = None) -> list[dict]:
     jobs = []
     for path in (store.root / "jobs").glob("*/job.json"):
         job = json.loads(path.read_text())
+        if input_export is not None and input_export not in job.get("input_exports", []):
+            continue
         if job["container_id"] and container_state(job["container_id"])["Status"] in ACTIVE_STATES:
             jobs.append(job)
     return jobs
@@ -431,6 +493,9 @@ def count_active_jobs(store: JobStore) -> int:
 
 def submit(store: JobStore, request: dict, args) -> dict:
     validate_submit(request)
+    exports = ReadonlyExports(store.root)
+    for identifier in request.get("input_exports", []):
+        exports.data_path(request["experiment_id"], identifier)
     lease = None
     container_id = None
     with (store.root / "locks" / "scheduler.lock").open("a") as scheduler:
@@ -483,6 +548,7 @@ def submit(store: JobStore, request: dict, args) -> dict:
                 run_id=run_id,
             )
             job["storage_limit_bytes"] = limit
+            job["input_exports"] = request.get("input_exports", [])
             job["gpu_uuid"] = gpu_uuid
             job["gpu_shared"] = shared and request["gpu"]
             job["gpu_memory_mb"] = memory_mb if request["gpu"] else 0
@@ -616,6 +682,89 @@ def cancel(store: JobStore, request: dict) -> dict:
     return {"job_id": job["job_id"], "status": "cancelled"}
 
 
+def export_operation(store: JobStore, request: dict, args) -> dict:
+    """Only the Host invokes these operations; Gateway owns role/recipient checks."""
+    exports = ReadonlyExports(store.root)
+    actor = request.get("experiment_id")
+    if not isinstance(actor, str) or not actor:
+        raise PermissionError("Export is not accessible")
+    operation = args.operation
+    identifier = request.get("export_id")
+    if operation == "exports-list":
+        return {"exports": exports.list_accessible(actor)}
+    if operation == "exports-check":
+        ids = request.get("export_ids", [])
+        if not isinstance(ids, list) or len(ids) > 64:
+            raise ValueError("Expected an export ID list")
+        for value in ids:
+            exports.data_path(actor, value)
+        return {"exports": [exports.read(actor, value) for value in ids]}
+    if operation == "export-status":
+        exports.read(actor, identifier)
+        exports.refresh_sealer(identifier)
+        return exports.read(actor, identifier)
+    if operation == "export-manifest":
+        return {"export_id": identifier, "files": exports.manifest(actor, identifier)}
+    with (store.root / "locks/scheduler.lock").open("a") as scheduler:
+        fcntl.flock(scheduler, fcntl.LOCK_EX)
+        if operation == "export-create":
+            job = store.load(request.get("job_id"), actor)
+            location = request.get("location", "outputs")
+            if location not in {"outputs", "workspace"}:
+                raise ValueError("Expected outputs or workspace location")
+            base = store.outputs(job) if location == "outputs" else store.workspace(job)
+            source = safe_path(base, request.get("path"))
+            record = exports.create(
+                actor, job.get("run_id", actor), source, job["job_id"], location, request["path"]
+            )
+            if args.run_storage_bytes:
+                planned = record["planned_bytes"]
+                if store.run_storage_bytes(record["run_id"]) + planned >= args.run_storage_bytes:
+                    exports.fail(record["export_id"], "run storage limit prevents export snapshot")
+                    return exports.read(actor, record["export_id"])
+            command = [
+                sys.executable,
+                str(Path(__file__).resolve()),
+                "--seal-export",
+                "--root",
+                str(store.root),
+                "--export-id",
+                record["export_id"],
+                "--storage-limit",
+                str(args.run_storage_bytes),
+            ]
+            try:
+                with (exports.records / f"{record['export_id']}.log").open("ab") as log:
+                    process = subprocess.Popen(
+                        command,
+                        stdin=subprocess.DEVNULL,
+                        stdout=log,
+                        stderr=subprocess.STDOUT,
+                        start_new_session=True,
+                    )
+                exports.set_pid(record["export_id"], process.pid)
+            except OSError:
+                exports.fail(record["export_id"], "Export sealer could not start")
+                raise
+            return exports.read(actor, record["export_id"])
+        if operation == "export-grant":
+            return exports.grant(actor, identifier, request.get("recipient"))
+        if operation in {"export-revoke", "export-delete"}:
+            mounted = active_jobs(store, input_export=identifier)
+            if operation == "export-revoke":
+                mounted = [
+                    job for job in mounted if job["experiment_id"] == request.get("recipient")
+                ]
+            if mounted:
+                raise ValueError(
+                    "Export is mounted by active jobs; wait before revoking or deleting"
+                )
+            if operation == "export-revoke":
+                return exports.revoke(actor, identifier, request.get("recipient"))
+            return exports.delete(actor, identifier)
+    raise ValueError("Unknown export operation")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", required=True, type=Path)
@@ -633,9 +782,27 @@ def main() -> None:
     parser.add_argument("--gpu-capacity-mb", type=int, default=0)
     parser.add_argument("--run-storage-bytes", type=int, default=0)
     parser.add_argument("--models-root", type=Path)
+    parser.add_argument("--preserve-models-path", action="store_true")
+    parser.add_argument("--model-cache-root", type=Path)
     parser.add_argument("--datasets-root", type=Path)
     parser.add_argument(
-        "operation", choices=["submit", "status", "cancel", "artifact", "health", "usage"]
+        "operation",
+        choices=[
+            "submit",
+            "status",
+            "cancel",
+            "artifact",
+            "health",
+            "usage",
+            "export-create",
+            "export-status",
+            "export-manifest",
+            "exports-list",
+            "exports-check",
+            "export-grant",
+            "export-revoke",
+            "export-delete",
+        ],
     )
     args = parser.parse_args()
     if args.max_jobs < 0 or args.run_storage_bytes < 0 or args.timeout < 0:
@@ -655,6 +822,9 @@ def main() -> None:
         if not isinstance(request, dict):
             raise TypeError("request must be an object")
         store = JobStore(args.root)
+        if args.operation.startswith("export"):
+            print(json.dumps(export_operation(store, request, args)))
+            return
         if args.operation == "usage":
             print(json.dumps(store.update_host_storage(request)))
             return
@@ -680,6 +850,7 @@ def main() -> None:
                         "assets": {
                             "models": "/models" if args.models_root else None,
                             "datasets": "/datasets" if args.datasets_root else None,
+                            "model_cache": "/model-cache" if args.model_cache_root else None,
                         },
                     }
                 )
@@ -697,7 +868,21 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    if "--watch" in sys.argv:
+    if "--seal-export" in sys.argv:
+        sealer = argparse.ArgumentParser()
+        sealer.add_argument("--seal-export", action="store_true")
+        sealer.add_argument("--root", type=Path, required=True)
+        sealer.add_argument("--export-id", required=True)
+        sealer.add_argument("--storage-limit", type=int, default=0)
+        args = sealer.parse_args()
+        store = JobStore(args.root)
+        exports = ReadonlyExports(args.root)
+        record = exports.load(args.export_id)
+        exports.set_pid(args.export_id, os.getpid())
+        exports.seal(
+            args.export_id, lambda: store.run_storage_bytes(record["run_id"]), args.storage_limit
+        )
+    elif "--watch" in sys.argv:
         watcher = argparse.ArgumentParser()
         watcher.add_argument("--watch", action="store_true")
         watcher.add_argument("--root", type=Path, required=True)

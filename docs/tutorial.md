@@ -281,3 +281,12 @@ uv run python -m runtime.local.reload_inputs "artifacts/rsi/<run-id>" --confirm 
 部署方设置 A3_REMOTE_SHARE_GPUS=1，使用 A3_REMOTE_MAX_GPUS 控制同时使用的物理卡数；A3_REMOTE_MAX_JOBS=0 关闭按作业数量的固定限制。同一卡有余量时可继续接收小作业，运行位置由 Host 选择。
 
 A3_REMOTE_GPU_CAPACITY_MB 与 A3_REMOTE_GPU_HEADROOM_MB 分别设置每卡可预留总额和缓冲。Agent 提交作业时可用 gpu_memory_mb 记录预计峰值，省略时采用 A3_REMOTE_GPU_MEMORY_MB。详细算法与范围见[远程调度说明](../runtime/remote/README.md#显存共享调度)。
+
+
+## 第二阶段的大文件交接
+
+阶段二沿用所选保留 Harness，并开始新的模型上下文。预训练 backbone、tokenizer 和相关资源由人类在执行端准备；模型目录和离线缓存只读提供，作业不下载缺失依赖。下载的 ACT backbone 是否构成完整可运行 Policy，应按资产清单判断。
+
+训练产生的 checkpoint、数据和视频由 Agent 自己选择保留。固定 Host 提供 exports：先封存稳定文件，验证 ready 后明确授权给后继，后继作业只读加载。接口、文件路径和清理规则见 [Host 大文件交接说明](../runtime/local/README.md#大文件只读交接)。这不需要人类组织交接包。
+
+跨轮复用时，Agent 将引用写入 continuation.json 的 remote_exports；运行结束后的 retained.json 同时保存代码版本和大文件引用。用户仍使用 `--phase phase-two --run-harness <明确选定的run目录>` 启动。源数据与授权需要保留在同一执行端资源根目录，不能删掉仍被后续运行引用的快照。模型、数据训练及六格真实成绩由正式 auto research 产生，环境检查不计为正式结果。

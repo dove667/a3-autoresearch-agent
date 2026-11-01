@@ -26,6 +26,7 @@ from runtime.local.candidate_runtime import MAX_ACTIVE_CANDIDATES, CandidateRunt
 from runtime.local.candidate_versions import CandidateVersions
 from runtime.local.context_resume import ContextAgent, load_context
 from runtime.local.continuation import (
+    import_retained_exports,
     prepare_fresh_task,
     publish_run_result,
     resolve_harness_start,
@@ -128,6 +129,7 @@ def remote_call(operation: str, payload: dict) -> dict:
     ]
     for environment, flag in (
         ("A3_REMOTE_MAX_JOBS", "--max-jobs"),
+        ("A3_REMOTE_MEMORY", "--memory"),
         ("A3_REMOTE_MAX_GPUS", "--max-gpus"),
         ("A3_REMOTE_GPU_MEMORY_MB", "--gpu-memory-mb"),
         ("A3_REMOTE_GPU_HEADROOM_MB", "--gpu-headroom-mb"),
@@ -135,12 +137,15 @@ def remote_call(operation: str, payload: dict) -> dict:
         ("A3_REMOTE_JOB_TIMEOUT", "--timeout"),
         ("A3_REMOTE_RUN_STORAGE_BYTES", "--run-storage-bytes"),
         ("A3_REMOTE_MODELS_ROOT", "--models-root"),
+        ("A3_REMOTE_MODEL_CACHE_ROOT", "--model-cache-root"),
         ("A3_REMOTE_DATASETS_ROOT", "--datasets-root"),
     ):
         if os.environ.get(environment):
             arguments += [flag, os.environ[environment]]
     if os.environ.get("A3_REMOTE_SHARE_GPUS") == "1":
         arguments += ["--share-gpus"]
+    if os.environ.get("A3_REMOTE_PRESERVE_MODELS_PATH") == "1":
+        arguments += ["--preserve-models-path"]
     command = shlex.join([*arguments, operation])
     result = subprocess.run(
         [
@@ -210,7 +215,7 @@ def local_storage_bytes(run: Path) -> int:
 def remote_limits() -> dict:
     return {
         "cpus": 2,
-        "memory": "8g",
+        "memory": os.environ.get("A3_REMOTE_MEMORY", "8g"),
         "max_jobs": int(os.environ.get("A3_REMOTE_MAX_JOBS", "2")),
         "timeout_seconds": int(os.environ.get("A3_REMOTE_JOB_TIMEOUT", "900")),
         "run_storage_bytes": int(os.environ.get("A3_REMOTE_RUN_STORAGE_BYTES", "0")),
@@ -426,6 +431,7 @@ def launch_run(args, run: Path, a3: Path, image: str, start) -> None:
         )
 
     fixtures = IsolationFixtures(remote_for_run, run / "fixtures")
+    initial_exports = import_retained_exports(start, run_id, remote_for_run)
     app = create_app(
         model_name=os.environ["MODEL_NAME"],
         sessions={token: run_id},
@@ -480,6 +486,7 @@ def launch_run(args, run: Path, a3: Path, image: str, start) -> None:
                     "remote_workspace": "/workspace",
                     "remote_outputs": "/outputs (persistent within the same worker identity)",
                     "remote_models": "/models (read-only, when configured)",
+                    "remote_model_cache": "/model-cache (read-only, when configured)",
                     "remote_datasets": "/datasets (read-only, when configured)",
                     "sessions": {
                         "create": "POST /sessions {command: [...], files: {...}} or {command: [...], version_id: ...}",
@@ -548,7 +555,9 @@ def launch_run(args, run: Path, a3: Path, image: str, start) -> None:
                 for path in inputs.iterdir():
                     if path.is_file():
                         shutil.copy2(path, private_inputs / path.name)
-            session = app.state.start_local_harness(command, files, "Bearer " + token)
+            session = app.state.start_local_harness(
+                command, files, "Bearer " + token, read_only_exports=initial_exports
+            )
             (run / "startup.json").write_text(
                 json.dumps(
                     {
@@ -559,6 +568,7 @@ def launch_run(args, run: Path, a3: Path, image: str, start) -> None:
                         "parent_run": start.previous_run.name if start.previous_run else None,
                         "source_version": start.source_version,
                         "task_context": task_context,
+                        "remote_exports": initial_exports,
                         "session_id": session["session_id"],
                         "version_id": session["version_id"],
                         "inputs": input_hashes(inputs),
@@ -677,8 +687,25 @@ def launch_run(args, run: Path, a3: Path, image: str, start) -> None:
 
         def save_completed_result() -> None:
             actor, parent_version = app.state.result_location()
+
+            def validate_exports(identifiers):
+                result = remote_for_run(
+                    "exports-check",
+                    {
+                        "experiment_id": actor or run_id,
+                        "export_ids": identifiers,
+                    },
+                )
+                if result.get("status") == "error":
+                    raise ValueError("Retained exports must be readable and sealed")
+
             selected = publish_run_result(
-                run, result_workspace(), versions, actor or run_id, parent_version
+                run,
+                result_workspace(),
+                versions,
+                actor or run_id,
+                parent_version,
+                validate_exports=validate_exports,
             )
             if selected["status"] != "ready":
                 raise ValueError("Completed run needs a runnable retained snapshot")

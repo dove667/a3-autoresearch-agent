@@ -46,8 +46,9 @@
 | `artifacts/rsi/launch-logs/` | 后台启动时保存的终端日志；正式轨迹与验收证据仍归属各 run |
 | `artifacts/validation/` | 部署、恢复、隔离、预检、安装和报告复核记录；不作为正式验收的替代 |
 | `artifacts/deployment/` | 镜像构建材料、迁移清单、部署修复与目录迁移记录 |
+| `artifacts/model-cache/` | 人类准备的项目专属 HF/Torch 离线缓存，仅引用批准模型和 tokenizer |
 | `artifacts/models/`、`artifacts/datasets/` | 可选的只读公共权重与数据目录，也可配置到其他项目数据目录 |
-| `artifacts/remote-runtime/` | 执行端的作业、实验目录与共享调度锁与显存预留；所有 Controller 必须使用同一配置根目录 |
+| `artifacts/remote-runtime/` | 执行端的作业、共享调度锁、显存预留与只读快照授权；所有 Controller 必须使用同一配置根目录 |
 | `reports/<name>/dist/` | 报告构建结果，由 Data 插件生成 |
 | `reports/<name>/output/` | 报告截图与视觉检查输出 |
 | `.env`、`.venv/` | 本机部署配置和依赖环境 |
@@ -111,3 +112,6 @@ artifacts/rsi/run-*/
 `configs/prompts/phase-one.md` 和 `configs/prompts/phase-two.md` 分别是对应阶段的完整主 Agent 协议。Host 按本轮 `phase` 选择其中一份，版本化到 `inputs/phase-instructions.md`；目标与验收从 `evals/<phase>/` 读取。第二阶段另加载本阶段 protocol.md；不存在额外 common Prompt。测试 Agent 和普通 worker 不由 Host 自动加载主 Agent 协议，其提示词由主 Agent 编写。
 
 每轮 `.host/` 由 Host 私有维护，保存恢复所需身份与注册表、进程锁；不挂载给 Agent，不作为可分享产物。`resume-events.jsonl` 记录原 run 内的恢复事件。
+
+
+执行端大文件数据留在 `artifacts/remote-runtime/runs/<来源run>/readonly-exports/<export_id>/`；根下 `readonly-exports/` 保存授权与状态。它们由固定 Controller 管理，不与本地源码版本混放。retained.json 的 remote_exports 只记录 Agent 选定的引用，不复制二进制；跨轮引用要求这些数据和授权继续保留。

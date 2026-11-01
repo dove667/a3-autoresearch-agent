@@ -19,7 +19,7 @@ Policy 接收机器人观测并产生动作，影响机械臂能否完成任务�
 
 阶段一允许候选没有收益。正确执行并拒绝退化候选，也能完成优化闭环。记忆的组织方式由 Agent 决定，可使用文件、表格、数据库或其他形式；人类提供历史材料的访问与隔离能力。
 
-第二阶段在此起点上持续优化 Policy 与 Harness，关注任务表现、模型调用、计算时间和失败恢复等实际代价。更有区分度的 Policy 任务条件与评估协议由团队继续调研；跨 Agent 协调与去重也尚未形成完整策略。
+第二阶段在此起点上持续优化 Policy 与 Harness，关注任务表现、模型调用、计算时间和失败恢复等实际代价。当前评估采用 2×5/2×10 与三个难度组成的六格协议，详见第二阶段目标与 protocol；跨 Agent 协调与去重仍由生成的 Harness 自行组织。
 
 ```mermaid
 flowchart LR
@@ -235,3 +235,10 @@ Host 的 `/evolution` 协议记录清单、版本、决策与唯一主身份，�
 保留版本将 Harness 源码、声明携带的持久记忆和 checkpoint 固定在不可变 commit 中。新的 phase-two run 从该 commit 复制独立工作区，并将副本 checkpoint 的消息列表初始化为新目标；原消息和产物保留在来源 run。启动记录关联 source_version 与 task_context，重复启动同一来源不会消耗或覆盖原起点。
 
 --resume-from 延续同一 run 的上下文；--run-harness 发起新阶段二任务。前者保留当前对话，后者保留 Harness 能力与持久记忆并初始化新对话。长期上下文选择、压缩与记忆组织仍由 SWE Agent 演化；Host 不替它提炼经验。
+
+
+## 训练产物怎样跨身份复用
+
+可写训练输出归各 worker。Agent 选定要交接的文件或目录后，远程 Controller 复制成带逐文件 SHA256 的不可变快照；准备完成才允许使用。主 Agent 创建 worker 或接任候选时显式给出引用，Host 在进程启动前授权，后继的远程作业通过 `/inputs/<export_id>/` 只读挂载。worker 也可以把自己的结果明确交付给当前主 Agent。权限检查、封存和挂载由固定基础设施执行；选择什么权重、为何保留、如何用于下一次实验仍由 Agent 决定。
+
+Host 把 Agent 在 continuation.json 中声明的 remote_exports 验证后记入 retained.json。新一轮显式选择该 run 时自动取得这些引用，源码、持久记忆与大文件引用分别保存；同 run 恢复沿用原授权。数据在执行端原位置保留，不把大权重通过模型上下文或候选源码 JSON 传输。源 container 退出不影响已完成快照。快照复制计入来源 run 存储，清理来源 run 前必须检查后续引用。

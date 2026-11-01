@@ -1,4 +1,4 @@
-import importlib.util
+import importlib
 import subprocess
 import sys
 from pathlib import Path
@@ -10,11 +10,7 @@ MODULE_PATH = Path(__file__).resolve().parents[2] / "runtime/remote/remote_jobs.
 
 def load_runtime():
     assert MODULE_PATH.is_file(), "remote job controller has not been implemented"
-    spec = importlib.util.spec_from_file_location("remote_jobs", MODULE_PATH)
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
+    return importlib.import_module("runtime.remote.remote_jobs")
 
 
 def test_workspace_files_reject_escape_and_symlinks(tmp_path):
@@ -209,9 +205,10 @@ def test_shared_assets_are_read_only_and_outputs_stay_with_owner(tmp_path, monke
     runtime = load_runtime()
     store = runtime.JobStore(tmp_path / "runtime")
     job = store.create("owner", ["true"], False, {}, run_id="run-one")
-    models, datasets = tmp_path / "models", tmp_path / "datasets"
+    models, datasets, cache = tmp_path / "models", tmp_path / "datasets", tmp_path / "cache"
     models.mkdir()
     datasets.mkdir()
+    cache.mkdir()
     calls = []
     monkeypatch.setattr(
         runtime,
@@ -230,10 +227,16 @@ def test_shared_assets_are_read_only_and_outputs_stay_with_owner(tmp_path, monke
             image="test",
             models_root=models,
             datasets_root=datasets,
+            model_cache_root=cache,
+            preserve_models_path=True,
         ),
     )
     assert f"type=bind,source={models},target=/models,readonly" in calls[0]
     assert f"type=bind,source={datasets},target=/datasets,readonly" in calls[0]
+    assert f"type=bind,source={models},target={models},readonly" in calls[0]
+    assert f"type=bind,source={cache},target=/model-cache,readonly" in calls[0]
+    assert "HF_HUB_CACHE=/model-cache/huggingface/hub" in calls[0]
+    assert "TORCH_HOME=/model-cache/torch" in calls[0]
     assert f"type=bind,source={store.outputs(job)},target=/outputs" in calls[0]
     other = store.create("other-owner", ["true"], False, {}, run_id="run-one")
     assert store.outputs(other) != store.outputs(job)
@@ -251,3 +254,30 @@ def test_run_storage_includes_latest_host_report(tmp_path):
     for value in (-1, True, "10"):
         with pytest.raises(ValueError):
             store.update_host_storage({"run_id": "run-one", "host_storage_bytes": value})
+
+
+def test_remote_job_has_a_user_name_and_writable_training_cache(tmp_path, monkeypatch):
+    from argparse import Namespace
+
+    runtime = load_runtime()
+    store = runtime.JobStore(tmp_path / "runtime")
+    job = store.create("owner", ["true"], False, {}, run_id="run-one")
+    calls = []
+    monkeypatch.setattr(
+        runtime,
+        "docker",
+        lambda arguments: (
+            calls.append(arguments) or subprocess.CompletedProcess(arguments, 0, "container\n", "")
+        ),
+    )
+    runtime.create_container(
+        store, job, Namespace(cpus=2, memory="8g", pids_limit=256, image="test")
+    )
+    arguments = calls[0]
+    assert "USER=agent" in arguments
+    assert "LOGNAME=agent" in arguments
+    assert "HOME=/tmp/agent" in arguments
+    assert "HF_HUB_OFFLINE=1" in arguments
+    assert "TRANSFORMERS_OFFLINE=1" in arguments
+    assert arguments[arguments.index("--network") + 1] == "none"
+    assert "TORCHINDUCTOR_CACHE_DIR=/outputs/.cache/torchinductor" in arguments

@@ -66,7 +66,7 @@ printf '{}' | python3 "$CONTROLLER" \
 | 操作 | 请求字段 | 返回内容 |
 | --- | --- | --- |
 | `health` | 无 | 状态、协议版本、镜像标识 |
-| `submit` | `experiment_id`、`command`、`gpu`，可选 Host 注入的 `run_id` 与 `files` | 作业标识、状态、分配的 GPU UUID |
+| `submit` | `experiment_id`、`command`、`gpu`，可选 Host 注入的 `run_id`、`files` 与 `input_exports` | 作业标识、状态、分配的 GPU UUID |
 | `status` | `experiment_id`、`job_id` | 状态、退出码、近期合并输出 |
 | `cancel` | `experiment_id`、`job_id` | 终止或取消状态 |
 | `artifact` | `experiment_id`、`job_id`、`path` | 路径、Base64 编码及内容 |
@@ -78,7 +78,7 @@ printf '{}' | python3 "$CONTROLLER" \
 
 未知作业、缺少归属和归属不匹配统一返回 `PermissionError` JSON。业务错误包含 `status: error`、错误类型和说明，输出后 CLI 退出码为 0；命令行参数错误沿用非零退出码。
 
-产物必须是最多 32 MiB 的普通文件。接口拒绝绝对路径、路径越界和符号链接。状态输出截取最后 64 KiB，容器日志循环保存。
+通过 artifact 接口读取的产物必须是最多 32 MiB 的普通文件。接口拒绝绝对路径、路径越界和符号链接。状态输出截取最后 64 KiB，容器日志循环保存。
 
 ## 执行限制与 GPU 租约
 
@@ -118,3 +118,31 @@ python3 runtime/remote/verify_remote.py \
 调度器读取 nvidia-smi 的实际显存，并用本项目 Docker 的进程归属区分已兑现预留和尚未加载的预留。既不把已加载显存重复相加，也不把新启动作业误认为零占用。每卡预留与实际加待兑现预留都须在容量内；没有空间时等待，已在运行的作业退出后名额自动释放。只将空闲卡加入本项目卡池；池内支持共享，不接管其他使用者的忙碌卡。
 
 预留用于准入控制，不是 CUDA 硬显存配额。峰值估计应覆盖模型加载、训练与渲染需要；同卡并发会影响耗时，结果记录应保留共享条件。NVIDIA 指标字段见[官方 nvidia-smi 文档](https://docs.nvidia.com/deploy/nvidia-smi/index.html)。
+
+## 离线训练环境
+
+作业以 Host 数字 UID/GID 写入自己的文件，同时设置固定 USER/LOGNAME 与可写 HOME，供 PyTorch 等依赖解析用户名。编译缓存放在自己的输出目录。
+
+--model-cache-root 可将项目专属缓存只读挂载为 /model-cache，并设置 HF_HOME、HF_HUB_CACHE 和 TORCH_HOME。缓存由人类准备，包含已批准模型与 tokenizer 的固定版本，不能挂载整个个人缓存目录。--preserve-models-path 将同一模型目录只读挂载到其原路径，供资产附属配置解析已有引用；不增加其他目录访问权限。HF Hub refs 文件直接保存 revision，不附加换行。
+
+本地对应配置为 A3_REMOTE_MODEL_CACHE_ROOT、A3_REMOTE_PRESERVE_MODELS_PATH；A3_REMOTE_MEMORY 设置每个作业的系统内存上限。backbone、tokenizer 等预训练资源均由人类提前准备，作业关闭网络并强制离线加载，缺项按资源缺失处理。
+
+
+## 跨身份只读二进制快照
+
+`readonly_exports.py` 与 controller 一起部署，均只依赖 Python 标准库。Agent 的 HTTP 使用说明见 [Host 接口](../local/README.md#大文件只读交接)。以下 CLI 操作由受信任的 Gateway 调用，experiment_id 由 Host 注入，角色和接收人限制在 Gateway 校验。
+
+| 操作 | 请求字段（另带 experiment_id） | 用途 |
+| --- | --- | --- |
+| export-create | job_id、location、path | 从自己的 outputs 或 workspace 选择文件/目录，异步封存 |
+| export-status / export-manifest | export_id | 状态、摘要或逐文件清单 |
+| exports-list | 无 | 当前身份获授权的快照 |
+| exports-check | export_ids | 校验所有引用已 ready 且可读 |
+| export-grant / export-revoke | export_id、recipient | 增加或撤回明确身份的只读权限 |
+| export-delete | export_id | 原始所有者删除快照，不删除源文件 |
+
+submit 的 input_exports 最多 64 个且不能重复；只挂载本身份获授权且 ready 的数据，每个引用对应 `/inputs/<export_id>/` 的只读目录。读取权不扩展为原 worker 目录的访问权；同一快照可在不同身份和后续 run 使用。源文件改变不影响已封存数据。
+
+元数据和授权保存在 `readonly-exports/`，复制的数据、manifest 保存在 `runs/<来源run>/readonly-exports/<export_id>/`。独立 sealer 按块复制并计算摘要，原子发布 ready。复制失败清理未发布数据；状态查询发现 sealer 已退出会记录失败，不把它一直显示为 preparing。源文件应在封存期间保持稳定。符号链接和特殊文件被拒绝。
+
+封存副本纳入来源 run 的存储监测；后续只读挂载不重复占用空间。删除和撤权与作业提交共享调度锁，活动消费者结束前拒绝回收。container 回收不删除快照；部署方清理历史 run 前，应核对 retained.json 中的 remote_exports 引用。授权和封存目录必须随共享资源根目录一同保留，才能继续恢复及跨轮引用。

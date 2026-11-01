@@ -9,7 +9,7 @@ import time
 from collections.abc import Callable
 from contextlib import asynccontextmanager, nullcontext
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import FastAPI, Header, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field, StrictBool
@@ -34,6 +34,7 @@ class JobRequest(BaseModel):
     gpu: StrictBool = False
     gpu_memory_mb: int | None = Field(default=None, ge=1, strict=True)
     files: dict[str, str] = Field(default_factory=dict)
+    input_exports: list[str] = Field(default_factory=list, max_length=64)
 
 
 class SessionRequest(BaseModel):
@@ -42,6 +43,18 @@ class SessionRequest(BaseModel):
     files: dict[str, str] = Field(default_factory=dict)
     version_id: str | None = None
     parent_version: str | None = None
+    read_only_exports: list[str] = Field(default_factory=list, max_length=64)
+
+
+class ExportRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    path: str = Field(min_length=1, max_length=4096)
+    location: Literal["outputs", "workspace"] = "outputs"
+
+
+class ExportGrantRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    session_id: str = Field(min_length=1, max_length=64)
 
 
 class TrialRequest(SessionRequest):
@@ -383,7 +396,22 @@ def create_app(
             scope = "candidate-" + secrets.token_hex(16)
             token = secrets.token_urlsafe(32)
             sessions[token] = scope
+            granted = []
             try:
+                if body.read_only_exports:
+                    if evolution is None:
+                        raise HTTPException(403, "Only the current main Agent can share exports")
+                    deployment_call(evolution.require_main, parent)
+                    remote(
+                        "exports-check",
+                        {"experiment_id": parent, "export_ids": body.read_only_exports},
+                    )
+                    for identifier in body.read_only_exports:
+                        remote(
+                            "export-grant",
+                            {"experiment_id": parent, "export_id": identifier, "recipient": scope},
+                        )
+                        granted.append(identifier)
                 if body.version_id and (body.files or body.parent_version):
                     raise HTTPException(422, "Choose version_id or files with parent_version")
                 version_id = body.version_id
@@ -415,6 +443,14 @@ def create_app(
                     result = deployment_call(sandbox.create, scope, body.command, body.files, token)
             except Exception:
                 sessions.pop(token, None)
+                for identifier in granted:
+                    try:
+                        remote(
+                            "export-revoke",
+                            {"experiment_id": parent, "export_id": identifier, "recipient": scope},
+                        )
+                    except HTTPException:
+                        logging.getLogger(__name__).error("Export grant rollback requires retry")
                 raise
             children[result["session_id"]] = {
                 "parent": parent,
@@ -430,7 +466,12 @@ def create_app(
             session_event("created", result["session_id"])
             return result
 
-    def start_local_harness(command: list[str], files: dict[str, str], authorization: str):
+    def start_local_harness(
+        command: list[str],
+        files: dict[str, str],
+        authorization: str,
+        read_only_exports: list[str] | None = None,
+    ):
         """Import a local package inside the Host; no unbounded HTTP route is exposed."""
         with session_lock:
             accepting_resources()
@@ -439,7 +480,7 @@ def create_app(
                 raise HTTPException(403, "Local Harness imports require the Host root identity")
             if versions is None or sandbox is None:
                 raise HTTPException(503, "Candidate execution is not configured")
-            request = SessionRequest(command=command)
+            request = SessionRequest(command=command, read_only_exports=read_only_exports or [])
             if hasattr(sandbox, "check_capacity"):
                 deployment_call(sandbox.check_capacity)
             version = versions.create_local(parent, files)
@@ -662,7 +703,9 @@ def create_app(
             request = CURRENT_REQUEST.get()
             if request is not None:
                 request.update(error_layer="remote_controller", error_type="ControllerError")
-            raise HTTPException(400, result["error"])
+            raise HTTPException(
+                403 if result["error"] == "PermissionError" else 400, result["error"]
+            )
         if result.get("status") == "resource_busy":
             request = CURRENT_REQUEST.get()
             if request is not None:
@@ -783,13 +826,86 @@ def create_app(
         with session_lock:
             accepting_resources()
             experiment = owner(authorization)
-            result = remote(
-                "submit", body.model_dump(exclude_none=True) | {"experiment_id": experiment}
-            )
+            request = body.model_dump(exclude_none=True)
+            if not body.input_exports:
+                request.pop("input_exports")
+            result = remote("submit", request | {"experiment_id": experiment})
             if result.get("job_id"):
                 jobs.setdefault(experiment, set()).add(result["job_id"])
                 save_checkpoint()
             return result
+
+    @app.get("/jobs/exports")
+    def list_exports(authorization: Annotated[str | None, Header()] = None):
+        return remote("exports-list", {"experiment_id": owner(authorization)})
+
+    @app.post("/jobs/{job_id}/exports")
+    def publish_export(
+        job_id: str, body: ExportRequest, authorization: Annotated[str | None, Header()] = None
+    ):
+        accepting_resources()
+        return remote(
+            "export-create",
+            {**body.model_dump(), "experiment_id": owner(authorization), "job_id": job_id},
+        )
+
+    @app.get("/jobs/exports/{export_id}")
+    def export_status(export_id: str, authorization: Annotated[str | None, Header()] = None):
+        return remote(
+            "export-status", {"experiment_id": owner(authorization), "export_id": export_id}
+        )
+
+    @app.get("/jobs/exports/{export_id}/manifest")
+    def export_manifest(export_id: str, authorization: Annotated[str | None, Header()] = None):
+        return remote(
+            "export-manifest", {"experiment_id": owner(authorization), "export_id": export_id}
+        )
+
+    def require_export_recipient(actor, session_id):
+        if evolution is None:
+            raise HTTPException(403, "Only the current main Agent can share exports")
+        # Workers can deliver results to the current main without gaining sibling access.
+        if actor in children and session_id == evolution.main_owner:
+            return
+        deployment_call(evolution.require_main, actor)
+        record = children.get(session_id)
+        if not record or record["parent"] != actor or record["closed"]:
+            raise HTTPException(403, "Export recipient must be an active direct worker")
+
+    @app.post("/jobs/exports/{export_id}/grants")
+    def grant_export(
+        export_id: str,
+        body: ExportGrantRequest,
+        authorization: Annotated[str | None, Header()] = None,
+    ):
+        with session_lock:
+            accepting_resources()
+            actor = owner(authorization)
+            require_export_recipient(actor, body.session_id)
+            return remote(
+                "export-grant",
+                {"experiment_id": actor, "export_id": export_id, "recipient": body.session_id},
+            )
+
+    @app.delete("/jobs/exports/{export_id}/grants/{session_id}")
+    def revoke_export(
+        export_id: str, session_id: str, authorization: Annotated[str | None, Header()] = None
+    ):
+        with session_lock:
+            actor = owner(authorization)
+            if evolution is None:
+                raise HTTPException(403, "Only the current main Agent revokes worker access")
+            deployment_call(evolution.require_main, actor)
+            require_export_recipient(actor, session_id)
+            return remote(
+                "export-revoke",
+                {"experiment_id": actor, "export_id": export_id, "recipient": session_id},
+            )
+
+    @app.delete("/jobs/exports/{export_id}")
+    def delete_export(export_id: str, authorization: Annotated[str | None, Header()] = None):
+        actor = owner(authorization)
+        return remote("export-delete", {"experiment_id": actor, "export_id": export_id})
 
     @app.get("/jobs/{job_id}")
     def status(job_id: str, authorization: Annotated[str | None, Header()] = None):

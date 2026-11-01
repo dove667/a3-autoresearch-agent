@@ -1,6 +1,6 @@
 # Host提供的执行与验收入口
 
-Version: 0.1.6
+Version: 0.1.8
 
 部署方运行 gateway、容器引擎、模型认证与远程资源调度。候选 Harness 在独立容器内运行，
 通过 HTTP 请求这些固定能力。工具名称、研究逻辑、反思方法和版本选择由 Agent 设计。
@@ -211,7 +211,7 @@ Git 记录进入本轮 `versions/`。工作区内的即时修改不会自动成�
 {"command": ["python", "next_agent.py"], "files": ["next_agent.py", "memory/lessons.json"]}
 ```
 
-文件清单使用工作区内的相对路径，当前保留包支持 UTF-8 文件。Host 在所有 worker 停止后读取清单，把文件保存为固定 Git 快照，并写本轮 `retained.json`。本地保存不受 HTTP 上传的 128 个文件、20 MiB 限制；仍会检查路径、身份归属，并拒绝凭据文件和 Git 控制文件。磁盘空间、内存或 Git 操作失败会使保存失败，原工作区继续保留。二进制经验材料可保存在历史中，由 Harness 按需恢复。
+文件清单使用工作区内的相对路径，当前保留包支持 UTF-8 文件。Host 在所有 worker 停止后读取清单，把文件保存为固定 Git 快照，并写本轮 `retained.json`。本地保存不受 HTTP 上传的 128 个文件、20 MiB 限制；仍会检查路径、身份归属，并拒绝凭据文件和 Git 控制文件。磁盘空间、内存或 Git 操作失败会使保存失败，原工作区继续保留。远程二进制材料通过下方只读快照接口显式保留。
 
 `--run-harness <run目录>` 由 Host 直接导入本地保留包，再使用与 `/sessions` 相同的身份注册、授权、资源分配和候选执行流程；文件内容不再经 HTTP 整包上传。Agent 通过 `/sessions` 或 `/versions` 提交文件时，仍受单次上传 128 个 UTF-8 文件、合计 20 MiB 的限制。Agent 自己选择保留版本和需要的启动状态，无需人工整理接续包。
 
@@ -282,3 +282,30 @@ memory_shared 模式允许多个独立 Docker 作业共享同一张 GPU，文件
 POST /jobs 可选 gpu_memory_mb，表示预计显存峰值，单位 MiB。未提供时采用部署方的默认预留；小仿真可直接使用默认值，大模型加载/训练应提交合理的峰值估计。Host 同时检查每卡预留总额、实际显存和尚未兑现的预留，扣除缓冲。过大请求返回 resource_unavailable；暂时无余量返回 resource_busy。
 
 新卡需处于空闲状态，已有本项目共享作业的卡可继续接收任务；其他使用者正在占用的卡不会被纳入。此模式共享计算与显存，不提供每作业硬显存隔离。GPU UUID、共享标志和预留量随作业保存；比较运行时间时记录同卡并发条件。
+
+## 人类准备的离线模型资源
+
+backbone、tokenizer 及相关预训练资源由人类提前准备、校验后只读提供。作业禁用网络，HF_HUB_OFFLINE 与 TRANSFORMERS_OFFLINE 固定为 1，缺项应记录并请求补齐，不自行下载。部署方可提供 /model-cache，其中的 Hugging Face 与 Torch 缓存只包含本项目已批准的资源。
+
+模型附属配置若引用原始资源目录，Host 可把同一只读模型目录同时挂载到原路径；这只开放既定模型资产，不开放原路径的其他文件。USER/LOGNAME 使用固定的 agent，HOME 位于可写临时目录；PyTorch 编译缓存写入同身份输出目录并计入本轮存储。内存上限按部署信息提供，不要求沿用通用默认值。
+
+
+## 大文件只读交接
+
+训练 checkpoint、数据集和视频在执行端封存；模型请求只传引用与摘要。原作业输出仍归原身份，封存不会开放整个输出目录。
+
+1. 先让写入选定文件的作业完成或停止写入，再 `POST /jobs/{job_id}/exports`，例如 `{"location":"outputs","path":"checkpoints/best"}`。location 可用 outputs 或 workspace，path 是本身份作业内的相对路径。只接受普通文件和目录，拒绝符号链接与特殊文件。
+2. 返回 export_id 和 preparing。用 `GET /jobs/exports/{export_id}` 等待 ready；失败返回 failed 与 error。封存使用独立进程，不占 GPU。每个文件复制并计算 SHA256，源文件在封存期间改变则失败；ready 后源文件再改变不影响快照。`GET /jobs/exports/{export_id}/manifest` 返回相对路径、字节数与逐文件 SHA256。`GET /jobs/exports` 仅列出本身份获授权的快照。
+3. 创建普通 worker 或完整接任候选时，在 `/sessions` 或 `/evolution/trials` 请求中加入 `"read_only_exports":["export-..."]`。Host 验证主身份有读取权，并在新进程启动前授权。创建失败撤回授权。也可用 `POST /jobs/exports/{export_id}/grants {"session_id":"candidate-..."}` 授予自己直接创建的 worker；普通 worker 只能把自己可读的快照明确交付给当前主身份，不能发给同级或无关身份。
+4. 获授权的 Agent 提交 `/jobs` 时加入 `"input_exports":["export-..."]`。执行端把每份快照挂载为只读 `/inputs/<export_id>/`，保留选定目录的相对结构；选单个文件时路径为 `/inputs/<export_id>/<文件名>`。本地 Agent Docker 不挂载这些执行端二进制文件，需要通过远程作业使用。未授权或未 ready 的引用拒绝提交，不分配作业资源。每个请求最多 64 个引用。
+5. 接任主身份后可继续把已获授权的引用传给自己的 worker。退出、container 回收和同 run 恢复保留快照及授权。跨轮使用时，把选定 ID 写入自己的 continuation.json 顶层 remote_exports 数组；Host 保存前验证 ready 与可读性。之后显式 `--run-harness <该run>` 会把引用授权给新 run 的主身份及初始 Harness，无需人工复制大文件；新的模型上下文仍按阶段初始化。
+
+例如保留声明：
+
+```json
+{"command":["python","agent.py","--resume"],"files":["agent.py","checkpoint.json","memory.json"],"remote_exports":["export-<32位十六进制ID>"]}
+```
+
+只保留引用，不把二进制加入 UTF-8 源码清单。原始快照与授权必须仍存在，且新 run 使用同一执行端资源根目录；缺失、删除或撤权会使启动明确失败。Agent 在交接材料中记录引用、用途、摘要和所需文件路径，不能期待 Host 替它选择 Policy 或数据版本。
+
+`DELETE /jobs/exports/{export_id}/grants/{session_id}` 撤回授权；被授权身份仍有作业挂载时拒绝。`DELETE /jobs/exports/{export_id}` 删除自己创建的快照，要求调用身份是原始所有者，且没有活动作业挂载；不会删除源输出。快照默认保留，仍被 retained 结果引用时不要删除。封存副本计入来源 run 的新增存储额度，后续只读引用不再复制计费；在新 run 中生成的可写结果计入新 run。封存前、复制期间及发布 ready 前检查额度，失败清理未发布的数据并保存错误。并发写入仍可能短暂超过监测额度。
