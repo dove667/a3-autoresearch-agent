@@ -1,6 +1,6 @@
 # Host提供的执行与验收入口
 
-Version: 0.1.3
+Version: 0.1.6
 
 部署方运行 gateway、容器引擎、模型认证与远程资源调度。候选 Harness 在独立容器内运行，
 通过 HTTP 请求这些固定能力。工具名称、研究逻辑、反思方法和版本选择由 Agent 设计。
@@ -113,7 +113,7 @@ Host 先记录停止意图，再停止进程；若中断留下未确认的停止
 `GET /jobs/{job_id}/artifacts?path=relative_path` 取回产物；取消为 `DELETE /jobs/{job_id}`。
 资源忙时稍后重试。长任务先提交再查询，避免单条本地命令超时。
 
-部署限制：每个作业 2 CPU、8 GiB 内存、最多一张 GPU、900 秒时限，同时最多两个作业。
+实际限制以 deployment.json 的 remote_limits 为准。作业可共享同一张 GPU；Host 按实际显存与预留量准入，物理 GPU 数和作业数量分别配置。max_jobs=0 不设作业数量上限，timeout_seconds=0 不设时限。
 这是单作业资源边界，总研究 step、候选代数与总时长没有上限。
 
 ## 受控双身份验收资源
@@ -251,12 +251,34 @@ H0 的已保存执行结果可作为基线证据，无需为了每次改动再�
 
 ## 固定核心提示词
 
-`configs/rsi-bootstrap.yaml` 仅维护初始 mini 的参数、Bash/提交约定与启动路径。跨代共用的目标职责、执行边界、测试角色、交接和证据要求统一维护在 `configs/prompts/common.md`。
+`configs/rsi-bootstrap.yaml` 仅维护初始 mini 的参数、Bash/提交约定与启动路径。完整的阶段协议分别维护在 `configs/prompts/phase-one.md` 与 `configs/prompts/phase-two.md`，由本轮 phase 选择。目标和验收来自对应的 `evals/<phase>/`；第二阶段还包含 protocol.md。
 
-`configs/prompts/common.md` 保存主 Agent 与接任候选共同遵循的核心协议。每轮启动版本化为 `inputs/common-instructions.md`，摘要进入 `startup.json`。初始 mini 的 system 直接加载这份内容；Gateway 在转发当前主身份、待接任候选的每次模型请求时，以同一版本化内容作为 instructions 前缀，保留其专属 instructions、消息和工具定义。主身份来自 Host 记录，候选来自 `/evolution/trials`，不依据模型在提示词里自称的角色。
+Host 只加载所选阶段的一份完整 Prompt，不叠加 common 或另一阶段 Prompt。主 Agent 与接任候选遵循同一份阶段协议，每轮启动版本化为 `inputs/phase-instructions.md`，摘要进入 `startup.json`。初始 mini 的 system 直接加载这份内容；Gateway 在转发当前主身份、待接任候选的每次模型请求时，以同一版本化内容作为 instructions 前缀，保留其专属 instructions、消息和工具定义。主身份来自 Host 记录，候选来自 `/evolution/trials`，不依据模型在提示词里自称的角色。
 
 普通 `/sessions` worker 包括局部测试 Agent，Host 不额外附加核心提示词；其完整提示词由主 Agent 编写。主身份交接后，接任候选继续得到核心协议，旧主身份不再获得新的附加层。部署准备检查不使用这份完整 auto research 协议。
 
-启动和 resume 读取仓库当前文件；运行中更换版本需要 Host 操作者预览并确认。每个直接发布的 Agent 输入都有 Version，清单见 `/run/input/input-manifest.json`。其中 revision 是整套输入的快照编号，generation 是发布尝试序号，失败回滚也会递增；由 Host 自动维护。Gateway 用量记录 input_revision、各文件版本与摘要；历史内容保存在 run 的 input-revisions。主 Agent 与接任候选会获得当前目标、验收和共性协议，旧对话作为历史保留。普通 worker 的专属任务仍由主 Agent 提供。
+启动和 resume 读取仓库当前文件；运行中更换版本需要 Host 操作者预览并确认。每个直接发布的 Agent 输入都有 Version，清单见 `/run/input/input-manifest.json`。其中 revision 是整套输入的快照编号，generation 是发布尝试序号，失败回滚也会递增；由 Host 自动维护。Gateway 用量记录 input_revision、各文件版本与摘要；历史内容保存在 run 的 input-revisions。主 Agent 与接任候选会获得当前阶段的目标、验收和完整 Prompt（第二阶段另含 protocol.md），旧对话作为历史保留。普通 worker 的专属任务仍由主 Agent 提供。
 
 部署方热加载使用 `python -m runtime.local.reload_inputs <run目录>` 预览警告，再加 `--confirm <预览摘要>` 确认。Agent 的令牌无此权限。已发出的模型请求不变，后续请求采用新版本；Agent 连续读取多个输入文件时，前后必须都是 manifest.status=active，且 revision 和 generation 都相同。updating 时等待，标识变化后重新读取。完整版本维护规则见项目 docs/agent-inputs.md。
+
+## 远程资产、输出与额度
+
+部署方可配置只读 `/models`、`/datasets`；Agent 根据目录中的实际文件选择模型和数据。远程作业自己的 `/workspace` 与同一 worker 身份持久可写的 `/outputs` 保存在服务器项目的数据目录中。其他身份的输出不挂载，主身份交接不自动授予前任输出访问权；文件、版本或大文件交接须使用 Host 已支持的显式授权途径。
+
+部署信息 remote_limits 保存实际并发、单作业超时和本地 run 文件与新增远程数据的合计额度。timeout_seconds 为 0 表示不限时，run_storage_bytes 为 0 表示不启用这项额度；只读公共模型与数据不计入新增额度。所有后继和辅助 worker 的新增远程数据合并计入同一 run；Host 每五秒报告本地 run 文件占用，远程 watcher 使用最近报告与远程占用之和。
+
+额度检查在提交前执行，运行中的 watcher 每秒扫描，达到额度后停止自己的作业，保留文件和失败原因。并行写入及正常停止有延迟，可能短暂超过阈值；这是监测式额度，不是文件系统硬配额。收到 storage_limit 或 run storage limit reached 后保存状态并结束预算内任务，不以重复提交绕过额度。
+
+## 新任务与 checkpoint 复用
+
+阶段二通过 --run-harness 启动新任务时，Host 从所选保留 commit 复制代码、文件和持久记忆，在新副本中将 checkpoint.json 的消息列表初始化为当前阶段目标。原 checkpoint、轨迹及原保留 commit 不改；历史文件按授权放在只读 history 中，按需检索。启动记录 task_context 保存源 checkpoint 摘要、旧消息数与新会话消息数。
+
+当前新任务入口支持 checkpoint.json 为 JSON 消息列表的 Harness，并继续使用其原启动命令。未知格式会拒绝启动，须由 Harness 提供适配入口；Host 不猜测私有状态格式或代写记忆整理。普通 --resume-from 仍保留原会话、原身份和完整上下文。
+
+## 同卡多作业与显存预留
+
+memory_shared 模式允许多个独立 Docker 作业共享同一张 GPU，文件、身份与输出仍各自隔离。Agent 不指定卡号；Host 根据显存余量和整机已使用卡数分配，max_gpus 约束本项目同时使用的物理卡数，max_jobs=0 时不按作业数量阻止新增任务。
+
+POST /jobs 可选 gpu_memory_mb，表示预计显存峰值，单位 MiB。未提供时采用部署方的默认预留；小仿真可直接使用默认值，大模型加载/训练应提交合理的峰值估计。Host 同时检查每卡预留总额、实际显存和尚未兑现的预留，扣除缓冲。过大请求返回 resource_unavailable；暂时无余量返回 resource_busy。
+
+新卡需处于空闲状态，已有本项目共享作业的卡可继续接收任务；其他使用者正在占用的卡不会被纳入。此模式共享计算与显存，不提供每作业硬显存隔离。GPU UUID、共享标志和预留量随作业保存；比较运行时间时记录同卡并发条件。

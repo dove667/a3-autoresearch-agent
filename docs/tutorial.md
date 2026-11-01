@@ -64,9 +64,23 @@ nohup bash scripts/start-rsi.sh --run-harness "artifacts/rsi/<run-id>" \
 
 macOS 可在另一个终端运行 `pmset -g assertions`，检查活动的 `caffeinate` 与防休眠记录。命令和参数的系统说明见本机 `man caffeinate`；Apple 的[电源管理接口说明](https://github.com/apple-oss-distributions/IOKitUser/blob/main/pwr_mgt.subproj/IOPMLib.h)说明了休眠断言的适用范围。
 
+## 选择阶段
+
+目标与验收分别位于 `evals/phase-one/`、`evals/phase-two/`；完整 Prompt 分别位于 `configs/prompts/phase-one.md`、`configs/prompts/phase-two.md`。Host 每次选择一个阶段，向主 Agent 和接任候选提供对应阶段的完整输入，不叠加另一个阶段或 common Prompt。
+
+新运行默认第一阶段，也可显式写 `--phase phase-one`。第二阶段从明确选定的保留 Harness 开始，输入选择命令为：
+
+```bash
+bash scripts/start-rsi.sh --phase phase-two --run-harness "artifacts/rsi/<run-id>"
+```
+
+此命令使用阶段一交付的 Harness 代码与持久记忆，初始化新的模型上下文，原保留 checkpoint 不变。当前支持 checkpoint.json 为 JSON 消息列表的入口；其他格式会明确报错。正式第二阶段实验还需完成[方案中的训练环境、预算与成果接续检查](plans/2026-10-31-phase-two.md)，输入选择通过不代表这些准备已完成。
+
+`--resume-from` 自动沿用原 run 的阶段，加载该阶段的当前版本文件；无需重复 `--phase`。显式指定不同阶段会报错。跨阶段使用新 run 和 `--run-harness`，保留来源关联。原始历史输入与轨迹保持原样。
+
 ## 初始运行：从通用 SWE Agent 构建 Harness
 
-先阅读或调整 `evals/goal.md` 和 `evals/acceptance.md`。当前阶段一包含四项：一次 Policy 优化尝试、一次轨迹反思驱动的 Harness 优化、受限执行与跨实验隔离、持久记忆的跨会话检索与实际复用。专项实现由 SWE Agent 决定。
+先阅读或调整 `evals/phase-one/goal.md` 和 `evals/phase-one/acceptance.md`。当前阶段一包含四项：一次 Policy 优化尝试、一次轨迹反思驱动的 Harness 优化、受限执行与跨实验隔离、持久记忆的跨会话检索与实际复用。专项实现由 SWE Agent 决定。
 
 ```bash
 bash scripts/start-rsi.sh
@@ -188,6 +202,7 @@ $$
 | 无参数 | 从通用 mini 开始新的冷启动，版本化当前目标 |
 | `--resume-from <run目录>` | 保留会话身份、代码和对话；加载启动时当前目标、验收与 Prompt 后继续 |
 | `--run-harness <目录>` | 必须显式指定 run 或源码 manifest 目录；加载该结果并版本化当前目标 |
+| `--phase {phase-one,phase-two}` | 新运行默认第一阶段；恢复自动沿用原阶段；第二阶段需明确保留来源 |
 | `--check` | 执行部署预检后退出，不启动 Agent；可与 `--run-harness` 一起校验所选起点 |
 | `--verify-deployment` | 运行有界的真实 Agent 部署检查：最多 24 次模型调用、600 秒 |
 | `-h`、`--help` | 显示启动器帮助 |
@@ -242,7 +257,7 @@ Docker 只挂载自己的源码目录，Git 对象库和其他 worktree 留在 H
 
 ## 调整核心提示词
 
-`configs/rsi-bootstrap.yaml` 只维护初始 mini 的运行参数、Bash/提交约定和路径；主 Agent 和接任候选共享的核心协议放在 `configs/prompts/common.md`。需要调整共性要求时修改后者，再启动新运行。启动器版本化文件，Host 为这两类身份直接提供同一份内容，下一代不依赖祖先复述。局部测试 Agent 与普通 worker 的完整提示词由主 Agent 编写。
+`configs/rsi-bootstrap.yaml` 只维护初始 mini 的运行参数、Bash/提交约定和路径。主 Agent 和接任候选使用 `configs/prompts/<phase>.md` 中所选阶段的完整协议。调整要求时修改对应阶段的文件并递增版本，再启动或显式热加载。Host 为这两类身份提供同一份阶段输入；局部测试 Agent 与普通 worker 的完整提示词由主 Agent 编写。
 
 编辑源文件不会自动影响已经运行的实验；恢复启动会采用当前版本。运行中可以预览并确认热加载：
 
@@ -252,3 +267,17 @@ uv run python -m runtime.local.reload_inputs "artifacts/rsi/<run-id>" --confirm 
 ```
 
 警告和确认绑定具体内容，Agent 令牌不能执行更新。版本规则、输入清单和生效边界见 [Agent 输入管理](agent-inputs.md)。
+
+## 同一起点开展多次独立实验
+
+反复使用同一个明确来源的 `--phase phase-two --run-harness <run目录>`，每次生成独立 run 和工作副本。Host 读取原保留 commit，不读取后来被修改的活动 worktree；第二阶段在副本中初始化新上下文，代码与持久记忆保持原样。每轮更新自己的 checkpoint，源快照不会变长。
+
+需要继续同一轮中断任务时使用 `--resume-from <该轮目录>`，保留该轮完整上下文。希望从某个阶段二成果再次开始新任务时，明确选择那个成果所在 run，仍走 --run-harness。源历史可只读查阅，不必全部装入新模型上下文。
+
+远程并发、超时、存储额度与只读资产目录通过 `.env.example` 中的 A3_REMOTE_* 选项配置；详见[远程存储与执行限制](../runtime/remote/README.md)。这些部署参数由 Host 管理，不向 Agent 开放修改权限。
+
+## 多个小作业共享 GPU
+
+部署方设置 A3_REMOTE_SHARE_GPUS=1，使用 A3_REMOTE_MAX_GPUS 控制同时使用的物理卡数；A3_REMOTE_MAX_JOBS=0 关闭按作业数量的固定限制。同一卡有余量时可继续接收小作业，运行位置由 Host 选择。
+
+A3_REMOTE_GPU_CAPACITY_MB 与 A3_REMOTE_GPU_HEADROOM_MB 分别设置每卡可预留总额和缓冲。Agent 提交作业时可用 gpu_memory_mb 记录预计峰值，省略时采用 A3_REMOTE_GPU_MEMORY_MB。详细算法与范围见[远程调度说明](../runtime/remote/README.md#显存共享调度)。

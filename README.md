@@ -33,11 +33,11 @@ macOS 上启动脚本会自动使用 `caffeinate -is` 包裹 Agent runtime，在
 bash scripts/start-rsi.sh
 ```
 
-启动通用 mini-SWE-agent，在独立 Docker 工作区中依据 `evals/goal.md` 与 `evals/acceptance.md` 构建并演化 auto research Harness。运行无需逐轮人工确认；Agent 可以自行创建候选、测试和继续迭代。
+启动通用 mini-SWE-agent，在独立 Docker 工作区中依据 `evals/phase-one/goal.md` 与 `evals/phase-one/acceptance.md` 构建并演化 auto research Harness。运行无需逐轮人工确认；Agent 可以自行创建候选、测试和继续迭代。
 
 初始 SWE 只启动一次。每代主 Agent 为改动写下验收清单，启动一个新 Harness 候选；拒绝则回收候选，保留则由同一个候选接任主 Agent，原主 Agent 退出。Policy 优化可穿插进行。Host 保活 worker，不重新派发任务。全部 worker 停止后再复核结果，详见[使用教程](docs/tutorial.md)。
 
-主 Agent 与接任候选共享的核心协议配置在 [configs/prompts/common.md](configs/prompts/common.md)，由 Host 固定提供；测试 Agent 的提示词由主 Agent 编写。
+两个阶段分别维护完整 Prompt：[phase-one](configs/prompts/phase-one.md) 与 [phase-two](configs/prompts/phase-two.md)。Host 每次只向主 Agent 和接任候选提供所选阶段的 Prompt；测试 Agent 的提示词由主 Agent 编写。第二阶段从保留版本接续的输入选择见[使用教程](docs/tutorial.md#选择阶段)，正式运行前的准备见[第二阶段方案](docs/plans/2026-10-31-phase-two.md)。
 
 运行目录使用 Host 本地时间命名，例如 `artifacts/rsi/run-20261031-110415-123456/`，可直接看出启动日期和时间；末段为微秒。
 

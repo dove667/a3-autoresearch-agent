@@ -1,6 +1,6 @@
 # 远程容器作业
 
-宿主控制器负责独立作业的执行和资源分配。模型服务、凭据、SSH 和作业归属映射留在容器外；实验策略和 Harness 演化由 Agent 完成。
+Host控制器负责独立作业的执行和资源分配。模型服务、凭据、SSH 和作业归属映射留在容器外；实验策略和 Harness 演化由 Agent 完成。
 
 ## 部署
 
@@ -48,7 +48,7 @@ python /opt/a3/examples/benchmark_cookie_batch.py --help
 两条命令应显示同一个评测入口的参数。`python -m a3` 和 `python -m a3_dual_arm_sim` 不是该评测入口。读取文档可使用 Python 标准库或系统已有命令；镜像不保证提供 `rg` 等额外开发工具。生成后的 Harness 自行选择怎样检索文档、保存和交接接口经验。
 
 服务器部署 checkout 位于候选实验工作区之外，候选代码不能修改它。
-同一执行端的所有控制器进程必须共享 `--root` 和资源配置，统一管理作业数和 GPU 锁。容器只获得自己的工作区。
+同一执行端的所有控制器进程必须共享 `--root` 和资源配置，统一管理 GPU 卡数、显存预留与作业容量。容器获得自己的工作区、同身份输出目录及部署方配置的只读公共资产。
 
 迁移已有部署前，停止提交新作业并等待已有作业及 watcher 结束；完整迁移资源根目录，保留其中的
 `jobs/`、`experiments/` 和 `locks/`，再统一切换所有调用方的路径。迁移后检查历史产物仍可读取，
@@ -66,12 +66,13 @@ printf '{}' | python3 "$CONTROLLER" \
 | 操作 | 请求字段 | 返回内容 |
 | --- | --- | --- |
 | `health` | 无 | 状态、协议版本、镜像标识 |
-| `submit` | `experiment_id`、`command`、`gpu`，可选 `files` | 作业标识、状态、分配的 GPU UUID |
+| `submit` | `experiment_id`、`command`、`gpu`，可选 Host 注入的 `run_id` 与 `files` | 作业标识、状态、分配的 GPU UUID |
 | `status` | `experiment_id`、`job_id` | 状态、退出码、近期合并输出 |
 | `cancel` | `experiment_id`、`job_id` | 终止或取消状态 |
 | `artifact` | `experiment_id`、`job_id`、`path` | 路径、Base64 编码及内容 |
+| `usage` | Host 提供的 `run_id`、`host_storage_bytes` | 更新本地占用并返回合计，不对 Agent 开放 |
 
-受信任的 gateway 注入 `experiment_id`。容器客户端提供容器内命令，例如 `["a3-sim", "smoke", "--steps", "20"]`，以及是否需要 GPU 的布尔值。挂载和 Docker 参数由宿主配置决定。`files` 将相对工作区路径映射到 UTF-8 内容；请求最多 20 MiB、128 个文件。
+受信任的 Gateway 注入 `experiment_id` 和整轮共享的 `run_id`；模型请求不能自行指定这两项。容器客户端提供容器内命令，例如 `["a3-sim", "smoke", "--steps", "20"]`，以及是否需要 GPU 的布尔值。挂载和 Docker 参数由 Host配置决定。`files` 将相对工作区路径映射到 UTF-8 内容；请求最多 20 MiB、128 个文件。
 
 提交先返回 `created`，随后由独立 watcher 启动容器。状态包括 `created`、`running`、`completed`、`failed`、`cancelled`。资源不足时返回 `resource_busy`、空作业标识和重试间隔，该请求不启动容器。
 
@@ -81,13 +82,13 @@ printf '{}' | python3 "$CONTROLLER" \
 
 ## 执行限制与 GPU 租约
 
-每个作业只挂载一个可写的 `/workspace`。固定 A3 基线位于 `/opt/a3`，整个容器根文件系统只读。容器关闭网络，移除 capabilities，启用 `no-new-privileges`，不提供 Docker socket、SSH 或模型凭据。
+每个作业挂载自己可写的 `/workspace`；有 run_id 时还挂载同一 worker 身份持久可写的 `/outputs`。固定 A3 基线位于 `/opt/a3`，整个容器根文件系统只读。容器关闭网络，移除 capabilities，启用 `no-new-privileges`，不提供 Docker socket、SSH 或模型凭据。
 
-默认限制为 2 CPU、8 GiB 内存与交换空间总额、256 个进程、256 MiB 共享内存、512 MiB 临时空间、2 个并发作业和 900 秒作业时限。部署方通过 `--cpus`、`--memory`、`--pids-limit`、`--max-jobs`、`--timeout` 调整；`--gpu-ids` 可限定 GPU 索引或 UUID。这些参数由宿主配置提供。
+默认限制为 2 CPU、8 GiB 内存与交换空间总额、256 个进程、256 MiB 共享内存、512 MiB 临时空间、2 个并发作业和 900 秒作业时限。部署方通过 `--cpus`、`--memory`、`--pids-limit`、`--max-jobs`、`--timeout` 调整（--max-jobs 0 不设作业数量上限，--timeout 0 不限时）；`--gpu-ids` 可限定 GPU 索引或 UUID。这些参数由 Host配置提供。
 
-每个 GPU 作业最多获得一张卡。分配器跳过显存占用超过 128 MiB 或利用率超过 5% 的设备；分配后由独立 watcher 继承并持有宿主 `flock`，直至容器结束。持久化容器租约使 watcher 意外退出后仍能识别正在运行的作业，避免重复分配。共享调度锁串行完成容量检查和容器创建。
+独占模式下，每个 GPU 作业持有单卡租约直到结束。共享模式使用 --share-gpus，允许同一卡运行多个作业；分配登记在共享调度锁内原子完成，持续有效的预留依据活动容器记录核算，不用整卡互斥锁阻止共享。
 
-watcher 保存退出状态并终止超时作业。取消操作移除容器，覆盖已创建但尚未启动的情况；工作区和元数据保留供检查。调度器协调本 runtime 的作业，其他宿主工作负载沿用原有调度方式。
+watcher 保存退出状态并终止超时作业。取消操作移除容器，覆盖已创建但尚未启动的情况；工作区和元数据保留供检查。调度器协调本 runtime 的作业，其他 Host工作负载沿用原有调度方式。
 
 ## 验证
 
@@ -99,3 +100,21 @@ python3 runtime/remote/verify_remote.py \
 ```
 
 集成检查提交临时实验，先检查公共参考文件及模块、示例两种评测入口，再验证工作区隔离、只读基线、归属拒绝、产物回传、CUDA、EGL 相机、资源限额，以及两个控制器竞争同一张 GPU。退出时取消本次仍在运行的作业。请在存在空闲 GPU 时运行；部署路径和验证记录保存在 ignored artifacts 中。
+
+## 项目内的资产与运行存储
+
+模型和数据放在部署方指定的项目数据目录中，通过 --models-root、--datasets-root 分别只读挂载到 /models、/datasets，不复制到镜像或每个作业。所有挂载路径由 Host 配置提供。公共数据由部署方提供；Agent 自己生成的数据写入自己的输出目录。
+
+带 run_id 的新作业保存在 `artifacts/remote-runtime/runs/<run-id>/<owner>/jobs/<job-id>/`，同身份输出保存在相邻 outputs/。普通 job 之间可以复用同身份输出；不同身份无共享写目录。原有作业按其元数据保留原位置。
+
+--run-storage-bytes 设置本地 run 文件与每轮新增远程数据、输出的合计额度，0 表示关闭限制。公共只读资产与通过符号链接引用的原始起点不计入；所有身份和作业的可写文件按逻辑字节数合计，符号链接不跟随。提交前检查已有内容与上传文件；Host 每五秒通过仅供部署方使用的 usage 操作报告本地占用，远程使用最近报告与远程文件之和。运行中由独立 watcher 每秒扫描，到额后正常停止自己的作业并保留证据。并发写入和停止期间允许短暂超额，因此不宣称文件系统级硬配额。额度不足返回 storage_limit，运行中超额以 failed 和明确原因保存。
+
+本地 Host 通过 A3_REMOTE_MAX_JOBS、A3_REMOTE_JOB_TIMEOUT、A3_REMOTE_RUN_STORAGE_BYTES、A3_REMOTE_MODELS_ROOT、A3_REMOTE_DATASETS_ROOT 配置对应参数；health 返回实际限额与可用公共挂载。max-jobs 单独约束 CPU 与 GPU 作业数，设为 0 时不按数量限制。共享模式下，max-gpus 约束本项目同时使用的物理卡数；多个作业可以在同一卡并行，文件权限保持隔离。
+
+## 显存共享调度
+
+--share-gpus 开启同卡多作业；--max-gpus 限制整机本项目活动物理卡数。--gpu-memory-mb 是每个新作业缺省的显存峰值预留，Agent 可通过 gpu_memory_mb 提供实际预计值；--gpu-capacity-mb 限制每卡总预留（0 表示按设备容量减缓冲），--gpu-headroom-mb 保留显存缓冲，单位均为 MiB。它们由对应的 A3_REMOTE_SHARE_GPUS、A3_REMOTE_MAX_GPUS、A3_REMOTE_GPU_MEMORY_MB、A3_REMOTE_GPU_CAPACITY_MB、A3_REMOTE_GPU_HEADROOM_MB 提供。
+
+调度器读取 nvidia-smi 的实际显存，并用本项目 Docker 的进程归属区分已兑现预留和尚未加载的预留。既不把已加载显存重复相加，也不把新启动作业误认为零占用。每卡预留与实际加待兑现预留都须在容量内；没有空间时等待，已在运行的作业退出后名额自动释放。只将空闲卡加入本项目卡池；池内支持共享，不接管其他使用者的忙碌卡。
+
+预留用于准入控制，不是 CUDA 硬显存配额。峰值估计应覆盖模型加载、训练与渲染需要；同卡并发会影响耗时，结果记录应保留共享条件。NVIDIA 指标字段见[官方 nvidia-smi 文档](https://docs.nvidia.com/deploy/nvidia-smi/index.html)。

@@ -1,4 +1,4 @@
-version: 0.1.0
+version: 0.1.1
 agent:
   agent_class: default
   step_limit: 0
@@ -12,7 +12,7 @@ agent:
     protocol, end this mini session with a command whose first output line is
     COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT, followed by your handoff or final summary.
 
-    {{ common_instructions }}
+    {{ phase_instructions }}
   instance_template: |
     {{ task }}
 
@@ -24,7 +24,7 @@ agent:
     版本化验收：{{ A3_ACCEPTANCE_FILE }}
     部署信息：{{ A3_DEPLOYMENT_FILE }}
     执行接口：/run/input/execution.md
-    核心协议：/run/input/common-instructions.md（已加载到 system）
+    核心协议：/run/input/phase-instructions.md（已加载到 system）
 
     Bash 只用于这个隔离构建环境；首个候选需提供实际工具和后续自主执行循环。
     按核心协议安排局部测试、完整候选试运行和主身份交接。
@@ -41,4 +41,4 @@ model:
 run:
   task: >-
     从通用 mini-SWE-agent 出发，依据本次版本化的目标和验收，自主完成
-    本次目标要求的第 1 阶段适配验证。实现形态和 auto research 方向由你选择。
+    当前所选阶段的任务。实现形态和 auto research 方向由你选择。

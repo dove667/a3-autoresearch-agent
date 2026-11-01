@@ -7,8 +7,15 @@
 ├── runtime/
 │   ├── local/             本地启动器、Gateway、候选版本、协议检查与恢复
 │   └── remote/            远程作业 Controller、镜像构建与验证入口
-├── configs/                通用启动配置
-├── evals/                  当前目标与验收标准
+├── configs/
+│   ├── rsi-bootstrap.yaml  初始 mini 的运行参数与工具约定
+│   └── prompts/
+│       ├── phase-one.md    第一阶段完整主 Agent Prompt
+│       ├── phase-two.md    第二阶段完整主 Agent Prompt
+│       └── workspace.md    固定工作区与接口说明
+├── evals/
+│   ├── phase-one/          冷启动 goal.md 与 acceptance.md
+│   └── phase-two/          联合优化 goal.md、acceptance.md 与 protocol.md
 ├── tests/runtime/          本地和远程基础设施的回归测试
 ├── scripts/                薄启动入口
 ├── third_party/            固定版本的 mini-SWE-agent submodule
@@ -39,7 +46,8 @@
 | `artifacts/rsi/launch-logs/` | 后台启动时保存的终端日志；正式轨迹与验收证据仍归属各 run |
 | `artifacts/validation/` | 部署、恢复、隔离、预检、安装和报告复核记录；不作为正式验收的替代 |
 | `artifacts/deployment/` | 镜像构建材料、迁移清单、部署修复与目录迁移记录 |
-| `artifacts/remote-runtime/` | 执行端的作业、实验目录与共享资源锁；所有 Controller 必须使用同一配置根目录 |
+| `artifacts/models/`、`artifacts/datasets/` | 可选的只读公共权重与数据目录，也可配置到其他项目数据目录 |
+| `artifacts/remote-runtime/` | 执行端的作业、实验目录与共享调度锁与显存预留；所有 Controller 必须使用同一配置根目录 |
 | `reports/<name>/dist/` | 报告构建结果，由 Data 插件生成 |
 | `reports/<name>/output/` | 报告截图与视觉检查输出 |
 | `.env`、`.venv/` | 本机部署配置和依赖环境 |
@@ -100,6 +108,6 @@ artifacts/rsi/run-*/
 
 启动流程与参数见[使用教程](tutorial.md)，执行单元和调用关系见[系统架构](architecture.md)。`continuation.py` 负责跨轮结果的机械保存与读取；`retained.json` 是运行结果，Agent 的记忆实现仍归属其生成的 Harness。
 
-`configs/prompts/common.md` 是主 Agent 与接任候选的核心协议来源，每轮版本化到 `inputs/common-instructions.md`。测试 Agent 和普通 worker 不由 Host 自动加载该协议；其提示词属于主 Agent 的专项实现。
+`configs/prompts/phase-one.md` 和 `configs/prompts/phase-two.md` 分别是对应阶段的完整主 Agent 协议。Host 按本轮 `phase` 选择其中一份，版本化到 `inputs/phase-instructions.md`；目标与验收从 `evals/<phase>/` 读取。第二阶段另加载本阶段 protocol.md；不存在额外 common Prompt。测试 Agent 和普通 worker 不由 Host 自动加载主 Agent 协议，其提示词由主 Agent 编写。
 
 每轮 `.host/` 由 Host 私有维护，保存恢复所需身份与注册表、进程锁；不挂载给 Agent，不作为可分享产物。`resume-events.jsonl` 记录原 run 内的恢复事件。

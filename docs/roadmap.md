@@ -16,11 +16,13 @@
 
 冷启动采用串行候选探索，代码候选可保留历史版本并据此继续，不设总 step 或代数上限。运行中断后的 `--resume-from` 从最新保存状态继续；从历史 checkpoint 恢复完整执行状态的分支功能尚未实现。模型调用复用 mini 的多提供商支持；默认执行方式为本地 runtime 通过 SSH 调用远程 GPU 环境，同时规划本地执行后端。
 
-目标与验收分别见 [goal.md](../evals/goal.md) 和 [acceptance.md](../evals/acceptance.md)，无人交互运行见[使用教程](tutorial.md)。具体实现由 Agent 根据反馈决定。
+目标与验收分别见 [goal.md](../evals/phase-one/goal.md) 和 [acceptance.md](../evals/phase-one/acceptance.md)，无人交互运行见[使用教程](tutorial.md)。具体实现由 Agent 根据反馈决定。
 
 ## 第二阶段：Policy 与 Harness 联合优化
 
 接入训练、检查点与模型评测，让 Agent 自主联合优化机器人 Policy 的任务表现和 Harness 的实验效率。评价纳入 GPU 时间、模型调用成本和达到目标成绩所需实验次数。
+
+[具体方案](plans/2026-10-31-phase-two.md)与独立的 [Policy/Harness 评估协议](../evals/phase-two/protocol.md)已写成设计稿：采用两个任务、三个难度的完整网格，模型、数据及训练方法由 Agent 自主选择，Harness 效率单独比较。两个阶段的目标、验收与完整 Prompt 已分开维护，阶段输入选择与恢复隔离已实现；训练资源、预算控制和保留 Harness 的新目标适配仍待验证，尚未启动第二阶段实验。
 
 ### 候选代码版本与并行执行
 
@@ -30,7 +32,7 @@ Host 管理共享 Git 仓库和 worktree，将获授权的候选源码交给对�
 
 Host 已提供逐候选 commit、按身份授权的版本列表、独立 worktree 和全新身份启动入口。它们属于人类提前准备的基础设施。Agent 应显式保存选定源码，并将实际评测、协议、选择与版本关联；跨 Agent 分工、互相发现与避免重复实验的协调策略留待后续设计。
 
-Host 也提供比较协议差异检查和脱敏请求诊断。记忆模块新增为阶段一 D 项，由 SWE Agent 自主实现与验收：在当前 session 主动写入值得保存的真实经验，再由新会话检索复用；历史 A/B/C 记录按当次版本化条件保留。第二阶段 Policy 任务条件与评测设计仍待团队调研，本次不实施。
+Host 也提供比较协议差异检查和脱敏请求诊断。记忆模块新增为阶段一 D 项，由 SWE Agent 自主实现与验收：在当前 session 主动写入值得保存的真实经验，再由新会话检索复用；历史 A/B/C 记录按当次版本化条件保留。第二阶段评估已有独立设计稿；实现和正式运行尚待完成启动准备。
 
 ## 代码与文档归属
 

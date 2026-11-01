@@ -1,5 +1,6 @@
 """Start from an Agent's retained result, without a manually assembled handoff."""
 
+import hashlib
 import json
 from dataclasses import dataclass
 from pathlib import Path
@@ -15,6 +16,27 @@ class HarnessStart:
     files: dict[str, str]
     previous_run: Path | None = None
     source_version: str | None = None
+
+
+def prepare_fresh_task(start: HarnessStart, task: str) -> tuple[HarnessStart, dict]:
+    """Initialize a copied message checkpoint; preserve the retained code and memory."""
+    content = start.files.get("checkpoint.json")
+    if content is None:
+        raise ValueError("Fresh tasks require a supported checkpoint.json message list")
+    messages = json.loads(content)
+    if not isinstance(messages, list) or not all(isinstance(item, dict) for item in messages):
+        raise ValueError("Unsupported checkpoint format; Harness needs an explicit new-task entry")
+    files = dict(start.files)
+    files["checkpoint.json"] = json.dumps([{"role": "user", "content": task}], ensure_ascii=False)
+    return (
+        HarnessStart(start.command.copy(), files, start.previous_run, start.source_version),
+        {
+            "mode": "fresh",
+            "previous_message_count": len(messages),
+            "source_checkpoint_sha256": hashlib.sha256(content.encode()).hexdigest(),
+            "initial_message_count": 1,
+        },
+    )
 
 
 def load_run_result(run: Path) -> HarnessStart:

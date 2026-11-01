@@ -26,11 +26,12 @@ from runtime.local.candidate_runtime import MAX_ACTIVE_CANDIDATES, CandidateRunt
 from runtime.local.candidate_versions import CandidateVersions
 from runtime.local.context_resume import ContextAgent, load_context
 from runtime.local.continuation import (
+    prepare_fresh_task,
     publish_run_result,
     resolve_harness_start,
 )
 from runtime.local.host_gateway import create_app
-from runtime.local.input_versions import InputVersions
+from runtime.local.input_versions import PHASES, InputVersions, resolve_phase
 from runtime.local.isolation_fixture import IsolationFixtures
 from runtime.local.recovery import stage_recovery
 from runtime.local.run_resume import load_resume_state
@@ -117,17 +118,30 @@ def snapshot_checkout(source: Path, destination: Path) -> None:
 
 
 def remote_call(operation: str, payload: dict) -> dict:
-    command = shlex.join(
-        [
-            os.environ.get("A3_REMOTE_PYTHON", "python3"),
-            os.environ["A3_REMOTE_CONTROLLER"],
-            "--root",
-            os.environ["A3_REMOTE_RUN_ROOT"],
-            "--image",
-            os.environ["A3_REMOTE_IMAGE"],
-            operation,
-        ]
-    )
+    arguments = [
+        os.environ.get("A3_REMOTE_PYTHON", "python3"),
+        os.environ["A3_REMOTE_CONTROLLER"],
+        "--root",
+        os.environ["A3_REMOTE_RUN_ROOT"],
+        "--image",
+        os.environ["A3_REMOTE_IMAGE"],
+    ]
+    for environment, flag in (
+        ("A3_REMOTE_MAX_JOBS", "--max-jobs"),
+        ("A3_REMOTE_MAX_GPUS", "--max-gpus"),
+        ("A3_REMOTE_GPU_MEMORY_MB", "--gpu-memory-mb"),
+        ("A3_REMOTE_GPU_HEADROOM_MB", "--gpu-headroom-mb"),
+        ("A3_REMOTE_GPU_CAPACITY_MB", "--gpu-capacity-mb"),
+        ("A3_REMOTE_JOB_TIMEOUT", "--timeout"),
+        ("A3_REMOTE_RUN_STORAGE_BYTES", "--run-storage-bytes"),
+        ("A3_REMOTE_MODELS_ROOT", "--models-root"),
+        ("A3_REMOTE_DATASETS_ROOT", "--datasets-root"),
+    ):
+        if os.environ.get(environment):
+            arguments += [flag, os.environ[environment]]
+    if os.environ.get("A3_REMOTE_SHARE_GPUS") == "1":
+        arguments += ["--share-gpus"]
+    command = shlex.join([*arguments, operation])
     result = subprocess.run(
         [
             "ssh",
@@ -163,11 +177,51 @@ def bootstrap_source(parent: Path | None) -> Path:
 
 
 def input_hashes(inputs: Path) -> dict[str, str]:
-    names = ("goal.md", "acceptance.md", "bootstrap.yaml", "execution.md", "common-instructions.md")
+    names = (
+        "goal.md",
+        "acceptance.md",
+        "bootstrap.yaml",
+        "execution.md",
+        "phase-instructions.md",
+        "protocol.md",
+    )
     return {
         name: hashlib.sha256((inputs / name).read_bytes()).hexdigest()
         for name in names
         if (inputs / name).is_file()
+    }
+
+
+def local_storage_bytes(run: Path) -> int:
+    """Count this run's files without following links into source or other runs."""
+    total = 0
+    for directory, names, files in os.walk(run, followlinks=False):
+        names[:] = [name for name in names if not (Path(directory) / name).is_symlink()]
+        for name in files:
+            path = Path(directory) / name
+            try:
+                if not path.is_symlink() and path.is_file():
+                    total += path.stat().st_size
+            except FileNotFoundError:
+                pass
+    return total
+
+
+def remote_limits() -> dict:
+    return {
+        "cpus": 2,
+        "memory": "8g",
+        "max_jobs": int(os.environ.get("A3_REMOTE_MAX_JOBS", "2")),
+        "timeout_seconds": int(os.environ.get("A3_REMOTE_JOB_TIMEOUT", "900")),
+        "run_storage_bytes": int(os.environ.get("A3_REMOTE_RUN_STORAGE_BYTES", "0")),
+        "gpu_mode": "memory_shared"
+        if os.environ.get("A3_REMOTE_SHARE_GPUS") == "1"
+        else "exclusive",
+        "max_gpus": int(os.environ.get("A3_REMOTE_MAX_GPUS", "4")),
+        "gpu_memory_mb": int(os.environ.get("A3_REMOTE_GPU_MEMORY_MB", "512")),
+        "gpu_headroom_mb": int(os.environ.get("A3_REMOTE_GPU_HEADROOM_MB", "1024")),
+        "gpu_capacity_mb": int(os.environ.get("A3_REMOTE_GPU_CAPACITY_MB", "0")),
+        "storage_scope": "local run files plus new remote data and outputs across all identities in this run",
     }
 
 
@@ -200,9 +254,22 @@ def main() -> None:
         type=Path,
         help="Start from the retained result of an explicitly selected run/package directory",
     )
+    parser.add_argument(
+        "--phase",
+        choices=PHASES,
+        help="Select stage inputs; new runs default to phase-one, resumes keep their stage",
+    )
     args = parser.parse_args()
     if args.run_harness and (args.resume_from or args.verify_deployment):
         parser.error("--run-harness cannot be combined with --resume-from or --verify-deployment")
+    try:
+        args.phase = resolve_phase(args.resume_from, args.phase)
+    except ValueError as error:
+        parser.error(str(error))
+    if args.phase == "phase-two" and not (args.run_harness or args.resume_from):
+        parser.error("phase-two requires --run-harness or a phase-two --resume-from")
+    if args.phase == "phase-two" and args.verify_deployment:
+        parser.error("--verify-deployment is a phase-one readiness check")
     start = resolve_harness_start(args.run_harness) if args.run_harness else None
     load_dotenv(os.environ.get("A3_RSI_ENV_FILE", ROOT / ".env"), override=True)
     required = (
@@ -251,7 +318,7 @@ def launch_run(args, run: Path, a3: Path, image: str, start) -> None:
     store = RunStateStore(run)
     saved = None
     resume_context = None
-    input_versions = InputVersions(ROOT, run)
+    input_versions = InputVersions(ROOT, run, phase=getattr(args, "phase", None))
     proposed_inputs = input_versions.prepare()
     if resuming:
         startup = json.loads((run / "startup.json").read_text())
@@ -292,12 +359,14 @@ def launch_run(args, run: Path, a3: Path, image: str, start) -> None:
                     indent=2,
                 )
             )
-        if not parent:
-            shutil.copy2(ROOT / "configs/rsi-bootstrap.yaml", inputs / "bootstrap.yaml")
         public_a3 = run / "public/a3"
         public_a3.parent.mkdir()
         snapshot_checkout(a3, public_a3)
     input_versions.activate(proposed_inputs, "resume" if resuming else "start")
+    task_context = None
+    if package and input_versions.phase == "phase-two":
+        start, task_context = prepare_fresh_task(start, input_versions.contents["goal.md"])
+        package = (start.command, start.files)
     public_a3 = run / "public/a3"
     if saved:
         endpoint = saved["endpoint"]
@@ -338,15 +407,30 @@ def launch_run(args, run: Path, a3: Path, image: str, start) -> None:
             and initial_session in sandbox.records
         ):
             sandbox.records[initial_session]["inputs"] = str(private_inputs)
-    common_instructions = input_versions.model_instructions()[1]
+    phase_instructions = input_versions.model_instructions()[1]
     if args.verify_deployment:
-        common_instructions = ""  # Readiness checks are test sessions, not main Agents.
-    fixtures = IsolationFixtures(remote_call, run / "fixtures")
+        phase_instructions = ""  # Readiness checks are test sessions, not main Agents.
+
+    def remote_for_run(operation, payload):
+        if operation == "submit":
+            payload = {**payload, "run_id": run_id}
+        return remote_call(operation, payload)
+
+    def report_storage():
+        return remote_for_run(
+            "usage",
+            {
+                "run_id": run_id,
+                "host_storage_bytes": local_storage_bytes(run),
+            },
+        )
+
+    fixtures = IsolationFixtures(remote_for_run, run / "fixtures")
     app = create_app(
         model_name=os.environ["MODEL_NAME"],
         sessions={token: run_id},
         forward_model=litellm.responses,
-        remote_call=remote_call,
+        remote_call=remote_for_run,
         usage_log=run / "model-usage.jsonl",
         sandbox=sandbox,
         fixtures=fixtures,
@@ -354,11 +438,14 @@ def launch_run(args, run: Path, a3: Path, image: str, start) -> None:
         initial_inputs=private_inputs,
         main_owner=saved["gateway"]["evolution"]["main_owner"] if saved else run_id,
         start_main_session=bool(package),
-        common_instructions=common_instructions,
+        phase_instructions=phase_instructions,
         state_store=store,
         restored_state=saved["gateway"] if saved else None,
         input_versions=None if args.verify_deployment else input_versions,
         operator_token=store.load()["operator_token"],
+        resource_monitor=report_storage
+        if int(os.environ.get("A3_REMOTE_RUN_STORAGE_BYTES", "0"))
+        else None,
     )
     app.state.save_checkpoint()
     server = uvicorn.Server(
@@ -391,6 +478,9 @@ def launch_run(args, run: Path, a3: Path, image: str, start) -> None:
                     "model_api_key": "$A3_GATEWAY_TOKEN",
                     "remote_a3": "/opt/a3",
                     "remote_workspace": "/workspace",
+                    "remote_outputs": "/outputs (persistent within the same worker identity)",
+                    "remote_models": "/models (read-only, when configured)",
+                    "remote_datasets": "/datasets (read-only, when configured)",
                     "sessions": {
                         "create": "POST /sessions {command: [...], files: {...}} or {command: [...], version_id: ...}",
                         "list": "GET /sessions (managed descendants and parent relationships)",
@@ -419,12 +509,7 @@ def launch_run(args, run: Path, a3: Path, image: str, start) -> None:
                         "close": "DELETE /fixtures/isolation/{fixture_id}",
                         "scope": "peer identity and sentinel remain host-owned; only peer job ID is shared",
                     },
-                    "remote_limits": {
-                        "cpus": 2,
-                        "memory": "8g",
-                        "max_jobs": 2,
-                        "timeout_seconds": 900,
-                    },
+                    "remote_limits": remote_limits(),
                     "execution_guide": "/run/input/execution.md",
                     "input_manifest": "/run/input/input-manifest.json",
                     "parent_run": start.previous_run.name
@@ -439,6 +524,7 @@ def launch_run(args, run: Path, a3: Path, image: str, start) -> None:
     else:
         deployment = json.loads((inputs / "deployment.json").read_text())
         deployment["sessions"]["max_active"] = MAX_ACTIVE_CANDIDATES
+        deployment["remote_limits"] = remote_limits()
         (inputs / "deployment.json").write_text(json.dumps(deployment, indent=2))
     config = yaml.safe_load((inputs / "bootstrap.yaml").read_text())
     if args.verify_deployment:
@@ -467,10 +553,12 @@ def launch_run(args, run: Path, a3: Path, image: str, start) -> None:
                 json.dumps(
                     {
                         "run_id": run_id,
+                        "phase": input_versions.phase,
                         "mode": kind,
                         "package": str(args.run_harness or args.resume_from),
                         "parent_run": start.previous_run.name if start.previous_run else None,
                         "source_version": start.source_version,
+                        "task_context": task_context,
                         "session_id": session["session_id"],
                         "version_id": session["version_id"],
                         "inputs": input_hashes(inputs),
@@ -526,6 +614,7 @@ def launch_run(args, run: Path, a3: Path, image: str, start) -> None:
                 json.dumps(
                     {
                         "run_id": run_id,
+                        "phase": input_versions.phase,
                         "inputs": input_hashes(inputs),
                         "input_manifest": input_versions.manifest,
                         "a3_commit": git(a3, "rev-parse", "HEAD"),
@@ -549,7 +638,7 @@ def launch_run(args, run: Path, a3: Path, image: str, start) -> None:
             if key.startswith("A3_") and key not in ("A3_GATEWAY_TOKEN", "A3_GATEWAY_URL")
         }
 
-        template_vars["common_instructions"] = common_instructions
+        template_vars["phase_instructions"] = phase_instructions
 
         def execute_builder(reason: str, trajectory: Path) -> None:
             model = get_model(
@@ -568,7 +657,7 @@ def launch_run(args, run: Path, a3: Path, image: str, start) -> None:
                 def current_system():
                     with input_versions.lock:
                         latest = yaml.safe_load(input_versions.contents["bootstrap.yaml"])
-                        agent.extra_template_vars["common_instructions"] = (
+                        agent.extra_template_vars["phase_instructions"] = (
                             input_versions.model_instructions()[1]
                         )
                         return agent._render_template(latest["agent"]["system_template"])

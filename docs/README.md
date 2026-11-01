@@ -6,7 +6,8 @@
 - [使用教程](tutorial.md)：安装准备、全部启动参数、初始运行、中断恢复、版本迭代、轨迹与故障定位。
 - [系统架构](architecture.md)：两阶段 RSI、运行单元、调用链、版本与身份、权限和资源管理。
 - [目录职责](project-structure.md)：源码、候选、报告和运行产物的存放位置。
-- [能力目标](../evals/goal.md)与[验收标准](../evals/acceptance.md)：启动时采用当前版本并记录内容。
+- 第一阶段[能力目标](../evals/phase-one/goal.md)与[验收标准](../evals/phase-one/acceptance.md)：默认启动输入，记录当前版本与内容。
+- [第二阶段方案](plans/2026-10-31-phase-two.md)：完整网格下的 Policy 与 Harness 联合优化；独立目标、评估与完整 Prompt 已接入阶段选择；训练环境与预算准备待完成。
 - [Agent 输入版本与热加载](agent-inputs.md)：版本号维护、恢复加载规则和警告确认。
 - [Host 执行接口](../runtime/local/README.md)：给生成后的 Harness 使用的固定部署能力。
 

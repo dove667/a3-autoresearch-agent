@@ -1,20 +1,23 @@
 # Agent 输入的版本与加载
 
-Version: 0.1.0
+Version: 0.1.1
 
-目标、验收、Prompt 和执行说明由部署方维护。新启动、`--resume-from` 和 `--run-harness` 都采用启动时仓库里的当前文件，包括未提交的工作区内容。恢复保留原 run、身份、生成的 Harness 和模型对话历史；部署方 system Prompt 与共性协议更新为当前版本。
+目标、验收、Prompt 和执行说明由部署方维护。新启动、`--resume-from` 和 `--run-harness` 都采用启动时仓库里的当前文件，包括未提交的工作区内容。恢复保留原 run、身份、生成的 Harness 和模型对话历史；部署方 system Prompt 与所选阶段协议更新为当前版本。
 
 ## 需要维护版本的内容
 
 | 源文件 | Agent 可读位置 |
 | --- | --- |
-| `evals/goal.md` | `/run/input/goal.md` |
-| `evals/acceptance.md` | `/run/input/acceptance.md` |
-| `configs/prompts/common.md` | `/run/input/common-instructions.md`，主 Agent 和接任候选的模型指令 |
+| `evals/<phase>/goal.md` | `/run/input/goal.md` |
+| `evals/<phase>/acceptance.md` | `/run/input/acceptance.md` |
+| `configs/prompts/<phase>.md` | `/run/input/phase-instructions.md`，所选阶段的完整主 Agent 协议 |
+| `evals/phase-two/protocol.md` | `/run/input/protocol.md`，仅第二阶段的评估协议 |
 | `configs/rsi-bootstrap.yaml` | `/run/input/bootstrap.yaml`，初始 mini 的 Prompt 与启动配置 |
 | `runtime/local/README.md` | `/run/input/execution.md` |
 | `runtime/local/readiness-task.md` | `/run/input/readiness-task.md`，部署验证任务 |
 | `configs/prompts/workspace.md` | `/run/input/workspace-instructions.md`，构建工作区的 `harness/AGENTS.md` |
+
+`<phase>` 为 `phase-one` 或 `phase-two`。两个阶段的目标、验收和 Prompt 对称维护；每个输入清单只包含一个阶段。阶段一不加载阶段二文件，阶段二不加载阶段一 Prompt，也不叠加 common Prompt。启动参数与工作区说明共用固定接口，不包含阶段验收目标。
 
 Markdown 在标题之后写 `Version: 0.1.0`；YAML 顶层写 `version: 0.1.0`。这些版本独立维护。任何内容修改都需要递增：兼容性文字修正递增 patch，例如 `0.1.0 → 0.1.1`；能力、协议或验收变化通常递增 minor；不兼容重构递增 major。版本号与 SHA256 同时记录。同一 run 见过的同名同版本文件若内容变化，加载会被拒绝，须先修正版本号。
 
@@ -22,11 +25,13 @@ Markdown 在标题之后写 `Version: 0.1.0`；YAML 顶层写 `version: 0.1.0`�
 
 ## 启动与恢复记录
 
-`inputs/input-manifest.json` 列出整套输入的快照编号 revision、发布尝试序号 generation，以及每个文件的源路径、语义版本和 SHA256。revision 定位一组确定的文件；generation 在每次发布尝试时增加，更新失败回到旧快照也会增加，让读取程序知道期间发生过更新。两者均由 Host 自动维护，开发者维护的是各文件的 `0.1.x` 版本。
+新运行默认 `phase-one`，使用 `--phase phase-two --run-harness <明确来源>` 选择第二阶段。`--resume-from` 自动读取原 run 的阶段，显式指定冲突阶段会拒绝；跨阶段使用新 run。旧记录没有阶段字段时归属阶段一。热加载只更新当前阶段的文件。
+
+`startup.json` 和 `inputs/input-manifest.json` 保存 `phase`。`inputs/input-manifest.json` 列出整套输入的快照编号 revision、发布尝试序号 generation，以及每个文件的源路径、语义版本和 SHA256。revision 定位一组确定的文件；generation 在每次发布尝试时增加，更新失败回到旧快照也会增加，让读取程序知道期间发生过更新。两者均由 Host 自动维护，开发者维护的是各文件的 `0.1.x` 版本。
 
 发布开始时所有挂载先标记 status=updating（更新中），完成后才标记 active（可读取）。每次启动或更新的完整内容保存在 `input-revisions/revision-*/`；`input-events.jsonl` 保存切换记录。原始 `startup.json` 保持不变，恢复事件附带当前清单写入 `resume-events.jsonl`。旧运行首次升级时，原输入另存历史副本。
 
-普通挂载与主会话的私有输入挂载同步发布。主 Agent 与接任候选每次模型请求都获得当前共性协议、目标和验收正文；普通测试 worker 的任务与 Prompt 继续由主 Agent 提供。用量日志记录请求采用的 input_revision、各文件版本与摘要。初始 mini 刷新部署方 system 消息，保留已有用户消息、模型回复和工具结果。
+普通挂载与主会话的私有输入挂载同步发布。主 Agent 与接任候选每次模型请求都获得当前阶段 Prompt、目标和验收正文；第二阶段还提供 protocol.md；普通测试 worker 的任务与 Prompt 继续由主 Agent 提供。用量日志记录请求采用的 input_revision、各文件版本与摘要。初始 mini 刷新部署方 system 消息，保留已有用户消息、模型回复和工具结果。
 
 全部 worker 停止后，Host 先关闭更新入口，再按最终生效的验收版本作结构检查，并把该版本清单写入 outcome。历史结果保留各自产生时的版本；变更验收后需要 Agent 重新判断已有证据是否适用。
 

@@ -1,6 +1,6 @@
-# Agent 共性执行协议
+# 第一阶段主 Agent 执行协议
 
-Version: 0.1.0
+Version: 0.1.1
 
 本协议由 Host 固定提供给当前主 Agent 与候选接任主 Agent。测试 Agent 和其他 worker 的完整提示词由主 Agent 自行编写，Host 不额外附加本协议。主 Agent 与接任候选仍自行编写各自的具体任务和专属提示词。
 

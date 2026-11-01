@@ -129,3 +129,125 @@ def test_unknown_job_cli_returns_json_error_without_revealing_ownership(tmp_path
         "error": "PermissionError",
         "message": "job is not accessible",
     }
+
+
+def test_run_storage_combines_owners_and_ignores_other_runs(tmp_path):
+    runtime = load_runtime()
+    store = runtime.JobStore(tmp_path)
+    first = store.create("a", ["true"], False, {"data": "123"}, run_id="run-one")
+    second = store.create("b", ["true"], False, {"data": "4567"}, run_id="run-one")
+    store.create("a", ["true"], False, {"data": "other"}, run_id="run-two")
+    assert store.run_storage_bytes("run-one") == 7
+    assert store.workspace(first) != store.workspace(second)
+    outside = tmp_path / "outside"
+    outside.write_text("not part of quota")
+    (store.workspace(first) / "link").symlink_to(outside)
+    assert store.run_storage_bytes("run-one") == 7
+
+
+def test_zero_timeout_means_no_wall_time_limit():
+    runtime = load_runtime()
+    assert runtime.job_timeout(0) is None
+    assert runtime.job_timeout(12) == 12
+    with pytest.raises(ValueError):
+        runtime.job_timeout(-1)
+
+
+def test_storage_limit_blocks_new_job_before_gpu_or_container_allocation(tmp_path, monkeypatch):
+    from argparse import Namespace
+
+    runtime = load_runtime()
+    store = runtime.JobStore(tmp_path)
+    store.create("old-owner", ["true"], False, {"data": "1234567"}, run_id="run-one")
+    monkeypatch.setattr(runtime, "docker", lambda *a, **k: pytest.fail("Docker reached"))
+    result = runtime.submit(
+        store,
+        {
+            "experiment_id": "new-owner",
+            "run_id": "run-one",
+            "command": ["true"],
+            "gpu": True,
+            "files": {"data": "12"},
+        },
+        Namespace(run_storage_bytes=8, max_jobs=4),
+    )
+    assert result["status"] == "storage_limit"
+    assert result["used_bytes"] == 7
+
+
+def test_storage_watcher_stops_only_its_job_and_keeps_evidence(tmp_path, monkeypatch):
+    from argparse import Namespace
+
+    runtime = load_runtime()
+    store = runtime.JobStore(tmp_path)
+    job = store.create("owner", ["true"], False, {"data": "12345"}, run_id="run-one")
+    job.update(container_id="own-container", storage_limit_bytes=4)
+    store.save(job)
+    calls = []
+    state = {"Status": "running", "ExitCode": None}
+
+    def docker(arguments, **kwargs):
+        calls.append(arguments)
+        if arguments[0] == "stop":
+            state.update(Status="exited", ExitCode=143)
+        return subprocess.CompletedProcess(arguments, 0, "", "")
+
+    monkeypatch.setattr(runtime, "docker", docker)
+    monkeypatch.setattr(runtime, "container_state", lambda container: dict(state))
+    runtime.watch(Namespace(root=tmp_path, job_id=job["job_id"], timeout=0, lock_fd=None))
+    saved = store.load(job["job_id"], "owner")
+    assert saved["status"] == "failed"
+    assert saved["error"] == "run storage limit reached"
+    assert ["stop", "--time", "10", "own-container"] in calls
+    assert (store.workspace(job) / "data").read_text() == "12345"
+    assert all("other-container" not in call for call in calls)
+
+
+def test_shared_assets_are_read_only_and_outputs_stay_with_owner(tmp_path, monkeypatch):
+    from argparse import Namespace
+
+    runtime = load_runtime()
+    store = runtime.JobStore(tmp_path / "runtime")
+    job = store.create("owner", ["true"], False, {}, run_id="run-one")
+    models, datasets = tmp_path / "models", tmp_path / "datasets"
+    models.mkdir()
+    datasets.mkdir()
+    calls = []
+    monkeypatch.setattr(
+        runtime,
+        "docker",
+        lambda arguments: (
+            calls.append(arguments) or subprocess.CompletedProcess(arguments, 0, "container\n", "")
+        ),
+    )
+    runtime.create_container(
+        store,
+        job,
+        Namespace(
+            cpus=2,
+            memory="8g",
+            pids_limit=256,
+            image="test",
+            models_root=models,
+            datasets_root=datasets,
+        ),
+    )
+    assert f"type=bind,source={models},target=/models,readonly" in calls[0]
+    assert f"type=bind,source={datasets},target=/datasets,readonly" in calls[0]
+    assert f"type=bind,source={store.outputs(job)},target=/outputs" in calls[0]
+    other = store.create("other-owner", ["true"], False, {}, run_id="run-one")
+    assert store.outputs(other) != store.outputs(job)
+
+
+def test_run_storage_includes_latest_host_report(tmp_path):
+    runtime = load_runtime()
+    store = runtime.JobStore(tmp_path)
+    store.create("a", ["true"], False, {"data": "123"}, run_id="run-one")
+    result = store.update_host_storage({"run_id": "run-one", "host_storage_bytes": 11})
+    assert result["used_bytes"] == 14
+    store.update_host_storage({"run_id": "run-one", "host_storage_bytes": 5})
+    assert store.run_storage_bytes("run-one") == 8
+    assert store.run_storage_bytes("other-run") == 0
+    for value in (-1, True, "10"):
+        with pytest.raises(ValueError):
+            store.update_host_storage({"run_id": "run-one", "host_storage_bytes": value})

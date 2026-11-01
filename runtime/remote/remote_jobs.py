@@ -59,11 +59,14 @@ def write_files(workspace: Path, files: dict) -> None:
 
 
 def validate_submit(request: dict) -> None:
-    if set(request) - {"experiment_id", "command", "gpu", "files"}:
+    if set(request) - {"experiment_id", "run_id", "command", "gpu", "gpu_memory_mb", "files"}:
         raise ValueError("unknown submit fields")
     owner = request.get("experiment_id")
     if not isinstance(owner, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", owner):
         raise ValueError("invalid experiment_id")
+    run_id = request.get("run_id", owner)
+    if not isinstance(run_id, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", run_id):
+        raise ValueError("invalid run_id")
     command = request.get("command")
     if not isinstance(command, list) or not command or len(command) > 256:
         raise ValueError("command must be a nonempty argument list")
@@ -71,6 +74,9 @@ def validate_submit(request: dict) -> None:
         raise ValueError("command contains invalid arguments")
     if not isinstance(request.get("gpu"), bool):
         raise TypeError("gpu must be a boolean")
+    memory = request.get("gpu_memory_mb")
+    if memory is not None and (type(memory) is not int or memory < 1):
+        raise ValueError("gpu_memory_mb must be a positive integer")
     if not isinstance(request.get("files", {}), dict):
         raise TypeError("files must be an object")
 
@@ -100,9 +106,60 @@ class JobStore:
         atomic_json(self.metadata_path(job["job_id"]), job)
 
     def workspace(self, job: dict) -> Path:
+        if job.get("run_id"):
+            return self.run_directory(job["run_id"]) / job["experiment_id"] / "jobs" / job["job_id"]
         return self.root / "experiments" / job["experiment_id"] / job["job_id"]
 
-    def create(self, experiment_id: str, command: list[str], gpu: bool, files: dict) -> dict:
+    def run_directory(self, run_id: str) -> Path:
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", run_id):
+            raise ValueError("invalid run_id")
+        return self.root / "runs" / run_id
+
+    def outputs(self, job: dict) -> Path:
+        return self.run_directory(job["run_id"]) / job["experiment_id"] / "outputs"
+
+    def run_storage_bytes(self, run_id: str) -> int:
+        report = self.root / "run-budgets" / f"{run_id}.json"
+        total = (
+            json.loads(report.read_text()).get("host_storage_bytes", 0) if report.exists() else 0
+        )
+        for directory, names, files in os.walk(self.run_directory(run_id), followlinks=False):
+            names[:] = [name for name in names if not (Path(directory) / name).is_symlink()]
+            for name in files:
+                path = Path(directory) / name
+                try:
+                    if not path.is_symlink() and path.is_file():
+                        total += path.stat().st_size
+                except FileNotFoundError:
+                    pass  # A running job may replace or remove a file during the scan.
+        return total
+
+    def update_host_storage(self, request: dict) -> dict:
+        run_id = request.get("run_id")
+        self.run_directory(run_id)
+        used = request.get("host_storage_bytes")
+        if type(used) is not int or used < 0:
+            raise ValueError("host_storage_bytes must be a nonnegative integer")
+        directory = self.root / "run-budgets"
+        directory.mkdir(exist_ok=True)
+        atomic_json(
+            directory / f"{run_id}.json",
+            {
+                "host_storage_bytes": used,
+                "reported_at": time.time(),
+            },
+        )
+        return {"run_id": run_id, "used_bytes": self.run_storage_bytes(run_id)}
+
+    def create(
+        self,
+        experiment_id: str,
+        command: list[str],
+        gpu: bool,
+        files: dict,
+        *,
+        run_id: str | None = None,
+    ) -> dict:
         job = {
             "job_id": uuid.uuid4().hex,
             "experiment_id": experiment_id,
@@ -112,13 +169,22 @@ class JobStore:
             "status": "created",
             "created_at": time.time(),
             "container_id": None,
+            **({"run_id": run_id} if run_id else {}),
         }
         directory = self.metadata_path(job["job_id"]).parent
         directory.mkdir(mode=0o700)
         self.workspace(job).mkdir(parents=True, mode=0o700)
+        if run_id:
+            self.outputs(job).mkdir(parents=True, exist_ok=True, mode=0o700)
         write_files(self.workspace(job), files)
         self.save(job)
         return job
+
+
+def job_timeout(seconds: int) -> int | None:
+    if seconds < 0:
+        raise ValueError("timeout must be nonnegative; zero means unlimited")
+    return seconds or None
 
 
 class GpuLease:
@@ -205,6 +271,96 @@ def acquire_gpu(store: JobStore, allowed: set[str] | None):
     return None, None
 
 
+def gpu_devices() -> list[dict]:
+    result = subprocess.run(
+        [
+            "nvidia-smi",
+            "--query-gpu=index,uuid,memory.total,memory.used,utilization.gpu",
+            "--format=csv,noheader,nounits",
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=15,
+    )
+    return [
+        {
+            "index": index,
+            "uuid": gpu,
+            "total_mb": float(total),
+            "used_mb": float(used),
+            "utilization": float(utilization),
+        }
+        for index, gpu, total, used, utilization in csv.reader(
+            result.stdout.splitlines(), skipinitialspace=True
+        )
+    ]
+
+
+def gpu_process_memory() -> dict[tuple[str, int], float]:
+    result = subprocess.run(
+        [
+            "nvidia-smi",
+            "--query-compute-apps=gpu_uuid,pid,used_gpu_memory",
+            "--format=csv,noheader,nounits",
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=15,
+    )
+    return {
+        (gpu, int(pid)): float(memory)
+        for gpu, pid, memory in csv.reader(result.stdout.splitlines(), skipinitialspace=True)
+    }
+
+
+def container_gpu_memory(job: dict, processes: dict) -> float:
+    result = docker(["top", job["container_id"], "-eo", "pid"], check=False)
+    if result.returncode:
+        if container_state(job["container_id"])["Status"] != "running":
+            return 0
+        raise RuntimeError("Cannot inspect a running job's GPU processes")
+    pids = [int(line.strip()) for line in result.stdout.splitlines()[1:] if line.strip()]
+    return sum(processes.get((job["gpu_uuid"], pid), 0) for pid in pids)
+
+
+def select_shared_gpu(store: JobStore, args, jobs: list[dict], memory_mb: int) -> str | None:
+    """Reserve capacity under the scheduler lock; share only project-owned devices."""
+    active_devices = {job["gpu_uuid"] for job in jobs if job.get("gpu_uuid")}
+    processes = gpu_process_memory()
+    allowed = set(args.gpu_ids.split(",")) if args.gpu_ids else None
+    candidates = []
+    for device in gpu_devices():
+        gpu = device["uuid"]
+        if allowed is not None and gpu not in allowed and device["index"] not in allowed:
+            continue
+        occupants = [job for job in jobs if job.get("gpu_uuid") == gpu]
+        if any(not job.get("gpu_shared") for job in occupants):
+            continue
+        if gpu not in active_devices:
+            if len(active_devices) >= args.max_gpus:
+                continue
+            if device["used_mb"] > 128 or device["utilization"] > 5:
+                continue
+        probe = GpuLease.try_acquire(store.root / "locks", gpu)
+        if probe is None:
+            continue
+        probe.close()
+        reserved = sum(job["gpu_memory_mb"] for job in occupants)
+        pending = sum(
+            max(0, job["gpu_memory_mb"] - container_gpu_memory(job, processes)) for job in occupants
+        )
+        capacity = device["total_mb"] - args.gpu_headroom_mb
+        configured = getattr(args, "gpu_capacity_mb", 0)
+        if configured:
+            capacity = min(capacity, configured)
+        available = min(capacity - reserved, capacity - device["used_mb"] - pending)
+        if available >= memory_mb:
+            candidates.append((available, gpu))
+    return max(candidates)[1] if candidates else None
+
+
 def create_container(store: JobStore, job: dict, args) -> str:
     arguments = [
         "create",
@@ -246,18 +402,31 @@ def create_container(store: JobStore, job: dict, args) -> str:
         "--mount",
         f"type=bind,source={store.workspace(job)},target=/workspace",
     ]
+    if job.get("run_id"):
+        arguments += ["--mount", f"type=bind,source={store.outputs(job)},target=/outputs"]
+    for option, target in (("models_root", "/models"), ("datasets_root", "/datasets")):
+        source = getattr(args, option, None)
+        if source:
+            source = Path(source).resolve(strict=True)
+            if not source.is_dir() or "," in str(source):
+                raise ValueError("Shared asset root must be a directory without commas")
+            arguments += ["--mount", f"type=bind,source={source},target={target},readonly"]
     if job["gpu_uuid"]:
         arguments += ["--gpus", f"device={job['gpu_uuid']}"]
     return docker([*arguments, args.image, *job["command"]]).stdout.strip()
 
 
-def count_active_jobs(store: JobStore) -> int:
-    count = 0
+def active_jobs(store: JobStore) -> list[dict]:
+    jobs = []
     for path in (store.root / "jobs").glob("*/job.json"):
         job = json.loads(path.read_text())
         if job["container_id"] and container_state(job["container_id"])["Status"] in ACTIVE_STATES:
-            count += 1
-    return count
+            jobs.append(job)
+    return jobs
+
+
+def count_active_jobs(store: JobStore) -> int:
+    return len(active_jobs(store))
 
 
 def submit(store: JobStore, request: dict, args) -> dict:
@@ -266,13 +435,44 @@ def submit(store: JobStore, request: dict, args) -> dict:
     container_id = None
     with (store.root / "locks" / "scheduler.lock").open("a") as scheduler:
         fcntl.flock(scheduler, fcntl.LOCK_EX)
-        if count_active_jobs(store) >= args.max_jobs:
+        limit = getattr(args, "run_storage_bytes", 0)
+        run_id = request.get("run_id")
+        if limit and not run_id:
+            raise ValueError("A storage-limited deployment requires a Host-provided run_id")
+        if limit:
+            used = store.run_storage_bytes(run_id)
+            contents = request.get("files", {}).values()
+            if any(not isinstance(text, str) for text in contents):
+                raise TypeError("file contents must be UTF-8 strings")
+            uploaded = sum(len(text.encode()) for text in contents)
+            if used + uploaded >= limit:
+                return {
+                    "job_id": None,
+                    "status": "storage_limit",
+                    "used_bytes": used,
+                    "limit_bytes": limit,
+                }
+        if args.max_jobs and count_active_jobs(store) >= args.max_jobs:
             return {"job_id": None, "status": "resource_busy", "retry_after_seconds": 2}
         gpu_uuid = None
+        shared = bool(getattr(args, "share_gpus", False))
+        memory_mb = request.get("gpu_memory_mb") or getattr(args, "gpu_memory_mb", 512)
         if request["gpu"]:
-            allowed = set(args.gpu_ids.split(",")) if args.gpu_ids else None
-            gpu_uuid, lease = acquire_gpu(store, allowed)
-            if lease is None:
+            if shared:
+                capacity = getattr(args, "gpu_capacity_mb", 0)
+                if capacity and memory_mb > capacity:
+                    return {
+                        "job_id": None,
+                        "status": "resource_unavailable",
+                        "reason": "requested GPU memory exceeds the per-device capacity",
+                        "gpu_memory_mb": memory_mb,
+                        "gpu_capacity_mb": capacity,
+                    }
+                gpu_uuid = select_shared_gpu(store, args, active_jobs(store), memory_mb)
+            else:
+                allowed = set(args.gpu_ids.split(",")) if args.gpu_ids else None
+                gpu_uuid, lease = acquire_gpu(store, allowed)
+            if gpu_uuid is None:
                 return {"job_id": None, "status": "resource_busy", "retry_after_seconds": 2}
         try:
             job = store.create(
@@ -280,8 +480,12 @@ def submit(store: JobStore, request: dict, args) -> dict:
                 request["command"],
                 request["gpu"],
                 request.get("files", {}),
+                run_id=run_id,
             )
+            job["storage_limit_bytes"] = limit
             job["gpu_uuid"] = gpu_uuid
+            job["gpu_shared"] = shared and request["gpu"]
+            job["gpu_memory_mb"] = memory_mb if request["gpu"] else 0
             container_id = create_container(store, job, args)
             job["container_id"] = container_id
             store.save(job)
@@ -333,15 +537,34 @@ def watch(args) -> None:
         docker(["start", job["container_id"]])
         job["status"] = "running"
         store.save(job)
-        result = subprocess.run(
-            ["docker", "wait", job["container_id"]],
-            capture_output=True,
-            text=True,
-            check=True,
-            timeout=args.timeout,
-        )
-        job["exit_code"] = int(result.stdout.strip())
-        job["status"] = "completed" if job["exit_code"] == 0 else "failed"
+        timeout = job_timeout(args.timeout)
+        if job.get("storage_limit_bytes"):
+            started = time.monotonic()
+            while True:
+                state = container_state(job["container_id"])
+                used = store.run_storage_bytes(job["run_id"])
+                if used >= job["storage_limit_bytes"]:
+                    if state["Status"] in ACTIVE_STATES:
+                        docker(["stop", "--time", "10", job["container_id"]], check=False)
+                    job.update(error="run storage limit reached", used_bytes=used)
+                    job["exit_code"] = container_state(job["container_id"]).get("ExitCode")
+                    break
+                if state["Status"] not in ACTIVE_STATES:
+                    job["exit_code"] = state.get("ExitCode")
+                    break
+                if timeout is not None and time.monotonic() - started >= timeout:
+                    raise subprocess.TimeoutExpired("container job", timeout)
+                time.sleep(1)
+        else:
+            result = subprocess.run(
+                ["docker", "wait", job["container_id"]],
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=timeout,
+            )
+            job["exit_code"] = int(result.stdout.strip())
+        job["status"] = "completed" if job["exit_code"] == 0 and not job.get("error") else "failed"
     except subprocess.TimeoutExpired:
         docker(["kill", job["container_id"]], check=False)
         job.update(status="failed", error="job timed out")
@@ -374,6 +597,8 @@ def status(store: JobStore, request: dict) -> dict:
         "job_id": job["job_id"],
         "status": current,
         "gpu_uuid": job["gpu_uuid"],
+        "gpu_shared": job.get("gpu_shared", False),
+        "gpu_memory_mb": job.get("gpu_memory_mb"),
         "exit_code": state.get("ExitCode"),
         "output": (output.stdout + output.stderr)[-65536:],
         **({"error": job["error"]} if "error" in job else {}),
@@ -401,8 +626,27 @@ def main() -> None:
     parser.add_argument("--max-jobs", type=int, default=2)
     parser.add_argument("--timeout", type=int, default=900)
     parser.add_argument("--gpu-ids", default="")
-    parser.add_argument("operation", choices=["submit", "status", "cancel", "artifact", "health"])
+    parser.add_argument("--share-gpus", action="store_true")
+    parser.add_argument("--max-gpus", type=int, default=4)
+    parser.add_argument("--gpu-memory-mb", type=int, default=512)
+    parser.add_argument("--gpu-headroom-mb", type=int, default=1024)
+    parser.add_argument("--gpu-capacity-mb", type=int, default=0)
+    parser.add_argument("--run-storage-bytes", type=int, default=0)
+    parser.add_argument("--models-root", type=Path)
+    parser.add_argument("--datasets-root", type=Path)
+    parser.add_argument(
+        "operation", choices=["submit", "status", "cancel", "artifact", "health", "usage"]
+    )
     args = parser.parse_args()
+    if args.max_jobs < 0 or args.run_storage_bytes < 0 or args.timeout < 0:
+        parser.error("max-jobs, storage bytes and timeout must be nonnegative")
+    if (
+        args.max_gpus < 1
+        or args.gpu_memory_mb < 1
+        or args.gpu_headroom_mb < 0
+        or args.gpu_capacity_mb < 0
+    ):
+        parser.error("GPU count/reservation must be positive; headroom/capacity nonnegative")
     try:
         raw = sys.stdin.buffer.read(MAX_INPUT_BYTES + 1)
         if len(raw) > MAX_INPUT_BYTES:
@@ -411,11 +655,33 @@ def main() -> None:
         if not isinstance(request, dict):
             raise TypeError("request must be an object")
         store = JobStore(args.root)
+        if args.operation == "usage":
+            print(json.dumps(store.update_host_storage(request)))
+            return
         if args.operation == "health":
             image = docker(["image", "inspect", "--format", "{{.Id}}", args.image]).stdout.strip()
             print(
                 json.dumps(
-                    {"status": "ok", "protocol_version": 1, "image": args.image, "image_id": image}
+                    {
+                        "status": "ok",
+                        "protocol_version": 1,
+                        "image": args.image,
+                        "image_id": image,
+                        "limits": {
+                            "max_jobs": args.max_jobs,
+                            "timeout_seconds": args.timeout,
+                            "run_storage_bytes": args.run_storage_bytes,
+                            "gpu_mode": "memory_shared" if args.share_gpus else "exclusive",
+                            "max_gpus": args.max_gpus,
+                            "gpu_memory_mb": args.gpu_memory_mb,
+                            "gpu_headroom_mb": args.gpu_headroom_mb,
+                            "gpu_capacity_mb": args.gpu_capacity_mb,
+                        },
+                        "assets": {
+                            "models": "/models" if args.models_root else None,
+                            "datasets": "/datasets" if args.datasets_root else None,
+                        },
+                    }
                 )
             )
             return

@@ -5,7 +5,9 @@ import threading
 from fastapi.testclient import TestClient
 
 from runtime.local.host_gateway import create_app
-from runtime.local.input_versions import INPUT_SOURCES, InputVersions
+from runtime.local.input_versions import InputVersions, input_sources
+
+INPUT_SOURCES = input_sources("phase-one")
 
 
 def setup(tmp_path):
@@ -16,7 +18,7 @@ def setup(tmp_path):
         path.write_text(f"Version: 0.1.0\nold {name}\n")
         if name == "bootstrap.yaml":
             path.write_text(
-                'version: 0.1.0\nagent:\n  system_template: "{{ common_instructions }}"\n  instance_template: "{{ task }}"\nrun:\n  task: task\n'
+                'version: 0.1.0\nagent:\n  system_template: "{{ phase_instructions }}"\n  instance_template: "{{ task }}"\nrun:\n  task: task\n'
             )
     versions = InputVersions(source, tmp_path / "run")
     versions.activate(versions.prepare(), "start")
@@ -42,7 +44,7 @@ def test_hot_reload_requires_operator_and_confirmation_of_exact_preview(tmp_path
     operator = {"Authorization": "Bearer operator-secret"}
     assert client.get("/control/inputs", headers=agent).status_code == 403
     assert client.get("/control/inputs").status_code == 403
-    path = versions.source_root / INPUT_SOURCES["common-instructions.md"]
+    path = versions.source_root / INPUT_SOURCES["phase-instructions.md"]
     path.write_text("Version: 0.1.1\nnew common prompt\n")
     preview = client.get("/control/inputs", headers=operator).json()
     digest = preview["proposed"]["digest"]
@@ -65,7 +67,7 @@ def test_hot_reload_requires_operator_and_confirmation_of_exact_preview(tmp_path
     assert result.headers["X-A3-Input-Revision"] == versions.manifest["revision"]
     usage = json.loads((versions.run / "model-usage.jsonl").read_text().splitlines()[-1])
     assert usage["input_revision"] == versions.manifest["revision"]
-    assert usage["input_versions"]["common-instructions.md"]["version"] == "0.1.1"
+    assert usage["input_versions"]["phase-instructions.md"]["version"] == "0.1.1"
 
 
 def test_changed_source_after_preview_invalidates_confirmation(tmp_path):

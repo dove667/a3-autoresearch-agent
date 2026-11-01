@@ -2,7 +2,9 @@ import json
 
 import pytest
 
-from runtime.local.input_versions import INPUT_SOURCES, InputVersions
+from runtime.local.input_versions import InputVersions, input_sources
+
+INPUT_SOURCES = input_sources("phase-one")
 
 
 def sources(tmp_path):
@@ -13,7 +15,7 @@ def sources(tmp_path):
         path.write_text(f"version: 0.1.0\n\n{name} current content\n")
         if name == "bootstrap.yaml":
             path.write_text(
-                'version: 0.1.0\nagent:\n  system_template: "{{ common_instructions }}"\n  instance_template: "{{ task }}"\nrun:\n  task: task\n'
+                'version: 0.1.0\nagent:\n  system_template: "{{ phase_instructions }}"\n  instance_template: "{{ task }}"\nrun:\n  task: task\n'
             )
     return root
 
@@ -76,7 +78,7 @@ def test_prepare_does_not_activate_or_replace_live_prompt(tmp_path):
     root = sources(tmp_path)
     versions = InputVersions(root, tmp_path / "run")
     initial = versions.activate(versions.prepare(), "start")
-    prompt = root / INPUT_SOURCES["common-instructions.md"]
+    prompt = root / INPUT_SOURCES["phase-instructions.md"]
     prompt.write_text("version: 0.1.1\nupdated prompt\n")
     preview = versions.prepare()
     assert preview["digest"] != initial["digest"]

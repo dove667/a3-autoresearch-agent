@@ -11,15 +11,46 @@ from pathlib import Path
 import yaml
 from jinja2 import Environment, TemplateError
 
-INPUT_SOURCES = {
-    "goal.md": "evals/goal.md",
-    "acceptance.md": "evals/acceptance.md",
-    "common-instructions.md": "configs/prompts/common.md",
+SHARED_INPUT_SOURCES = {
     "bootstrap.yaml": "configs/rsi-bootstrap.yaml",
     "execution.md": "runtime/local/README.md",
     "readiness-task.md": "runtime/local/readiness-task.md",
     "workspace-instructions.md": "configs/prompts/workspace.md",
 }
+PHASES = ("phase-one", "phase-two")
+
+
+def input_sources(phase: str) -> dict[str, str]:
+    if phase not in PHASES:
+        raise ValueError(f"Unknown phase: {phase}")
+    sources = {
+        **SHARED_INPUT_SOURCES,
+        "goal.md": f"evals/{phase}/goal.md",
+        "acceptance.md": f"evals/{phase}/acceptance.md",
+        "phase-instructions.md": f"configs/prompts/{phase}.md",
+    }
+    if phase == "phase-two":
+        sources["protocol.md"] = "evals/phase-two/protocol.md"
+    return sources
+
+
+def resolve_phase(run: Path | None, requested: str | None = None) -> str:
+    """Keep a run in its recorded stage; older runs belong to phase one."""
+    recorded = []
+    paths = (run / "startup.json", run / "inputs/input-manifest.json") if run else ()
+    for path in paths:
+        if path.is_file():
+            saved = json.loads(path.read_text())
+            phase = saved.get("phase") or saved.get("input_manifest", {}).get("phase")
+            recorded.append(phase or "phase-one")
+    phase = requested or (recorded[0] if recorded else "phase-one")
+    if phase not in PHASES:
+        raise ValueError(f"Unknown phase: {phase}")
+    if any(previous != phase for previous in recorded):
+        raise ValueError("Cannot change phase within a run; start a new run with --run-harness")
+    return phase
+
+
 VERSION = re.compile(
     r"^(?:Version|version):\s*(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)\s*$", re.MULTILINE
 )
@@ -51,9 +82,11 @@ def validate_bootstrap(text: str) -> None:
 
 
 class InputVersions:
-    def __init__(self, source_root: Path, run: Path):
+    def __init__(self, source_root: Path, run: Path, phase: str | None = None):
         self.source_root = source_root
         self.run = run
+        self.phase = resolve_phase(run, phase)
+        self.sources = input_sources(self.phase)
         self.lock = threading.RLock()
         self.manifest: dict = {}
         self.contents: dict[str, str] = {}
@@ -62,7 +95,7 @@ class InputVersions:
         """Read a proposed update without changing the active run."""
         with self.lock:
             contents, files = {}, {}
-            for name, relative in INPUT_SOURCES.items():
+            for name, relative in self.sources.items():
                 data = (self.source_root / relative).read_bytes()
                 text = data.decode("utf-8")
                 match = VERSION.search(text)
@@ -87,17 +120,19 @@ class InputVersions:
                         raise ValueError(f"{name} changed without a version increment")
             validate_bootstrap(contents["bootstrap.yaml"])
             digest = hashlib.sha256(json.dumps(files, sort_keys=True).encode()).hexdigest()
-            return {"digest": digest, "files": files, "contents": contents}
+            return {"phase": self.phase, "digest": digest, "files": files, "contents": contents}
 
     def activate(self, proposal: dict, event: str) -> dict:
         """Publish an already selected bundle; callers own update authorization."""
         with self.lock:
+            if proposal["phase"] != self.phase:
+                raise ValueError("Cannot activate another phase within a run")
             revisions = self.run / "input-revisions"
             revisions.mkdir(parents=True, exist_ok=True)
             legacy = revisions / "legacy"
             if not legacy.exists() and (self.run / "inputs").exists():
                 legacy.mkdir()
-                for name in (*INPUT_SOURCES, "input-manifest.json"):
+                for name in (*self.sources, "common-instructions.md", "input-manifest.json"):
                     original = self.run / "inputs" / name
                     if original.is_file():
                         write_atomic(legacy / name, original.read_bytes())
@@ -110,6 +145,7 @@ class InputVersions:
                 except FileExistsError:
                     index += 1
             manifest = {
+                "phase": self.phase,
                 "revision": directory.name,
                 "digest": proposal["digest"],
                 "files": proposal["files"],
@@ -130,6 +166,11 @@ class InputVersions:
                 data = text.encode()
                 write_atomic(directory / name, data)
                 replacements.update({target / name: data for target in targets})
+            # Retire the old mounted prompt after archiving it; new requests use one stage prompt.
+            for target in targets:
+                old_prompt = target / "common-instructions.md"
+                if old_prompt.exists():
+                    replacements[old_prompt] = None
             workspace_guide = self.run / "workspace/harness/AGENTS.md"
             if workspace_guide.parent.exists():
                 replacements[workspace_guide] = proposal["contents"][
@@ -150,7 +191,10 @@ class InputVersions:
                 for target in targets:
                     write_atomic(target / "input-manifest.json", json.dumps(publishing).encode())
                 for path, data in replacements.items():
-                    write_atomic(path, data)
+                    if data is None:
+                        path.unlink(missing_ok=True)
+                    else:
+                        write_atomic(path, data)
                 write_atomic(directory / "manifest.json", manifest_bytes)
             except OSError:
                 for target in targets:
@@ -188,15 +232,17 @@ class InputVersions:
             manifest = deepcopy(self.manifest)
             instructions = (
                 f"当前 Agent 输入：{manifest['revision']}，内容标识 {manifest['digest']}。\n"
-                "目标、验收和共性协议以以下当前版本为准；历史上下文中的旧版内容保留供追溯。\n"
+                f"当前阶段：{self.phase}。目标、验收和阶段协议以以下当前版本为准；"
+                "历史上下文中的旧版内容保留供追溯。\n"
                 "执行接口与其他说明见 /run/input/input-manifest.json 所列当前文件；"
                 "连续读取多个输入文件时，前后必须都是status=active且revision与generation相同；"
                 "status=updating时等待，标识变化后重新读取。\n\n"
-                + self.contents["common-instructions.md"]
+                + self.contents["phase-instructions.md"]
                 + "\n\n"
                 + self.contents["goal.md"]
                 + "\n\n"
                 + self.contents["acceptance.md"]
+                + ("\n\n" + self.contents["protocol.md"] if "protocol.md" in self.contents else "")
             )
             return manifest, instructions
 

@@ -9,9 +9,10 @@ from runtime.local import launch
 from runtime.local.run_state import RunStateStore
 
 
+@pytest.mark.parametrize("phase", ["phase-one", "phase-two"])
 @pytest.mark.parametrize("submitted_builder", [False, True])
 def test_in_place_resume_keeps_run_and_can_supervise_after_builder_submission(
-    tmp_path, monkeypatch, submitted_builder
+    tmp_path, monkeypatch, submitted_builder, phase
 ):
     run = tmp_path / "run-original-timestamp"
     inputs = run / "inputs"
@@ -31,6 +32,7 @@ def test_in_place_resume_keeps_run_and_can_supervise_after_builder_submission(
     )
     startup = {
         "run_id": run.name,
+        "phase": phase,
         "mode": "rsi",
         "inputs": {name: hashlib.sha256(text.encode()).hexdigest() for name, text in files.items()},
     }
@@ -92,6 +94,7 @@ def test_in_place_resume_keeps_run_and_can_supervise_after_builder_submission(
         Namespace(resume_from=run, verify_deployment=False), run, tmp_path, "image", None
     )
     assert (run / "startup.json").read_bytes() == original_startup
+    assert json.loads((inputs / "input-manifest.json").read_text())["phase"] == phase
     assert store.load()["run_id"] == run.name
     assert store.load()["status"] == "suspended"
     assert ("resume", actor) in events

@@ -32,6 +32,7 @@ class JobRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     command: list[str] = Field(min_length=1, max_length=256)
     gpu: StrictBool = False
+    gpu_memory_mb: int | None = Field(default=None, ge=1, strict=True)
     files: dict[str, str] = Field(default_factory=dict)
 
 
@@ -107,11 +108,12 @@ def create_app(
     initial_inputs: Path | None = None,
     main_owner: str | None = None,
     start_main_session: bool = False,
-    common_instructions: str = "",
+    phase_instructions: str = "",
     state_store: RunStateStore | None = None,
     restored_state: dict | None = None,
     input_versions: InputVersions | None = None,
     operator_token: str | None = None,
+    resource_monitor: Callable | None = None,
 ) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app):
@@ -133,12 +135,32 @@ def create_app(
                 target=reap_workers, name="worker-container-reaper", daemon=True
             )
             reaper.start()
+        budget_monitor = None
+        if resource_monitor is not None:
+
+            def monitor_storage():
+                while not stopped.is_set():
+                    try:
+                        resource_monitor()
+                    except Exception as error:  # noqa: BLE001 — retry transport failures
+                        logging.getLogger(__name__).error(
+                            "Storage usage report will retry (%s)", type(error).__name__
+                        )
+                    if stopped.wait(5):
+                        break
+
+            budget_monitor = threading.Thread(
+                target=monitor_storage, name="run-storage-monitor", daemon=True
+            )
+            budget_monitor.start()
         try:
             yield
         finally:
             stopped.set()
             if reaper is not None:
                 reaper.join()
+            if budget_monitor is not None:
+                budget_monitor.join(timeout=1)
 
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
     diagnostics = GatewayDiagnostics(usage_log.with_name("gateway-events.jsonl"))
@@ -709,22 +731,22 @@ def create_app(
         arguments.pop("stream", None)
         with session_lock:
             trial = evolution.trials.get(experiment, {}) if evolution else {}
-            receives_common = bool(
-                (common_instructions or input_versions)
+            receives_phase = bool(
+                (phase_instructions or input_versions)
                 and evolution
                 and (experiment == evolution.main_owner or trial.get("status") == "testing")
             )
-        input_manifest, active_common = (
+        input_manifest, active_phase = (
             input_versions.model_instructions()
             if input_versions is not None
-            else ({}, common_instructions)
+            else ({}, phase_instructions)
         )
-        if receives_common:
+        if receives_phase:
             specific = arguments.get("instructions")
             if specific is not None and not isinstance(specific, str):
                 raise HTTPException(422, "Instructions must be text")
             arguments["instructions"] = (
-                active_common + "\n\n" + specific if specific else active_common
+                active_phase + "\n\n" + specific if specific else active_phase
             )
         if isinstance(arguments.get("input"), str):
             arguments["input"] = [{"role": "user", "content": arguments["input"]}]
@@ -741,8 +763,8 @@ def create_app(
             "wall_seconds": time.monotonic() - started,
             "usage": data.get("usage"),
         }
-        if receives_common:
-            entry["common_instructions_sha256"] = hashlib.sha256(active_common.encode()).hexdigest()
+        if receives_phase:
+            entry["phase_instructions_sha256"] = hashlib.sha256(active_phase.encode()).hexdigest()
         if input_manifest:
             entry["input_revision"] = input_manifest["revision"]
             entry["input_versions"] = input_manifest["files"]
@@ -761,7 +783,9 @@ def create_app(
         with session_lock:
             accepting_resources()
             experiment = owner(authorization)
-            result = remote("submit", body.model_dump() | {"experiment_id": experiment})
+            result = remote(
+                "submit", body.model_dump(exclude_none=True) | {"experiment_id": experiment}
+            )
             if result.get("job_id"):
                 jobs.setdefault(experiment, set()).add(result["job_id"])
                 save_checkpoint()
