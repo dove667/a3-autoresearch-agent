@@ -32,7 +32,7 @@ python3 runtime/remote/prepare_image.py \
   --image "$RUNTIME_IMAGE"
 ```
 
-构建目录必须尚未存在，并与原项目位于同一文件系统，以便用硬链接准备依赖包。脚本复制项目资源、Python 环境和解释器，并在镜像内重建 editable 安装引用。项目凭据、Git 元数据、数据集、实验输出和模型权重均不进入镜像。构建需要为 Python 环境和 Docker 构建层预留空间；基底为 `python:3.12-slim`，补充 EGL/OpenGL 系统库。
+构建目录必须尚未存在，并与原项目位于同一文件系统，以便用硬链接准备依赖包。脚本复制项目资源、Python 环境和解释器，并在镜像内重建 editable 安装引用。项目凭据、Host Git 配置、数据集、实验输出和模型权重均不进入镜像。镜像带有仅保留当前 A3 HEAD 的独立浅仓库，供原始命令读取真实 commit；不复制 Host 的 remote、认证配置或 hooks。构建需要为 Python 环境和 Docker 构建层预留空间；基底为 `python:3.12-slim`，补充 EGL/OpenGL 系统库。
 
 镜像同时包含该 A3 checkout 的 `README.md`、`docs/` 和 `examples/`。构建前检查工作流指南、动作契约与评测示例入口是否存在，缺失时拒绝构建。更新部署仓库里的准备脚本不会补齐旧镜像；已有部署需要构建新镜像、验证后切换 `A3_REMOTE_IMAGE`，并保留旧镜像供历史运行核对。
 
@@ -146,3 +146,12 @@ submit 的 input_exports 最多 64 个且不能重复；只挂载本身份获授
 元数据和授权保存在 `readonly-exports/`，复制的数据、manifest 保存在 `runs/<来源run>/readonly-exports/<export_id>/`。独立 sealer 按块复制并计算摘要，原子发布 ready。复制失败清理未发布数据；状态查询发现 sealer 已退出会记录失败，不把它一直显示为 preparing。源文件应在封存期间保持稳定。符号链接和特殊文件被拒绝。
 
 封存副本纳入来源 run 的存储监测；后续只读挂载不重复占用空间。删除和撤权与作业提交共享调度锁，活动消费者结束前拒绝回收。container 回收不删除快照；部署方清理历史 run 前，应核对 retained.json 中的 remote_exports 引用。授权和封存目录必须随共享资源根目录一同保留，才能继续恢复及跨轮引用。
+
+
+## A3 源码版本记录
+
+镜像提供 git，固定只读 A3 目录包含独立的 `.git`。采集和诊断入口可直接执行 `git -C /opt/a3 rev-parse HEAD`，无需 Agent 补装依赖或伪造版本号。数字 UID 作业通过系统级 safe.directory 允许读取该目录；根文件系统仍只读，作业不能改动基线版本库。
+
+prepare_image.py 从部署方提供的 A3 checkout 导出真实 HEAD 的浅对象与索引，并记录 `/opt/a3/source-revision.json`：commit、源工作区是否有改动，以及实际准备进镜像的源码/资源文件 SHA256。工作区有改动时，commit 与文件摘要一起用于定位有效源码；不能只凭 HEAD 声称文件与提交逐字一致。安装环境和运行时依赖不纳入该源码清单。
+
+已有镜像不会随部署脚本更新。更新已有部署时保留旧标签，在新标签中补齐 git 与来源信息；复用旧镜像层时先逐文件核对原镜像和来源 checkout，匹配后才附加该来源的 Git 信息。用实际数字 UID、只读根文件系统和无网络的作业验证版本读取与原采集程序的元数据代码，再切换部署配置。历史运行输入和结果保留旧镜像信息，新作业使用当前配置。

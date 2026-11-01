@@ -1,4 +1,6 @@
+import json
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -73,6 +75,7 @@ def test_full_build_stages_references_before_invoking_docker(tmp_path, monkeypat
                 assert (context / "a3" / name).read_bytes() == data
 
     monkeypatch.setattr(prepare_image.subprocess, "run", execute)
+    monkeypatch.setattr(prepare_image, "copy_source_revision", lambda project, baseline: None)
     monkeypatch.setattr(
         sys,
         "argv",
@@ -88,3 +91,48 @@ def test_full_build_stages_references_before_invoking_docker(tmp_path, monkeypat
     )
     prepare_image.main()
     assert len(builds) == 1
+
+
+def test_source_revision_preserves_real_commit_without_private_git_config(tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    subprocess.run(["git", "init", "--quiet", str(project)], check=True)
+    subprocess.run(
+        ["git", "-C", str(project), "config", "user.email", "fixture@example.invalid"], check=True
+    )
+    subprocess.run(["git", "-C", str(project), "config", "user.name", "Fixture"], check=True)
+    (project / "src").mkdir()
+    (project / "src/module.py").write_text("VALUE = 1")
+    subprocess.run(["git", "-C", str(project), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(project), "commit", "--quiet", "-m", "fixture"], check=True)
+    subprocess.run(
+        ["git", "-C", str(project), "config", "credential.helper", "PRIVATE_FIXTURE"], check=True
+    )
+    (project / "src/module.py").write_text("VALUE = 2")
+    destination = tmp_path / "image/a3"
+    shutil.copytree(project / "src", destination / "src")
+    prepare_image.copy_source_revision(project, destination)
+
+    def git(*args):
+        return subprocess.check_output(["git", "-C", str(destination), *args], text=True).strip()
+
+    assert (
+        git("rev-parse", "HEAD")
+        == subprocess.check_output(
+            ["git", "-C", str(project), "rev-parse", "HEAD"], text=True
+        ).strip()
+    )
+    assert "VALUE = 2" in git("diff", "HEAD", "--", "src/module.py")
+    assert git("remote") == ""
+    assert "PRIVATE_FIXTURE" not in (destination / ".git/config").read_text()
+    assert not (destination / ".git/hooks").exists()
+    revision = json.loads((destination / "source-revision.json").read_text())
+    assert revision["commit"] == git("rev-parse", "HEAD")
+    assert revision["source_dirty"] is True
+    assert "src/module.py" in revision["sha256"]
+
+
+def test_remote_dockerfile_provides_git_for_unprivileged_readonly_jobs():
+    dockerfile = Path("runtime/remote/Dockerfile").read_text()
+    assert "git" in dockerfile.split("apt-get install", 1)[1].split("&&", 1)[0].split()
+    assert "safe.directory /opt/a3" in dockerfile

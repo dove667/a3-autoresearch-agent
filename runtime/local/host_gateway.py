@@ -127,6 +127,7 @@ def create_app(
     input_versions: InputVersions | None = None,
     operator_token: str | None = None,
     resource_monitor: Callable | None = None,
+    human_feedback=None,
 ) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app):
@@ -793,6 +794,12 @@ def create_app(
             )
         if isinstance(arguments.get("input"), str):
             arguments["input"] = [{"role": "user", "content": arguments["input"]}]
+        feedback_ids = []
+        if human_feedback is not None:
+            try:
+                arguments, feedback_ids = human_feedback.apply(experiment, arguments)
+            except ValueError as error:
+                raise HTTPException(422, str(error)) from None
         started = time.monotonic()
         try:
             response = forward_model(model=model_name, **arguments)
@@ -800,12 +807,16 @@ def create_app(
         except Exception as error:  # noqa: BLE001 — never return provider or SSH credential details
             diagnostics.error("model_provider", error)
             raise HTTPException(502, "Model forwarding failed") from None
+        if human_feedback is not None:
+            human_feedback.forwarded(feedback_ids)
         entry = {
             "experiment_id": experiment,
             "model": model_name,
             "wall_seconds": time.monotonic() - started,
             "usage": data.get("usage"),
         }
+        if feedback_ids:
+            entry["human_feedback_ids"] = feedback_ids
         if receives_phase:
             entry["phase_instructions_sha256"] = hashlib.sha256(active_phase.encode()).hexdigest()
         if input_manifest:

@@ -32,6 +32,7 @@ from runtime.local.continuation import (
     resolve_harness_start,
 )
 from runtime.local.host_gateway import create_app
+from runtime.local.human_feedback import HumanFeedback
 from runtime.local.input_versions import PHASES, InputVersions, resolve_phase
 from runtime.local.isolation_fixture import IsolationFixtures
 from runtime.local.recovery import stage_recovery
@@ -264,7 +265,14 @@ def main() -> None:
         choices=PHASES,
         help="Select stage inputs; new runs default to phase-one, resumes keep their stage",
     )
+    parser.add_argument(
+        "--feedback-file",
+        type=Path,
+        help="On resume, explicitly add a human feedback file before the next main model call",
+    )
     args = parser.parse_args()
+    if args.feedback_file and not args.resume_from:
+        parser.error("--feedback-file requires --resume-from")
     if args.run_harness and (args.resume_from or args.verify_deployment):
         parser.error("--run-harness cannot be combined with --resume-from or --verify-deployment")
     try:
@@ -432,6 +440,12 @@ def launch_run(args, run: Path, a3: Path, image: str, start) -> None:
 
     fixtures = IsolationFixtures(remote_for_run, run / "fixtures")
     initial_exports = import_retained_exports(start, run_id, remote_for_run)
+    human_feedback = HumanFeedback(run)
+    if getattr(args, "feedback_file", None):
+        if actor == run_id:
+            raise ValueError("Human feedback currently requires a generated Harness main session")
+        registration = human_feedback.register(args.feedback_file, actor)
+        print("Human feedback registered: " + json.dumps(registration), flush=True)
     app = create_app(
         model_name=os.environ["MODEL_NAME"],
         sessions={token: run_id},
@@ -445,6 +459,7 @@ def launch_run(args, run: Path, a3: Path, image: str, start) -> None:
         main_owner=saved["gateway"]["evolution"]["main_owner"] if saved else run_id,
         start_main_session=bool(package),
         phase_instructions=phase_instructions,
+        human_feedback=human_feedback,
         state_store=store,
         restored_state=saved["gateway"] if saved else None,
         input_versions=None if args.verify_deployment else input_versions,

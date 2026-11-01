@@ -1,9 +1,63 @@
 """Prepare a container build context from an existing project environment."""
 
 import argparse
+import hashlib
+import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
+
+
+def copy_source_revision(project: Path, destination: Path) -> None:
+    """Keep real HEAD objects and staged-source hashes without Host Git settings."""
+    project = project.resolve()
+    destination.mkdir(parents=True, exist_ok=True)
+    metadata = destination / ".git"
+    subprocess.run(["git", "init", "--bare", "--quiet", str(metadata)], check=True)
+
+    def git(*arguments):
+        return subprocess.check_output(
+            ["git", "--git-dir", str(metadata), "--work-tree", str(destination), *arguments],
+            text=True,
+        ).strip()
+
+    git(
+        "fetch",
+        "--quiet",
+        "--depth=1",
+        "--no-tags",
+        "--no-write-fetch-head",
+        project.as_uri(),
+        "HEAD:refs/heads/baseline",
+    )
+    git("config", "core.bare", "false")
+    git("symbolic-ref", "HEAD", "refs/heads/baseline")
+    git("read-tree", "HEAD")
+    shutil.rmtree(metadata / "hooks", ignore_errors=True)
+    hashes = {}
+    for directory, names, files in os.walk(destination):
+        names[:] = sorted(
+            name for name in names if name not in {".git", ".venv", ".runtime", "__pycache__"}
+        )
+        for name in sorted(files):
+            path = Path(directory) / name
+            if path.is_symlink() or path.name == "source-revision.json":
+                continue
+            with path.open("rb") as stream:
+                digest = hashlib.sha256()
+                for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                    digest.update(chunk)
+                hashes[path.relative_to(destination).as_posix()] = digest.hexdigest()
+    dirty = subprocess.check_output(
+        ["git", "-C", str(project), "status", "--porcelain"], text=True
+    ).strip()
+    (destination / "source-revision.json").write_text(
+        json.dumps(
+            {"commit": git("rev-parse", "HEAD"), "source_dirty": bool(dirty), "sha256": hashes},
+            indent=2,
+        )
+    )
 
 
 def copy_public_references(project: Path, destination: Path) -> None:
@@ -61,6 +115,7 @@ def main():
     )
     interpreter = (project / ".venv/bin/python").resolve()
     shutil.copytree(interpreter.parent.parent, context / "python", symlinks=True)
+    copy_source_revision(project, baseline)
     subprocess.run(["docker", "build", "-t", args.image, str(context)], check=True)
 
 

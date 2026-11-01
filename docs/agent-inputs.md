@@ -54,3 +54,9 @@ uv run python -m runtime.local.reload_inputs "artifacts/rsi/<run-id>" --confirm 
 已发出的模型请求按原版本返回，下一个请求使用新版本；对话历史和 Agent 自己的代码不重写。多文件读取前后必须都是 manifest.status=active，并且 revision 与 generation 都相同；updating 时等待，标识变化后重新读取。热加载更新文件与 Prompt，不重新创建已有的 Python 对象、不切换模型或 Docker 镜像；bootstrap 的运行参数变化需要重启 Host。固定基础设施代码更新也通过停止和恢复应用。
 
 更新不自动启动额外 Agent、不替 Agent 选择实验、不回注人工验收结论。操作记录可用于复核何时、以哪个版本改变了任务条件。
+
+## 显式人类反馈
+
+`--resume-from <run> --feedback-file <本地文件>` 是独立的可选人工反馈入口，面向已生成 Harness 的主身份。反馈不是目标或计分文件的替换；由固定 0.1.0 封装协议生成 user message，以反馈 ID 和内容 SHA256 追踪每次显式登记。源文件可覆盖，无需用户手动改版本号；封装协议行为变化需递增实现中的 PROTOCOL_VERSION 并同步本节。
+
+具体文本副本、登记/定位/成功转发事件和当前状态保存在 `.host/human-feedback/`，不自动读取或热加载文件。重复提供最近一次同内容文件不产生新的登记。有效历史中的注入位置由完整历史前缀摘要确定，工具调用与结果保持配对；上下文重建时会记录重新定位。模型用量记录中的 human_feedback_ids 标识该请求使用了哪些反馈。没有反馈时原有请求路径保持不变；完整操作和范围见[使用教程](tutorial.md#恢复时加入人类反馈)。

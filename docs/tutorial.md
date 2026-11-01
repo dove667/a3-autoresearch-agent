@@ -290,3 +290,23 @@ A3_REMOTE_GPU_CAPACITY_MB 与 A3_REMOTE_GPU_HEADROOM_MB 分别设置每卡可预
 训练产生的 checkpoint、数据和视频由 Agent 自己选择保留。固定 Host 提供 exports：先封存稳定文件，验证 ready 后明确授权给后继，后继作业只读加载。接口、文件路径和清理规则见 [Host 大文件交接说明](../runtime/local/README.md#大文件只读交接)。这不需要人类组织交接包。
 
 跨轮复用时，Agent 将引用写入 continuation.json 的 remote_exports；运行结束后的 retained.json 同时保存代码版本和大文件引用。用户仍使用 `--phase phase-two --run-harness <明确选定的run目录>` 启动。源数据与授权需要保留在同一执行端资源根目录，不能删掉仍被后续运行引用的快照。模型、数据训练及六格真实成绩由正式 auto research 产生，环境检查不计为正式结果。
+
+## 恢复时加入人类反馈
+
+环境修复说明或专家建议可以维护在同一个本地 `human-feedback.md` 中，每次覆盖内容。反馈文件由人类明确授权注入，普通历史报告与工具输出继续按数据处理。
+
+```bash
+bash scripts/start-rsi.sh \
+  --resume-from "artifacts/rsi/<run-id>" \
+  --feedback-file human-feedback.md
+```
+
+`--feedback-file` 仅用于恢复已经生成 Harness 的主 Agent；未提供时不会读取该源文件。当前实现要求 Harness 向 Gateway 发送完整消息历史，不支持仅用 `previous_response_id` 引用服务器端对话。反馈应说明已核实的变更、受影响作业与建议核查事项，不包含认证信息，也不替 Agent 宣称验收通过。
+
+Host 读取当次 UTF-8 文本（最多 64 KiB），保存内容副本、SHA256 和反馈 ID，封装协议版本为 0.1.0。源文件不要求人为维护语义版本；每次显式注入的具体内容由摘要与反馈 ID 标识。同一身份最近一次反馈与文件内容一致时，重复指定不会新建注入事件。覆盖源文件不会自动改变正在运行的请求。
+
+恢复后，反馈作为一条新的 user message 放在原有历史之后、下一次模型调用之前。Host 不改写旧 checkpoint、工具结果或原始轨迹，不拆开 function_call 与对应工具结果。暂停进程可能仍在处理恢复前的请求；反馈是否实际抵达，以后续模型请求的 human_feedback_ids 和 Host 的 forwarded 事件为准。forwarded 表示模型请求成功返回，不代表 Agent 已接受建议或完成了建议动作。
+
+后续完整历史请求中，Host 在同一个历史边界保留该条反馈，每份有效上下文只有一条该反馈，不在每轮末尾反复追加。再次 resume 不指定文件仍会沿用已经登记的反馈。Harness 压缩或重建上下文时，Host 将反馈重新定位到当前完整历史末尾并记录 reanchored 事件；未完成的工具结果须先对齐。
+
+同一个源文件便于维护，当次副本与事件仍保存在本 run 私有的 `.host/human-feedback/`，恢复与审查依赖这些记录。反馈只绑定登记时的主身份，不自动发给测试 worker 或后继主身份；主 Agent 按任务需要自行交接。原 run、身份和 Agent 的持久记忆保持不变。该人工反馈会影响后续执行，应在实验报告中如实标记人工参与。
