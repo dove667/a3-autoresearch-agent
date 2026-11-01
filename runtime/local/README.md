@@ -1,6 +1,6 @@
 # Host提供的执行与验收入口
 
-Version: 0.1.11
+Version: 0.1.12
 
 部署方运行 gateway、容器引擎、模型认证与远程资源调度。候选 Harness 在独立容器内运行，
 通过 HTTP 请求这些固定能力。工具名称、研究逻辑、反思方法和版本选择由 Agent 设计。
@@ -295,7 +295,7 @@ POST /jobs 可选 gpu_memory_mb，表示预计显存峰值，单位 MiB。未提
 
 backbone、tokenizer 及相关预训练资源由人类提前准备、校验后只读提供。作业禁用网络，HF_HUB_OFFLINE 与 TRANSFORMERS_OFFLINE 固定为 1，缺项应记录并请求补齐，不自行下载。部署方可提供 /model-cache，其中的 Hugging Face 与 Torch 缓存只包含本项目已批准的资源。
 
-模型附属配置若引用原始资源目录，Host 可把同一只读模型目录同时挂载到原路径；这只开放既定模型资产，不开放原路径的其他文件。USER/LOGNAME 使用固定的 agent，HOME 位于可写临时目录；PyTorch 编译缓存写入同身份输出目录并计入本轮存储。内存上限按部署信息提供，不要求沿用通用默认值。
+模型附属配置若引用原始资源目录，Host 可把同一只读模型目录同时挂载到原路径；这只开放既定模型资产，不开放原路径的其他文件。USER/LOGNAME 使用固定的 agent，HOME 位于可写临时目录；远程新建作业默认上限为16 CPU、64 GiB内存和1024个进程与线程，禁止额外swap；实际限额以部署信息和作业记录为准。临时文件与PyTorch编译等可写缓存使用独立 `/job-tmp`，由Host挂载执行服务器数据盘目录，计入本轮存储并在作业退出后回收。`/tmp`只读；需保留和恢复的checkpoint、数据与报告写入 `/outputs` 或 `/workspace`。旧作业不自动更换挂载。
 
 
 ## 大文件只读交接

@@ -276,8 +276,115 @@ def test_remote_job_has_a_user_name_and_writable_training_cache(tmp_path, monkey
     arguments = calls[0]
     assert "USER=agent" in arguments
     assert "LOGNAME=agent" in arguments
-    assert "HOME=/tmp/agent" in arguments
+    assert "HOME=/job-tmp/home" in arguments
     assert "HF_HUB_OFFLINE=1" in arguments
     assert "TRANSFORMERS_OFFLINE=1" in arguments
     assert arguments[arguments.index("--network") + 1] == "none"
-    assert "TORCHINDUCTOR_CACHE_DIR=/outputs/.cache/torchinductor" in arguments
+    assert "TORCHINDUCTOR_CACHE_DIR=/job-tmp/torchinductor" in arguments
+
+
+def test_job_temporary_files_use_isolated_data_directory_and_count_toward_budget(
+    tmp_path, monkeypatch
+):
+    from argparse import Namespace
+
+    runtime = load_runtime()
+    store = runtime.JobStore(tmp_path / "runtime")
+    job = store.create("owner", ["true"], False, {}, run_id="run-one")
+    temporary_root = tmp_path / "data-temporary"
+    monkeypatch.setenv("TMPDIR", str(temporary_root))
+    calls = []
+    monkeypatch.setattr(
+        runtime,
+        "docker",
+        lambda arguments: (
+            calls.append(arguments) or subprocess.CompletedProcess(arguments, 0, "container\n", "")
+        ),
+    )
+    runtime.create_container(
+        store, job, Namespace(cpus=16, memory="64g", pids_limit=1024, image="test")
+    )
+    arguments = calls[0]
+    assert arguments[arguments.index("--cpus") + 1] == "16"
+    assert arguments[arguments.index("--memory-swap") + 1] == "64g"
+    assert arguments[arguments.index("--pids-limit") + 1] == "1024"
+    assert "--tmpfs" not in arguments
+    assert "TMPDIR=/job-tmp" in arguments
+    assert "HOME=/job-tmp/home" in arguments
+    assert "XDG_CACHE_HOME=/job-tmp/cache" in arguments
+    directory = Path(job["temporary_directory"])
+    assert directory.is_relative_to(temporary_root)
+    assert f"type=bind,source={directory},target=/job-tmp" in arguments
+    assert not any("target=/tmp" in x for x in arguments)
+    store.save(job)
+    (directory / "partial").write_bytes(b"12345")
+    assert store.run_storage_bytes("run-one") == 5
+    assert store.run_storage_bytes("run-other") == 0
+    peer = store.create("peer", ["true"], False, {}, run_id="run-other")
+    runtime.create_container(
+        store, peer, Namespace(cpus=16, memory="64g", pids_limit=1024, image="test")
+    )
+    peer_temporary = Path(peer["temporary_directory"])
+    (peer_temporary / "keep").write_text("peer")
+    runtime.cleanup_temporary_directory(job)
+    runtime.cleanup_temporary_directory(job)
+    assert (peer_temporary / "keep").read_text() == "peer"
+    assert not directory.exists()
+    assert store.run_storage_bytes("run-one") == 0
+
+
+def test_remote_resource_settings_are_forwarded_and_reported(monkeypatch):
+    from runtime.local import launch
+
+    monkeypatch.setenv("A3_REMOTE_CPUS", "16")
+    monkeypatch.setenv("A3_REMOTE_PIDS_LIMIT", "1024")
+    monkeypatch.setenv("A3_REMOTE_MEMORY", "64g")
+    monkeypatch.setenv("A3_REMOTE_TMP_ROOT", "/data/job-temporary")
+    limits = launch.remote_limits()
+    assert limits["cpus"] == 16
+    assert limits["pids_limit"] == 1024
+    assert limits["temporary_root"] == "/data/job-temporary"
+    for key, value in {
+        "A3_REMOTE_CONTROLLER": "/data/project/remote_jobs.py",
+        "A3_REMOTE_RUN_ROOT": "/data/project/runtime",
+        "A3_REMOTE_IMAGE": "test-image",
+        "A3_REMOTE_HOST": "test-host",
+    }.items():
+        monkeypatch.setenv(key, value)
+    calls = []
+
+    def remote_process(arguments, **kwargs):
+        calls.append(arguments)
+        return subprocess.CompletedProcess(arguments, 0, '{"status":"ok"}', "")
+
+    monkeypatch.setattr(launch.subprocess, "run", remote_process)
+    assert launch.remote_call("health", {}) == {"status": "ok"}
+    command = calls[0][-1]
+    assert "--cpus 16" in command
+    assert "--pids-limit 1024" in command
+    assert "--tmp-root /data/job-temporary" in command
+
+
+def test_watcher_removes_only_exited_jobs_temporary_files(tmp_path, monkeypatch):
+    from argparse import Namespace
+
+    runtime = load_runtime()
+    store = runtime.JobStore(tmp_path / "runtime")
+    job = store.create("owner", ["true"], False, {}, run_id="run-one")
+    temporary = tmp_path / "data-temporary"
+    temporary.mkdir()
+    (temporary / "scratch").write_text("disposable")
+    (store.outputs(job) / "checkpoint").write_text("persistent")
+    job.update(container_id="own-container", temporary_directory=str(temporary))
+    store.save(job)
+    monkeypatch.setattr(
+        runtime, "docker", lambda a, **kw: subprocess.CompletedProcess(a, 0, "", "")
+    )
+    monkeypatch.setattr(runtime, "container_state", lambda c: {"Status": "exited", "ExitCode": 0})
+    monkeypatch.setattr(
+        runtime.subprocess, "run", lambda *a, **kw: subprocess.CompletedProcess(a, 0, "0", "")
+    )
+    runtime.watch(Namespace(root=store.root, job_id=job["job_id"], timeout=0, lock_fd=None))
+    assert not temporary.exists()
+    assert (store.outputs(job) / "checkpoint").read_text() == "persistent"
+    assert store.load(job["job_id"], "owner")["status"] == "completed"

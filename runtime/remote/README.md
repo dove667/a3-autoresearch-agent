@@ -84,7 +84,7 @@ printf '{}' | python3 "$CONTROLLER" \
 
 每个作业挂载自己可写的 `/workspace`；有 run_id 时还挂载同一 worker 身份持久可写的 `/outputs`。固定 A3 基线位于 `/opt/a3`，整个容器根文件系统只读。容器关闭网络，移除 capabilities，启用 `no-new-privileges`，不提供 Docker socket、SSH 或模型凭据。
 
-默认限制为 2 CPU、8 GiB 内存与交换空间总额、256 个进程、256 MiB 共享内存、512 MiB 临时空间、2 个并发作业和 900 秒作业时限。部署方通过 `--cpus`、`--memory`、`--pids-limit`、`--max-jobs`、`--timeout` 调整（--max-jobs 0 不设作业数量上限，--timeout 0 不限时）；`--gpu-ids` 可限定 GPU 索引或 UUID。这些参数由 Host配置提供。
+默认限制为 16 CPU、64 GiB 内存、禁用额外 swap、1024 个进程与线程、256 MiB 共享内存、2 个并发作业和 900 秒作业时限。部署方通过 `--cpus`、`--memory`、`--pids-limit`、`--max-jobs`、`--timeout` 调整（--max-jobs 0 不设作业数量上限，--timeout 0 不限时）；`--gpu-ids` 可限定 GPU 索引或 UUID。这些参数由 Host配置提供。
 
 独占模式下，每个 GPU 作业持有单卡租约直到结束。共享模式使用 --share-gpus，允许同一卡运行多个作业；分配登记在共享调度锁内原子完成，持续有效的预留依据活动容器记录核算，不用整卡互斥锁阻止共享。
 
@@ -159,3 +159,10 @@ submit 的 input_exports 最多 64 个且不能重复；只挂载本身份获授
 prepare_image.py 从部署方提供的 A3 checkout 导出真实 HEAD 的浅对象与索引，并记录 `/opt/a3/source-revision.json`：commit、源工作区是否有改动，以及实际准备进镜像的源码/资源文件 SHA256。工作区有改动时，commit 与文件摘要一起用于定位有效源码；不能只凭 HEAD 声称文件与提交逐字一致。安装环境和运行时依赖不纳入该源码清单。
 
 已有镜像不会随部署脚本更新。更新已有部署时保留旧标签，在新标签中补齐 git 与来源信息；复用旧镜像层时先逐文件核对原镜像和来源 checkout，匹配后才附加该来源的 Git 信息。用实际数字 UID、只读根文件系统和无网络的作业验证版本读取与原采集程序的元数据代码，再切换部署配置。历史运行输入和结果保留旧镜像信息，新作业使用当前配置。
+
+
+## 临时文件与数据盘
+
+`--tmp-root` 指定数据盘上的临时根目录；省略时采用执行服务器的 `TMPDIR`，两者均未设置则使用运行根目录下的 `temporary/`。Host 为每个作业创建独立目录并仅将该目录挂载为 `/job-tmp`；`TMPDIR`、`TMP`、`TEMP`、`HOME` 和可写缓存指向这里。Docker 根文件系统只读，`/tmp` 不提供可写挂载，硬编码该路径的程序应改用标准临时目录接口。临时文件计入所属 run 的存储额度，作业退出后回收；需恢复的 checkpoint 和产物写入 `/outputs` 或 `/workspace`。不同作业不共享临时目录。
+
+Host 环境变量 `A3_REMOTE_CPUS`、`A3_REMOTE_MEMORY`、`A3_REMOTE_PIDS_LIMIT`、`A3_REMOTE_TMP_ROOT` 对应这些参数。新配置用于新建作业；已运行作业的挂载与环境保持原样。Docker daemon 自身的元数据和有界日志仍位于其配置的数据目录，若要迁移该目录，应由服务器管理员另行安排。

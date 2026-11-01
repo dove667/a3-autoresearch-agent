@@ -129,6 +129,9 @@ def remote_call(operation: str, payload: dict) -> dict:
         os.environ["A3_REMOTE_IMAGE"],
     ]
     for environment, flag in (
+        ("A3_REMOTE_CPUS", "--cpus"),
+        ("A3_REMOTE_PIDS_LIMIT", "--pids-limit"),
+        ("A3_REMOTE_TMP_ROOT", "--tmp-root"),
         ("A3_REMOTE_MAX_JOBS", "--max-jobs"),
         ("A3_REMOTE_MEMORY", "--memory"),
         ("A3_REMOTE_MAX_GPUS", "--max-gpus"),
@@ -215,8 +218,10 @@ def local_storage_bytes(run: Path) -> int:
 
 def remote_limits() -> dict:
     return {
-        "cpus": 2,
-        "memory": os.environ.get("A3_REMOTE_MEMORY", "8g"),
+        "cpus": float(os.environ.get("A3_REMOTE_CPUS", "16")),
+        "memory": os.environ.get("A3_REMOTE_MEMORY", "64g"),
+        "pids_limit": int(os.environ.get("A3_REMOTE_PIDS_LIMIT", "1024")),
+        "temporary_root": os.environ.get("A3_REMOTE_TMP_ROOT") or "execution-server TMPDIR",
         "max_jobs": int(os.environ.get("A3_REMOTE_MAX_JOBS", "2")),
         "timeout_seconds": int(os.environ.get("A3_REMOTE_JOB_TIMEOUT", "900")),
         "run_storage_bytes": int(os.environ.get("A3_REMOTE_RUN_STORAGE_BYTES", "0")),

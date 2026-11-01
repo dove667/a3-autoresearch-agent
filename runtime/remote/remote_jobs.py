@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -144,15 +145,13 @@ class JobStore:
         total = (
             json.loads(report.read_text()).get("host_storage_bytes", 0) if report.exists() else 0
         )
-        for directory, names, files in os.walk(self.run_directory(run_id), followlinks=False):
-            names[:] = [name for name in names if not (Path(directory) / name).is_symlink()]
-            for name in files:
-                path = Path(directory) / name
-                try:
-                    if not path.is_symlink() and path.is_file():
-                        total += path.stat().st_size
-                except FileNotFoundError:
-                    pass  # A running job may replace or remove a file during the scan.
+        roots = [self.run_directory(run_id)]
+        for metadata in (self.root / "jobs").glob("*/job.json"):
+            job = json.loads(metadata.read_text())
+            if job.get("run_id") == run_id and job.get("temporary_directory"):
+                roots.append(Path(job["temporary_directory"]))
+        for root in roots:
+            total += directory_storage_bytes(root)
         return total
 
     def update_host_storage(self, request: dict) -> dict:
@@ -427,7 +426,44 @@ def record_scheduler_event(store: JobStore, request: dict, result: dict) -> None
         os.fsync(stream.fileno())
 
 
+def directory_storage_bytes(root: Path) -> int:
+    total = 0
+    for directory, names, files in os.walk(root, followlinks=False):
+        names[:] = [name for name in names if not (Path(directory) / name).is_symlink()]
+        for name in files:
+            path = Path(directory) / name
+            try:
+                if not path.is_symlink() and path.is_file():
+                    total += path.stat().st_size
+            except FileNotFoundError:
+                pass  # A running job may replace or remove a file during the scan.
+    return total
+
+
+def cleanup_temporary_directory(job: dict) -> None:
+    directory = job.get("temporary_directory")
+    if directory:
+        try:
+            shutil.rmtree(directory)
+        except FileNotFoundError:
+            pass
+
+
 def create_container(store: JobStore, job: dict, args) -> str:
+    temporary_root = getattr(args, "tmp_root", None) or os.environ.get("TMPDIR")
+    temporary_root = Path(temporary_root) if temporary_root else store.root / "temporary"
+    namespace = hashlib.sha256(str(store.root).encode()).hexdigest()[:16]
+    temporary = temporary_root.resolve() / "a3-jobs" / namespace / job["job_id"]
+    temporary.mkdir(parents=True, mode=0o700)
+    (temporary / "home").mkdir(mode=0o700)
+    job["temporary_directory"] = str(temporary)
+    job["resource_limits"] = {
+        "cpus": args.cpus,
+        "memory": args.memory,
+        "pids_limit": args.pids_limit,
+        "swap": False,
+    }
+    store.save(job)
     arguments = [
         "create",
         "--name",
@@ -453,8 +489,8 @@ def create_container(store: JobStore, job: dict, args) -> str:
         str(args.pids_limit),
         "--shm-size",
         "256m",
-        "--tmpfs",
-        "/tmp:rw,nosuid,nodev,size=512m",
+        "--mount",
+        f"type=bind,source={temporary},target=/job-tmp",
         "--log-driver",
         "local",
         "--log-opt",
@@ -468,15 +504,23 @@ def create_container(store: JobStore, job: dict, args) -> str:
         "--env",
         "LOGNAME=agent",
         "--env",
-        "HOME=/tmp/agent",
+        "HOME=/job-tmp/home",
+        "--env",
+        "TMPDIR=/job-tmp",
+        "--env",
+        "TMP=/job-tmp",
+        "--env",
+        "TEMP=/job-tmp",
+        "--env",
+        "XDG_CACHE_HOME=/job-tmp/cache",
+        "--env",
+        "MPLCONFIGDIR=/job-tmp/matplotlib",
         "--env",
         "HF_HUB_OFFLINE=1",
         "--env",
         "TRANSFORMERS_OFFLINE=1",
         "--env",
-        "TORCHINDUCTOR_CACHE_DIR="
-        + ("/outputs" if job.get("run_id") else "/workspace")
-        + "/.cache/torchinductor",
+        "TORCHINDUCTOR_CACHE_DIR=/job-tmp/torchinductor",
         "--workdir",
         "/workspace",
         "--mount",
@@ -673,6 +717,11 @@ def submit(store: JobStore, request: dict, args) -> dict:
         except Exception:
             if container_id:
                 docker(["rm", "-f", container_id], check=False)
+            stopped = (
+                not container_id or container_state(container_id)["Status"] not in ACTIVE_STATES
+            )
+            if stopped and "job" in locals() and job.get("temporary_directory"):
+                cleanup_temporary_directory(job)
             raise
         finally:
             if lease:
@@ -727,6 +776,8 @@ def watch(args) -> None:
         store.save(job)
         if container_state(job["container_id"])["Status"] in ACTIVE_STATES:
             docker(["rm", "-f", job["container_id"]], check=False)
+        if container_state(job["container_id"])["Status"] not in ACTIVE_STATES:
+            cleanup_temporary_directory(job)
         if args.lock_fd is not None:
             lease_path = store.root / "locks" / f"{job['gpu_uuid']}.json"
             if container_state(job["container_id"])["Status"] not in ACTIVE_STATES:
@@ -853,9 +904,10 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", required=True, type=Path)
     parser.add_argument("--image", required=True)
-    parser.add_argument("--cpus", type=float, default=2)
-    parser.add_argument("--memory", default="8g")
-    parser.add_argument("--pids-limit", type=int, default=256)
+    parser.add_argument("--cpus", type=float, default=16)
+    parser.add_argument("--memory", default="64g")
+    parser.add_argument("--pids-limit", type=int, default=1024)
+    parser.add_argument("--tmp-root", type=Path)
     parser.add_argument("--max-jobs", type=int, default=2)
     parser.add_argument("--timeout", type=int, default=900)
     parser.add_argument("--gpu-ids", default="")
@@ -922,6 +974,9 @@ def main() -> None:
                         "image": args.image,
                         "image_id": image,
                         "limits": {
+                            "cpus": args.cpus,
+                            "memory": args.memory,
+                            "pids_limit": args.pids_limit,
                             "max_jobs": args.max_jobs,
                             "timeout_seconds": args.timeout,
                             "run_storage_bytes": args.run_storage_bytes,

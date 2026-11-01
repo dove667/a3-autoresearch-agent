@@ -59,3 +59,8 @@ Linux 无显示器环境可按仿真项目要求设置 `MUJOCO_GL=egl`，并单�
 ## 本地配置与运行产物
 
 个人部署参数、认证信息和日志保存在版本控制之外。项目的 `artifacts/` 按 `rsi/`、`validation/` 和 `deployment/` 分别保存原始运行、验证与部署产物；目录职责见[项目结构](project-structure.md)。含个人资源或使用习惯的 Agent 指引文件应加入 `.gitignore`。提交示例配置时使用相对路径、清晰占位符和通用参数。
+
+
+### 执行端 CPU、内存与临时文件
+
+通过 `.env` 的 `A3_REMOTE_CPUS`、`A3_REMOTE_MEMORY`、`A3_REMOTE_PIDS_LIMIT` 配置单作业限额，默认分别为16 CPU、64 GiB、1024个进程与线程，不使用额外swap。`A3_REMOTE_TMP_ROOT` 应指向执行服务器的数据盘；未设置时使用该服务器的 `TMPDIR`。作业内使用 `/job-tmp` 及标准临时目录环境变量，`/tmp`保持只读。临时文件计入run存储额度并在退出后删除，checkpoint和长期产物应写入持久工作区或输出目录。配置在新建作业时生效，详情见[远程执行](../runtime/remote/README.md)。
