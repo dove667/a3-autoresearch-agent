@@ -1,6 +1,6 @@
 {
   "id": "a3-mujoco-autoresearch",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "status": "reference",
   "comparison_status": "compare-not-proven",
   "description": "A3 MuJoCo autoresearch and model training: ACT, Diffusion/Flow, VLA, world models, diagnostics and paired evaluation.",
@@ -33,6 +33,10 @@
     {
       "version": "0.1.1",
       "change": "Clarify measured end-to-end bottlenecks, simulation/data reuse, partial throughput probes and Host resource-allocation boundary; no new execution or quota authority."
+    },
+    {
+      "version": "0.1.2",
+      "change": "Remove Host quota-setting and resource-administration guidance from the research skill. Retain conditional pipeline measurement, valid reuse, and attributable throughput experiments."
     }
   ]
 }
