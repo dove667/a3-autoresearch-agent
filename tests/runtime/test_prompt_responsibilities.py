@@ -17,7 +17,7 @@ class PromptResponsibilitiesTests(unittest.TestCase):
     def test_operator_docs_are_not_agent_inputs(self):
         for phase in ("phase-one", "phase-two"):
             sources = input_sources(phase)
-            self.assertEqual(len(sources), 8 if phase == "phase-two" else 7)
+            self.assertEqual(len(sources), 9 if phase == "phase-two" else 8)
             self.assertEqual(sources["execution.md"], "runtime/local/README.md")
             self.assertFalse(any(path.startswith("docs/") for path in sources.values()))
             for path in sources.values():
@@ -63,6 +63,33 @@ class PromptResponsibilitiesTests(unittest.TestCase):
             "--confirm",
         ):
             self.assertIn(required, operator)
+
+    def test_research_skills_are_agent_owned_guidance(self):
+        prompt = read("configs/prompts/phase-two.md")
+        for required in (
+            "## 可复用研究 skills",
+            "skills/INDEX.md",
+            "外部参考／待验证",
+            "本地验证",
+            "失效或被反证",
+            "不要求每轮新增 skill",
+            "不能覆盖当前目标、验收、科学协议或固定权限",
+            "continuation.json",
+            "恢复清单",
+            "不得把新增 skill 数量当作研究收益",
+            "检查实际注册与可调用状态，再决定复用或修补",
+        ):
+            self.assertIn(required, prompt)
+        with tempfile.TemporaryDirectory() as directory:
+            versions = InputVersions(ROOT, Path(directory) / "run", phase="phase-two")
+            proposal = versions.prepare()
+            self.assertEqual(proposal["files"]["phase-instructions.md"]["version"], "0.7.0")
+            versions.activate(proposal, "start")
+            self.assertIn(prompt, versions.model_instructions()[1])
+        operator = read("docs/operator-supervision.md")
+        self.assertIn("任何人工干预", operator)
+        self.assertIn("human feedback", operator)
+        self.assertIn("forwarded", operator)
 
     def test_scientific_rules_remain_in_protocol(self):
         text = read("evals/phase-two/protocol.md")

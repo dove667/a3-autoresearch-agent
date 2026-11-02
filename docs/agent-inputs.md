@@ -1,6 +1,6 @@
 # Agent 输入的版本与加载
 
-Version: 0.3.1
+Version: 0.3.2
 
 本文件面向维护输入的部署方；运行监督与审批见 [操作者文档](operator-supervision.md)。目标、验收、Prompt 和执行说明由部署方维护。新启动、`--resume-from` 和 `--run-harness` 都采用启动时仓库里的当前文件，包括未提交的工作区内容。恢复保留原 run、身份、生成的 Harness 和模型对话历史；部署方 system Prompt 与所选阶段协议更新为当前版本。
 
@@ -11,17 +11,27 @@ Version: 0.3.1
 | `evals/<phase>/goal.md` | Agent：研究目标、范围、什么不算收益 | 操作者审批、接口操作手册 |
 | `evals/<phase>/acceptance.md` | Agent / 复核者：完成条件、证据与终态交付 | 将人工建议当通过标签 |
 | `evals/phase-two/protocol.md` | 第二阶段 Agent / 复核者：固定科学比较与归因规则 | 外界调度审批 |
+| `SOUL.md` | 主 Agent / 接任候选：跨阶段长期角色、主动工作和经验复用原则 | 新增阶段目标、修改科学计分或权限 |
 | `configs/prompts/<phase>.md` | 主 Agent / 接任候选：行动、角色、记忆、收到反馈后的处理 | 审核外界批准、教授 operator CLI |
 | `runtime/local/README.md` → `execution.md` | Agent：真实可调用 API、状态、权限和生效技术事实 | 操作者 CLI 教程 |
 | 本文件 / [教程](tutorial.md) | 维护者 / 用户：输入装载、版本、使用入口 | 新增科学验收门槛 |
 | [operator-supervision.md](operator-supervision.md) | 用户 / 父助手 / 操作者：低频弱监督、每次干预的批准与执行核对 | 作为 Agent input 或替 Agent 做验收 |
 
-读取路径保持不变：阶段 Prompt + goal + acceptance（第二阶段加 protocol）直接进入主身份/接任候选模型请求；execution 等其余输入保持 `/run/input` 可读。不是仅给模型链接而拿走规则正文。普通 worker 仍由主 Agent 提供任务。`docs/` 下操作者文档不加入 `runtime/local/input_versions.py` 清单，也不注入 Agent 请求；本次职责重构不改变装载链或运行行为。
+阶段文件读取路径保持不变，新增 SOUL.md：SOUL + 阶段 Prompt + goal + acceptance（第二阶段加 protocol）直接进入主身份/接任候选模型请求；execution 等其余输入保持 `/run/input` 可读。不是仅给模型链接而拿走规则正文。普通 worker 仍由主 Agent 提供任务。`docs/` 下操作者文档不加入 `runtime/local/input_versions.py` 清单，也不注入 Agent 请求；SOUL 的装载链有离线回归覆盖；是否实际采用仍以对应运行的输入版本和模型调用记录为准。
+
+## 长期行为与 Agent 自有知识
+
+仓库根 SOUL.md 定义跨阶段的研究者角色、主动行动、经验复用与诚实反馈原则；阶段 Prompt 保留具体流程，goal/acceptance/protocol 分别保持目标、完成证据和科学规则职责。SOUL.md 由 Host 版本化，作为 /run/input/SOUL.md 提供，并进入主身份与接任候选的模型输入，不靠 Agent 偶然发现文件。普通测试 worker 仍由主 Agent 编写具体任务，不自动承担全部研究目标。
+
+Agent 自己积累的 skills 是工作区可复用知识与代码，不是部署方版本化指令或新增权限。实际 E 保留包尚无统一技能发现、加载和保存机制；这些工具能力交给下一轮第一阶段 F，由 Agent 自主实现，设计见 [F 任务草案](plans/2026-11-02-phase-one-skills-f.md)。该草案不是已接入的 F 启动 profile，本次不会实现技能工具或启动实验。
+
+SOUL 与 Prompt 发布只提供行为指导，不能证明实际 Agent 已创建、加载或验证 skills。F 完成后还需用真实调用与恢复证据确认；保留清单不能自动替代技能发现和使用。本轮不会修改已完成 E 的保留包，也不自动启动第二阶段或热加载。
 
 ## 需要维护版本的内容
 
 | 源文件 | Agent 可读位置 |
 | --- | --- |
+| `SOUL.md` | `/run/input/SOUL.md`，长期行为原则 |
 | `evals/<phase>/goal.md` | `/run/input/goal.md` |
 | `evals/<phase>/acceptance.md` | `/run/input/acceptance.md` |
 | `configs/prompts/<phase>.md` | `/run/input/phase-instructions.md`，所选阶段的完整主 Agent 协议 |
@@ -31,7 +41,7 @@ Version: 0.3.1
 | `runtime/local/readiness-task.md` | `/run/input/readiness-task.md`，部署验证任务 |
 | `configs/prompts/workspace.md` | `/run/input/workspace-instructions.md`，构建工作区的 `harness/AGENTS.md` |
 
-`<phase>` 为 `phase-one` 或 `phase-two`。两个阶段的目标、验收和 Prompt 对称维护；每个输入清单只包含一个阶段。阶段一不加载阶段二文件，阶段二不加载阶段一 Prompt，也不叠加 common Prompt。启动参数与工作区说明共用固定接口，不包含阶段验收目标。
+`<phase>` 为 `phase-one` 或 `phase-two`。两个阶段的目标、验收和 Prompt 对称维护；每个输入清单只包含一个阶段，并共用 SOUL.md 长期原则。阶段一不加载阶段二文件，阶段二不加载阶段一 Prompt，不额外叠加重复的 common Prompt。启动参数与工作区说明共用固定接口，不包含阶段验收目标。
 
 例外是显式 `--phase phase-one --task-profile web-extension`：加载 `evals/phase-one-web/{goal,acceptance}.md` 和 `configs/prompts/phase-one-web.md`，映射到相同 `/run/input` 文件名，三者正文直接注入主 Agent／接任候选，execution 保持可读。它不叠加普通第一阶段 A–D Prompt 或第二阶段 protocol；普通冷启动仍使用 `standard` profile 的原 A–D 输入。E-only 验收只有 `## E.` 能力项，不把继承元数据解析为新的 A–D pass。
 

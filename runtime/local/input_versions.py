@@ -12,6 +12,7 @@ import yaml
 from jinja2 import Environment, TemplateError
 
 SHARED_INPUT_SOURCES = {
+    "SOUL.md": "SOUL.md",
     "bootstrap.yaml": "configs/rsi-bootstrap.yaml",
     "execution.md": "runtime/local/README.md",
     "readiness-task.md": "runtime/local/readiness-task.md",
@@ -280,6 +281,9 @@ class InputVersions:
                 "执行接口与其他说明见 /run/input/input-manifest.json 所列当前文件；"
                 "连续读取多个输入文件时，前后必须都是status=active且revision与generation相同；"
                 "status=updating时等待，标识变化后重新读取。\n\n"
+                + "SOUL 是跨阶段长期角色原则；SOUL 不得覆盖当前阶段的 goal、acceptance、protocol 或权限边界。\n"
+                + self.contents["SOUL.md"]
+                + "\n\n"
                 + self.contents["phase-instructions.md"]
                 + "\n\n"
                 + self.contents["goal.md"]
