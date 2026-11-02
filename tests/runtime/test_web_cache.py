@@ -421,3 +421,88 @@ def test_payload_open_missing_is_not_retried(tmp_path, monkeypatch):
     assert cache.get('key', 60) is None
     assert cache.put('key', payload()) is False
     assert len(attempts) == 2
+
+
+def test_removed_root_with_stale_link_count_is_not_retried(tmp_path, monkeypatch):
+    import os
+
+    cache = WebCache(tmp_path / 'cache')
+    (cache.root / '.cache.lock').unlink()
+    cache.root.rmdir()
+    original_open, original_fstat = os.open, os.fstat
+    attempts = []
+
+    def stale_link_count(descriptor):
+        result = original_fstat(descriptor)
+        if descriptor == cache._directory:
+            fields = list(result)
+            fields[3] = 2  # macOS can retain this count on a removed directory fd.
+            return os.stat_result(fields)
+        return result
+
+    def counted_open(name, flags, mode=0o777, *, dir_fd=None):
+        attempts.append(name)
+        return original_open(name, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr('runtime.local.web_cache.os.fstat', stale_link_count)
+    monkeypatch.setattr('runtime.local.web_cache.os.open', counted_open)
+    with cache.lock('key'):
+        pass
+    assert len(attempts) == 1
+    assert not cache.root.exists()
+    assert cache.warning == 'cache_unavailable'
+
+
+def test_root_replacement_after_missing_does_not_redirect_retry(tmp_path, monkeypatch):
+    import errno
+    import os
+
+    cache = WebCache(tmp_path / 'cache')
+    original_open = os.open
+    moved = tmp_path / 'original-cache'
+    attempts = []
+
+    def replaced_root(name, flags, mode=0o777, *, dir_fd=None):
+        if isinstance(name, str) and name.startswith('.key-'):
+            attempts.append(name)
+            if len(attempts) == 1:
+                cache.root.rename(moved)
+                cache.root.mkdir(mode=0o755)
+                raise FileNotFoundError(errno.ENOENT, 'transient creation', name)
+        return original_open(name, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr('runtime.local.web_cache.os.open', replaced_root)
+    with cache.lock('key'):
+        pass
+    assert len(attempts) == 1
+    assert list(cache.root.iterdir()) == []
+    assert list(moved.glob('.key-*')) == []
+    assert cache.root.stat().st_mode & 0o777 == 0o755
+    assert cache.warning == 'cache_unavailable'
+
+
+def test_root_symlink_to_same_inode_after_missing_is_not_retried(tmp_path, monkeypatch):
+    import errno
+    import os
+
+    cache = WebCache(tmp_path / 'cache')
+    original_open = os.open
+    moved = tmp_path / 'original-cache'
+    attempts = []
+
+    def symlinked_root(name, flags, mode=0o777, *, dir_fd=None):
+        if isinstance(name, str) and name.startswith('.key-'):
+            attempts.append(name)
+            if len(attempts) == 1:
+                cache.root.rename(moved)
+                cache.root.symlink_to(moved, target_is_directory=True)
+                raise FileNotFoundError(errno.ENOENT, 'transient creation', name)
+        return original_open(name, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr('runtime.local.web_cache.os.open', symlinked_root)
+    with cache.lock('key'):
+        pass
+    assert len(attempts) == 1
+    assert cache.root.is_symlink()
+    assert list(moved.glob('.key-*')) == []
+    assert cache.warning == 'cache_unavailable'

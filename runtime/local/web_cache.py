@@ -134,7 +134,16 @@ class WebCache:
                 descriptor = self._open(name, os.O_RDWR | os.O_CREAT)
                 break
             except FileNotFoundError:
-                if attempt == _LOCK_OPEN_ATTEMPTS - 1 or os.fstat(self._directory).st_nlink == 0:
+                if attempt == _LOCK_OPEN_ATTEMPTS - 1:
+                    raise
+                # A removed directory fd can retain a nonzero link count on
+                # macOS. Check the name still denotes the anchored directory;
+                # never reopen it or follow a replacement symlink on retry.
+                anchored = os.fstat(self._directory)
+                named = os.stat(self.root, follow_symlinks=False)
+                if not stat.S_ISDIR(named.st_mode) or (named.st_dev, named.st_ino) != (
+                    anchored.st_dev, anchored.st_ino
+                ):
                     raise
                 time.sleep(0.001)
         try:
