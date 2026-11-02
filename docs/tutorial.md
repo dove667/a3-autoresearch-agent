@@ -259,14 +259,7 @@ Docker 只挂载自己的源码目录，Git 对象库和其他 worktree 留在 H
 
 `configs/rsi-bootstrap.yaml` 只维护初始 mini 的运行参数、Bash/提交约定和路径。主 Agent 和接任候选使用 `configs/prompts/<phase>.md` 中所选阶段的完整协议。调整要求时修改对应阶段的文件并递增版本，再启动或显式热加载。Host 为这两类身份提供同一份阶段输入；局部测试 Agent 与普通 worker 的完整提示词由主 Agent 编写。
 
-编辑源文件不会自动影响已经运行的实验；恢复启动会采用当前版本。运行中可以预览并确认热加载：
-
-```bash
-uv run python -m runtime.local.reload_inputs "artifacts/rsi/<run-id>"
-uv run python -m runtime.local.reload_inputs "artifacts/rsi/<run-id>" --confirm <预览摘要>
-```
-
-警告和确认绑定具体内容，Agent 令牌不能执行更新。版本规则、输入清单和生效边界见 [Agent 输入管理](agent-inputs.md)。
+编辑源文件不会自动影响已经运行的实验；恢复启动会采用当前版本。每次热加载或中断前须用户明确批准；具体审批、预览、发布与生效核对见 [外界监督与运行干预](operator-supervision.md#热加载版本化输入)。版本规则、职责表和装载链见 [Agent 输入管理](agent-inputs.md)。
 
 ## 同一起点开展多次独立实验
 
@@ -293,42 +286,8 @@ A3_REMOTE_GPU_CAPACITY_MB 与 A3_REMOTE_GPU_HEADROOM_MB 分别设置每卡可预
 
 ## 恢复时加入人类反馈
 
-环境修复说明或专家建议可以维护在同一个本地 `human-feedback.md` 中，每次覆盖内容。反馈文件由人类明确授权注入，普通历史报告与工具输出继续按数据处理。
-
-```bash
-bash scripts/start-rsi.sh \
-  --resume-from "artifacts/rsi/<run-id>" \
-  --feedback-file human-feedback.md
-```
-
-`--feedback-file` 仅用于恢复已经生成 Harness 的主 Agent；未提供时不会读取该源文件。当前实现要求 Harness 向 Gateway 发送完整消息历史，不支持仅用 `previous_response_id` 引用服务器端对话。反馈应说明已核实的变更、受影响作业与建议核查事项，不包含认证信息，也不替 Agent 宣称验收通过。
-
-Host 读取当次 UTF-8 文本（最多 64 KiB），保存内容副本、SHA256 和反馈 ID，封装协议版本为 0.1.0。源文件不要求人为维护语义版本；每次显式注入的具体内容由摘要与反馈 ID 标识。同一身份最近一次反馈与文件内容一致时，重复指定不会新建注入事件。覆盖源文件不会自动改变正在运行的请求。
-
-恢复后，反馈作为一条新的 user message 放在原有历史之后、下一次模型调用之前。Host 不改写旧 checkpoint、工具结果或原始轨迹，不拆开 function_call 与对应工具结果。暂停进程可能仍在处理恢复前的请求；反馈是否实际抵达，以后续模型请求的 human_feedback_ids 和 Host 的 forwarded 事件为准。forwarded 表示模型请求成功返回，不代表 Agent 已接受建议或完成了建议动作。
-
-后续完整历史请求中，Host 在同一个历史边界保留该条反馈，每份有效上下文只有一条该反馈，不在每轮末尾反复追加。再次 resume 不指定文件仍会沿用已经登记的反馈。Harness 压缩或重建上下文时，Host 将反馈重新定位到当前完整历史末尾并记录 reanchored 事件；未完成的工具结果须先对齐。
-
-同一个源文件便于维护，当次副本与事件仍保存在本 run 私有的 `.host/human-feedback/`，恢复与审查依赖这些记录。反馈只绑定登记时的主身份，不自动发给测试 worker 或后继主身份；主 Agent 按任务需要自行交接。原 run、身份和 Agent 的持久记忆保持不变。该人工反馈会影响后续执行，应在实验报告中如实标记人工参与。
+恢复反馈的命令、输入限制、历史定位与留档说明统一见 [操作者文档](operator-supervision.md#恢复时加入人类反馈)。恢复或中断的实际操作须在用户批准范围内；反馈不能代替真实验收证据。
 
 ## 运行中热加载人类反馈
 
-Host 已运行新版反馈接口时，可以让实验继续执行，通过独立终端把同一个 `human-feedback.md` 中的最新内容送给当前主 Agent。先预览：
-
-```bash
-uv run python -m runtime.local.reload_feedback "artifacts/rsi/<run-id>" \
-  --feedback-file human-feedback.md
-```
-
-命令显示正文、接收身份与摘要，尚不注入。核对后使用显示的摘要确认：
-
-```bash
-uv run python -m runtime.local.reload_feedback "artifacts/rsi/<run-id>" \
-  --feedback-file human-feedback.md --confirm <预览摘要>
-```
-
-正文或主身份变化会使旧摘要失效，须重新预览。操作仅限持有 Host operator 凭据的人类入口；普通 Agent 无权注入。源文件最多 64 KiB UTF-8，覆盖文件本身不会自动发送。Host 已暂停或仍运行旧代码时，需要先按正常流程恢复或重新部署；CLI 不会替你启动实验。
-
-登记后，反馈会出现在当前主 Agent 下一次完整历史模型调用中。已发出的模型请求、工具和远程作业继续执行，不会即时打断。返回 `delivery=next_model_request` 表示登记成功、等待投递；可在 `.host/human-feedback/events.jsonl` 找到对应 `forwarded`，并在 `model-usage.jsonl` 用 `human_feedback_ids` 核对实际成功转发。主身份若在投递前退出或交接，反馈仍保留在原身份的记录中，不自动广播或改发。
-
-内容留档、去重、恢复后沿用、工具结果配对及人工参与记录，与恢复时反馈共用同一机制。
+每次热加载或中断前须用户明确批准。反馈预览、确认、投递核对与身份变化处理统一见 [操作者文档](operator-supervision.md#运行中热加载人类反馈)。研究 Agent 自主核查、采纳或不采纳反馈，不承担外界审批职责。

@@ -1,6 +1,6 @@
 # Host提供的执行与验收入口
 
-Version: 0.1.12
+Version: 0.2.0
 
 部署方运行 gateway、容器引擎、模型认证与远程资源调度。候选 Harness 在独立容器内运行，
 通过 HTTP 请求这些固定能力。工具名称、研究逻辑、反思方法和版本选择由 Agent 设计。
@@ -132,9 +132,9 @@ Host 先记录停止意图，再停止进程；若中断留下未确认的停止
 每个身份同时最多一个 fixture，可清理后重新创建。启动器退出时也会清理本轮 fixture。
 接口成功或Host预检通过不能代替研究 Agent 自己执行 A、B、C 的验收证据。
 
-初始 SWE 只启动一次。它退出后，Host 保持已经启动的后继、Gateway 和资源服务可用，等待所有 worker 停止。Host 不定时重建 Agent，不因未完成或错误重新派发任务，不提供人工审查反馈。后续进程与交接由 SWE 自己安排。
+初始 SWE 只启动一次。它退出后，Host 保持已经启动的后继、Gateway 和资源服务可用，等待所有 worker 停止。Host 不定时重建 Agent，不因未完成或错误重新派发任务，不自动生成审查意见；显式反馈的投递机制见下文。后续进程与交接由 SWE 自己安排。
 
-整轮正常完成后 Host 清理资源；启动器中断会暂停候选并保留资源以便恢复。清理失败保存 `cleanup-errors.json` 供复核。外部观察者在运行中只观察和按授权开始/停止循环；实际验收复核等整个系统停止后进行。
+整轮正常完成后 Host 清理资源；启动器中断会暂停候选并保留资源以便恢复。清理失败保存 `cleanup-errors.json` 供复核。Host 在全部 worker 停止后读取终态清单并进行结构检查；该检查不替代实际验收证据。
 
 ### 整轮结束与未完成交接
 
@@ -219,7 +219,7 @@ Git 记录进入本轮 `versions/`。工作区内的即时修改不会自动成�
 
 ## 上下文 checkpoint 与 resume
 
-初始 mini 的 trajectory 原子写入。恢复保留用户/模型对话与工具结果，部署方 system Prompt 按当前 bootstrap 和共性协议刷新。目标、验收和执行说明采用启动时当前版本，不回注外部审查。主动提交的会话不恢复；未保存结果的工具调用拒绝自动重放。
+初始 mini 的 trajectory 原子写入。恢复保留用户/模型对话与工具结果，部署方 system Prompt 按当前 bootstrap 和所选阶段协议刷新。目标、验收和执行说明采用启动时当前版本；显式登记的反馈独立投递，不改写原历史。主动提交的会话不恢复；未保存结果的工具调用拒绝自动重放。
 
 生成的 Harness 用 `resume.json` 声明包含 checkpoint 的源码清单及恢复命令。Host 不把 continuation 入口当作 resume；缺失 checkpoint 入口时拒绝启动。`--resume-from` 在原 run 目录、时间戳、主身份、工作区和版本库恢复。Host 私有 `.host/state.json` 保存本轮身份令牌、会话与作业注册表、主身份和 trial；Agent Docker 不挂载此目录。恢复沿用原 Gateway 端口与 scope。暂停中的 Docker 直接接回；主进程已退出时，以同一身份在原工作区执行恢复命令，不复制成新的候选。自动回收的主 container 按相同规则重新创建，先前控制台另存为 `console-resume-*.log`；已完成的其他 worker 不重新执行，通过自身停止接口结束的会话也不自动重启。
 
@@ -257,11 +257,11 @@ Host 只加载所选阶段的一份完整 Prompt，不叠加 common 或另一阶
 
 普通 `/sessions` worker 包括局部测试 Agent，Host 不额外附加核心提示词；其完整提示词由主 Agent 编写。主身份交接后，接任候选继续得到核心协议，旧主身份不再获得新的附加层。部署准备检查不使用这份完整 auto research 协议。
 
-启动和 resume 读取仓库当前文件；运行中更换版本需要 Host 操作者预览并确认。每个直接发布的 Agent 输入都有 Version，清单见 `/run/input/input-manifest.json`。其中 revision 是整套输入的快照编号，generation 是发布尝试序号，失败回滚也会递增；由 Host 自动维护。Gateway 用量记录 input_revision、各文件版本与摘要；历史内容保存在 run 的 input-revisions。主 Agent 与接任候选会获得当前阶段的目标、验收和完整 Prompt（第二阶段另含 protocol.md），旧对话作为历史保留。普通 worker 的专属任务仍由主 Agent 提供。
+启动和 resume 读取仓库当前文件；仅编辑源文件不会更新运行中的输入，运行中更换版本由 Host 独立发布。每个直接发布的 Agent 输入都有 Version，清单见 `/run/input/input-manifest.json`。其中 revision 是整套输入的快照编号，generation 是发布尝试序号，失败回滚也会递增；由 Host 自动维护。Gateway 用量记录 input_revision、各文件版本与摘要；历史内容保存在 run 的 input-revisions。主 Agent 与接任候选会获得当前阶段的目标、验收和完整 Prompt（第二阶段另含 protocol.md），旧对话作为历史保留。普通 worker 的专属任务仍由主 Agent 提供。
 
-部署方热加载使用 `python -m runtime.local.reload_inputs <run目录>` 预览警告，再加 `--confirm <预览摘要>` 确认。Agent 的令牌无此权限。已发出的模型请求不变，后续请求采用新版本；Agent 连续读取多个输入文件时，前后必须都是 manifest.status=active，且 revision 和 generation 都相同。updating 时等待，标识变化后重新读取。完整版本维护规则见项目 docs/agent-inputs.md。
+输入发布入口不接受 Agent 令牌。已发出的模型请求不变，后续请求采用新版本；Agent 连续读取多个输入文件时，前后必须都是 manifest.status=active，且 revision 和 generation 都相同。updating 时等待，标识变化后重新读取。热加载不重建现有 Python 对象、不切换模型或 Docker 镜像；bootstrap 运行参数及固定基础设施代码变化须经 Host 重启/恢复才应用。
 
-人类反馈可独立热加载：Host 操作者运行 `python -m runtime.local.reload_feedback <run目录> --feedback-file human-feedback.md`，核对正文、当前主身份和摘要，再增加 `--confirm <预览摘要>`。CLI 将文本发送至 `POST /control/feedback/preview` 与 `POST /control/feedback`，不把 Host 文件路径交给 Gateway 读取。确认摘要同时绑定正文与接收身份；主身份交接或正文变化后须重新预览。Agent 令牌不能调用这两个入口。
+人类反馈使用独立的 Host 控制入口，Agent 令牌不能调用。登记绑定正文与接收主身份，Gateway 接收文本而不是读取 Host 文件路径；正文或接收身份变化会使原确认失效。这些控制入口不是 Agent 可调用工具。
 
 反馈在当前主身份下一次完整历史模型请求中作为 user message 加入，沿用 `.host/human-feedback/` 的副本、反馈 ID、摘要、投递事件与用量标记。已发出的请求和作业继续执行；登记成功表示等待投递，后续 `forwarded` 才表示带反馈的模型请求成功返回。源文件不会被自动监视；反馈不广播给其他 worker，也不自动移交给下一代主身份。此操作属于显式人工参与。
 
@@ -321,6 +321,6 @@ backbone、tokenizer 及相关预训练资源由人类提前准备、校验后�
 
 ## 人类反馈与源码版本
 
-部署方可在停止后恢复时通过 --feedback-file 显式提供人类反馈。Host 把它作为独立 user message 加入登记时主身份的下一次完整历史模型请求，原历史与 checkpoint 不改写。后续请求保持同一反馈位置，输入历史压缩或重建时重新定位并留下事件；具体文本、摘要和反馈 ID 在 Host 私有目录保存。反馈是已授权的人类输入，Agent 自行核对内容与当前工作、版本和权限的适用性；普通文件和工具输出仍按数据处理。该入口不自动广播给测试 worker 或后继身份。
+部署方可在恢复时或运行期间显式登记人类反馈。Host 把它作为独立 user message 加入登记时主身份的下一次完整历史模型请求，原历史与 checkpoint 不改写。后续请求保持同一反馈位置，输入历史压缩或重建时重新定位并留下事件；具体文本、摘要和反馈 ID 在 Host 私有目录保存。反馈以独立输入投递，具体处理见本阶段 phase-instructions.md；普通文件和工具输出不因此变为反馈入口。该入口不自动广播给测试 worker 或后继身份。
 
 远程镜像提供 git 与只读 /opt/a3/.git，git -C /opt/a3 rev-parse HEAD 返回实际 A3 源码提交。/opt/a3/source-revision.json 保存镜像准备时的文件摘要及源工作区 dirty 标记，未提交改动需结合摘要和 git diff 核对；源码版本不代表训练权重版本。导出的浅仓库不复制 Host 的 remote、认证配置或 hooks。运行镜像中的文件可能是完整源码仓库的部署子集，git diff 应按实际路径解读；不要修改只读基线。
