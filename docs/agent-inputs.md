@@ -1,6 +1,6 @@
 # Agent 输入的版本与加载
 
-Version: 0.5.0
+Version: 0.5.1
 
 本文件面向维护输入的部署方；运行监督与审批见 [操作者文档](operator-supervision.md)。目标、验收、Prompt 和执行说明由部署方维护。使用内置 profile 时，新启动、`--resume-from` 和 `--run-harness` 采用启动时仓库里的当前文件，包括未提交的工作区内容。显式自定义输入目录则使用下述独立冻结快照，不回退到仓库模板。恢复保留原 run、身份、生成的 Harness 和模型对话历史；部署方 system Prompt 与所选阶段协议更新为当前版本。
 
@@ -38,6 +38,37 @@ SOUL、phase-instructions、goal、acceptance 以及存在的 protocol 正文直
 启动前验证并读取整套输入；实际采用的字节、来源、版本和哈希写入 run 的 `input-revisions` 与 manifest，后续不依赖原目录是否还存在。自定义 run 的 `--resume-from <新run目录> --feedback-file <获批说明>` 保留这轮完整现场，继续使用已记录的冻结输入快照。不会因为仓库模板或原输入目录改了而换任务；当前自定义输入不提供源目录热加载，修改目标/验收应明确创建另一个新 run。动态 human feedback 的既有接口及审批要求不变。
 
 `--agent-inputs-dir` 只用于新 `--run-harness`，不能与 resume、部署检查、E/F 专项 profile 或 `--initial-feedback-file` 混用。自定义初始反馈统一放进输入目录。旧内置 profile 保持兼容，用于已有流程/历史恢复；通用新任务无需选择这些专项 profile。
+
+## G：使用通用入口装配上下文管理任务
+
+G 的源文件位于 `agent-inputs/phase-one-context/`，不注册新的 task profile。部署方在启动前核对选定来源确为 F ready 成果及当次初始反馈；使用已有 `--run-harness` 与完整自定义输入目录，新 run 不覆盖源包。本节只说明装配，不会启动任务。
+
+在仓库根目录准备独立输入目录（不要把整仓库作为输入）：
+
+```bash
+inputs=$(mktemp -d)
+cp agent-inputs/SOUL.md "$inputs/SOUL.md"
+cp agent-inputs/phase-one-context/goal.md "$inputs/goal.md"
+cp agent-inputs/phase-one-context/acceptance.md "$inputs/acceptance.md"
+cp agent-inputs/phase-one-context/instructions.md "$inputs/phase-instructions.md"
+cp agent-inputs/phase-one-context/initial-feedback.md "$inputs/initial-feedback.md"
+cp agent-inputs/shared/bootstrap.yaml "$inputs/bootstrap.yaml"
+cp agent-inputs/shared/execution.md "$inputs/execution.md"
+cp agent-inputs/shared/readiness-task.md "$inputs/readiness-task.md"
+cp agent-inputs/shared/workspace.md "$inputs/workspace-instructions.md"
+```
+
+确认当次来源、模型和预算后，将该目录交给既有启动命令：
+
+```bash
+python -m runtime.local.launch \
+  --run-harness artifacts/rsi/<选定的-F-run-id> \
+  --agent-inputs-dir "$inputs"
+```
+
+本轮只有 `acceptance.G`；不传 E/F 专项 profile，不加载 phase-two protocol。初始反馈通过目录里的文件注入，不另传 `--initial-feedback-file`。若需要随新任务提供研究 skill，可把已检查的 `skills/a3-mujoco-autoresearch/` 纯文本文件树复制到该输入目录同名子路径；它会只读挂载，不自动注入正文或自动登记为 Agent 的活动 skill。正文读取、未来工作区复制及目录合并见 skill 自带集成说明，这不是 G 的新增验收项目。
+
+启动后应核实实际 input manifest、`acceptance_checks=["G"]`、新任务状态及初始反馈消息，不能只看仓库文件。自定义 run 的恢复使用其冻结输入；每次人工恢复的说明继续走已有 feedback 流程。G 通过保存退出，不自动开始第二阶段。准备输入或发布源码本身不证明 Agent 已实现上下文管理。
 
 ## 文档职责与读者
 

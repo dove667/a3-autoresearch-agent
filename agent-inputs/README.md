@@ -14,6 +14,11 @@ agent-inputs/
 │   ├── goal.md
 │   ├── acceptance.md
 │   └── instructions.md
+├── phase-one-context/
+│   ├── goal.md
+│   ├── acceptance.md
+│   ├── instructions.md
+│   └── initial-feedback.md
 ├── phase-one-skills/
 │   ├── goal.md
 │   ├── acceptance.md
@@ -36,3 +41,5 @@ SOUL、所选阶段 instructions、goal、acceptance，以及第二阶段 protoc
 文件名 SOUL.md 保留，仓库根不再维护重复副本。execution 从 runtime/local/README.md 搬来，目录迁移时仅修正路径并升至 0.8.2；后续 F 接入说明升至 0.9.0。各输入按实际内容独立维护版本。新 manifest 记录新源路径并产生新 revision，旧 run 的历史 manifest 与输入快照保留原样。
 
 教程、审批规则和历史设计仍在 `docs/`；历史 plans 保留当时路径，不能视为当前加载映射。F 的部署方输入已放在 phase-one-skills/，由 skills-extension profile 选择；准备输入不代表已运行 F 或已实现技能工具，正式启动另行批准。设计来源见 [F 草案](../docs/plans/2026-11-02-phase-one-skills-f.md)。生成／retained Agent 的自有提示词、记忆和 skills 不属于此部署方目录，本次不改动。
+
+G 的上下文管理输入位于 `phase-one-context/`，通过既有 `--run-harness` + `--agent-inputs-dir` 装配完整目录，不新增 profile。装配与初始反馈说明见 [输入加载说明](../docs/agent-inputs.md#g使用通用入口装配上下文管理任务)。G 输入准备不等于实际运行或能力通过。
