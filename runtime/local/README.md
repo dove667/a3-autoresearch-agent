@@ -1,6 +1,6 @@
 # Host提供的执行与验收入口
 
-Version: 0.8.0
+Version: 0.8.1
 
 部署方运行 gateway、容器引擎、模型认证与远程资源调度。候选 Harness 在独立容器内运行，
 通过 HTTP 请求这些固定能力。工具名称、研究逻辑、反思方法和版本选择由 Agent 设计。
@@ -286,6 +286,10 @@ Git 记录进入本轮 `versions/`。工作区内的即时修改不会自动成�
 操作者明确执行现有 `--resume-from`，也可恢复因可信外部 `blocked` 而 self-stop 的**当前主 Agent**。要求 Host 已 suspended/stopped、supervision 已 stopped、主身份与 evolution 记录一致、Docker 终态确认停止且已回收、未 closed，且 blocked 原因、人工所需动作及非空证据均有效。已完成 run、已交权旧主、已关闭 worker、普通无有效 blocked 的 self-stop 不恢复。不是 supervisor 自动重试，也不创建新 run。
 
 恢复仍使用原 run、主身份、版本、工作区、模型和完整 checkpoint；不复制上下文、不改生成代码、不补造工具输出、不重注入反馈。此显式恢复目前要求 `resume.json` 的 command 为 `python`／`python3 <源码.py> --resume`，files 包含该源码与非空消息型 `checkpoint.json`；重复或未配对工具调用拒绝启动。原 terminal、console、outcome 和 supervision 归档到 Host 私有 `.host/blocked-resume/<attempt>/`，记录摘要与当前输入 revision，并追加 session 事件；活动 outcome 改为 continue，旧 blocked 不再结束刚恢复的进程。只轮换原主身份的临时 Gateway token，scope 不变、旧 token 保持撤销，其他身份和凭据不变。
+
+人工恢复自停 run 时，应通过现有 `--feedback-file <UTF-8通知文件>` 说明已修复的问题、仍需重验的验收和下一步范围，不能仅恢复进程而让 Agent 猜测。若上一次已完成的 blocked 恢复留下活动 `continue`、Host `incomplete / Explicit operator resume`，主进程又 self-stop，只有本次明确反馈、同一 Host restart attempt 关联及原 blocked 归档摘要均核验通过时才允许继续；普通 incomplete 不适用。原有效 blocked 的兼容入口不变。
+
+反馈沿用 HumanFeedback 现有协议：以独立 `user` 消息进入首次恢复的完整模型请求，不改生成代码、checkpoint 或 system 指令。attempt 关联 feedback_id／SHA；`registered` 只是排队，不代表模型已收到，模型转发成功后才有 `forwarded` 及用量记录 human_feedback_ids。同一文件按已有规则幂等登记；同一反馈在完整历史中仅出现一次，但后续模型请求仍携带该历史，不是每次都追加新的人工消息。基础设施 smoke 证据与 Agent 的任务验收须在通知中明确区分。
 
 先完成只读校验，再写 pending 恢复日志，最后才调整状态、发放凭据和启动。若进程崩溃／启动失败留下 pending，后续 CLI 明确拒绝自动重试，须核查 Docker 实际状态和该目录归档后人工协调恢复；不要直接删 pending、改标志或重放工具。RunLease 和固定 container 名防止并发／重复启动。本机制提供失败封闭的进程崩溃审计，不承诺断电级跨文件事务。
 

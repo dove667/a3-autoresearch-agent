@@ -494,6 +494,8 @@ def launch_run(args, run: Path, a3: Path, image: str, start) -> None:
     resume_context = None
     blocked_plan = None
     blocked_attempt = None
+    feedback_content = None
+    registration = None
     input_versions = InputVersions(
         ROOT,
         run,
@@ -504,8 +506,14 @@ def launch_run(args, run: Path, a3: Path, image: str, start) -> None:
     if resuming:
         startup = json.loads((run / "startup.json").read_text())
         saved = load_resume_state(run, store, os.environ["MODEL_NAME"], os.environ["MODEL_CLASS"])
-        blocked_plan = preflight_blocked_resume(run, saved)
         actor = saved["gateway"]["evolution"]["main_owner"]
+        feedback_proposal = None
+        if getattr(args, "feedback_file", None):
+            with args.feedback_file.open("rb") as stream:
+                feedback_content = stream.read(MAX_FEEDBACK_BYTES + 1)
+            text = HumanFeedback.validate_content(feedback_content)
+            feedback_proposal = HumanFeedback.preview(text, actor)
+        blocked_plan = preflight_blocked_resume(run, saved, feedback=feedback_proposal)
         if actor == run.name:
             checkpoint = json.loads((run / "trajectory.json").read_text())
             if checkpoint.get("info", {}).get("exit_status") != "Submitted":
@@ -620,14 +628,14 @@ def launch_run(args, run: Path, a3: Path, image: str, start) -> None:
     if getattr(args, "feedback_file", None):
         if actor == run_id:
             raise ValueError("Human feedback currently requires a generated Harness main session")
-        registration = human_feedback.register(args.feedback_file, actor)
+        registration = human_feedback.register_content(feedback_content, actor)
         print("Human feedback registered: " + json.dumps(registration), flush=True)
     web_gateway = WebGateway(
         run / ".host" / "web", WebConfig.from_env(), cache_root=ROOT / "artifacts" / "web-cache"
     )
     if blocked_plan is not None:
         blocked_attempt = begin_blocked_resume(
-            run, saved, store, sandbox, blocked_plan, input_versions.manifest
+            run, saved, store, sandbox, blocked_plan, input_versions.manifest, registration
         )
     app = create_app(
         web_gateway=web_gateway,

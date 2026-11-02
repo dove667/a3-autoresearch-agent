@@ -106,7 +106,9 @@ def load_resume_state(
     return state
 
 
-def preflight_blocked_resume(run: Path, state: dict) -> dict | None:
+def preflight_blocked_resume(
+    run: Path, state: dict, *, feedback: dict | None = None
+) -> dict | None:
     """Read-only eligibility check for an explicit CLI resume, never supervisor retry."""
     from runtime.local.candidate_runtime import candidate_workspace
     from runtime.local.harness_package import load_harness_package
@@ -153,13 +155,16 @@ def preflight_blocked_resume(run: Path, state: dict) -> dict | None:
     outcome = evaluate_outcome(workspace, ())
     supervision = json.loads(workspace_path(run, "supervision.json").read_text())
     host_outcome = json.loads(workspace_path(run, "outcome.json").read_text())
-    if (
-        outcome.get("status") != "blocked"
-        or host_outcome.get("status") != "blocked"
-        or supervision.get("phase") != "stopped"
-        or supervision.get("outcome", {}).get("status") != "blocked"
+    prior_attempt = None
+    if not (
+        outcome.get("status") == "blocked"
+        and host_outcome.get("status") == "blocked"
+        and supervision.get("phase") == "stopped"
+        and supervision.get("outcome", {}).get("status") == "blocked"
     ):
-        raise ValueError("Self-stopped main needs valid external blocked evidence and stopped Host")
+        prior_attempt = _feedback_retry(run, workspace, actor, feedback, host_outcome, supervision)
+        if prior_attempt != child.get("restart_attempt"):
+            raise ValueError("Workspace terminal does not match the Host restart attempt")
     command, files = load_harness_package(workspace, "resume.json")
     if (
         len(command) != 3
@@ -190,6 +195,8 @@ def preflight_blocked_resume(run: Path, state: dict) -> dict | None:
         snapshots["console.log"] = console.read_text()
     return {
         "actor": actor,
+        "feedback": feedback,
+        "prior_attempt": prior_attempt,
         "workspace": workspace,
         "record_text": record_text,
         "snapshots": snapshots,
@@ -204,6 +211,71 @@ def preflight_blocked_resume(run: Path, state: dict) -> dict | None:
             workspace_path(workspace, "checkpoint.json").read_bytes()
         ).hexdigest(),
     }
+
+
+def _feedback_retry(run, workspace, actor, feedback, host_outcome, supervision):
+    """Only reopen the stopped result of a verified prior blocked restart, with new notice."""
+    from runtime.local.run_supervisor import EXTERNAL_BLOCKERS, evidence_exists
+
+    error = (
+        "Self-stopped main needs valid blocked evidence or an audited resume with explicit feedback"
+    )
+    current = json.loads(workspace_path(workspace, "run-outcome.json").read_text())
+    previous = current.get("previous_terminal")
+    if (
+        not feedback
+        or feedback.get("owner") != actor
+        or not isinstance(previous, str)
+        or current.get("status") != "continue"
+        or current.get("reason") != "Explicit operator resume"
+        or host_outcome.get("status") != "incomplete"
+        or host_outcome.get("reason") != "Explicit operator resume"
+        or supervision.get("phase") != "stopped"
+        or supervision.get("outcome") != host_outcome
+    ):
+        raise ValueError(error)
+    attempt = workspace_path(run, previous)
+    if attempt.parent != run / ".host/blocked-resume":
+        raise ValueError(error)
+    metadata = json.loads(workspace_path(attempt, "attempt.json").read_text())
+    if (
+        metadata.get("status") != "complete"
+        or metadata.get("main_owner") != actor
+        or metadata.get("run_id") != run.name
+        or metadata.get("event") != "explicit_blocked_resume"
+    ):
+        raise ValueError(error)
+    hashes = metadata.get("previous_sha256", {})
+    required = {"session.json", "run-outcome.json", "outcome.json", "supervision.json"}
+    if not required <= hashes.keys() or not hashes.keys() <= required | {"console.log"}:
+        raise ValueError(error)
+    for name, expected in hashes.items():
+        content = workspace_path(attempt, name).read_text()
+        if hashlib.sha256(content.encode()).hexdigest() != expected:
+            raise ValueError("Prior blocked resume archive hash mismatch")
+    prior = json.loads(workspace_path(attempt, "run-outcome.json").read_text())
+    record = json.loads(workspace_path(attempt, "session.json").read_text())
+    root = json.loads(workspace_path(attempt, "outcome.json").read_text())
+    supervisor = json.loads(workspace_path(attempt, "supervision.json").read_text())
+    blocker = prior.get("external_blocker", {})
+    if (
+        prior.get("status") != "blocked"
+        or root.get("status") != "blocked"
+        or supervisor.get("phase") != "stopped"
+        or supervisor.get("outcome", {}).get("status") != "blocked"
+        or record.get("owner") != actor
+        or record.get("closed") is not False
+        or not isinstance(blocker, dict)
+        or blocker.get("kind") not in EXTERNAL_BLOCKERS
+        or blocker.get("requires_human") is not True
+        or not all(
+            isinstance(blocker.get(key), str) and blocker[key].strip()
+            for key in ("reason", "required_action")
+        )
+        or not evidence_exists(workspace, blocker.get("evidence"))
+    ):
+        raise ValueError(error)
+    return previous
 
 
 def _validate_blocked_checkpoint(messages: list[dict]) -> None:
@@ -235,7 +307,9 @@ def _validate_blocked_checkpoint(messages: list[dict]) -> None:
         raise ValueError("Unresolved tool execution in checkpoint")
 
 
-def begin_blocked_resume(run, state, store, runtime, plan, input_manifest):
+def begin_blocked_resume(
+    run, state, store, runtime, plan, input_manifest, feedback_registration=None
+):
     """Durably journal the authorization before changing current terminal state.
 
     The caller holds RunLease. A pending journal intentionally fences off all later
@@ -244,13 +318,18 @@ def begin_blocked_resume(run, state, store, runtime, plan, input_manifest):
     from runtime.local.candidate_runtime import CandidateRuntime
 
     # Recheck before credential issuance, including checkpoint/outcome changes since preflight.
-    current = preflight_blocked_resume(run, state)
+    current = preflight_blocked_resume(run, state, feedback=plan.get("feedback"))
     if current != plan:
         raise ValueError("Blocked resume source changed after preflight")
     actor = plan["actor"]
     record = runtime.records[actor]
     if record != json.loads(plan["record_text"]):
         raise ValueError("Blocked resume runtime state changed after preflight")
+    if plan.get("feedback") and (
+        not feedback_registration
+        or feedback_registration.get("sha256") != plan["feedback"]["sha256"]
+    ):
+        raise ValueError("Resume notification must be registered through HumanFeedback first")
     attempt = run / ".host/blocked-resume" / str(time.time_ns())
     attempt.mkdir(parents=True)
     write = CandidateRuntime.write_durable
@@ -260,6 +339,8 @@ def begin_blocked_resume(run, state, store, runtime, plan, input_manifest):
         "run_id": run.name,
         "main_owner": actor,
         "input_manifest": input_manifest,
+        "feedback": feedback_registration,
+        "prior_attempt": plan.get("prior_attempt"),
         "checkpoint_sha256": plan["checkpoint_sha256"],
         "resume_sha256": plan["resume_sha256"],
         "source_sha256": plan["source_sha256"],

@@ -118,6 +118,14 @@ bash scripts/start-rsi.sh --resume-from "artifacts/rsi/<run-id>"
 bash scripts/start-rsi.sh --resume-from "$(cat artifacts/rsi/latest-run.txt)"
 ```
 
+人工回复一个已断开的自停 run 时，恢复命令应明确携带通知：
+
+```bash
+bash scripts/start-rsi.sh --resume-from "artifacts/rsi/<run-id>" --feedback-file "<已批准的恢复通知.md>"
+```
+
+通知说明修复了什么、基础设施检查不替代哪些 Agent 验收，以及继续工作的边界。`registered` 不等于已送达；检查 HumanFeedback 的 `forwarded` 事件及 model-usage 的 `human_feedback_ids` 才能确认成功转发。通知经现有独立 user feedback 进入完整历史，不另建上下文；同一反馈不会在历史中重复追加。若上次 blocked 恢复后又因旧上下文自停，只有已完成 attempt 的原 blocked 归档与当前主身份关联核验通过，并显式提供通知，才恢复该窄情况；不是放开普通 incomplete 或已完成任务。
+
 同一个 `--resume-from` 也支持：当前主 Agent 因有效外部 blocked 主动 self-stop 后，由操作者明确恢复。Host 必须已停止，Docker 停止已确认，主身份未完成、未 closed、未交权，checkpoint 和外部阻塞证据有效。保留同 run、身份、工作区、模型和全部历史；旧 terminal／console／outcome 先归档，再把活动 outcome 设为 continue，并仅轮换相同 scope 的临时 token。不会自动重试、重注入反馈或复活其他已停止 worker。若出现 `.host/blocked-resume/<attempt>/attempt.json` pending，CLI 拒绝重复启动，先核查实际 container 和归档，不直接删除 pending 或改停止标志。详见[恢复协议](../runtime/local/README.md#上下文-checkpoint-与-resume)。
 
 恢复直接使用指定的原 run 目录，保持 run ID、时间戳、当前主 Agent 身份、全部工作区文件与版本库。目标、验收、执行说明和部署方 Prompt 加载启动时仓库当前文件，记录版本号与摘要。startup.json 不改写，恢复时间和输入清单另记在 resume-events.jsonl。初始 mini 保留原 `trajectory.json` 中的用户/模型对话、工具结果与调用/费用统计，刷新部署方 system 消息后继续，不重新加入整套任务；不透明 provider 上下文按原样保留。

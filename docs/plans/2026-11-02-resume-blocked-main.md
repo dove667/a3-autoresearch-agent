@@ -13,3 +13,7 @@
 **Review focus:** malformed/nested checkpoint tool calls; unsafe workspace/evidence paths; gateway/runtime self-stop disagreement; crash after container creation; current-main versus retired/closed identities.
 
 Verification: full offline suite and repository Ruff/diff checks; no live resume or external calls. Pending failures are deliberately fail-closed and require inspection, not automatic reconciliation.
+
+## Authorized notification follow-up
+
+Use existing `--feedback-file` / HumanFeedback, not generated-code changes or hidden system instructions. Validate notification bytes before preflight; register the exact same bytes before restart and associate feedback ID/SHA with the attempt. Permit only the same current main's audited prior blocked restart to reopen its resulting continue/incomplete self-stop, with explicit feedback and verified archive hashes. Ordinary incomplete and completed/retired identities remain excluded. Offline tests capture the first real Gateway forwarding boundary: all 78 original history items remain, one user feedback is present, repeated histories do not duplicate it, and registered versus forwarded states remain distinct.
