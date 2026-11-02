@@ -55,6 +55,8 @@ $$
 bash scripts/start-rsi.sh --resume-from "artifacts/rsi/<run-id>"
 ```
 
+`--resume-from` 也可由操作者明确恢复因有效外部 blocked 而主动停止的当前主 Agent：保持同 run、身份、工作区、模型与完整上下文，归档旧终态后继续；不恢复已完成 run、已交权旧主或已关闭 worker。不是自动重试；失败留下 pending 时先核查，不直接重启。详见[恢复协议](runtime/local/README.md#上下文-checkpoint-与-resume)。
+
 将 `<run-id>` 替换为要恢复的运行标识。恢复保留模型对话、工具结果和生成的 Harness，通过原 checkpoint 继续；目标、验收和部署方 Prompt 加载启动时的当前版本。缺少恢复入口、会话已主动提交或存在结果不明的工具调用时会明确报错。
 
 恢复沿用原 run 目录、时间戳、主身份、工作区与资源权限，轨迹继续追加。中断会保留可恢复状态；详细行为见[恢复说明](docs/tutorial.md#中断恢复保留原任务继续推进)。修改 `evals/` 后开展新任务，应使用下面的版本迭代入口。

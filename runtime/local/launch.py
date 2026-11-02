@@ -42,7 +42,12 @@ from runtime.local.input_versions import (
 )
 from runtime.local.isolation_fixture import IsolationFixtures
 from runtime.local.recovery import stage_recovery
-from runtime.local.run_resume import load_resume_state
+from runtime.local.run_resume import (
+    begin_blocked_resume,
+    finish_blocked_resume,
+    load_resume_state,
+    preflight_blocked_resume,
+)
 from runtime.local.run_state import RunLease, RunStateStore
 from runtime.local.run_supervisor import RunSupervisor
 from runtime.local.web_gateway import WebConfig, WebGateway
@@ -487,6 +492,8 @@ def launch_run(args, run: Path, a3: Path, image: str, start) -> None:
     store = RunStateStore(run)
     saved = None
     resume_context = None
+    blocked_plan = None
+    blocked_attempt = None
     input_versions = InputVersions(
         ROOT,
         run,
@@ -497,6 +504,7 @@ def launch_run(args, run: Path, a3: Path, image: str, start) -> None:
     if resuming:
         startup = json.loads((run / "startup.json").read_text())
         saved = load_resume_state(run, store, os.environ["MODEL_NAME"], os.environ["MODEL_CLASS"])
+        blocked_plan = preflight_blocked_resume(run, saved)
         actor = saved["gateway"]["evolution"]["main_owner"]
         if actor == run.name:
             checkpoint = json.loads((run / "trajectory.json").read_text())
@@ -617,6 +625,10 @@ def launch_run(args, run: Path, a3: Path, image: str, start) -> None:
     web_gateway = WebGateway(
         run / ".host" / "web", WebConfig.from_env(), cache_root=ROOT / "artifacts" / "web-cache"
     )
+    if blocked_plan is not None:
+        blocked_attempt = begin_blocked_resume(
+            run, saved, store, sandbox, blocked_plan, input_versions.manifest
+        )
     app = create_app(
         web_gateway=web_gateway,
         model_name=os.environ["MODEL_NAME"],
@@ -903,6 +915,8 @@ def launch_run(args, run: Path, a3: Path, image: str, start) -> None:
 
         if resuming:
             sandbox.resume_sessions(saved["gateway"]["sessions"], actor)
+            if blocked_attempt is not None:
+                finish_blocked_resume(blocked_attempt)
             with (run / "resume-events.jsonl").open("a") as stream:
                 stream.write(
                     json.dumps(

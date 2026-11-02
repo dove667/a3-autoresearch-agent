@@ -1,8 +1,12 @@
 """Validate in-place recovery and import Host metadata from pre-checkpoint runs."""
 
+import hashlib
 import json
+import os
 import secrets
 import socket
+import time
+from copy import deepcopy
 from pathlib import Path
 
 from runtime.local.candidate_runtime import workspace_path
@@ -100,3 +104,220 @@ def load_resume_state(
         probe.bind(("127.0.0.1", int(state["endpoint"].rsplit(":", 1)[1])))
     store.save(state)
     return state
+
+
+def preflight_blocked_resume(run: Path, state: dict) -> dict | None:
+    """Read-only eligibility check for an explicit CLI resume, never supervisor retry."""
+    from runtime.local.candidate_runtime import candidate_workspace
+    from runtime.local.harness_package import load_harness_package
+    from runtime.local.run_supervisor import evaluate_outcome
+
+    journal = run / ".host/blocked-resume"
+    for path in journal.glob("*/attempt.json"):
+        if json.loads(path.read_text()).get("status") != "complete":
+            raise ValueError(
+                f"Blocked resume pending at {path.parent}; inspect the container and archived "
+                "state before recovery; automatic retry is disabled"
+            )
+    gateway = state["gateway"]
+    actor = gateway["evolution"]["main_owner"]
+    child = gateway["children"].get(actor)
+    path = workspace_path(run, f"candidates/{actor}/session.json")
+    if child is None or not path.is_file():
+        return None
+    record_text = path.read_text()
+    record = json.loads(record_text)
+    if not (
+        child.get("self_stopped") or record.get("self_stop_requested") or record.get("self_stopped")
+    ):
+        return None
+    evolution = json.loads(workspace_path(run, "evolution.json").read_text())
+    if evolution.get("main_owner") != actor:
+        raise ValueError("Saved main identity disagrees with the evolution history")
+    terminal = record.get("terminal_state", {})
+    if (
+        state.get("status") not in {"suspended", "stopped"}
+        or child.get("closed") is not False
+        or record.get("closed") is not False
+        or record.get("owner") != actor
+        or record.get("session_id") != actor
+        or child.get("owner") != actor
+        or record.get("self_stop_requested") is not True
+        or record.get("self_stopped") is not True
+        or record.get("container_removed") is not True
+        or terminal.get("Status") not in {"exited", "dead"}
+        or any(terminal.get(key) is not False for key in ("Running", "Paused", "Restarting"))
+    ):
+        raise ValueError("Blocked resume requires the confirmed stopped, nonclosed current main")
+    workspace = candidate_workspace(run / "candidates", actor)
+    outcome = evaluate_outcome(workspace, ())
+    supervision = json.loads(workspace_path(run, "supervision.json").read_text())
+    host_outcome = json.loads(workspace_path(run, "outcome.json").read_text())
+    if (
+        outcome.get("status") != "blocked"
+        or host_outcome.get("status") != "blocked"
+        or supervision.get("phase") != "stopped"
+        or supervision.get("outcome", {}).get("status") != "blocked"
+    ):
+        raise ValueError("Self-stopped main needs valid external blocked evidence and stopped Host")
+    command, files = load_harness_package(workspace, "resume.json")
+    if (
+        len(command) != 3
+        or command[0] not in {"python", "python3"}
+        or command[2] != "--resume"
+        or command[1] not in files
+        or not command[1].endswith(".py")
+        or "checkpoint.json" not in files
+    ):
+        raise ValueError("Blocked resume requires an explicit Python checkpoint resume command")
+    checkpoint = json.loads(files["checkpoint.json"])
+    messages = checkpoint.get("messages") if isinstance(checkpoint, dict) else checkpoint
+    if (
+        not isinstance(messages, list)
+        or not messages
+        or not all(isinstance(item, dict) for item in messages)
+    ):
+        raise ValueError("Blocked resume requires a nonempty message checkpoint")
+    _validate_blocked_checkpoint(messages)
+    snapshots = {
+        "session.json": record_text,
+        "run-outcome.json": workspace_path(workspace, "run-outcome.json").read_text(),
+        "outcome.json": workspace_path(run, "outcome.json").read_text(),
+        "supervision.json": workspace_path(run, "supervision.json").read_text(),
+    }
+    console = workspace_path(run, f"candidates/{actor}/console.log")
+    if console.is_file():
+        snapshots["console.log"] = console.read_text()
+    return {
+        "actor": actor,
+        "workspace": workspace,
+        "record_text": record_text,
+        "snapshots": snapshots,
+        "resume_sha256": hashlib.sha256(
+            workspace_path(workspace, "resume.json").read_bytes()
+        ).hexdigest(),
+        "source_sha256": {
+            name: hashlib.sha256(text.encode()).hexdigest() for name, text in files.items()
+        },
+        "command": command,
+        "checkpoint_sha256": hashlib.sha256(
+            workspace_path(workspace, "checkpoint.json").read_bytes()
+        ).hexdigest(),
+    }
+
+
+def _validate_blocked_checkpoint(messages: list[dict]) -> None:
+    from runtime.local.context_resume import require_tool_results
+
+    require_tool_results(messages)
+    calls, results = set(), set()
+    for message in messages:
+        items = message.get("output")
+        items = items if isinstance(items, list) else [message]
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            kind = item.get("type")
+            if kind not in {"function_call", "function_call_output"}:
+                continue
+            identifier = item.get("call_id")
+            if not isinstance(identifier, str) or not identifier:
+                raise ValueError("Checkpoint tool call needs a stable call_id")
+            if kind == "function_call":
+                if identifier in calls:
+                    raise ValueError("Duplicate checkpoint tool call")
+                calls.add(identifier)
+            else:
+                if identifier not in calls or identifier in results:
+                    raise ValueError("Unpaired or duplicate checkpoint tool result")
+                results.add(identifier)
+    if calls != results:
+        raise ValueError("Unresolved tool execution in checkpoint")
+
+
+def begin_blocked_resume(run, state, store, runtime, plan, input_manifest):
+    """Durably journal the authorization before changing current terminal state.
+
+    The caller holds RunLease. A pending journal intentionally fences off all later
+    CLI attempts: a crash can occur after Docker starts but before its receipt saves.
+    """
+    from runtime.local.candidate_runtime import CandidateRuntime
+
+    # Recheck before credential issuance, including checkpoint/outcome changes since preflight.
+    current = preflight_blocked_resume(run, state)
+    if current != plan:
+        raise ValueError("Blocked resume source changed after preflight")
+    actor = plan["actor"]
+    record = runtime.records[actor]
+    if record != json.loads(plan["record_text"]):
+        raise ValueError("Blocked resume runtime state changed after preflight")
+    attempt = run / ".host/blocked-resume" / str(time.time_ns())
+    attempt.mkdir(parents=True)
+    write = CandidateRuntime.write_durable
+    metadata = {
+        "status": "pending",
+        "event": "explicit_blocked_resume",
+        "run_id": run.name,
+        "main_owner": actor,
+        "input_manifest": input_manifest,
+        "checkpoint_sha256": plan["checkpoint_sha256"],
+        "resume_sha256": plan["resume_sha256"],
+        "source_sha256": plan["source_sha256"],
+        "command": plan["command"],
+        "previous_sha256": {
+            name: hashlib.sha256(text.encode()).hexdigest()
+            for name, text in plan["snapshots"].items()
+        },
+    }
+    # Journal first: partial archival also fails closed without issuing any new token.
+    write(attempt / "attempt.json", json.dumps(metadata, indent=2))
+    for name, text in plan["snapshots"].items():
+        write(attempt / name, text)
+    write(attempt / "gateway-child.json", json.dumps(state["gateway"]["children"][actor], indent=2))
+    with (run / "session-events.jsonl").open("a") as stream:
+        stream.write(
+            json.dumps({**metadata, "attempt": str(attempt.relative_to(run)), "time": time.time()})
+            + "\n"
+        )
+        stream.flush()
+        os.fsync(stream.fileno())
+    continuing = json.dumps(
+        {
+            "status": "continue",
+            "reason": "Explicit operator resume",
+            "previous_terminal": str(attempt.relative_to(run)),
+            "input_manifest": input_manifest,
+        },
+        indent=2,
+    )
+    write(plan["workspace"] / "run-outcome.json", continuing)
+    write(run / "outcome.json", continuing)
+    restarted = deepcopy(record)
+    restarted.update(
+        self_stopped=False, self_stop_requested=False, restart_attempt=str(attempt.relative_to(run))
+    )
+    runtime.save_record(restarted)
+    runtime.records[actor] = restarted
+    gateway = state["gateway"]
+    child = gateway["children"][actor]
+    # Revoke every stale credential for only this identity, retaining all other scopes.
+    gateway["sessions"] = {
+        token: owner for token, owner in gateway["sessions"].items() if owner != actor
+    }
+    child.update(
+        token=secrets.token_urlsafe(32),
+        self_stopped=False,
+        restart_attempt=str(attempt.relative_to(run)),
+    )
+    gateway["sessions"][child["token"]] = actor
+    store.update(gateway=gateway)
+    return attempt
+
+
+def finish_blocked_resume(attempt: Path) -> None:
+    from runtime.local.candidate_runtime import CandidateRuntime
+
+    path = attempt / "attempt.json"
+    metadata = json.loads(path.read_text())
+    metadata["status"] = "complete"
+    CandidateRuntime.write_durable(path, json.dumps(metadata, indent=2))

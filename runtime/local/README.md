@@ -1,6 +1,6 @@
 # Host提供的执行与验收入口
 
-Version: 0.7.0
+Version: 0.8.0
 
 部署方运行 gateway、容器引擎、模型认证与远程资源调度。候选 Harness 在独立容器内运行，
 通过 HTTP 请求这些固定能力。工具名称、研究逻辑、反思方法和版本选择由 Agent 设计。
@@ -137,7 +137,7 @@ container 回收不删除镜像、构建缓存、运行目录或历史证据；�
 Host 仅停止调用者自身的 Docker，确认退出并保存控制台后自动删除 container，
 保留工作区，不级联终止后继，不取消远程作业。
 这些作业继续受原资源分配和超时约束，并在整轮清理时回收。成功停止后撤销当前会话令牌，
-祖先仍可查询该 session 和后继，后继使用自己的身份继续执行。通过此接口主动结束的 session 不由 resume 自动重启。
+祖先仍可查询该 session 和后继，后继使用自己的身份继续执行。通过此接口主动结束的 session 不自动重启；唯一恢复例外是操作者明确 `--resume-from`，且当前主身份因有效外部 blocked 停止（见下文）。
 停止失败时返回可重试错误，身份保持可用。请求不能指定其他身份、挂载或级联操作。
 Host 先记录停止意图，再停止进程；若中断留下未确认的停止请求，恢复会明确报错，需先核查实际状态。
 日志归档错误记录在 session.json 的 cleanup_error，保留 container 等待重试；
@@ -283,9 +283,15 @@ Git 记录进入本轮 `versions/`。工作区内的即时修改不会自动成�
 
 ## 上下文 checkpoint 与 resume
 
+操作者明确执行现有 `--resume-from`，也可恢复因可信外部 `blocked` 而 self-stop 的**当前主 Agent**。要求 Host 已 suspended/stopped、supervision 已 stopped、主身份与 evolution 记录一致、Docker 终态确认停止且已回收、未 closed，且 blocked 原因、人工所需动作及非空证据均有效。已完成 run、已交权旧主、已关闭 worker、普通无有效 blocked 的 self-stop 不恢复。不是 supervisor 自动重试，也不创建新 run。
+
+恢复仍使用原 run、主身份、版本、工作区、模型和完整 checkpoint；不复制上下文、不改生成代码、不补造工具输出、不重注入反馈。此显式恢复目前要求 `resume.json` 的 command 为 `python`／`python3 <源码.py> --resume`，files 包含该源码与非空消息型 `checkpoint.json`；重复或未配对工具调用拒绝启动。原 terminal、console、outcome 和 supervision 归档到 Host 私有 `.host/blocked-resume/<attempt>/`，记录摘要与当前输入 revision，并追加 session 事件；活动 outcome 改为 continue，旧 blocked 不再结束刚恢复的进程。只轮换原主身份的临时 Gateway token，scope 不变、旧 token 保持撤销，其他身份和凭据不变。
+
+先完成只读校验，再写 pending 恢复日志，最后才调整状态、发放凭据和启动。若进程崩溃／启动失败留下 pending，后续 CLI 明确拒绝自动重试，须核查 Docker 实际状态和该目录归档后人工协调恢复；不要直接删 pending、改标志或重放工具。RunLease 和固定 container 名防止并发／重复启动。本机制提供失败封闭的进程崩溃审计，不承诺断电级跨文件事务。
+
 初始 mini 的 trajectory 原子写入。恢复保留用户/模型对话与工具结果，部署方 system Prompt 按当前 bootstrap 和所选阶段协议刷新。目标、验收和执行说明采用启动时当前版本；显式登记的反馈独立投递，不改写原历史。主动提交的会话不恢复；未保存结果的工具调用拒绝自动重放。
 
-生成的 Harness 用 `resume.json` 声明包含 checkpoint 的源码清单及恢复命令。Host 不把 continuation 入口当作 resume；缺失 checkpoint 入口时拒绝启动。`--resume-from` 在原 run 目录、时间戳、主身份、工作区和版本库恢复。Host 私有 `.host/state.json` 保存本轮身份令牌、会话与作业注册表、主身份和 trial；Agent Docker 不挂载此目录。恢复沿用原 Gateway 端口与 scope。暂停中的 Docker 直接接回；主进程已退出时，以同一身份在原工作区执行恢复命令，不复制成新的候选。自动回收的主 container 按相同规则重新创建，先前控制台另存为 `console-resume-*.log`；已完成的其他 worker 不重新执行，通过自身停止接口结束的会话也不自动重启。
+生成的 Harness 用 `resume.json` 声明包含 checkpoint 的源码清单及恢复命令。Host 不把 continuation 入口当作 resume；缺失 checkpoint 入口时拒绝启动。`--resume-from` 在原 run 目录、时间戳、主身份、工作区和版本库恢复。Host 私有 `.host/state.json` 保存本轮身份令牌、会话与作业注册表、主身份和 trial；Agent Docker 不挂载此目录。恢复沿用原 Gateway 端口与 scope。暂停中的 Docker 直接接回；主进程已退出时，以同一身份在原工作区执行恢复命令，不复制成新的候选。自动回收的主 container 按相同规则重新创建，先前控制台另存为 `console-resume-*.log`；已完成的其他 worker 不重新执行，通过自身停止接口结束的会话也不自动重启；明确恢复外部 blocked 当前主身份的例外见下文。
 
 中断时暂停本轮候选 Docker、保存 Host 状态并保留远程作业；整轮正常结束仍回收资源。原任务轨迹继续追加，`startup.json` 保持原样，`resume-events.jsonl` 记录每次恢复。run 排他锁拒绝重复启动，端口不可用时明确失败。旧 Host 无私有快照时，仅从已停止运行的 Host 元数据导入原 scope 并轮换本轮令牌；不修改生成代码或模型上下文。已取消的远程 job 不自动重跑。
 
@@ -345,7 +351,7 @@ Host 只加载所选阶段的一份完整 Prompt，不叠加 common 或另一阶
 
 阶段二或第一阶段 web-extension 从保留结果启动新任务时，Host 从所选保留 commit 复制代码、文件和持久记忆，在新副本中将 checkpoint.json 的消息列表初始化为当前目标。原 checkpoint、轨迹及原保留 commit 不改；历史文件按授权放在只读 history 中，按需检索。启动记录 task_context 保存源 checkpoint 摘要、旧消息数与新会话消息数。
 
-web-extension 仅接受第一阶段明确 retained 来源；task_context.inherited_acceptance 记录 checks=[A,B,C,D]、status=historical-not-recertified、source_run 与 source_version，仅表示历史来源，不生成新验收证据。新副本若携带旧 run-outcome.json，将活动值初始化为 continue，并在 task_context.retired_terminal 记录原摘要与来源，避免旧 complete／blocked 结束新 E 任务；原保留结果不改，同 run resume 不做此初始化。
+web-extension 仅接受第一阶段明确 retained 来源；task_context.inherited_acceptance 记录 checks=[A,B,C,D]、status=historical-not-recertified、source_run 与 source_version，仅表示历史来源，不生成新验收证据。新副本若携带旧 run-outcome.json，将活动值初始化为 continue，并在 task_context.retired_terminal 记录原摘要与来源，避免旧 complete／blocked 结束新 E 任务；原保留结果不改，普通同 run resume 不做此新任务初始化；显式 blocked 恢复仅按上述协议归档并解除旧 terminal 声明。
 
 此 profile 还将已存在的 `task.txt`、`trajectory.jsonl`、`progress.md`、`run-outcome.json` 原文归档到新副本的 `inherited-task-state/`：活动 task.txt 写当前 E 目标，trajectory.jsonl 清空，progress.md 写 E pending／历史 A–D 未重新认证，run-outcome.json 写 continue；不存在的文件不凭空创建。`task_context.initialized_task_files` 按文件名记录 source_sha256、archive_path、source_run、source_version；归档路径或其祖先／后代冲突时拒绝启动，不覆盖已有材料。checkpoint 另按上述新消息规则初始化。源保留快照、只读历史和长期记忆不改。Harness 负责新增模块／记忆的 resume 与 continuation 清单及其持久写入逻辑；Host 的任务状态初始化不替代工具实现或清单完整性验证。
 

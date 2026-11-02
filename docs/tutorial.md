@@ -118,6 +118,8 @@ bash scripts/start-rsi.sh --resume-from "artifacts/rsi/<run-id>"
 bash scripts/start-rsi.sh --resume-from "$(cat artifacts/rsi/latest-run.txt)"
 ```
 
+同一个 `--resume-from` 也支持：当前主 Agent 因有效外部 blocked 主动 self-stop 后，由操作者明确恢复。Host 必须已停止，Docker 停止已确认，主身份未完成、未 closed、未交权，checkpoint 和外部阻塞证据有效。保留同 run、身份、工作区、模型和全部历史；旧 terminal／console／outcome 先归档，再把活动 outcome 设为 continue，并仅轮换相同 scope 的临时 token。不会自动重试、重注入反馈或复活其他已停止 worker。若出现 `.host/blocked-resume/<attempt>/attempt.json` pending，CLI 拒绝重复启动，先核查实际 container 和归档，不直接删除 pending 或改停止标志。详见[恢复协议](../runtime/local/README.md#上下文-checkpoint-与-resume)。
+
 恢复直接使用指定的原 run 目录，保持 run ID、时间戳、当前主 Agent 身份、全部工作区文件与版本库。目标、验收、执行说明和部署方 Prompt 加载启动时仓库当前文件，记录版本号与摘要。startup.json 不改写，恢复时间和输入清单另记在 resume-events.jsonl。初始 mini 保留原 `trajectory.json` 中的用户/模型对话、工具结果与调用/费用统计，刷新部署方 system 消息后继续，不重新加入整套任务；不透明 provider 上下文按原样保留。
 
 已主动提交的会话不能用 resume 重新打开；下一代应使用明确保留版本。发现工具请求已发出而结果尚未保存时，恢复会拒绝自动执行，须先查明原请求是否成功，避免重复提交作业。模型配置须与原运行一致，认证由 Host 提供。
@@ -165,7 +167,7 @@ bash scripts/start-rsi.sh --phase phase-one --task-profile web-extension \
 
 这是新 run，不是 resume 旧 self-stop 会话，也不重新冷启动 mini。代码、持久记忆和原恢复／身份能力沿用；新工作副本初始化新模型上下文与 checkpoint，源快照不改。旧记录经只读索引按需检索，不预加载全量历史。A–D 已记录结论带来源继承，标为 historical-not-recertified，不重跑、不重新认证；原 Host 归档缺口和 retained readiness 不等于本轮独立 A–D 审计。
 
-新副本中已知旧任务状态先归档到 `inherited-task-state/` 并记录摘要：task.txt 使用 E 目标，trajectory 从空文件继续追加，旧 progress 完成状态转为继承记录，旧 run-outcome 改为 continue。仅处理新副本，源快照和长期记忆不改；同 run resume 保留本轮状态。Harness 自己更新 resume／continuation 的保存逻辑，确保新工具模块、记忆及必要源码／来源引用不会被旧固定清单遗漏或覆盖。
+新副本中已知旧任务状态先归档到 `inherited-task-state/` 并记录摘要：task.txt 使用 E 目标，trajectory 从空文件继续追加，旧 progress 完成状态转为继承记录，旧 run-outcome 改为 continue。仅处理新副本，源快照和长期记忆不改；普通同 run resume 保留本轮状态；显式外部 blocked 恢复只归档并解除旧 terminal 声明，不做新任务初始化。Harness 自己更新 resume／continuation 的保存逻辑，确保新工具模块、记忆及必要源码／来源引用不会被旧固定清单遗漏或覆盖。
 
 只加载 [E 目标](../evals/phase-one-web/goal.md)、[E 验收](../evals/phase-one-web/acceptance.md)和[专用协议](../configs/prompts/phase-one-web.md)。保留 Harness 自己实现工具并让实际模型成功 search、fetch 公开正文，完成来源引用和离线错误 fixture；不训练、下载模型／PDF、运行 A3 或 GPU 实验。只做必要局部检查，不强制完整 H0/H1 或 A–D 循环。完成 E、结果包与 continuation 后退出；配置、key、额度或网络阻断时保存 blocked 后停止，不能把离线测试当真实通过。
 
@@ -258,7 +260,7 @@ bash scripts/start-rsi.sh --verify-deployment
 
 已退出的 worker 无需等整轮结束才清理。Host 每两秒检查，并在确认退出、保存控制台与退出记录后自动删除其 container。工作区里的 checkpoint、记忆、源码和产物保留，仍可用原 session ID 查询状态与结果。运行和暂停中的 worker、其他 worker 及远程作业均不受这项回收影响。单个 worker 清理失败时，`candidates/<session_id>/session.json` 与状态接口提供 `cleanup_error`，Host 存活期间自动重试。运行目录和镜像、构建缓存仍需单独管理磁盘空间。
 
-`--resume-from` 可以恢复已经自动删除 container 的主 Agent：Host 根据原工作区的 `resume.json` 重新创建 Docker，沿用原 run、身份、上下文和记忆；已完成的辅助 worker 不重跑。恢复能力依赖 Harness 退出前保存有效 checkpoint，通过自身停止接口明确结束的会话不自动重启。
+`--resume-from` 可以恢复已经自动删除 container 的主 Agent：Host 根据原工作区的 `resume.json` 重新创建 Docker，沿用原 run、身份、上下文和记忆；已完成的辅助 worker 不重跑。恢复能力依赖 Harness 退出前保存有效 checkpoint，通过自身停止接口明确结束的会话不自动重启；操作者明确恢复有效外部 blocked 当前主身份时，适用上文的窄例外。
 
 Agent 写下完成或阻塞说明后，其运行程序还需要实际退出。生成的 Harness 应在自身循环中实现正常退出分支；Host 也提供 `POST /sessions/self/stop`，允许候选保存状态后只结束自己，后继和远程作业继续保留。该终结操作可能在 HTTP 响应返回前结束进程，不能把保存放在调用之后。Host 不根据验收声明自动杀进程，也不自动重启通过此接口结束的 session。接口详见 [Host 执行说明](../runtime/local/README.md#独立候选执行)。
 
