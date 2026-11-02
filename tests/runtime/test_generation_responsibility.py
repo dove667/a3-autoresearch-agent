@@ -1,5 +1,6 @@
 """Offline contracts for generation-local accountability in published inputs."""
 
+import re
 from pathlib import Path
 
 import pytest
@@ -7,6 +8,12 @@ import pytest
 from runtime.local.input_versions import InputVersions
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def assert_generation_contract_version(text):
+    match = re.search(r"^Version: (\d+)\.(\d+)\.(\d+)$", text, re.MULTILINE)
+    assert match is not None
+    assert tuple(map(int, match.groups())) >= (0, 3, 0)
 
 
 @pytest.mark.parametrize("phase", ["phase-one", "phase-two"])
@@ -30,7 +37,7 @@ def test_published_generation_contract(tmp_path, phase):
     ):
         assert clause in prompt
     assert "自行完成本轮全部验收" not in prompt
-    assert "Version: 0.3.0" in prompt
+    assert_generation_contract_version(prompt)
 
 
 @pytest.mark.parametrize("phase", ["phase-one", "phase-two"])
@@ -40,7 +47,7 @@ def test_acceptance_is_run_coverage_not_repeated_generation_gate(phase):
     assert "不是每代重复执行全部验收的门槛" in acceptance
     assert "未完成或未知不得写成已确认" in acceptance
     assert "存在未覆盖项时不得声明整轮全部通过" in acceptance
-    assert "Version: 0.3.0" in acceptance
+    assert_generation_contract_version(acceptance)
 
 
 def test_protocol_and_execution_preserve_local_handoff_boundary():
@@ -52,4 +59,19 @@ def test_protocol_and_execution_preserve_local_handoff_boundary():
     assert "候选在接任前无需完成整个 run" in execution
     assert "不重新执行或审计前任原实验" in execution
     for text in (protocol, execution):
-        assert "Version: 0.3.0" in text
+        assert_generation_contract_version(text)
+
+
+def test_research_web_is_optional_phase_two_function_integration():
+    prompt = (ROOT / "configs/prompts/phase-two.md").read_text()
+    execution = (ROOT / "runtime/local/README.md").read_text()
+    for endpoint in ("/web/status", "/web/search", "/web/fetch"):
+        assert endpoint in prompt and endpoint in execution
+    assert "不自动向模型注册函数工具" in prompt
+    assert "不重新运行第一阶段" in prompt
+    assert "未配置" in prompt or "未启用" in prompt
+    first_phase = (ROOT / "configs/prompts/phase-one.md").read_text()
+    assert "/web/" not in first_phase
+    for phase in ("phase-one", "phase-two"):
+        acceptance = (ROOT / f"evals/{phase}/acceptance.md").read_text()
+        assert "/web/" not in acceptance

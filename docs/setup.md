@@ -64,3 +64,20 @@ Linux 无显示器环境可按仿真项目要求设置 `MUJOCO_GL=egl`，并单�
 ### 执行端 CPU、内存与临时文件
 
 通过 `.env` 的 `A3_REMOTE_CPUS`、`A3_REMOTE_MEMORY`、`A3_REMOTE_PIDS_LIMIT` 配置单作业限额，默认分别为16 CPU、64 GiB、1024个进程与线程，不使用额外swap。`A3_REMOTE_TMP_ROOT` 应指向执行服务器的数据盘；未设置时使用该服务器的 `TMPDIR`。作业内使用 `/job-tmp` 及标准临时目录环境变量，`/tmp`保持只读。临时文件计入run存储额度并在退出后删除，checkpoint和长期产物应写入持久工作区或输出目录。配置在新建作业时生效，详情见[远程执行](../runtime/remote/README.md)。
+
+## 可选研究网页网关（Tavily）
+
+在启动 Host 的本机项目根目录 `.env` 配置，不在聊天中发送 key。当前 Mac 部署路径为 `/Users/dove/Projects/a3-research-agent/.env`；其他部署使用各自项目根目录或 `A3_RSI_ENV_FILE`。保留原有配置，仅加入或修改以下项：
+
+```dotenv
+TAVILY_API_KEY='<在本机填写自己的 key>'
+A3_WEB_ENABLED='1'
+A3_WEB_SEARCH_LIMIT='100'
+A3_WEB_FETCH_LIMIT='200'
+```
+
+仓库 `.env.example` 仅保留空 key，默认 `A3_WEB_ENABLED=0`。真实 key 只由 Host 读取，不复制到候选、执行服务器、Git、提示词或日志。用户自行管理 Tavily 免费账户，保持提供商付费计费与自动付费升级关闭；Host 不自动升级套餐。搜索固定使用 basic（每次 1 credit，见 [Tavily 官方额度说明](https://docs.tavily.com/documentation/api-credits)）；本地每 run 的搜索/fetch 上限是额外保护，不能保证账户全局免费余额（其他 run、程序或使用者也可能耗费额度）。各代、各候选和同 run 恢复共用持久计数，不能换代重置。
+
+网页正文由 Host 直接抓取，仅支持受约束的公开 HTTP(S) HTML/纯文本；不执行 JavaScript，也不用于 PDF、模型或依赖下载。DNS 校验及固定连接地址/TLS 校验约束此网关，不代表所有公网地址均可达，也不代表候选容器已部署通用出站防火墙。远程作业的离线设置不变。
+
+配置与代码在下一次经批准启动的新 run 使用；本次配置不会自动改动当前运行。新 run 沿用明确选定的第一阶段保留 H1，并由第二阶段 H1 自己实现、注册和测试检索工具，不重跑第一阶段。检查 `GET /web/status` 只读能力与额度，不消耗付费搜索；不要为配置检查发起真实搜索。接口见 [Host 执行说明](../runtime/local/README.md#研究网页网关)，运行干预的逐次批准见 [操作者文档](operator-supervision.md)。

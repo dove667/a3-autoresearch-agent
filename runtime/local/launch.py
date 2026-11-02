@@ -39,6 +39,7 @@ from runtime.local.recovery import stage_recovery
 from runtime.local.run_resume import load_resume_state
 from runtime.local.run_state import RunLease, RunStateStore
 from runtime.local.run_supervisor import RunSupervisor
+from runtime.local.web_gateway import WebConfig, WebGateway
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -451,7 +452,9 @@ def launch_run(args, run: Path, a3: Path, image: str, start) -> None:
             raise ValueError("Human feedback currently requires a generated Harness main session")
         registration = human_feedback.register(args.feedback_file, actor)
         print("Human feedback registered: " + json.dumps(registration), flush=True)
+    web_gateway = WebGateway(run / ".host" / "web", WebConfig.from_env())
     app = create_app(
+        web_gateway=web_gateway,
         model_name=os.environ["MODEL_NAME"],
         sessions={token: run_id},
         forward_model=litellm.responses,
@@ -490,6 +493,7 @@ def launch_run(args, run: Path, a3: Path, image: str, start) -> None:
             json.dumps(
                 {
                     "gateway": endpoint,
+                    "web": web_gateway.status(),
                     "workspace": "/workspace",
                     "jobs": "POST /jobs {command: [...], gpu: bool, files: {relative_path: text}}",
                     "status": "GET /jobs/{job_id}",
@@ -552,6 +556,7 @@ def launch_run(args, run: Path, a3: Path, image: str, start) -> None:
         deployment = json.loads((inputs / "deployment.json").read_text())
         deployment["sessions"]["max_active"] = MAX_ACTIVE_CANDIDATES
         deployment["remote_limits"] = remote_limits()
+        deployment["web"] = web_gateway.status()
         (inputs / "deployment.json").write_text(json.dumps(deployment, indent=2))
     config = yaml.safe_load((inputs / "bootstrap.yaml").read_text())
     if args.verify_deployment:

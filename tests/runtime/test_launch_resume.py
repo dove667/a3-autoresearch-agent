@@ -101,3 +101,7 @@ def test_in_place_resume_keeps_run_and_can_supervise_after_builder_submission(
     assert "suspend" in events and "close" not in events
     assert [p.name for p in tmp_path.iterdir() if p.is_dir()] == [run.name]
     assert json.loads((inputs / "deployment.json").read_text())["sessions"]["max_active"] == 5
+    web = json.loads((inputs / "deployment.json").read_text())["web"]
+    assert web["enabled"] is False
+    assert web["budget"]["search"] == {"limit": 100, "used": 0}
+    assert "api_key" not in json.dumps(web)

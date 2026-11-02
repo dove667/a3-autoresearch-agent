@@ -26,6 +26,7 @@ from runtime.local.evolution import EvolutionState
 from runtime.local.gateway_diagnostics import CURRENT_REQUEST, GatewayDiagnostics
 from runtime.local.input_versions import InputVersions
 from runtime.local.run_state import RunStateStore
+from runtime.local.web_gateway import FetchRequest, SearchRequest, WebConfig, WebError, WebGateway
 
 
 class JobRequest(BaseModel):
@@ -137,6 +138,7 @@ def create_app(
     operator_token: str | None = None,
     resource_monitor: Callable | None = None,
     human_feedback=None,
+    web_gateway=None,
 ) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app):
@@ -349,6 +351,41 @@ def create_app(
                     request["experiment_id"] = experiment
                 return experiment
         raise HTTPException(401, "Invalid experiment token")
+
+    web_service = web_gateway or WebGateway(usage_log.parent / ".host" / "web", WebConfig())
+
+    def web_call(operation, body, authorization):
+        actor = owner(authorization)
+        accepting_resources()
+        try:
+            return web_service.execute(operation, body, actor)
+        except WebError as error:
+            request = CURRENT_REQUEST.get() or {}
+            raise HTTPException(
+                error.status,
+                {
+                    "code": error.code,
+                    "request_id": request.get("request_id"),
+                    "message": error.code.replace("_", " "),
+                },
+            ) from None
+
+    @app.get("/web/status")
+    def web_status(authorization: Annotated[str | None, Header()] = None):
+        owner(authorization)
+        accepting_resources()
+        try:
+            return web_service.status()
+        except WebError as error:
+            raise HTTPException(error.status, {"code": error.code}) from None
+
+    @app.post("/web/search")
+    def web_search(body: SearchRequest, authorization: Annotated[str | None, Header()] = None):
+        return web_call("search", body, authorization)
+
+    @app.post("/web/fetch")
+    def web_fetch(body: FetchRequest, authorization: Annotated[str | None, Header()] = None):
+        return web_call("fetch", body, authorization)
 
     def deployment_call(operation, *args):
         try:

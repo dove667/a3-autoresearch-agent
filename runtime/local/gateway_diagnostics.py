@@ -39,6 +39,7 @@ class GatewayDiagnostics:
             area = request.url.path.split("/")[1]
             entry["request_kind"] = {
                 "v1": "model",
+                "web": "research_web",
                 "jobs": "remote_job",
                 "sessions": "candidate",
                 "versions": "candidate_version",
