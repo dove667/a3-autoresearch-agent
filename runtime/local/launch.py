@@ -32,8 +32,14 @@ from runtime.local.continuation import (
     resolve_harness_start,
 )
 from runtime.local.host_gateway import create_app
-from runtime.local.human_feedback import HumanFeedback
-from runtime.local.input_versions import PHASES, InputVersions, resolve_phase
+from runtime.local.human_feedback import MAX_FEEDBACK_BYTES, HumanFeedback
+from runtime.local.input_versions import (
+    PHASES,
+    TASK_PROFILES,
+    InputVersions,
+    resolve_phase,
+    resolve_task_profile,
+)
 from runtime.local.isolation_fixture import IsolationFixtures
 from runtime.local.recovery import stage_recovery
 from runtime.local.run_resume import load_resume_state
@@ -248,6 +254,102 @@ def supervised_sessions(client: httpx.Client) -> list[dict]:
     return response.json()["sessions"]
 
 
+def prepare_task_start(
+    start,
+    phase: str,
+    task_profile: str,
+    goal: str,
+    *,
+    initial_feedback: str | None = None,
+    initial_feedback_source: Path | None = None,
+):
+    """Initialize copied task state; retain source snapshots and historical evidence."""
+    if initial_feedback is not None and (phase != "phase-one" or task_profile != "web-extension"):
+        raise ValueError("Initial feedback requires a new web-extension task")
+    if task_profile == "web-extension":
+        if phase != "phase-one" or not start.previous_run or not start.source_version:
+            raise ValueError("web-extension requires a phase-one retained run source")
+        if resolve_phase(start.previous_run) != "phase-one":
+            raise ValueError("web-extension requires a phase-one retained run source")
+        fresh, context = prepare_fresh_task(start, goal)
+        context["inherited_acceptance"] = {
+            "checks": ["A", "B", "C", "D"],
+            "status": "historical-not-recertified",
+            "source_run": str(start.previous_run.resolve()),
+            "source_version": start.source_version,
+        }
+        initial_state = {
+            "task.txt": goal,
+            "trajectory.jsonl": "",
+            "progress.md": "# Fresh web-extension task\n\nE is pending; historical A-D is not recertified.\n",
+            "run-outcome.json": json.dumps(
+                {
+                    "status": "continue",
+                    "reason": "Fresh web-extension task requires new E evidence and outcome",
+                }
+            ),
+        }
+        context["initialized_task_files"] = {}
+        for name, current in initial_state.items():
+            if name not in fresh.files:
+                continue
+            archive = "inherited-task-state/" + name
+            if any(
+                path == archive or path.startswith(archive + "/") or archive.startswith(path + "/")
+                for path in fresh.files
+            ):
+                raise ValueError(f"Inherited task archive collision: {archive}")
+            previous = fresh.files[name]
+            context["initialized_task_files"][name] = {
+                "source_sha256": hashlib.sha256(previous.encode()).hexdigest(),
+                "archive_path": archive,
+                "source_run": str(start.previous_run.resolve()),
+                "source_version": start.source_version,
+            }
+            fresh.files[archive] = previous
+            fresh.files[name] = current
+        if "run-outcome.json" in context["initialized_task_files"]:
+            terminal = context["initialized_task_files"]["run-outcome.json"]
+            context["retired_terminal"] = {
+                "file": "run-outcome.json",
+                "sha256": terminal["source_sha256"],
+                "source_run": terminal["source_run"],
+                "source_version": terminal["source_version"],
+            }
+        if initial_feedback is not None:
+            content = initial_feedback.encode("utf-8")
+            HumanFeedback.validate_content(content)
+            if any(
+                path == "initial-feedback.md" or path.startswith("initial-feedback.md/")
+                for path in fresh.files
+            ):
+                raise ValueError("Initial feedback file collision")
+            sha256 = hashlib.sha256(content).hexdigest()
+            messages = json.loads(fresh.files["checkpoint.json"])
+            messages.append(
+                {
+                    "role": "user",
+                    "content": f"Initial human feedback (sha256: {sha256})\n\n{initial_feedback}",
+                }
+            )
+            fresh.files["checkpoint.json"] = json.dumps(messages, ensure_ascii=False)
+            fresh.files["initial-feedback.md"] = initial_feedback
+            context["initial_message_count"] = len(messages)
+            context["initial_feedback"] = {
+                "sha256": sha256,
+                "source": str(initial_feedback_source.resolve())
+                if initial_feedback_source
+                else None,
+                "bytes": len(content),
+                "file": "initial-feedback.md",
+                "mode": "initial-user-input",
+            }
+        return fresh, context
+    if phase == "phase-two":
+        return prepare_fresh_task(start, goal)
+    return start, None
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -272,9 +374,19 @@ def main() -> None:
         help="Select stage inputs; new runs default to phase-one, resumes keep their stage",
     )
     parser.add_argument(
+        "--task-profile",
+        choices=TASK_PROFILES,
+        help="New tasks default to standard; resumes keep their recorded profile",
+    )
+    parser.add_argument(
         "--feedback-file",
         type=Path,
         help="On resume, explicitly add a human feedback file before the next main model call",
+    )
+    parser.add_argument(
+        "--initial-feedback-file",
+        type=Path,
+        help="Approved initial user input for a new retained web-extension task",
     )
     args = parser.parse_args()
     if args.feedback_file and not args.resume_from:
@@ -283,13 +395,51 @@ def main() -> None:
         parser.error("--run-harness cannot be combined with --resume-from or --verify-deployment")
     try:
         args.phase = resolve_phase(args.resume_from, args.phase)
+        args.task_profile = resolve_task_profile(args.resume_from, args.task_profile)
     except ValueError as error:
         parser.error(str(error))
+    if args.initial_feedback_file and (
+        not args.run_harness
+        or args.resume_from
+        or args.check
+        or args.verify_deployment
+        or args.phase != "phase-one"
+        or args.task_profile != "web-extension"
+    ):
+        parser.error("--initial-feedback-file requires a new phase-one web-extension --run-harness")
     if args.phase == "phase-two" and not (args.run_harness or args.resume_from):
         parser.error("phase-two requires --run-harness or a phase-two --resume-from")
     if args.phase == "phase-two" and args.verify_deployment:
         parser.error("--verify-deployment is a phase-one readiness check")
-    start = resolve_harness_start(args.run_harness) if args.run_harness else None
+    if args.task_profile == "web-extension":
+        if args.phase != "phase-one" or args.verify_deployment:
+            parser.error("web-extension requires phase-one and is not a deployment readiness check")
+        if not (args.run_harness or args.resume_from):
+            parser.error("web-extension requires --run-harness or a web-extension --resume-from")
+        if args.resume_from and not (args.resume_from / "startup.json").is_file():
+            parser.error("web-extension resume requires an existing recorded run")
+        if args.run_harness and not (args.run_harness / "retained.json").is_file():
+            parser.error("web-extension requires an existing retained run source")
+    args.initial_feedback = None
+    try:
+        if args.initial_feedback_file:
+            with args.initial_feedback_file.open("rb") as stream:
+                args.initial_feedback = HumanFeedback.validate_content(
+                    stream.read(MAX_FEEDBACK_BYTES + 1)
+                )
+        start = resolve_harness_start(args.run_harness) if args.run_harness else None
+        if args.task_profile == "web-extension" and start:
+            # Validate source and checkpoint before deployment or resource access.
+            prepare_task_start(
+                start,
+                args.phase,
+                args.task_profile,
+                "",
+                initial_feedback=args.initial_feedback,
+                initial_feedback_source=args.initial_feedback_file,
+            )
+    except (ValueError, OSError) as error:
+        parser.error(str(error))
     load_dotenv(os.environ.get("A3_RSI_ENV_FILE", ROOT / ".env"), override=True)
     required = (
         "MODEL_NAME",
@@ -337,7 +487,12 @@ def launch_run(args, run: Path, a3: Path, image: str, start) -> None:
     store = RunStateStore(run)
     saved = None
     resume_context = None
-    input_versions = InputVersions(ROOT, run, phase=getattr(args, "phase", None))
+    input_versions = InputVersions(
+        ROOT,
+        run,
+        phase=getattr(args, "phase", None),
+        task_profile=getattr(args, "task_profile", None),
+    )
     proposed_inputs = input_versions.prepare()
     if resuming:
         startup = json.loads((run / "startup.json").read_text())
@@ -383,8 +538,15 @@ def launch_run(args, run: Path, a3: Path, image: str, start) -> None:
         snapshot_checkout(a3, public_a3)
     input_versions.activate(proposed_inputs, "resume" if resuming else "start")
     task_context = None
-    if package and input_versions.phase == "phase-two":
-        start, task_context = prepare_fresh_task(start, input_versions.contents["goal.md"])
+    if package:
+        start, task_context = prepare_task_start(
+            start,
+            input_versions.phase,
+            input_versions.task_profile,
+            input_versions.contents["goal.md"],
+            initial_feedback=getattr(args, "initial_feedback", None),
+            initial_feedback_source=getattr(args, "initial_feedback_file", None),
+        )
         package = (start.command, start.files)
     public_a3 = run / "public/a3"
     if saved:
@@ -588,6 +750,7 @@ def launch_run(args, run: Path, a3: Path, image: str, start) -> None:
                     {
                         "run_id": run_id,
                         "phase": input_versions.phase,
+                        "task_profile": input_versions.task_profile,
                         "mode": kind,
                         "package": str(args.run_harness or args.resume_from),
                         "parent_run": start.previous_run.name if start.previous_run else None,
@@ -650,6 +813,7 @@ def launch_run(args, run: Path, a3: Path, image: str, start) -> None:
                     {
                         "run_id": run_id,
                         "phase": input_versions.phase,
+                        "task_profile": input_versions.task_profile,
                         "inputs": input_hashes(inputs),
                         "input_manifest": input_versions.manifest,
                         "a3_commit": git(a3, "rev-parse", "HEAD"),

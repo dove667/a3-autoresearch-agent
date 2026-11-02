@@ -75,6 +75,15 @@ $$
 
 这条命令用于人在运行之间主动发起下一轮。单次无人交互运行中，主 Agent 通过 `/evolution/trials` 试运行候选并决定是否交接；两种入口都使用同一套候选版本、Docker 执行、权限与资源管理。Agent 可以自行推进多代，用户无需为每一代重新执行命令。
 
+只给第一阶段保留 Harness 补充联网工具 E 时，使用版本迭代的专用 profile：
+
+```bash
+bash scripts/start-rsi.sh --phase phase-one --task-profile web-extension \
+  --run-harness "artifacts/rsi/<第一阶段保留run-id>"
+```
+
+新 run 保留代码与持久记忆，使用新上下文；历史 A–D 结论带来源继承，不重跑、不重新认证。Harness 自己实现并实际验证工具，E 完成与产物保存后停止，不训练、下载模型或运行 A3／GPU 实验。E 通过不代表旧整轮历史通过；新保留版本可用于第二阶段。普通冷启动和同 run resume 语义不变，详见[补充任务](docs/plans/2026-11-02-phase-one-web-extension.md)与[教程](docs/tutorial.md#只补-e联网工具新-run)。
+
 ## 项目文档
 
 完整入口见 [docs/README.md](docs/README.md)。

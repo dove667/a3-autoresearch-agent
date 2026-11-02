@@ -18,16 +18,22 @@ SHARED_INPUT_SOURCES = {
     "workspace-instructions.md": "configs/prompts/workspace.md",
 }
 PHASES = ("phase-one", "phase-two")
+TASK_PROFILES = ("standard", "web-extension")
 
 
-def input_sources(phase: str) -> dict[str, str]:
+def input_sources(phase: str, task_profile: str = "standard") -> dict[str, str]:
     if phase not in PHASES:
         raise ValueError(f"Unknown phase: {phase}")
+    if task_profile not in TASK_PROFILES:
+        raise ValueError(f"Unknown task profile: {task_profile}")
+    if task_profile == "web-extension" and phase != "phase-one":
+        raise ValueError("web-extension requires phase-one")
+    bundle = "phase-one-web" if task_profile == "web-extension" else phase
     sources = {
         **SHARED_INPUT_SOURCES,
-        "goal.md": f"evals/{phase}/goal.md",
-        "acceptance.md": f"evals/{phase}/acceptance.md",
-        "phase-instructions.md": f"configs/prompts/{phase}.md",
+        "goal.md": f"evals/{bundle}/goal.md",
+        "acceptance.md": f"evals/{bundle}/acceptance.md",
+        "phase-instructions.md": f"configs/prompts/{bundle}.md",
     }
     if phase == "phase-two":
         sources["protocol.md"] = "evals/phase-two/protocol.md"
@@ -49,6 +55,27 @@ def resolve_phase(run: Path | None, requested: str | None = None) -> str:
     if any(previous != phase for previous in recorded):
         raise ValueError("Cannot change phase within a run; start a new run with --run-harness")
     return phase
+
+
+def resolve_task_profile(run: Path | None, requested: str | None = None) -> str:
+    """A profile is immutable within a run; pre-profile runs are standard."""
+    recorded = []
+    paths = (run / "startup.json", run / "inputs/input-manifest.json") if run else ()
+    for path in paths:
+        if path.is_file():
+            saved = json.loads(path.read_text())
+            profile = saved.get("task_profile") or saved.get("input_manifest", {}).get(
+                "task_profile"
+            )
+            recorded.append(profile or "standard")
+    profile = requested or (recorded[0] if recorded else "standard")
+    if profile not in TASK_PROFILES:
+        raise ValueError(f"Unknown task profile: {profile}")
+    if any(previous != profile for previous in recorded):
+        raise ValueError(
+            "Cannot change task profile within a run; start a new run with --run-harness"
+        )
+    return profile
 
 
 VERSION = re.compile(
@@ -82,11 +109,18 @@ def validate_bootstrap(text: str) -> None:
 
 
 class InputVersions:
-    def __init__(self, source_root: Path, run: Path, phase: str | None = None):
+    def __init__(
+        self,
+        source_root: Path,
+        run: Path,
+        phase: str | None = None,
+        task_profile: str | None = None,
+    ):
         self.source_root = source_root
         self.run = run
         self.phase = resolve_phase(run, phase)
-        self.sources = input_sources(self.phase)
+        self.task_profile = resolve_task_profile(run, task_profile)
+        self.sources = input_sources(self.phase, self.task_profile)
         self.lock = threading.RLock()
         self.manifest: dict = {}
         self.contents: dict[str, str] = {}
@@ -120,13 +154,21 @@ class InputVersions:
                         raise ValueError(f"{name} changed without a version increment")
             validate_bootstrap(contents["bootstrap.yaml"])
             digest = hashlib.sha256(json.dumps(files, sort_keys=True).encode()).hexdigest()
-            return {"phase": self.phase, "digest": digest, "files": files, "contents": contents}
+            return {
+                "phase": self.phase,
+                "task_profile": self.task_profile,
+                "digest": digest,
+                "files": files,
+                "contents": contents,
+            }
 
     def activate(self, proposal: dict, event: str) -> dict:
         """Publish an already selected bundle; callers own update authorization."""
         with self.lock:
             if proposal["phase"] != self.phase:
                 raise ValueError("Cannot activate another phase within a run")
+            if proposal.get("task_profile", "standard") != self.task_profile:
+                raise ValueError("Cannot activate another task profile within a run")
             revisions = self.run / "input-revisions"
             revisions.mkdir(parents=True, exist_ok=True)
             legacy = revisions / "legacy"
@@ -146,6 +188,7 @@ class InputVersions:
                     index += 1
             manifest = {
                 "phase": self.phase,
+                "task_profile": self.task_profile,
                 "revision": directory.name,
                 "digest": proposal["digest"],
                 "files": proposal["files"],
@@ -232,7 +275,7 @@ class InputVersions:
             manifest = deepcopy(self.manifest)
             instructions = (
                 f"当前 Agent 输入：{manifest['revision']}，内容标识 {manifest['digest']}。\n"
-                f"当前阶段：{self.phase}。目标、验收和阶段协议以以下当前版本为准；"
+                f"当前阶段：{self.phase}；任务配置：{self.task_profile}。目标、验收和阶段协议以以下当前版本为准；"
                 "历史上下文中的旧版内容保留供追溯。\n"
                 "执行接口与其他说明见 /run/input/input-manifest.json 所列当前文件；"
                 "连续读取多个输入文件时，前后必须都是status=active且revision与generation相同；"

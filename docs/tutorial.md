@@ -154,6 +154,25 @@ $$
 
 `--run-harness` 也接受带 `run.json` 的源码目录，例如归档快照。这适用于首次导入一个可运行版本；自动跨轮接续通常直接使用 run 目录。导入源码目录时不会凭空附带某次历史运行。
 
+### 只补 E：联网工具新 run
+
+在已批准的任务范围内，明确选择第一阶段保留 run：
+
+```bash
+bash scripts/start-rsi.sh --phase phase-one --task-profile web-extension \
+  --run-harness "artifacts/rsi/<第一阶段保留run-id>"
+```
+
+这是新 run，不是 resume 旧 self-stop 会话，也不重新冷启动 mini。代码、持久记忆和原恢复／身份能力沿用；新工作副本初始化新模型上下文与 checkpoint，源快照不改。旧记录经只读索引按需检索，不预加载全量历史。A–D 已记录结论带来源继承，标为 historical-not-recertified，不重跑、不重新认证；原 Host 归档缺口和 retained readiness 不等于本轮独立 A–D 审计。
+
+新副本中已知旧任务状态先归档到 `inherited-task-state/` 并记录摘要：task.txt 使用 E 目标，trajectory 从空文件继续追加，旧 progress 完成状态转为继承记录，旧 run-outcome 改为 continue。仅处理新副本，源快照和长期记忆不改；同 run resume 保留本轮状态。Harness 自己更新 resume／continuation 的保存逻辑，确保新工具模块、记忆及必要源码／来源引用不会被旧固定清单遗漏或覆盖。
+
+只加载 [E 目标](../evals/phase-one-web/goal.md)、[E 验收](../evals/phase-one-web/acceptance.md)和[专用协议](../configs/prompts/phase-one-web.md)。保留 Harness 自己实现工具并让实际模型成功 search、fetch 公开正文，完成来源引用和离线错误 fixture；不训练、下载模型／PDF、运行 A3 或 GPU 实验。只做必要局部检查，不强制完整 H0/H1 或 A–D 循环。完成 E、结果包与 continuation 后退出；配置、key、额度或网络阻断时保存 blocked 后停止，不能把离线测试当真实通过。
+
+此 profile 仅适用于第一阶段 retained 来源，不接受冷启动或第二阶段。普通第一阶段仍按原 A–D 目标运行。恢复本轮中断用 `--resume-from <本轮目录>`，自动保持 web-extension profile 与本轮上下文；显式冲突 profile 被拒绝。E 完成的新保留结果可作为 `--phase phase-two --run-harness <E轮目录>` 的来源，但 E 完成不认证前轮整个历史。配置沿用项目根目录私有 `.env`，无需分享 key。启动、发布反馈、热加载或中断须遵守[操作者授权规则](operator-supervision.md)。
+
+如用户已批准本轮初始反馈，可在上述命令追加 `--initial-feedback-file <已批准的UTF-8文件>`。文件须非空且不超过 64 KiB；它仅适用于新建第一阶段 web-extension retained run，不能与 resume 或旧 `--feedback-file` 混用。新 checkpoint 包含 E 目标与初始反馈两个 user messages，新副本保存 `initial-feedback.md` 及 task_context 中的摘要、字节数和来源审计。未提供时只有目标消息；没有 profile 固定反馈，不自动注入私有内容。这是新任务输入，不冒充运行中的 Host 动态反馈事件；原热加载／反馈审批规则不变。
+
 ### 让本轮结果能够直接用于下一轮
 
 Agent 在结束前，通过已有文件写入能力留下 `continuation.json`：
@@ -203,6 +222,8 @@ $$
 | `--resume-from <run目录>` | 保留会话身份、代码和对话；加载启动时当前目标、验收与 Prompt 后继续 |
 | `--run-harness <目录>` | 必须显式指定 run 或源码 manifest 目录；加载该结果并版本化当前目标 |
 | `--phase {phase-one,phase-two}` | 新运行默认第一阶段；恢复自动沿用原阶段；第二阶段需明确保留来源 |
+| `--task-profile {standard,web-extension}` | 默认 standard；web-extension 仅从第一阶段 retained 新建 E-only run；恢复沿用原 profile |
+| `--initial-feedback-file <文件>` | 可选已批准初始反馈，仅新建第一阶段 web-extension retained run；非空 UTF-8，最多 64 KiB |
 | `--check` | 执行部署预检后退出，不启动 Agent；可与 `--run-harness` 一起校验所选起点 |
 | `--verify-deployment` | 运行有界的真实 Agent 部署检查：最多 24 次模型调用、600 秒 |
 | `-h`、`--help` | 显示启动器帮助 |
@@ -253,7 +274,7 @@ Docker 只挂载自己的源码目录，Git 对象库和其他 worktree 留在 H
 
 局部功能验证用普通 `/sessions` worker，事先提供输入、工具、期望结果和停止条件；局部测试完成后可退出。将有效改动整合进当前完整 Harness，再使用 `/evolution/trials` 测试能否接任；这份候选须保留已有能力与自主执行循环。主 Agent 启动前检查自己提供的任务、工具和源码是否完整，并把两类协议交给下一代。
 
-每代主 Agent 先提出 Harness 改动和验收清单，启动一个完整候选进行实际执行；检查结果后决定保留或拒绝。拒绝回到当前版本，保留则让同一候选进程成为下一代主 Agent，原主 Agent 保存交接后退出。无需人工提供下一轮任务。Policy 优化可以在这些迭代之间进行。
+常规演化中，主 Agent 先提出 Harness 改动和验收清单，启动一个完整候选进行实际执行；检查结果后决定保留或拒绝。拒绝回到当前版本，保留则让同一候选进程成为下一代主 Agent，原主 Agent 保存交接后退出。无需人工提供下一轮任务。Policy 优化可以在这些迭代之间进行。E-only profile 只做实现与实际加载所需的局部验证；需要主身份更替时遵守此协议，不无条件追加完整演化或 Policy 实验。
 
 `evolution.json` 记录主身份、版本化清单、候选版本和选择理由。原始轨迹与各 session 代码仍保留在 run 中。主身份交接不等同于故障 resume：新一代的消息和记忆如何承接由 SWE 实现；网络故障恢复则要求显式 checkpoint。详见 [执行协议](../runtime/local/README.md#主身份与候选试运行)。
 
@@ -296,8 +317,8 @@ A3_REMOTE_GPU_CAPACITY_MB 与 A3_REMOTE_GPU_HEADROOM_MB 分别设置每卡可预
 
 ## 第二阶段按需网页研究
 
-可选 Tavily key 只在本机 Host `.env` 配置，具体位置、账户用量与无 per-run 累计上限语义见[环境配置](setup.md#可选研究网页网关tavily)。默认关闭。网关只提供受控 HTTP 能力：新第二阶段 run 的 H1 自己实现 function 工具适配与注册，并通过现有局部测试和接任流程验证；旧 Harness 不会自动出现新工具，无需重跑第一阶段。
+可选 Tavily key 只在本机 Host `.env` 配置，具体位置、账户用量与无 per-run 累计上限语义见[环境配置](setup.md#可选研究网页网关tavily)。默认关闭。网关只提供受控 HTTP 能力：H1 自己实现 function 工具适配与注册，并通过必要的局部测试和实际加载验证；需要主身份更替时遵守现有接任流程。可先用上面的第一阶段 web-extension profile 补 E，再将新保留版本用于第二阶段；旧 Harness 不会自动出现新工具，无需重跑 A–D。
 
 先核查记忆与已有资料，只针对模型/配置选择、训练调参、网络结构、兼容性或异常闭环中的具体缺口检索；资料转成预登记假设，再用本地可比实验检验。不是每个实验都必须联网；各代责任、科学指标和阈值不变。网页内容不可信，私有日志与源码不能发给搜索服务，模型与依赖仍由人类离线准备。
 
-本次实现不启动新实验、不热加载或中断现有 run。之后启动须明确选定保留来源并使用新的阶段二 run；低频观察与反馈不能替代 Agent 自主研究，每次热加载、反馈发布或运行中断仍需另行明确批准。
+文档与启动入口本身不代表已完成真实联网验证，也不自动热加载或中断现有 run。启动须明确选定保留来源及已批准的 profile／阶段；低频观察与反馈不能替代 Agent 自主研究，每次热加载、反馈发布或运行中断仍遵守操作者批准范围。

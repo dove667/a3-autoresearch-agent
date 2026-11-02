@@ -1,6 +1,6 @@
 # Agent 输入的版本与加载
 
-Version: 0.3.0
+Version: 0.3.1
 
 本文件面向维护输入的部署方；运行监督与审批见 [操作者文档](operator-supervision.md)。目标、验收、Prompt 和执行说明由部署方维护。新启动、`--resume-from` 和 `--run-harness` 都采用启动时仓库里的当前文件，包括未提交的工作区内容。恢复保留原 run、身份、生成的 Harness 和模型对话历史；部署方 system Prompt 与所选阶段协议更新为当前版本。
 
@@ -33,6 +33,8 @@ Version: 0.3.0
 
 `<phase>` 为 `phase-one` 或 `phase-two`。两个阶段的目标、验收和 Prompt 对称维护；每个输入清单只包含一个阶段。阶段一不加载阶段二文件，阶段二不加载阶段一 Prompt，也不叠加 common Prompt。启动参数与工作区说明共用固定接口，不包含阶段验收目标。
 
+例外是显式 `--phase phase-one --task-profile web-extension`：加载 `evals/phase-one-web/{goal,acceptance}.md` 和 `configs/prompts/phase-one-web.md`，映射到相同 `/run/input` 文件名，三者正文直接注入主 Agent／接任候选，execution 保持可读。它不叠加普通第一阶段 A–D Prompt 或第二阶段 protocol；普通冷启动仍使用 `standard` profile 的原 A–D 输入。E-only 验收只有 `## E.` 能力项，不把继承元数据解析为新的 A–D pass。
+
 Markdown 在标题之后写 `Version: 0.1.0`；YAML 顶层写 `version: 0.1.0`。这些版本独立维护。任何内容修改都需要递增：兼容性文字修正递增 patch，例如 `0.1.0 → 0.1.1`；能力、协议或验收变化通常递增 minor；不兼容重构递增 major。版本号与 SHA256 同时记录。同一 run 见过的同名同版本文件若内容变化，加载会被拒绝，须先修正版本号。
 
 新增直接发给 Agent 的文件时，添加明确版本，并将其加入 `runtime/local/input_versions.py` 的输入清单。专项 Harness 自己生成的任务、记忆和提示词由 Agent 管理，本规则约束部署方发布的输入。
@@ -40,6 +42,14 @@ Markdown 在标题之后写 `Version: 0.1.0`；YAML 顶层写 `version: 0.1.0`�
 ## 启动与恢复记录
 
 新运行默认 `phase-one`，使用 `--phase phase-two --run-harness <明确来源>` 选择第二阶段。`--resume-from` 自动读取原 run 的阶段，显式指定冲突阶段会拒绝；跨阶段使用新 run。旧记录没有阶段字段时归属阶段一。热加载只更新当前阶段的文件。
+
+联网补充只接受第一阶段明确保留结果，以 `--phase phase-one --task-profile web-extension --run-harness <第一阶段run目录>` 新建运行。`startup.json` 与 input manifest 保存 `task_profile`，缺省为 `standard`；恢复沿用原 profile，冲突选择拒绝，热加载也只更新该 profile。不要 resume 已 self-stop 的旧 run 来补 E。新副本初始化新上下文与 checkpoint，源保留快照不改；同 run resume 保留本轮上下文。`task_context.inherited_acceptance` 记录 A–D 的 `historical-not-recertified`、source_run 与 source_version，仅为来源元数据，不能证明新验收通过或修复原归档缺口。
+
+web-extension 的新副本将已知旧任务状态归档至 `inherited-task-state/`，记录原文件内容摘要与来源；活动 `task.txt` 改为 E 目标，checkpoint 初始化新上下文，append-only trajectory 从空轨迹开始，旧 progress 完成状态只作继承记录，`run-outcome.json` 改为 continue 并要求新 E 证据，防止旧任务／终态或旧大轨迹污染新任务。`task_context.retired_terminal` 仍留存原终态摘要与来源。源 retained 和只读历史不变，同 run resume 不执行这种新任务初始化。继承的长期记忆不是待清空的旧任务状态。
+
+具体归档只处理已存在的 task.txt、trajectory.jsonl、progress.md、run-outcome.json，不凭空创建缺失文件；`task_context.initialized_task_files` 逐文件记录 source_sha256、archive_path、source_run、source_version。旧 progress 原文保留，活动 progress 标记 E pending／历史未重新认证。归档路径或祖先／后代冲突时失败关闭，不覆盖材料。
+
+可选 `--initial-feedback-file` 只用于已批准的新建第一阶段 web-extension retained run 输入，不能与 resume 或旧 `--feedback-file` 混用。读取非空 UTF-8、最多 64 KiB 的文件，在 fresh checkpoint 的目标消息后加入第二个 user message，并在新副本写 `initial-feedback.md`、在 task_context 留存摘要／字节数／来源。省略时仍只有目标消息，不自动附加固定或私有反馈。它不是动态 Host feedback 登记，不改既有运行反馈、热加载及其审批规则。
 
 `startup.json` 和 `inputs/input-manifest.json` 保存 `phase`。`inputs/input-manifest.json` 列出整套输入的快照编号 revision、发布尝试序号 generation，以及每个文件的源路径、语义版本和 SHA256。revision 定位一组确定的文件；generation 在每次发布尝试时增加，更新失败回到旧快照也会增加，让读取程序知道期间发生过更新。两者均由 Host 自动维护，开发者维护的是各文件的语义版本。
 

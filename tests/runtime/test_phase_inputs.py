@@ -12,9 +12,12 @@ from runtime.local.input_versions import InputVersions
 ROOT = Path(__file__).resolve().parents[2]
 
 
-@pytest.mark.parametrize("phase", ["phase-one", "phase-two"])
-def test_only_selected_phase_enters_model_request(tmp_path, phase):
-    versions = InputVersions(ROOT, tmp_path / "run", phase=phase)
+@pytest.mark.parametrize(
+    "phase,task_profile",
+    [("phase-one", "standard"), ("phase-two", "standard"), ("phase-one", "web-extension")],
+)
+def test_only_selected_phase_enters_model_request(tmp_path, phase, task_profile):
+    versions = InputVersions(ROOT, tmp_path / "run", phase=phase, task_profile=task_profile)
     manifest = versions.activate(versions.prepare(), "start")
     calls = []
     client = TestClient(
@@ -35,14 +38,19 @@ def test_only_selected_phase_enters_model_request(tmp_path, phase):
     )
     assert result.status_code == 200
     assert manifest["phase"] == phase
+    assert manifest["task_profile"] == task_profile
+    bundle = "phase-one-web" if task_profile == "web-extension" else phase
     files = manifest["files"]
-    assert files["phase-instructions.md"]["source"] == f"configs/prompts/{phase}.md"
-    assert files["goal.md"]["source"] == f"evals/{phase}/goal.md"
+    assert files["phase-instructions.md"]["source"] == f"configs/prompts/{bundle}.md"
+    assert files["goal.md"]["source"] == f"evals/{bundle}/goal.md"
     assert "common-instructions.md" not in files
     instructions = calls[-1]["instructions"]
-    assert (ROOT / f"configs/prompts/{phase}.md").read_text() in instructions
+    assert (ROOT / f"configs/prompts/{bundle}.md").read_text() in instructions
     other = "phase-one" if phase == "phase-two" else "phase-two"
     assert (ROOT / f"configs/prompts/{other}.md").read_text() not in instructions
+    if task_profile == "web-extension":
+        assert manifest["acceptance_checks"] == ["E"]
+        assert (ROOT / "configs/prompts/phase-one.md").read_text() not in instructions
     if phase == "phase-two":
         assert (ROOT / "evals/phase-two/protocol.md").read_text() in instructions
     else:

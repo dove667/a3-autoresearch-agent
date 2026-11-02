@@ -9,10 +9,13 @@ from runtime.local import launch
 from runtime.local.run_state import RunStateStore
 
 
-@pytest.mark.parametrize("phase", ["phase-one", "phase-two"])
+@pytest.mark.parametrize(
+    "phase,task_profile",
+    [("phase-one", "standard"), ("phase-two", "standard"), ("phase-one", "web-extension")],
+)
 @pytest.mark.parametrize("submitted_builder", [False, True])
 def test_in_place_resume_keeps_run_and_can_supervise_after_builder_submission(
-    tmp_path, monkeypatch, submitted_builder, phase
+    tmp_path, monkeypatch, submitted_builder, phase, task_profile
 ):
     run = tmp_path / "run-original-timestamp"
     inputs = run / "inputs"
@@ -33,6 +36,7 @@ def test_in_place_resume_keeps_run_and_can_supervise_after_builder_submission(
     startup = {
         "run_id": run.name,
         "phase": phase,
+        **({"task_profile": task_profile} if task_profile != "standard" else {}),
         "mode": "rsi",
         "inputs": {name: hashlib.sha256(text.encode()).hexdigest() for name, text in files.items()},
     }
@@ -95,6 +99,11 @@ def test_in_place_resume_keeps_run_and_can_supervise_after_builder_submission(
     )
     assert (run / "startup.json").read_bytes() == original_startup
     assert json.loads((inputs / "input-manifest.json").read_text())["phase"] == phase
+    assert json.loads((inputs / "input-manifest.json").read_text())["task_profile"] == task_profile
+    if task_profile == "web-extension":
+        assert json.loads((inputs / "input-manifest.json").read_text())["acceptance_checks"] == [
+            "E"
+        ]
     assert store.load()["run_id"] == run.name
     assert store.load()["status"] == "suspended"
     assert ("resume", actor) in events
