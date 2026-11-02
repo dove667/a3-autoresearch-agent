@@ -388,3 +388,39 @@ def test_watcher_removes_only_exited_jobs_temporary_files(tmp_path, monkeypatch)
     assert not temporary.exists()
     assert (store.outputs(job) / "checkpoint").read_text() == "persistent"
     assert store.load(job["job_id"], "owner")["status"] == "completed"
+
+
+@pytest.mark.parametrize("gpu", [False, True])
+def test_gpu_jobs_select_readonly_nvidia_egl_vendor(tmp_path, monkeypatch, gpu):
+    import json
+    from argparse import Namespace
+
+    runtime = load_runtime()
+    store = runtime.JobStore(tmp_path / "runtime")
+    job = store.create("owner", ["true"], gpu, {})
+    job["gpu_uuid"] = "GPU-selected" if gpu else None
+    calls = []
+    monkeypatch.setattr(
+        runtime,
+        "docker",
+        lambda arguments: (
+            calls.append(arguments) or subprocess.CompletedProcess(arguments, 0, "container\n", "")
+        ),
+    )
+    runtime.create_container(
+        store, job, Namespace(cpus=16, memory="64g", pids_limit=1024, image="test")
+    )
+    arguments = calls[0]
+    vendor = MODULE_PATH.with_name("nvidia_egl_vendor.json")
+    mount = f"type=bind,source={vendor},target=/run/a3-egl/nvidia.json,readonly"
+    setting = "__EGL_VENDOR_LIBRARY_FILENAMES=/run/a3-egl/nvidia.json"
+    assert (mount in arguments) is gpu
+    assert (setting in arguments) is gpu
+    if gpu:
+        assert json.loads(vendor.read_text()) == {
+            "file_format_version": "1.0.0",
+            "ICD": {"library_path": "libEGL_nvidia.so.0"},
+        }
+        assert arguments[arguments.index("--gpus") + 1] == "device=GPU-selected"
+    assert arguments[arguments.index("--network") + 1] == "none"
+    assert "ALL" in arguments and "no-new-privileges" in arguments

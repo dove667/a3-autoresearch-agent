@@ -166,3 +166,14 @@ prepare_image.py 从部署方提供的 A3 checkout 导出真实 HEAD 的浅对�
 `--tmp-root` 指定数据盘上的临时根目录；省略时采用执行服务器的 `TMPDIR`，两者均未设置则使用运行根目录下的 `temporary/`。Host 为每个作业创建独立目录并仅将该目录挂载为 `/job-tmp`；`TMPDIR`、`TMP`、`TEMP`、`HOME` 和可写缓存指向这里。Docker 根文件系统只读，`/tmp` 不提供可写挂载，硬编码该路径的程序应改用标准临时目录接口。临时文件计入所属 run 的存储额度，作业退出后回收；需恢复的 checkpoint 和产物写入 `/outputs` 或 `/workspace`。不同作业不共享临时目录。
 
 Host 环境变量 `A3_REMOTE_CPUS`、`A3_REMOTE_MEMORY`、`A3_REMOTE_PIDS_LIMIT`、`A3_REMOTE_TMP_ROOT` 对应这些参数。新配置用于新建作业；已运行作业的挂载与环境保持原样。Docker daemon 自身的元数据和有界日志仍位于其配置的数据目录，若要迁移该目录，应由服务器管理员另行安排。
+
+### NVIDIA EGL discovery
+
+GPU jobs mount the controller's `nvidia_egl_vendor.json` read-only and set
+`__EGL_VENDOR_LIBRARY_FILENAMES` to that descriptor. This selects the NVIDIA EGL
+implementation already injected by the NVIDIA container runtime, even when an
+image only contains Mesa's vendor descriptor. Deploy this file alongside
+`remote_jobs.py`. CPU jobs retain their image's default discovery behavior.
+This does not install drivers, change GPU allocation, or relax container isolation.
+Verify `GL_VENDOR` and `GL_RENDERER` inside a GPU job; successful context creation
+alone can also indicate software rendering.

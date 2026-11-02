@@ -561,7 +561,16 @@ def create_container(store: JobStore, job: dict, args) -> str:
         source = exports.data_path(job["experiment_id"], identifier)
         arguments += ["--mount", f"type=bind,source={source},target=/inputs/{identifier},readonly"]
     if job["gpu_uuid"]:
-        arguments += ["--gpus", f"device={job['gpu_uuid']}"]
+        # Driver libraries can be injected without their GLVND discovery descriptor.
+        vendor = Path(__file__).resolve().with_name("nvidia_egl_vendor.json")
+        arguments += [
+            "--gpus",
+            f"device={job['gpu_uuid']}",
+            "--mount",
+            f"type=bind,source={vendor},target=/run/a3-egl/nvidia.json,readonly",
+            "--env",
+            "__EGL_VENDOR_LIBRARY_FILENAMES=/run/a3-egl/nvidia.json",
+        ]
     return docker([*arguments, args.image, *job["command"]]).stdout.strip()
 
 
