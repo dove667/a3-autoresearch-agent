@@ -177,3 +177,7 @@ image only contains Mesa's vendor descriptor. Deploy this file alongside
 This does not install drivers, change GPU allocation, or relax container isolation.
 Verify `GL_VENDOR` and `GL_RENDERER` inside a GPU job; successful context creation
 alone can also indicate software rendering.
+
+`verify_remote.py` also checks the vendor and renderer in a current MuJoCo EGL
+context inside its GPU camera job. A Mesa/llvmpipe fallback fails verification
+even when camera images have the expected dimensions.

@@ -9,6 +9,23 @@ import sys
 import time
 from pathlib import Path
 
+# Executed inside the GPU job, using the same MuJoCo EGL path as camera rendering.
+NVIDIA_EGL_PROBE = """import json
+import mujoco
+from OpenGL import GL
+context = mujoco.GLContext(16, 16)
+try:
+    context.make_current()
+    vendor = (GL.glGetString(GL.GL_VENDOR) or b'').decode('utf-8', errors='replace')
+    renderer = (GL.glGetString(GL.GL_RENDERER) or b'').decode('utf-8', errors='replace')
+    print(json.dumps({'egl_vendor': vendor, 'egl_renderer': renderer}), flush=True)
+    if ('nvidia' not in vendor.lower() or 'nvidia' not in renderer.lower()
+            or any(name in renderer.lower() for name in ('llvmpipe', 'softpipe'))):
+        raise RuntimeError('NVIDIA hardware EGL required; vendor=' + vendor + '; renderer=' + renderer)
+finally:
+    context.free()
+"""
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -157,7 +174,8 @@ print(torch.__version__, torch.cuda.get_device_name(0), 'CUDA passed')
         records["gpu"] = result
         render = submit(
             f"{prefix}-render",
-            """import json
+            NVIDIA_EGL_PROBE
+            + """import json
 import subprocess
 from pathlib import Path
 from PIL import Image
