@@ -9,7 +9,12 @@ from fastapi.testclient import TestClient
 from runtime.local.host_gateway import create_app
 from runtime.local.input_versions import InputVersions, input_sources
 
-PROFILES = [("phase-one", "standard"), ("phase-one", "web-extension"), ("phase-two", "standard")]
+PROFILES = [
+    ("phase-one", "standard"),
+    ("phase-one", "web-extension"),
+    ("phase-one", "skills-extension"),
+    ("phase-two", "standard"),
+]
 
 
 def source_bundle(tmp_path, phase="phase-one", profile="standard"):

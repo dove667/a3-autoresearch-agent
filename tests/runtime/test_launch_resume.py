@@ -11,7 +11,12 @@ from runtime.local.run_state import RunStateStore
 
 @pytest.mark.parametrize(
     "phase,task_profile",
-    [("phase-one", "standard"), ("phase-two", "standard"), ("phase-one", "web-extension")],
+    [
+        ("phase-one", "standard"),
+        ("phase-two", "standard"),
+        ("phase-one", "web-extension"),
+        ("phase-one", "skills-extension"),
+    ],
 )
 @pytest.mark.parametrize("submitted_builder", [False, True])
 def test_in_place_resume_keeps_run_and_can_supervise_after_builder_submission(
@@ -100,9 +105,9 @@ def test_in_place_resume_keeps_run_and_can_supervise_after_builder_submission(
     assert (run / "startup.json").read_bytes() == original_startup
     assert json.loads((inputs / "input-manifest.json").read_text())["phase"] == phase
     assert json.loads((inputs / "input-manifest.json").read_text())["task_profile"] == task_profile
-    if task_profile == "web-extension":
+    if task_profile in ("web-extension", "skills-extension"):
         assert json.loads((inputs / "input-manifest.json").read_text())["acceptance_checks"] == [
-            "E"
+            "F" if task_profile == "skills-extension" else "E"
         ]
     assert store.load()["run_id"] == run.name
     assert store.load()["status"] == "suspended"

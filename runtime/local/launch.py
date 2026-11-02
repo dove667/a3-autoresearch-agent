@@ -34,6 +34,7 @@ from runtime.local.continuation import (
 from runtime.local.host_gateway import create_app
 from runtime.local.human_feedback import MAX_FEEDBACK_BYTES, HumanFeedback
 from runtime.local.input_versions import (
+    EXTENSION_PROFILES,
     PHASES,
     TASK_PROFILES,
     InputVersions,
@@ -259,6 +260,32 @@ def supervised_sessions(client: httpx.Client) -> list[dict]:
     return response.json()["sessions"]
 
 
+def validate_skills_source(start) -> None:
+    """Require Host-recorded E success, not a copied Agent outcome template."""
+    source = start.previous_run
+    try:
+        if resolve_task_profile(source) != "web-extension":
+            raise ValueError("Source must be a web-extension run")
+        retained = json.loads((source / "retained.json").read_text())
+        outcome = json.loads((source / "outcome.json").read_text())
+        manifest = outcome.get("input_manifest", {})
+        if (
+            retained.get("status") != "ready"
+            or retained.get("version_id") != start.source_version
+            or outcome.get("status") != "complete"
+            or manifest.get("phase") != "phase-one"
+            or manifest.get("task_profile") != "web-extension"
+            or not isinstance(manifest.get("acceptance_checks"), list)
+            or "E" not in manifest["acceptance_checks"]
+            or outcome.get("acceptance", {}).get("E", {}).get("status") != "passed"
+        ):
+            raise ValueError("Missing successful Host E acceptance or ready retained version")
+    except (OSError, ValueError, TypeError, AttributeError) as error:
+        raise ValueError(
+            f"skills-extension requires a successful retained E source: {error}"
+        ) from error
+
+
 def prepare_task_start(
     start,
     phase: str,
@@ -269,16 +296,22 @@ def prepare_task_start(
     initial_feedback_source: Path | None = None,
 ):
     """Initialize copied task state; retain source snapshots and historical evidence."""
-    if initial_feedback is not None and (phase != "phase-one" or task_profile != "web-extension"):
-        raise ValueError("Initial feedback requires a new web-extension task")
-    if task_profile == "web-extension":
+    if initial_feedback is not None and (
+        phase != "phase-one" or task_profile not in EXTENSION_PROFILES
+    ):
+        raise ValueError("Initial feedback requires a new phase-one extension task")
+    if task_profile in EXTENSION_PROFILES:
         if phase != "phase-one" or not start.previous_run or not start.source_version:
-            raise ValueError("web-extension requires a phase-one retained run source")
+            raise ValueError(f"{task_profile} requires a phase-one retained run source")
         if resolve_phase(start.previous_run) != "phase-one":
-            raise ValueError("web-extension requires a phase-one retained run source")
+            raise ValueError(f"{task_profile} requires a phase-one retained run source")
+        if task_profile == "skills-extension":
+            validate_skills_source(start)
+        check = "F" if task_profile == "skills-extension" else "E"
+        historical = "A-E" if check == "F" else "A-D"
         fresh, context = prepare_fresh_task(start, goal)
         context["inherited_acceptance"] = {
-            "checks": ["A", "B", "C", "D"],
+            "checks": ["A", "B", "C", "D", "E"] if check == "F" else ["A", "B", "C", "D"],
             "status": "historical-not-recertified",
             "source_run": str(start.previous_run.resolve()),
             "source_version": start.source_version,
@@ -286,19 +319,35 @@ def prepare_task_start(
         initial_state = {
             "task.txt": goal,
             "trajectory.jsonl": "",
-            "progress.md": "# Fresh web-extension task\n\nE is pending; historical A-D is not recertified.\n",
+            "progress.md": f"# Fresh {task_profile} task\n\n{check} is pending; historical {historical} is not recertified.\n",
             "run-outcome.json": json.dumps(
                 {
                     "status": "continue",
-                    "reason": "Fresh web-extension task requires new E evidence and outcome",
+                    "reason": f"Fresh {task_profile} task requires new {check} evidence and outcome",
                 }
             ),
         }
+        if task_profile == "skills-extension":
+            if initial_feedback is None and "initial-feedback.md" in fresh.files:
+                for name in ("resume.json", "continuation.json"):
+                    if name in fresh.files:
+                        declaration = json.loads(fresh.files[name])
+                        if "initial-feedback.md" in declaration.get("files", []):
+                            raise ValueError(
+                                "Archiving initial-feedback.md would invalidate explicit manifest "
+                                f"{name}; refusing to produce a dangling file reference"
+                            )
+            initial_state["initial-feedback.md"] = None
         context["initialized_task_files"] = {}
         for name, current in initial_state.items():
             if name not in fresh.files:
                 continue
-            archive = "inherited-task-state/" + name
+            archive_root = (
+                "inherited-task-state/skills-extension/"
+                if task_profile == "skills-extension"
+                else "inherited-task-state/"
+            )
+            archive = archive_root + name
             if any(
                 path == archive or path.startswith(archive + "/") or archive.startswith(path + "/")
                 for path in fresh.files
@@ -312,7 +361,10 @@ def prepare_task_start(
                 "source_version": start.source_version,
             }
             fresh.files[archive] = previous
-            fresh.files[name] = current
+            if current is None:
+                del fresh.files[name]
+            else:
+                fresh.files[name] = current
         if "run-outcome.json" in context["initialized_task_files"]:
             terminal = context["initialized_task_files"]["run-outcome.json"]
             context["retired_terminal"] = {
@@ -391,7 +443,7 @@ def main() -> None:
     parser.add_argument(
         "--initial-feedback-file",
         type=Path,
-        help="Approved initial user input for a new retained web-extension task",
+        help="Approved initial user input for a new retained phase-one extension task",
     )
     args = parser.parse_args()
     if args.feedback_file and not args.resume_from:
@@ -409,22 +461,24 @@ def main() -> None:
         or args.check
         or args.verify_deployment
         or args.phase != "phase-one"
-        or args.task_profile != "web-extension"
+        or args.task_profile not in EXTENSION_PROFILES
     ):
-        parser.error("--initial-feedback-file requires a new phase-one web-extension --run-harness")
+        parser.error("--initial-feedback-file requires a new phase-one extension --run-harness")
     if args.phase == "phase-two" and not (args.run_harness or args.resume_from):
         parser.error("phase-two requires --run-harness or a phase-two --resume-from")
     if args.phase == "phase-two" and args.verify_deployment:
         parser.error("--verify-deployment is a phase-one readiness check")
-    if args.task_profile == "web-extension":
+    if args.task_profile in EXTENSION_PROFILES:
         if args.phase != "phase-one" or args.verify_deployment:
-            parser.error("web-extension requires phase-one and is not a deployment readiness check")
+            parser.error(
+                f"{args.task_profile} requires phase-one and is not a deployment readiness check"
+            )
         if not (args.run_harness or args.resume_from):
-            parser.error("web-extension requires --run-harness or a web-extension --resume-from")
+            parser.error(f"{args.task_profile} requires --run-harness or a matching --resume-from")
         if args.resume_from and not (args.resume_from / "startup.json").is_file():
-            parser.error("web-extension resume requires an existing recorded run")
+            parser.error(f"{args.task_profile} resume requires an existing recorded run")
         if args.run_harness and not (args.run_harness / "retained.json").is_file():
-            parser.error("web-extension requires an existing retained run source")
+            parser.error(f"{args.task_profile} requires an existing retained run source")
     args.initial_feedback = None
     try:
         if args.initial_feedback_file:
@@ -433,7 +487,7 @@ def main() -> None:
                     stream.read(MAX_FEEDBACK_BYTES + 1)
                 )
         start = resolve_harness_start(args.run_harness) if args.run_harness else None
-        if args.task_profile == "web-extension" and start:
+        if args.task_profile in EXTENSION_PROFILES and start:
             # Validate source and checkpoint before deployment or resource access.
             prepare_task_start(
                 start,

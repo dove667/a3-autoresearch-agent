@@ -1,6 +1,6 @@
 # Agent 输入的版本与加载
 
-Version: 0.3.3
+Version: 0.4.0
 
 本文件面向维护输入的部署方；运行监督与审批见 [操作者文档](operator-supervision.md)。目标、验收、Prompt 和执行说明由部署方维护。新启动、`--resume-from` 和 `--run-harness` 都采用启动时仓库里的当前文件，包括未提交的工作区内容。恢复保留原 run、身份、生成的 Harness 和模型对话历史；部署方 system Prompt 与所选阶段协议更新为当前版本。
 
@@ -25,7 +25,7 @@ Version: 0.3.3
 
 `agent-inputs/SOUL.md` 定义跨阶段的研究者角色、主动行动、经验复用与诚实反馈原则；阶段 Prompt 保留具体流程，goal/acceptance/protocol 分别保持目标、完成证据和科学规则职责。agent-inputs/SOUL.md 由 Host 版本化，作为 /run/input/SOUL.md 提供，并进入主身份与接任候选的模型输入，不靠 Agent 偶然发现文件。普通测试 worker 仍由主 Agent 编写具体任务，不自动承担全部研究目标。
 
-Agent 自己积累的 skills 是工作区可复用知识与代码，不是部署方版本化指令或新增权限。实际 E 保留包尚无统一技能发现、加载和保存机制；这些工具能力交给下一轮第一阶段 F，由 Agent 自主实现，设计见 [F 任务草案](plans/2026-11-02-phase-one-skills-f.md)。该草案不是已接入的 F 启动 profile，本次不会实现技能工具或启动实验。
+Agent 自己积累的 skills 是工作区可复用知识与代码，不是部署方版本化指令或新增权限。实际 E 保留包尚无统一技能发现、加载和保存机制；这些工具能力交给下一轮第一阶段 F，由 Agent 自主实现，设计见 [F 任务草案](plans/2026-11-02-phase-one-skills-f.md)。F 的版本化输入已接入 skills-extension profile，但本次不会代写技能工具或启动实验。
 
 SOUL 与 Prompt 发布只提供行为指导，不能证明实际 Agent 已创建、加载或验证 skills。F 完成后还需用真实调用与恢复证据确认；保留清单不能自动替代技能发现和使用。本轮不会修改已完成 E 的保留包，也不自动启动第二阶段或热加载。
 
@@ -61,7 +61,7 @@ web-extension 的新副本将已知旧任务状态归档至 `inherited-task-stat
 
 具体归档只处理已存在的 task.txt、trajectory.jsonl、progress.md、run-outcome.json，不凭空创建缺失文件；`task_context.initialized_task_files` 逐文件记录 source_sha256、archive_path、source_run、source_version。旧 progress 原文保留，活动 progress 标记 E pending／历史未重新认证。归档路径或祖先／后代冲突时失败关闭，不覆盖材料。
 
-可选 `--initial-feedback-file` 只用于已批准的新建第一阶段 web-extension retained run 输入，不能与 resume 或旧 `--feedback-file` 混用。读取非空 UTF-8、最多 64 KiB 的文件，在 fresh checkpoint 的目标消息后加入第二个 user message，并在新副本写 `initial-feedback.md`、在 task_context 留存摘要／字节数／来源。省略时仍只有目标消息，不自动附加固定或私有反馈。它不是动态 Host feedback 登记，不改既有运行反馈、热加载及其审批规则。
+可选 `--initial-feedback-file` 只用于已批准的新建第一阶段 web-extension 或 skills-extension retained run 输入，不能与 resume 或旧 `--feedback-file` 混用。读取非空 UTF-8、最多 64 KiB 的文件，在 fresh checkpoint 的目标消息后加入第二个 user message，并在新副本写 `initial-feedback.md`、在 task_context 留存摘要／字节数／来源。省略时仍只有目标消息，不自动附加固定或私有反馈。它不是动态 Host feedback 登记，不改既有运行反馈、热加载及其审批规则。
 
 `startup.json` 和 `inputs/input-manifest.json` 保存 `phase`。`inputs/input-manifest.json` 列出整套输入的快照编号 revision、发布尝试序号 generation，以及每个文件的源路径、语义版本和 SHA256。revision 定位一组确定的文件；generation 在每次发布尝试时增加，更新失败回到旧快照也会增加，让读取程序知道期间发生过更新。两者均由 Host 自动维护，开发者维护的是各文件的语义版本。
 
@@ -70,6 +70,14 @@ web-extension 的新副本将已知旧任务状态归档至 `inherited-task-stat
 普通挂载与主会话的私有输入挂载同步发布。主 Agent 与接任候选每次模型请求都获得当前阶段 Prompt、目标和验收正文；第二阶段还提供 protocol.md；普通测试 worker 的任务与 Prompt 继续由主 Agent 提供。用量日志记录请求采用的 input_revision、各文件版本与摘要。初始 mini 刷新部署方 system 消息，保留已有用户消息、模型回复和工具结果。
 
 全部 worker 停止后，Host 先关闭更新入口，再按最终生效的验收版本作结构检查，并把该版本清单写入 outcome。历史结果保留各自产生时的版本；变更验收后仅按影响范围判断相关已有结论是否适用，不将其扩为全历史重审。各代交权前核查自己的实验闭环，后继继承已确认结论及证据引用，不承担前任过去的验收责任；最终汇总仍须如实保留未完成与未知。
+
+## 第一阶段 F 的独立输入
+
+`--phase phase-one --task-profile skills-extension --run-harness <E run>` 选择 `agent-inputs/phase-one-skills/{goal,acceptance,instructions}.md`，仍映射到标准 /run/input 文件名，并共享 SOUL 和 execution。只验收 `## F.`，不叠加普通 A–D、E 或第二阶段任务。来源须是完成 E 且有 ready 保留包的第一阶段 web-extension run；不得把仓库模板、Agent 自述或历史 metadata 当作成功来源。
+
+新 F run 沿用源码与持久记忆，初始化新的 F 目标上下文，旧 task、trajectory、progress、run-outcome（存在时）及 initial-feedback 归档到 inherited-task-state/skills-extension/，保留原有归档且不修改源 retained。旧初始反馈不再占用活动文件位置；只有显式提供当次通知才生成新的 initial-feedback.md。A–E 仅作为 historical-not-recertified 来源继承，不能充当本轮新增 pass。可提供当次已批准的 initial feedback；旧 E 的 initial-feedback.md 不自动成为 F 指令。恢复沿原 F profile 与完整上下文，不能通过 resume 把完成 E 切换为 F。
+
+F 输入接入不是技能工具实现；实际模型发现、读取、执行、复用、更新及跨恢复能力须由后续 F 运行提供证据。当前准备工作不授权启动、热加载、训练或第二阶段。
 
 ## 运行期间热加载
 

@@ -14,7 +14,12 @@ ROOT = Path(__file__).resolve().parents[2]
 
 @pytest.mark.parametrize(
     "phase,task_profile",
-    [("phase-one", "standard"), ("phase-two", "standard"), ("phase-one", "web-extension")],
+    [
+        ("phase-one", "standard"),
+        ("phase-two", "standard"),
+        ("phase-one", "web-extension"),
+        ("phase-one", "skills-extension"),
+    ],
 )
 def test_only_selected_phase_enters_model_request(tmp_path, phase, task_profile):
     versions = InputVersions(ROOT, tmp_path / "run", phase=phase, task_profile=task_profile)
@@ -39,7 +44,9 @@ def test_only_selected_phase_enters_model_request(tmp_path, phase, task_profile)
     assert result.status_code == 200
     assert manifest["phase"] == phase
     assert manifest["task_profile"] == task_profile
-    bundle = "phase-one-web" if task_profile == "web-extension" else phase
+    bundle = {"web-extension": "phase-one-web", "skills-extension": "phase-one-skills"}.get(
+        task_profile, phase
+    )
     files = manifest["files"]
     assert files["phase-instructions.md"]["source"] == f"agent-inputs/{bundle}/instructions.md"
     assert files["goal.md"]["source"] == f"agent-inputs/{bundle}/goal.md"
@@ -48,8 +55,10 @@ def test_only_selected_phase_enters_model_request(tmp_path, phase, task_profile)
     assert (ROOT / f"agent-inputs/{bundle}/instructions.md").read_text() in instructions
     other = "phase-one" if phase == "phase-two" else "phase-two"
     assert (ROOT / f"agent-inputs/{other}/instructions.md").read_text() not in instructions
-    if task_profile == "web-extension":
-        assert manifest["acceptance_checks"] == ["E"]
+    if task_profile in ("web-extension", "skills-extension"):
+        assert manifest["acceptance_checks"] == (
+            ["F"] if task_profile == "skills-extension" else ["E"]
+        )
         assert (ROOT / "agent-inputs/phase-one/instructions.md").read_text() not in instructions
     if phase == "phase-two":
         assert (ROOT / "agent-inputs/phase-two/protocol.md").read_text() in instructions

@@ -86,6 +86,10 @@ bash scripts/start-rsi.sh --phase phase-one --task-profile web-extension \
 
 新 run 保留代码与持久记忆，使用新上下文；历史 A–D 结论带来源继承，不重跑、不重新认证。Harness 自己实现并实际验证工具，E 完成与产物保存后停止，不训练、下载模型或运行 A3／GPU 实验。E 通过不代表旧整轮历史通过；新保留版本可用于第二阶段。普通冷启动和同 run resume 语义不变，详见[补充任务](docs/plans/2026-11-02-phase-one-web-extension.md)与[教程](docs/tutorial.md#只补-e联网工具新-run)。
 
+### 第一阶段 F：Skills 工具补充（需单独批准启动）
+
+已准备 [F 目标](agent-inputs/phase-one-skills/goal.md)、[验收](agent-inputs/phase-one-skills/acceptance.md)与[执行协议](agent-inputs/phase-one-skills/instructions.md)。使用 `--phase phase-one --task-profile skills-extension --run-harness <已完成 E 的 run>` 从 ready E 保留包新建 F，只补 skills 工具与持久复用，不重验 A–E、不启动第二阶段。可追加本轮明确批准的 `--initial-feedback-file`。入口准备不代表 F 已运行或工具已实现，详见[教程](docs/tutorial.md#只补-fskills-工具新-run)。
+
 ## 项目文档
 
 完整入口见 [docs/README.md](docs/README.md)。

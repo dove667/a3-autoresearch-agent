@@ -19,7 +19,8 @@ SHARED_INPUT_SOURCES = {
     "workspace-instructions.md": "agent-inputs/shared/workspace.md",
 }
 PHASES = ("phase-one", "phase-two")
-TASK_PROFILES = ("standard", "web-extension")
+TASK_PROFILES = ("standard", "web-extension", "skills-extension")
+EXTENSION_PROFILES = ("web-extension", "skills-extension")
 
 
 def input_sources(phase: str, task_profile: str = "standard") -> dict[str, str]:
@@ -27,9 +28,11 @@ def input_sources(phase: str, task_profile: str = "standard") -> dict[str, str]:
         raise ValueError(f"Unknown phase: {phase}")
     if task_profile not in TASK_PROFILES:
         raise ValueError(f"Unknown task profile: {task_profile}")
-    if task_profile == "web-extension" and phase != "phase-one":
-        raise ValueError("web-extension requires phase-one")
-    bundle = "phase-one-web" if task_profile == "web-extension" else phase
+    if task_profile in EXTENSION_PROFILES and phase != "phase-one":
+        raise ValueError(f"{task_profile} requires phase-one")
+    bundle = {"web-extension": "phase-one-web", "skills-extension": "phase-one-skills"}.get(
+        task_profile, phase
+    )
     sources = {
         **SHARED_INPUT_SOURCES,
         "goal.md": f"agent-inputs/{bundle}/goal.md",

@@ -183,7 +183,23 @@ bash scripts/start-rsi.sh --phase phase-one --task-profile web-extension \
 
 如用户已批准本轮初始反馈，可在上述命令追加 `--initial-feedback-file <已批准的UTF-8文件>`。文件须非空且不超过 64 KiB；它仅适用于新建第一阶段 web-extension retained run，不能与 resume 或旧 `--feedback-file` 混用。新 checkpoint 包含 E 目标与初始反馈两个 user messages，新副本保存 `initial-feedback.md` 及 task_context 中的摘要、字节数和来源审计。未提供时只有目标消息；没有 profile 固定反馈，不自动注入私有内容。这是新任务输入，不冒充运行中的 Host 动态反馈事件；原热加载／反馈审批规则不变。
 
-### 让本轮结果能够直接用于下一轮
+### 只补 F：Skills 工具（新 run）
+
+先取得本轮 F 的明确启动授权，再从完成 E 且 ready 的保留来源启动：
+
+```bash
+bash scripts/start-rsi.sh --phase phase-one --task-profile skills-extension \
+  --run-harness artifacts/rsi/<已完成E的run目录> \
+  --initial-feedback-file <本轮已批准的UTF-8反馈文件>
+```
+
+初始反馈可省略；它说明选定来源、当前 F 目标、人工准备及范围，不代表验收通过。提供时须非空 UTF-8、最多 64 KiB，加入 fresh checkpoint 的目标消息之后。旧 E 反馈只作历史，不自动注入新任务。不要用 `--resume-from` 给完成的 E 更换任务，也不要恢复旧第二阶段。
+
+F 只加载 [goal](../agent-inputs/phase-one-skills/goal.md)、[acceptance](../agent-inputs/phase-one-skills/acceptance.md)、[instructions](../agent-inputs/phase-one-skills/instructions.md)与共享 SOUL/执行输入。Agent 自己实现技能发现、按需读取、实际执行和复用、证据状态更新、持久清单与重载；Host 不代写工具。A–E 按历史继承，不重跑、不重新认证。仅轻量隔离验证，不训练、下载或占用 GPU，不追求性能收益。
+
+F 新副本保持源码和持久记忆，用新上下文与 F 任务状态；旧任务材料归档保留，不覆盖 E 源。中断后的同轮恢复保持 skills-extension 和完整上下文，任何人工干预按操作者规则通过 human feedback 说明。F 完成后保存可复用 retained 并退出，不自动开始第二阶段。目录和 profile 已准备，不等于 F 已执行或 skills 已实现。
+
+## 让本轮结果能够直接用于下一轮
 
 Agent 在结束前，通过已有文件写入能力留下 `continuation.json`：
 
@@ -232,8 +248,8 @@ $$
 | `--resume-from <run目录>` | 保留会话身份、代码和对话；加载启动时当前目标、验收与 Prompt 后继续 |
 | `--run-harness <目录>` | 必须显式指定 run 或源码 manifest 目录；加载该结果并版本化当前目标 |
 | `--phase {phase-one,phase-two}` | 新运行默认第一阶段；恢复自动沿用原阶段；第二阶段需明确保留来源 |
-| `--task-profile {standard,web-extension}` | 默认 standard；web-extension 仅从第一阶段 retained 新建 E-only run；恢复沿用原 profile |
-| `--initial-feedback-file <文件>` | 可选已批准初始反馈，仅新建第一阶段 web-extension retained run；非空 UTF-8，最多 64 KiB |
+| `--task-profile {standard,web-extension,skills-extension}` | 默认 standard；web-extension 从第一阶段 retained 新建 E；skills-extension 从已完成 E 的 ready retained 新建 F；恢复沿用原 profile |
+| `--initial-feedback-file <文件>` | 可选已批准初始反馈，仅新建第一阶段 web-extension / skills-extension retained run；非空 UTF-8，最多 64 KiB |
 | `--check` | 执行部署预检后退出，不启动 Agent；可与 `--run-harness` 一起校验所选起点 |
 | `--verify-deployment` | 运行有界的真实 Agent 部署检查：最多 24 次模型调用、600 秒 |
 | `-h`、`--help` | 显示启动器帮助 |

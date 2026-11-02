@@ -1,6 +1,6 @@
 # Host提供的执行与验收入口
 
-Version: 0.8.2
+Version: 0.9.0
 
 部署方运行 gateway、容器引擎、模型认证与远程资源调度。候选 Harness 在独立容器内运行，
 通过 HTTP 请求这些固定能力。工具名称、研究逻辑、反思方法和版本选择由 Agent 设计。
@@ -330,6 +330,12 @@ H0 的已保存执行结果可作为基线证据，无需为了每次改动再�
 `agent-inputs/shared/bootstrap.yaml` 仅维护初始 mini 的参数、Bash/提交约定与启动路径。完整的阶段协议分别维护在 `agent-inputs/phase-one/instructions.md` 与 `agent-inputs/phase-two/instructions.md`，由本轮 phase 选择。目标和验收来自对应的 `agent-inputs/<phase>/`；第二阶段还包含 protocol.md。
 
 第一阶段显式 task_profile=web-extension 时改选 `agent-inputs/phase-one-web/instructions.md` 与 `agent-inputs/phase-one-web/{goal,acceptance}.md`，仍映射到相同 `/run/input` 名称；三者正文注入主身份／接任候选，execution 保持可读，不叠加普通 A–D Prompt 或第二阶段 protocol。startup 与 input manifest 保存 task_profile，缺省 standard；同 run 恢复和输入更新保持原 profile，冲突选择拒绝。
+
+第一阶段显式 task_profile=skills-extension 时改选 `agent-inputs/phase-one-skills/{instructions,goal,acceptance}.md`，只验收 F；不叠加 A–E 或第二阶段任务。新来源须是 Host 记录 E 完成且 retained ready 的 web-extension run，来源记录不是 Host 独立重验能力的证明。新任务沿用代码与持久记忆、使用 F 目标新上下文；A–E 只保留带来源的历史结论。旧任务和初始反馈归档到新副本的 `inherited-task-state/skills-extension/`，原归档不覆盖；旧反馈不作为本轮新指令。显式提供本轮初始反馈时才加入新上下文。该初始化不实现技能工具，不重写源 retained，也不改变同 run resume 的完整历史语义。
+
+本 profile 成功顶层为 `status=complete`，`acceptance.F.status=passed` 并附实际证据与有效 continuation；不得在顶层写 passed 或复制 A–E 成功项。失败、未完成、外部阻塞沿用上述固定结果协议。F 完成后保存并退出，不自动开始第二阶段。
+
+共享 `agent-inputs/SOUL.md` 版本化为 `/run/input/SOUL.md`，其长期行为原则与所选阶段协议一起提供给当前主 Agent 与接任候选；SOUL 不改变本轮目标、验收或权限，普通 worker 不自动接收该层。
 
 Host 只加载所选阶段的一份完整 Prompt，不叠加 common 或另一阶段 Prompt。主 Agent 与接任候选遵循同一份阶段协议，每轮启动版本化为 `inputs/phase-instructions.md`，摘要进入 `startup.json`。初始 mini 的 system 直接加载这份内容；Gateway 在转发当前主身份、待接任候选的每次模型请求时，以同一版本化内容作为 instructions 前缀，保留其专属 instructions、消息和工具定义。主身份来自 Host 记录，候选来自 `/evolution/trials`，不依据模型在提示词里自称的角色。
 

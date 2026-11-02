@@ -11,6 +11,7 @@ from runtime.local.input_versions import InputVersions, input_sources
 ROOT = Path(__file__).resolve().parents[2]
 # Frozen source paths and content hashes from 5abaf41, before relocation.
 LEGACY = json.loads((Path(__file__).parent / "fixtures/pre_unified_input_sources.json").read_text())
+RELOCATED_EXECUTION = (Path(__file__).parent / "fixtures/relocated_execution_0_8_2.md").read_bytes()
 PROFILES = [("phase-one", "standard"), ("phase-one", "web-extension"), ("phase-two", "standard")]
 
 
@@ -23,6 +24,12 @@ EXECUTION_RELOCATIONS = {
     "configs/prompts/phase-one-web.md": "agent-inputs/phase-one-web/instructions.md",
     "evals/phase-one-web/{goal,acceptance}.md": "agent-inputs/phase-one-web/{goal,acceptance}.md",
 }
+
+
+def relocation_fixture_content(name, path):
+    # This regression targets the historical relocation, not later input revisions.
+    # Keep the frozen migration's content pinned against the pre-relocation hashes.
+    return RELOCATED_EXECUTION if name == "execution.md" else (ROOT / path).read_bytes()
 
 
 def previous_content(name, content):
@@ -49,11 +56,11 @@ def expected_sources(bundle):
 
 
 @pytest.mark.parametrize("phase,profile", PROFILES)
-def test_active_input_sources_share_one_root_and_preserve_contents(phase, profile):
+def test_active_source_paths_and_historical_relocation_contents(phase, profile):
     bundle = "phase-one-web" if profile == "web-extension" else phase
     assert input_sources(phase, profile) == expected_sources(bundle)
     for name, path in expected_sources(bundle).items():
-        content = previous_content(name, (ROOT / path).read_bytes())
+        content = previous_content(name, relocation_fixture_content(name, path))
         assert hashlib.sha256(content).hexdigest() == LEGACY[bundle][name]["sha256"]
 
 
@@ -62,7 +69,7 @@ def test_relocated_sources_resume_old_manifest_without_rewriting_history(tmp_pat
     bundle = "phase-one-web" if profile == "web-extension" else phase
     root, run = tmp_path / "sources", tmp_path / "run"
     for name, path in expected_sources(bundle).items():
-        content = (ROOT / path).read_bytes()
+        content = relocation_fixture_content(name, path)
         for destination in (path, LEGACY[bundle][name]["source"]):
             target = root / destination
             target.parent.mkdir(parents=True, exist_ok=True)
