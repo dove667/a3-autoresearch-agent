@@ -246,3 +246,36 @@ def test_result_comes_from_final_main_after_all_workers_stop(tmp_path):
         result_workspace=select,
     ).run(initial_builder=False)
     assert outcome["status"] == "complete"
+
+
+def test_passed_milestones_with_continue_do_not_end_active_research(tmp_path):
+    complete_result(tmp_path)
+    path = tmp_path / "run-outcome.json"
+    outcome = json.loads(path.read_text())
+    outcome.update(status="continue", reason="Milestone saved; next experiment pending")
+    path.write_text(json.dumps(outcome))
+    assert evaluate_outcome(tmp_path, tuple("ABCD"))["status"] == "continue"
+    child = {"session_id": "main", "status": "running"}
+    waits, finalized = [], []
+
+    def wait(seconds):
+        waits.append(seconds)
+        state = json.loads((tmp_path / "supervision.json").read_text())
+        assert state["phase"] == "supervising"
+        assert not (tmp_path / "outcome.json").exists()
+        assert not finalized
+        if len(waits) == 3:
+            child["status"] = "exited"
+
+    result = RunSupervisor(
+        run=tmp_path,
+        workspace=tmp_path,
+        required_checks=tuple("ABCD"),
+        sessions=lambda: [dict(child)],
+        execute_builder=lambda *args: pytest.fail("Must not restart builder"),
+        finalize=lambda: finalized.append(True),
+        wait=wait,
+    ).run(initial_builder=False)
+    assert len(waits) == 3
+    assert result["status"] == "incomplete"
+    assert not finalized

@@ -114,9 +114,17 @@ def test_shared_storage_does_not_make_protocol_a_shared_input():
     assert sorted(p.name for p in (ROOT / "agent-inputs/phase-two").iterdir()) == ["acceptance.md", "goal.md"]
 
 
-def test_acceptance_reference_revision_preserves_conditions():
+def test_continuous_acceptance_preserves_scientific_conditions():
     old = (Path(__file__).parent / "fixtures/relocated_phase_two_acceptance_0_3_0.md").read_text()
     new = (ROOT / "agent-inputs/phase-two/acceptance.md").read_text()
-    assert new == old.replace("Version: 0.3.0", "Version: 0.3.1").replace(
-        "本文件与本目录 goal.md、protocol.md", "本文件与本轮 goal.md、protocol.md"
+    # A–C keep every scientific, attribution, resource and provenance requirement.
+    assert new.split("## A.", 1)[1].split("## D.", 1)[0] == (
+        old.split("## A.", 1)[1].split("## D.", 1)[0]
     )
+    old_delivery = old.split("## D. 终态交付与后续可用\n\n", 1)[1]
+    new_delivery = new.split("## D. 阶段交付与后续可用\n\n", 1)[1]
+    assert new_delivery.startswith(old_delivery.replace(
+        "交付最终 Policy、处理器", "按报告快照交付选定的最终 Policy、处理器"
+    ))
+    assert "全部通过也不自动结束持续研究" in new
+    assert "顶层仍写 status=continue" in new_delivery
