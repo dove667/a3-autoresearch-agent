@@ -31,6 +31,7 @@ MAX_PAYLOAD_BYTES = 2 * 1024 * 1024
 _MAX_ENTRY_BYTES = MAX_PAYLOAD_BYTES + 1024
 _ENTRY = re.compile(r"[0-9a-f]{64}\.json\Z")
 _STRIPES = 64
+_LOCK_OPEN_ATTEMPTS = 4
 _FORBIDDEN_KEYS = frozenset(
     {
         "api_key",
@@ -125,7 +126,17 @@ class WebCache:
 
     @contextmanager
     def _file_lock(self, name):
-        descriptor = self._open(name, os.O_RDWR | os.O_CREAT)
+        # Concurrent first creation can transiently report ENOENT on some Host
+        # filesystems. Retry only internal lock creation, never payload I/O or
+        # other errors, and retain _open's anchored/no-follow file validation.
+        for attempt in range(_LOCK_OPEN_ATTEMPTS):
+            try:
+                descriptor = self._open(name, os.O_RDWR | os.O_CREAT)
+                break
+            except FileNotFoundError:
+                if attempt == _LOCK_OPEN_ATTEMPTS - 1 or os.fstat(self._directory).st_nlink == 0:
+                    raise
+                time.sleep(0.001)
         try:
             deadline = time.monotonic() + self.lock_timeout
             while True:
