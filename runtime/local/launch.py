@@ -286,6 +286,64 @@ def validate_skills_source(start) -> None:
         ) from error
 
 
+def prepare_custom_task(start, goal: str, feedback: str | None = None):
+    """Start a new task with retained capabilities, never inherited completion state."""
+    fresh, context = prepare_fresh_task(start, goal)
+    source = str(start.previous_run.resolve()) if start.previous_run else None
+    identity = json.dumps([source, start.source_version, start.files], sort_keys=True)
+    prefix = "inherited-task-state/" + hashlib.sha256(identity.encode()).hexdigest() + "/"
+    updates = {
+        "checkpoint.json": fresh.files["checkpoint.json"],
+        "task.txt": goal,
+        "trajectory.jsonl": "",
+        "progress.md": "# New task\n\nCurrent acceptance is pending; inherited evidence is historical.\n",
+        "run-outcome.json": json.dumps(
+            {"status": "continue", "reason": "New task requires new evidence"}
+        ),
+        # Keep explicit retained file manifests valid without reusing old feedback.
+        "initial-feedback.md": feedback or "",
+    }
+    context["initialized_task_files"] = {}
+    for name, content in updates.items():
+        if name in start.files:
+            archive = prefix + name
+            if any(
+                path == archive or path.startswith(archive + "/") or archive.startswith(path + "/")
+                for path in fresh.files
+            ):
+                raise ValueError(f"Inherited task archive collision: {archive}")
+            fresh.files[archive] = start.files[name]
+            context["initialized_task_files"][name] = {
+                "source_sha256": hashlib.sha256(start.files[name].encode()).hexdigest(),
+                "archive_path": archive,
+                "source_run": source,
+                "source_version": start.source_version,
+            }
+        fresh.files[name] = content
+    context["inherited_acceptance"] = {
+        "status": "historical-not-recertified",
+        "source_run": source,
+        "source_version": start.source_version,
+    }
+    if feedback is not None:
+        data = feedback.encode("utf-8")
+        HumanFeedback.validate_content(data)
+        digest = hashlib.sha256(data).hexdigest()
+        messages = json.loads(fresh.files["checkpoint.json"])
+        messages.append(
+            {"role": "user", "content": f"Initial human feedback (sha256: {digest})\n\n{feedback}"}
+        )
+        fresh.files["checkpoint.json"] = json.dumps(messages, ensure_ascii=False)
+        context["initial_message_count"] = len(messages)
+        context["initial_feedback"] = {
+            "sha256": digest,
+            "bytes": len(data),
+            "file": "initial-feedback.md",
+            "mode": "initial-user-input",
+        }
+    return fresh, context
+
+
 def prepare_task_start(
     start,
     phase: str,
@@ -294,8 +352,11 @@ def prepare_task_start(
     *,
     initial_feedback: str | None = None,
     initial_feedback_source: Path | None = None,
+    custom_inputs: bool = False,
 ):
     """Initialize copied task state; retain source snapshots and historical evidence."""
+    if custom_inputs:
+        return prepare_custom_task(start, goal, initial_feedback)
     if initial_feedback is not None and (
         phase != "phase-one" or task_profile not in EXTENSION_PROFILES
     ):
@@ -445,7 +506,24 @@ def main() -> None:
         type=Path,
         help="Approved initial user input for a new retained phase-one extension task",
     )
+    parser.add_argument(
+        "--agent-inputs-dir",
+        type=Path,
+        help="Complete custom Agent input directory for a new --run-harness task",
+    )
     args = parser.parse_args()
+    if args.agent_inputs_dir and (
+        not args.run_harness
+        or args.resume_from
+        or args.check
+        or args.verify_deployment
+        or args.task_profile not in (None, "standard")
+        or args.initial_feedback_file
+    ):
+        parser.error(
+            "--agent-inputs-dir requires a new --run-harness with no preset profile; put initial-feedback.md in the directory"
+        )
+    args.custom_input_proposal = None
     if args.feedback_file and not args.resume_from:
         parser.error("--feedback-file requires --resume-from")
     if args.run_harness and (args.resume_from or args.verify_deployment):
@@ -486,7 +564,22 @@ def main() -> None:
                 args.initial_feedback = HumanFeedback.validate_content(
                     stream.read(MAX_FEEDBACK_BYTES + 1)
                 )
+        if args.agent_inputs_dir:
+            # Pure validation/snapshot before environment, Docker, SSH or run creation.
+            args.custom_input_proposal = InputVersions(
+                ROOT,
+                None,
+                phase=args.phase,
+                custom_dir=args.agent_inputs_dir,
+            ).prepare()
+            args.initial_feedback = args.custom_input_proposal["contents"].get(
+                "initial-feedback.md"
+            )
         start = resolve_harness_start(args.run_harness) if args.run_harness else None
+        if args.custom_input_proposal:
+            prepare_custom_task(
+                start, args.custom_input_proposal["contents"]["goal.md"], args.initial_feedback
+            )
         if args.task_profile in EXTENSION_PROFILES and start:
             # Validate source and checkpoint before deployment or resource access.
             prepare_task_start(
@@ -550,13 +643,17 @@ def launch_run(args, run: Path, a3: Path, image: str, start) -> None:
     blocked_attempt = None
     feedback_content = None
     registration = None
-    input_versions = InputVersions(
-        ROOT,
-        run,
-        phase=getattr(args, "phase", None),
-        task_profile=getattr(args, "task_profile", None),
-    )
-    proposed_inputs = input_versions.prepare()
+    proposed_inputs = getattr(args, "custom_input_proposal", None)
+    if proposed_inputs:
+        input_versions = InputVersions.from_proposal(ROOT, run, proposed_inputs)
+    else:
+        input_versions = InputVersions(
+            ROOT,
+            run,
+            phase=getattr(args, "phase", None),
+            task_profile=getattr(args, "task_profile", None),
+        )
+        proposed_inputs = input_versions.prepare()
     if resuming:
         startup = json.loads((run / "startup.json").read_text())
         saved = load_resume_state(run, store, os.environ["MODEL_NAME"], os.environ["MODEL_CLASS"])
@@ -616,6 +713,7 @@ def launch_run(args, run: Path, a3: Path, image: str, start) -> None:
             input_versions.contents["goal.md"],
             initial_feedback=getattr(args, "initial_feedback", None),
             initial_feedback_source=getattr(args, "initial_feedback_file", None),
+            custom_inputs=input_versions.input_mode == "custom",
         )
         package = (start.command, start.files)
     public_a3 = run / "public/a3"

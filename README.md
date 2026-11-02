@@ -101,3 +101,7 @@ bash scripts/start-rsi.sh --phase phase-one --task-profile web-extension \
 - [开发路线与实现状态](docs/roadmap.md)
 - [第三方依赖说明](third_party/README.md)
 - [Agent 输入版本与热加载](docs/agent-inputs.md)：版本维护、启动记录与确认更新。
+
+### 自定义 retained Harness 新任务
+
+已有保留包可通过 `--run-harness artifacts/rsi/<来源-run-id> --agent-inputs-dir <完整输入目录>` 启动独立新任务。输入由操作者完整指定，不受 E/F 专项 profile 限制；新任务清空旧任务上下文与完成状态，保留代码、skills 和长期记忆。`--resume-from` 则继续原任务。文件清单、快照与验收格式见 [Agent 输入说明](docs/agent-inputs.md#通用新任务交接包--完整输入目录)。

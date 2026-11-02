@@ -1,8 +1,43 @@
 # Agent 输入的版本与加载
 
-Version: 0.4.0
+Version: 0.5.0
 
-本文件面向维护输入的部署方；运行监督与审批见 [操作者文档](operator-supervision.md)。目标、验收、Prompt 和执行说明由部署方维护。新启动、`--resume-from` 和 `--run-harness` 都采用启动时仓库里的当前文件，包括未提交的工作区内容。恢复保留原 run、身份、生成的 Harness 和模型对话历史；部署方 system Prompt 与所选阶段协议更新为当前版本。
+本文件面向维护输入的部署方；运行监督与审批见 [操作者文档](operator-supervision.md)。目标、验收、Prompt 和执行说明由部署方维护。使用内置 profile 时，新启动、`--resume-from` 和 `--run-harness` 采用启动时仓库里的当前文件，包括未提交的工作区内容。显式自定义输入目录则使用下述独立冻结快照，不回退到仓库模板。恢复保留原 run、身份、生成的 Harness 和模型对话历史；部署方 system Prompt 与所选阶段协议更新为当前版本。
+
+## 通用新任务：交接包 + 完整输入目录
+
+已有 `--run-harness` 可以把任意有效的 ready 保留包用于新的任务，不需要为每个任务增加 E/F profile 或专用启动入口：
+
+```bash
+python -m runtime.local.launch \
+  --run-harness artifacts/rsi/<来源-run-id> \
+  --agent-inputs-dir /absolute/path/to/my-task-inputs
+```
+
+`--run-harness` 的路径选择**来源 run ID 的交接包**（或现有支持的显式包目录），不改名、不写回来源。新 run ID 仍由 Host 自动生成。输入目录选择**本轮全部 Agent 输入**，没有指定的必需文件会报错，绝不悄悄补入旧 E/F 模板。原有 ready/快照完整性校验不变；源码路径上的模板版本或历史通过记录不能代替本轮验收。
+
+输入目录使用容器内规范文件名，完整包含：
+
+- `SOUL.md`
+- `goal.md`
+- `acceptance.md`
+- `phase-instructions.md`
+- `bootstrap.yaml`
+- `execution.md`
+- `readiness-task.md`
+- `workspace-instructions.md`
+
+可选 `protocol.md`；若指定 `--phase phase-two` 则它必需。可选 `initial-feedback.md` 放入当次获批的人工干预说明。其他 UTF-8 文本文件或子目录也按原相对路径完整快照并挂载到 `/run/input`。必需文件沿用语义版本约定；附加资料和初始反馈可以没有 Version 行，仍记录内容哈希。禁止符号链接、非普通文件和 Host 保留路径（如 `deployment.json`、`input-manifest.json`、`history/`），避免输入冒充运行元数据。不会读取整个项目目录或自动寻找密钥；请只传专门整理的 Agent 输入目录。
+
+SOUL、phase-instructions、goal、acceptance 以及存在的 protocol 正文直接进入主 Agent/接任候选的模型请求。其他文件**挂载可读但不自动全文注入**，可在目标/指令中说明用途。`initial-feedback.md` 经既有反馈内容校验后作为新 checkpoint 的第二条 user 消息注入，附 SHA256，task_context 记录来源文件与摘要；它不是运行中热加载。不要把这项通知当成验收通过标签。普通 worker 仍由主 Agent 分配任务。
+
+自定义验收用唯一命名标题，例如 `## skill_reuse. 真实工具闭环`，Host 据此检查 `acceptance.skill_reuse`，不限定 A–F。也可继续使用 `## A.` 等旧格式。至少需要一个验收项；重复 ID 或无可识别项会在启动前失败。
+
+新任务继承包中的 harness、代码、skills、长期记忆，但重新初始化 checkpoint、task.txt、trajectory.jsonl、progress.md 和 run-outcome.json（continue），不会因来源 F 已 complete 而立即结束。旧任务文件和旧初始反馈保存在副本的唯一 `inherited-task-state/<来源摘要>/` 下，并记录原摘要及来源；旧反馈不再次成为活动指令。继承的验收只记为历史未重新认证。保留包需要支持现有 `checkpoint.json` 消息列表格式，不猜测未知 Harness 的上下文布局。
+
+启动前验证并读取整套输入；实际采用的字节、来源、版本和哈希写入 run 的 `input-revisions` 与 manifest，后续不依赖原目录是否还存在。自定义 run 的 `--resume-from <新run目录> --feedback-file <获批说明>` 保留这轮完整现场，继续使用已记录的冻结输入快照。不会因为仓库模板或原输入目录改了而换任务；当前自定义输入不提供源目录热加载，修改目标/验收应明确创建另一个新 run。动态 human feedback 的既有接口及审批要求不变。
+
+`--agent-inputs-dir` 只用于新 `--run-harness`，不能与 resume、部署检查、E/F 专项 profile 或 `--initial-feedback-file` 混用。自定义初始反馈统一放进输入目录。旧内置 profile 保持兼容，用于已有流程/历史恢复；通用新任务无需选择这些专项 profile。
 
 ## 文档职责与读者
 
