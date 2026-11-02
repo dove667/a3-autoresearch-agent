@@ -98,6 +98,30 @@ class PromptResponsibilitiesTests(unittest.TestCase):
         self.assertIn("human feedback", operator)
         self.assertIn("forwarded", operator)
 
+    def test_gpu_model_compute_boundary_is_published_in_shared_execution(self):
+        execution = read("agent-inputs/shared/execution.md")
+        boundary = execution.split("### 模型计算必须使用 GPU", 1)[1].split("### 作业环境与接口", 1)[0]
+        # Keep the positive requirement, unavailable-device behavior, and CPU/API
+        # exceptions together in the authoritative execution layer, not only docs.
+        for required in (
+            "训练、微调", "学习型 Policy 推理和大模型推理", "gpu: true",
+            "启动计算前确认获配 GPU", "模型与张量确实位于 GPU",
+            "不得因租约暂不可用、CUDA 不可见或初始化失败，静默回退到 CPU",
+            "等待／拒绝原因与作业状态", "区分正常排队和分配／可见性故障",
+            "普通资源等待应退避查询", "报告具体阻塞及缺失条件",
+            "不得绕过 controller、抢卡、取消他人作业或移除他人租约",
+            "轻量元数据检查、预处理、日志分析、命令帮助与合成单元测试 fixture",
+            "不能当作真实模型能力证据", "/v1/responses",
+            "不要求调用方申请本地 GPU", "提供商执行不属于本地 CPU 回退",
+        ):
+            self.assertIn(required, boundary)
+        for phase in ("phase-one", "phase-two"):
+            with tempfile.TemporaryDirectory() as directory:
+                versions = InputVersions(ROOT, Path(directory) / "run", phase=phase)
+                versions.activate(versions.prepare(), "start")
+                self.assertEqual(versions.contents["execution.md"], execution)
+                self.assertIn(boundary, (Path(directory) / "run/inputs/execution.md").read_text(encoding="utf-8"))
+
     def test_scientific_rules_remain_in_protocol(self):
         text = read("agent-inputs/shared/protocol.md")
         for required in (

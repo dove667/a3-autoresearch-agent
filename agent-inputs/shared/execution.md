@@ -1,6 +1,6 @@
 # Host提供的执行与验收入口
 
-Version: 0.10.0
+Version: 0.11.0
 
 部署方运行 gateway、容器引擎、模型认证与远程资源调度。候选 Harness 在独立容器内运行，
 通过 HTTP 请求这些固定能力。工具名称、研究逻辑、反思方法和版本选择由 Agent 设计。
@@ -168,6 +168,16 @@ Host 先记录停止意图，再停止进程；若中断留下未确认的停止
 
 `POST /jobs` 接受 `{"command": [...], "gpu": false, "files": {"probe.py": "..."}}`。
 身份由 gateway 注入。需要 GPU 时设置 `gpu: true`，由同一服务器 controller 分配。
+
+### 模型计算必须使用 GPU
+
+真实的学习型 Policy／模型训练、微调，以及学习型 Policy 推理和大模型推理，必须通过 GPU 作业执行（`gpu: true`），启动计算前确认获配 GPU 在作业内可见、CUDA 可用，模型与张量确实位于 GPU。不得因租约暂不可用、CUDA 不可见或初始化失败，静默回退到 CPU；不要使用 `torch.device("cuda" if torch.cuda.is_available() else "cpu")` 掩盖资源或部署问题。
+
+若 controller 报无可用 GPU，保留返回的等待／拒绝原因与作业状态，区分正常排队和分配／可见性故障。只通过已授权接口核对租约、设备可见性与实际资源证据；不能仅凭瞬时利用率为零认定空卡。普通资源等待应退避查询并继续其他可做的工作；有证据表明需要部署方修复时，报告具体阻塞及缺失条件，而不是改跑 CPU。无权查看 Host 现场时明确这一限制，不假称已核实。不得绕过 controller、抢卡、取消他人作业或移除他人租约。
+
+CPU 仍可用于轻量元数据检查、预处理、日志分析、命令帮助与合成单元测试 fixture；这些不是训练／推理的替代执行通路，也不能当作真实模型能力证据。上文 gateway `/v1/responses` 的远端模型调用保持原接口，不要求调用方申请本地 GPU；提供商执行不属于本地 CPU 回退。
+
+### 作业环境与接口
 作业镜像内 A3 位于 `/opt/a3`，Python、仿真与相机依赖已准备好；命令工作目录为 `/workspace`。
 公共参考文件为 `/opt/a3/README.md`、`/opt/a3/docs/workflow_guide.md` 和 `/opt/a3/docs/contracts.md`，示例入口位于 `/opt/a3/examples/`。文档中的 `examples/...` 相对 A3 根目录；在作业工作目录中调用时使用绝对路径，或使用 Python 模块入口。例如检查评测命令：
 
