@@ -103,5 +103,6 @@ def test_in_place_resume_keeps_run_and_can_supervise_after_builder_submission(
     assert json.loads((inputs / "deployment.json").read_text())["sessions"]["max_active"] == 5
     web = json.loads((inputs / "deployment.json").read_text())["web"]
     assert web["enabled"] is False
-    assert web["budget"]["search"] == {"limit": 100, "used": 0}
+    assert web["budget"]["search"] == {"limit": None, "used": 0}
+    assert web["no_run_cap"] is True
     assert "api_key" not in json.dumps(web)

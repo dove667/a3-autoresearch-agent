@@ -50,8 +50,8 @@ def test_auth_disabled_and_missing_key(tmp_path):
     )
 
 
-def test_search_fixed_config_normalization_and_restart_budget(tmp_path, monkeypatch):
-    svc = service(tmp_path, search_limit=1)
+def test_search_fixed_config_normalization_and_restart_accounting(tmp_path, monkeypatch):
+    svc = service(tmp_path)
     seen = []
     monkeypatch.setattr(
         web,
@@ -106,11 +106,14 @@ def test_search_fixed_config_normalization_and_restart_budget(tmp_path, monkeypa
         "include_answer": False,
         "include_raw_content": False,
     }
-    restarted = client(tmp_path, service(tmp_path, search_limit=1))
+    resumed = service(tmp_path)
+    resumed.search_connection_factory = factory
+    restarted = client(tmp_path, resumed)
     r = restarted.post(
         "/web/search", json={"query": "another"}, headers={"Authorization": "Bearer two"}
     )
-    assert r.status_code == 429 and r.json()["detail"]["code"] == "budget_exhausted"
+    assert r.status_code == 200
+    assert resumed.budget()["search"] == {"limit": None, "used": 2}
     assert "secret-key" not in repr(svc.config)
     logs = (tmp_path / ".host/web/events.jsonl").read_text()
     assert "public paper" not in logs and "secret-key" not in logs and "alice" in logs
@@ -350,8 +353,8 @@ def test_connection_close_header_does_not_cancel_deadline(monkeypatch):
     connection.finish()
 
 
-def test_failed_requests_consume_budget_and_redact(tmp_path):
-    svc = service(tmp_path, fetch_limit=1)
+def test_failed_requests_are_counted_and_redacted(tmp_path):
+    svc = service(tmp_path)
 
     def broken(*args):
         raise RuntimeError("secret-key and private-query")
@@ -368,7 +371,8 @@ def test_failed_requests_consume_budget_and_redact(tmp_path):
     r = c.post(
         "/web/fetch", json={"url": "https://example.org"}, headers={"Authorization": "Bearer two"}
     )
-    assert r.status_code == 429
+    assert r.status_code == 502
+    assert svc.budget()["fetch"]["used"] == 2
     logs = (svc.root / "events.jsonl").read_text()
     assert "secret-key" not in logs and "private-query" not in logs
     assert json.loads(logs.splitlines()[0])["budget_reserved"] is True
@@ -404,10 +408,10 @@ def test_empty_search_timeout_busy_shutdown(tmp_path, monkeypatch):
 
 
 def test_budget_corruption_fails_closed_and_resume_does_not_reset(tmp_path):
-    svc = service(tmp_path, search_limit=1)
+    svc = service(tmp_path)
     svc.budget("search")
-    restarted = service(tmp_path, search_limit=100)
-    assert restarted.budget()["search"] == {"limit": 1, "used": 1}
+    restarted = service(tmp_path)
+    assert restarted.budget()["search"] == {"limit": None, "used": 1}
     (svc.root / "budget.json").write_text("{bad")
     with pytest.raises(web.WebError, match="budget_unavailable"):
         restarted.budget("search")
@@ -416,7 +420,7 @@ def test_budget_corruption_fails_closed_and_resume_does_not_reset(tmp_path):
 def test_atomic_budget_across_service_instances(tmp_path):
     from concurrent.futures import ThreadPoolExecutor
 
-    services = [service(tmp_path, search_limit=3) for _ in range(8)]
+    services = [service(tmp_path) for _ in range(8)]
 
     def reserve(svc):
         try:
@@ -426,8 +430,8 @@ def test_atomic_budget_across_service_instances(tmp_path):
             return False
 
     with ThreadPoolExecutor(max_workers=8) as pool:
-        assert sum(pool.map(reserve, services)) == 3
-    assert services[0].budget()["search"]["used"] == 3
+        assert sum(pool.map(reserve, services)) == 8
+    assert services[0].budget()["search"]["used"] == 8
 
 
 @pytest.mark.parametrize(
@@ -443,11 +447,13 @@ def test_host_environment_config_redacts_key(monkeypatch):
     monkeypatch.setenv("TAVILY_API_KEY", "super-secret")
     monkeypatch.setenv("A3_WEB_SEARCH_LIMIT", "12")
     config = web.WebConfig.from_env()
-    assert config.enabled and config.search_limit == 12
+    assert config.enabled
+    assert not hasattr(config, "search_limit") and not hasattr(config, "fetch_limit")
     assert "super-secret" not in repr(config)
     monkeypatch.setenv("A3_WEB_FETCH_LIMIT", "-1")
-    with pytest.raises(ValueError):
-        web.WebConfig.from_env()
+    assert web.WebConfig.from_env() == config
+    monkeypatch.setenv("A3_WEB_SEARCH_LIMIT", "not-an-integer")
+    assert web.WebConfig.from_env() == config
 
 
 def test_redirect_count_is_bounded():
@@ -499,7 +505,7 @@ def test_audit_records_budget_snapshot(tmp_path):
     svc.search = lambda body: []
     svc.execute("search", web.SearchRequest(query="public"), "alice")
     event = json.loads((svc.root / "events.jsonl").read_text())
-    assert event["budget"]["search"] == {"limit": 100, "used": 1}
+    assert event["budget"]["search"] == {"limit": None, "used": 1}
 
 
 def test_deadline_interrupts_blocked_http_headers(monkeypatch):
@@ -548,3 +554,94 @@ def test_deadline_interrupts_blocked_http_headers(monkeypatch):
         assert interrupted.is_set()
     finally:
         connection.finish()
+
+
+@pytest.mark.parametrize("operation,count", [("search", 101), ("fetch", 201)])
+def test_no_cumulative_run_cap(tmp_path, operation, count):
+    svc = service(tmp_path)
+    svc.search = lambda body: []
+    svc.fetcher = lambda *args: {"text": "public", "truncated": False}
+    c = client(tmp_path, svc)
+    body = {"query": "public"} if operation == "search" else {"url": "https://example.org"}
+    for i in range(count):
+        response = c.post(
+            f"/web/{operation}",
+            json=body,
+            headers={"Authorization": "Bearer " + ("one" if i % 2 else "two")},
+        )
+        assert response.status_code == 200
+    state = service(tmp_path).status()
+    assert state["no_run_cap"] is True
+    assert state["budget"][operation] == {"limit": None, "used": count}
+
+
+def test_legacy_limits_migrate_without_resetting_usage_or_history(tmp_path):
+    svc = service(tmp_path)
+    svc.root.mkdir(parents=True)
+    old = {"search": {"limit": 100, "used": 100}, "fetch": {"limit": 200, "used": 200}}
+    (svc.root / "budget.json").write_text(json.dumps(old))
+    history = '{"historical": "unchanged"}\n'
+    (svc.root / "events.jsonl").write_text(history)
+    assert svc.budget()["search"] == {"limit": None, "used": 100}
+    assert json.loads((svc.root / "budget.json").read_text())["fetch"] == {
+        "limit": None,
+        "used": 200,
+    }
+    assert service(tmp_path).budget("search")["search"]["used"] == 101
+    assert service(tmp_path).budget("fetch")["fetch"]["used"] == 201
+    assert (svc.root / "events.jsonl").read_text() == history
+
+
+@pytest.mark.parametrize("used", [-1, True, "100", None])
+def test_invalid_accounting_fails_closed_without_overwrite(tmp_path, used):
+    svc = service(tmp_path)
+    svc.root.mkdir(parents=True)
+    raw = json.dumps({"search": {"limit": 100, "used": used}, "fetch": {"limit": 200, "used": 0}})
+    (svc.root / "budget.json").write_text(raw)
+    with pytest.raises(web.WebError, match="budget_unavailable"):
+        svc.budget("search")
+    assert (svc.root / "budget.json").read_text() == raw
+
+
+@pytest.mark.parametrize(
+    "status,code,http_status",
+    [
+        (401, "provider_auth_error", 502),
+        (429, "provider_rate_limited", 429),
+        (432, "provider_quota_exhausted", 429),
+        (433, "provider_quota_exhausted", 429),
+        (434, "provider_error", 502),
+        (500, "provider_error", 502),
+    ],
+)
+def test_provider_failures_are_distinct_redacted_and_not_retried(
+    tmp_path, monkeypatch, status, code, http_status
+):
+    svc = service(tmp_path)
+    monkeypatch.setattr(
+        web,
+        "resolve_public_url",
+        lambda url: web.PublicTarget(
+            url, "api.tavily.com", "93.184.216.34", 443, "https", "/search"
+        ),
+    )
+    connections = []
+
+    def factory(*args):
+        conn = FakeConnection(FakeResponse(b"secret-key private-query raw-error", status=status))
+        connections.append(conn)
+        return conn
+
+    svc.search_connection_factory = factory
+    r = client(tmp_path, svc).post(
+        "/web/search", json={"query": "private-query"}, headers={"Authorization": "Bearer one"}
+    )
+    assert r.status_code == http_status
+    assert r.json()["detail"]["code"] == code
+    assert r.json()["detail"]["request_id"] == r.headers["X-Request-ID"]
+    assert len(connections) == 1 and connections[0].closed
+    logs = (svc.root / "events.jsonl").read_text()
+    assert json.loads(logs)["status"] == code
+    assert svc.budget()["search"]["used"] == 1
+    for secret in ("secret-key", "private-query", "raw-error"):
+        assert secret not in r.text + logs

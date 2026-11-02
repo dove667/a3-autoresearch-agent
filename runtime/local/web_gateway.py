@@ -64,21 +64,14 @@ class FetchRequest(BaseModel):
 class WebConfig:
     enabled: bool = False
     api_key: str = field(default="", repr=False)
-    search_limit: int = 100
-    fetch_limit: int = 200
 
     @classmethod
     def from_env(cls):
         enabled = os.environ.get("A3_WEB_ENABLED", "0")
         if enabled not in ("0", "1"):
             raise ValueError("A3_WEB_ENABLED must be 0 or 1")
-        limits = [
-            int(os.environ.get(name, default))
-            for name, default in [("A3_WEB_SEARCH_LIMIT", "100"), ("A3_WEB_FETCH_LIMIT", "200")]
-        ]
-        if any(n < 0 for n in limits):
-            raise ValueError("Web limits must be nonnegative")
-        return cls(enabled == "1", os.environ.get("TAVILY_API_KEY", "").strip(), *limits)
+        # Removed legacy A3_WEB_SEARCH_LIMIT / A3_WEB_FETCH_LIMIT are ignored.
+        return cls(enabled == "1", os.environ.get("TAVILY_API_KEY", "").strip())
 
 
 class WebError(Exception):
@@ -328,6 +321,13 @@ class WebGateway:
         self.fetcher = fetch_public
 
     def budget(self, reserve=None):
+        """Persistent attempt accounting; legacy name/file retained for compatibility."""
+        try:
+            return self._account_usage(reserve)
+        except OSError:
+            raise WebError("budget_unavailable", 503) from None
+
+    def _account_usage(self, reserve=None):
         self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
         with self.lock, (self.root / "budget.lock").open("a") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
@@ -336,23 +336,23 @@ class WebGateway:
                 try:
                     state = json.loads(path.read_text())
                     for kind in ("search", "fetch"):
-                        if any(
-                            type(state[kind][key]) is not int or state[kind][key] < 0
-                            for key in ("used", "limit")
-                        ):
+                        used, limit = state[kind]["used"], state[kind]["limit"]
+                        if type(used) is not int or used < 0:
+                            raise ValueError
+                        if limit is not None and (type(limit) is not int or limit < 0):
                             raise ValueError
                 except (ValueError, KeyError, TypeError, AssertionError):
                     raise WebError("budget_unavailable", 503) from None
             else:
-                state = {
-                    kind: {"limit": getattr(self.config, kind + "_limit"), "used": 0}
-                    for kind in ("search", "fetch")
-                }
+                state = {kind: {"limit": None, "used": 0} for kind in ("search", "fetch")}
+            # Migrate finite legacy limits under the same cross-process lock, never
+            # reset used counts or touch historical audit events.
+            migrated = any(state[kind]["limit"] is not None for kind in ("search", "fetch"))
+            for kind in ("search", "fetch"):
+                state[kind]["limit"] = None
             if reserve:
-                if state[reserve]["used"] >= state[reserve]["limit"]:
-                    raise WebError("budget_exhausted", 429)
                 state[reserve]["used"] += 1
-            if reserve or not path.exists():
+            if reserve or migrated or not path.exists():
                 temporary = path.with_suffix(".tmp")
                 with temporary.open("w") as stream:
                     json.dump(state, stream)
@@ -377,6 +377,7 @@ class WebGateway:
                 "status": "GET /web/status",
             },
             "budget": self.budget(),
+            "no_run_cap": True,
             "cached": False,
             "max_parallel": 2,
             "search_max_results": 10,
@@ -419,7 +420,14 @@ class WebGateway:
             )
             response = connection.getresponse()
             if response.status != 200:
-                raise WebError("provider_error", 502)
+                code, status = {
+                    401: ("provider_auth_error", 502),
+                    429: ("provider_rate_limited", 429),
+                    432: ("provider_quota_exhausted", 429),
+                    433: ("provider_quota_exhausted", 429),
+                }.get(response.status, ("provider_error", 502))
+                # Never return provider bodies/headers: they may contain secrets.
+                raise WebError(code, status)
             if response.getheader("Content-Encoding", "identity").lower() != "identity":
                 raise WebError("unsupported_encoding", 422)
             chunks, size = [], 0
