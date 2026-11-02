@@ -106,7 +106,7 @@ artifacts/rsi/run-*/
 
 启动流程与参数见[使用教程](tutorial.md)，执行单元和调用关系见[系统架构](architecture.md)。`continuation.py` 负责跨轮结果的机械保存与读取；`retained.json` 是运行结果，Agent 的记忆实现仍归属其生成的 Harness。
 
-`agent-inputs/phase-one/instructions.md` 和 `agent-inputs/phase-two/instructions.md` 分别是对应阶段的完整主 Agent 协议。Host 按本轮 `phase` 选择其中一份，版本化到 `inputs/phase-instructions.md`；目标与验收从 `agent-inputs/<phase>/` 读取。第二阶段另加载本阶段 protocol.md；不存在额外 common Prompt。测试 Agent 和普通 worker 不由 Host 自动加载主 Agent 协议，其提示词由主 Agent 编写。
+第一阶段的 `agent-inputs/phase-one/instructions.md`（或专项目录）映射到 `inputs/phase-instructions.md`；新第二阶段没有这层，直接注入 SOUL、goal、acceptance 及仅第二阶段选择的 `agent-inputs/shared/protocol.md`。execution 保持挂载可读。目标与验收仍从 `agent-inputs/<phase>/` 读取，不存在额外 common Prompt。普通 worker 不自动加载主 Agent 核心输入，其任务由主 Agent 编写。旧自定义输入快照可保留显式的阶段层，恢复不改写历史。
 
 每轮 `.host/` 由 Host 私有维护，保存恢复所需身份与注册表、进程锁；不挂载给 Agent，不作为可分享产物。`resume-events.jsonl` 记录原 run 内的恢复事件。
 

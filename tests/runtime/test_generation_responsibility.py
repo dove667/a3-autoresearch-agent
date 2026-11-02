@@ -21,7 +21,7 @@ def test_published_generation_contract(tmp_path, phase):
     versions = InputVersions(ROOT, tmp_path / "run", phase=phase)
     versions.activate(versions.prepare(), "start")
     instructions = versions.model_instructions()[1]
-    prompt = (ROOT / f"agent-inputs/{phase}/instructions.md").read_text()
+    prompt = (ROOT / f"agent-inputs/{phase}/" / ("instructions.md" if phase == "phase-one" else "goal.md")).read_text()
     assert prompt in instructions
     if phase == "phase-two":
         # Canonical requirements are injected acceptance/protocol, not duplicated
@@ -36,7 +36,7 @@ def test_published_generation_contract(tmp_path, phase):
             "明确矛盾可针对性核查",
         ):
             assert clause in instructions
-        assert "主身份与候选试运行" in prompt
+        assert "execution.md" in prompt
         assert_generation_contract_version(prompt)
         return
     for clause in (
@@ -67,7 +67,7 @@ def test_acceptance_is_run_coverage_not_repeated_generation_gate(phase):
 
 
 def test_protocol_and_execution_preserve_local_handoff_boundary():
-    protocol = (ROOT / "agent-inputs/phase-two/protocol.md").read_text()
+    protocol = (ROOT / "agent-inputs/shared/protocol.md").read_text()
     assert "不因主身份交接而重复最终 120 回合网格或已完成的三个配对实例" in protocol
     assert "每代核对自己负责的实验" in protocol
     execution = (ROOT / "agent-inputs/shared/execution.md").read_text()
@@ -79,13 +79,13 @@ def test_protocol_and_execution_preserve_local_handoff_boundary():
 
 
 def test_research_web_is_optional_phase_two_function_integration():
-    prompt = (ROOT / "agent-inputs/phase-two/instructions.md").read_text()
+    prompt = (ROOT / "agent-inputs/phase-two/goal.md").read_text()
     execution = (ROOT / "agent-inputs/shared/execution.md").read_text()
     for endpoint in ("/web/status", "/web/search", "/web/fetch"):
         assert endpoint in execution
         assert endpoint not in prompt
     assert "不向模型自动注册 function tools" in execution
-    assert "不重跑通用冷启动或 E/F 能力建设" in prompt
+    assert "不因新任务默认重做通用能力建设" in execution
     assert "未配置" in execution
     assert "execution.md" in prompt
     first_phase = (ROOT / "agent-inputs/phase-one/instructions.md").read_text()

@@ -1,8 +1,8 @@
 # 第 2 阶段验收：学习型 Policy 与 Harness 联合优化
 
-Version: 0.3.0
+Version: 0.3.1
 
-本文件与本目录 goal.md、protocol.md 共同定义第二阶段验收，通过 phase-two 输入选择加载。
+本文件与本轮 goal.md、protocol.md 共同定义第二阶段验收，通过 phase-two 输入选择加载。
 
 ## 代际责任与整轮覆盖
 

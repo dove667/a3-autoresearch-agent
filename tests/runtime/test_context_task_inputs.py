@@ -35,7 +35,7 @@ def test_context_task_bundle_loads_g_and_initial_notice(tmp_path):
     assert proposal["contents"]["goal.md"] in instructions
     assert proposal["contents"]["acceptance.md"] in instructions
     assert "protocol.md" not in proposal["contents"]
-    assert (ROOT / "agent-inputs/phase-two/instructions.md").read_text() not in instructions
+    assert (ROOT / "agent-inputs/phase-two/goal.md").read_text() not in instructions
     assert manifest["acceptance_checks"] == ["G"]
     assert all(item["version"] for item in manifest["files"].values())
     source = HarnessStart(

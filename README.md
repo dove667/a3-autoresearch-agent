@@ -39,7 +39,7 @@ bash scripts/start-rsi.sh
 
 文档按读者职责分工，见 [职责表与输入装载链](docs/agent-inputs.md#文档职责与读者)。用户和父助手的低频监督、每次热加载或中断前的明确批准及操作核对统一见 [操作者监督](docs/operator-supervision.md)。这些文档不加入 Agent 输入。
 
-部署方给 Agent 的输入统一维护于 [agent-inputs/](agent-inputs/README.md)。两个阶段分别维护完整 Prompt：[phase-one](agent-inputs/phase-one/instructions.md) 与 [phase-two](agent-inputs/phase-two/instructions.md)。Host 每次只向主 Agent 和接任候选提供所选阶段的 Prompt；测试 Agent 的提示词由主 Agent 编写。第二阶段从保留版本接续的输入选择见[使用教程](docs/tutorial.md#选择阶段)，正式运行前的准备见[第二阶段方案](docs/plans/2026-10-31-phase-two.md)。
+部署方给 Agent 的输入统一维护于 [agent-inputs/](agent-inputs/README.md)。第一阶段保留专项 [instructions](agent-inputs/phase-one/instructions.md)；第二阶段直接组合 SOUL 与 [目标与验收](agent-inputs/phase-two/)及 [protocol](agent-inputs/shared/protocol.md)，无独立 instructions 文件。Host 每次只向主 Agent 和接任候选提供所选阶段的 Prompt；测试 Agent 的提示词由主 Agent 编写。第二阶段从保留版本接续的输入选择见[使用教程](docs/tutorial.md#选择阶段)，正式运行前的准备见[第二阶段方案](docs/plans/2026-10-31-phase-two.md)。
 
 运行目录使用 Host 本地时间命名，例如 `artifacts/rsi/run-20261031-110415-123456/`，可直接看出启动日期和时间；末段为微秒。
 

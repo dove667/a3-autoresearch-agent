@@ -22,7 +22,7 @@
 
 接入训练、检查点与模型评测，让 Agent 自主联合优化机器人 Policy 的任务表现和 Harness 的实验效率。评价纳入 GPU 时间、模型调用成本和达到目标成绩所需实验次数。
 
-[具体方案](plans/2026-10-31-phase-two.md)与独立的 [Policy/Harness 评估协议](../agent-inputs/phase-two/protocol.md)已写成设计稿：采用两个任务、三个难度的完整网格，模型、数据及训练方法由 Agent 自主选择，Harness 效率单独比较。两个阶段的目标、验收与完整 Prompt 已分开维护，阶段输入选择与恢复隔离已实现；离线依赖预检、预算控制、保留 Harness 的新上下文与只读大文件交接已实现，尚未启动第二阶段实验。
+[具体方案](plans/2026-10-31-phase-two.md)与独立的 [Policy/Harness 评估协议](../agent-inputs/shared/protocol.md)已写成设计稿：采用两个任务、三个难度的完整网格，模型、数据及训练方法由 Agent 自主选择，Harness 效率单独比较。两个阶段的目标与验收分开维护，第一阶段另有专项 Prompt，第二阶段直接组合 SOUL 与共享存放但仅该阶段加载的 protocol，阶段输入选择与恢复隔离已实现；离线依赖预检、预算控制、保留 Harness 的新上下文与只读大文件交接已实现，尚未启动第二阶段实验。
 
 ### 候选代码版本与并行执行
 

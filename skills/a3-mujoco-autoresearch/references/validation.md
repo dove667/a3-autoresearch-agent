@@ -1,3 +1,7 @@
+# Current validation: version 0.1.4
+
+Prepared from repository `6bde3b5` on 2026-11-02. The helper accepts protocol 0.3.0 and reference-only 0.3.1, requires matching version and digests in a pair, rejects unknown versions and reports the actual input version. Tests show identical scientific outputs for identical fixtures under either supported version. This is offline helper evidence, not a new policy result or live skill adoption. Earlier integration evidence below is historical and was not rerun as a live Agent test. Full offline repository suite: 590 passed; Ruff, whitespace, skill metadata and relative links pass.
+
 # Validation record for version 0.1.0
 
 Authored and checked 2026-11-02 against parent repository commit 401edc42b366703a6e2be4925fc947c1fcbad4e9. This record establishes offline package behavior, not A3 policy efficacy or live Agent adoption. Revalidate relevant checks after edits.

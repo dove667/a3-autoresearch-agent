@@ -32,6 +32,10 @@ def relocation_fixture_content(name, path):
     if name == "execution.md":
         return RELOCATED_EXECUTION
     frozen = {
+        "agent-inputs/phase-two/acceptance.md": "relocated_phase_two_acceptance_0_3_0.md",
+        "agent-inputs/phase-two/goal.md": "relocated_phase_two_goal_0_2_0.md",
+        "agent-inputs/phase-two/protocol.md": "relocated_phase_two_protocol_0_3_0.md",
+        "agent-inputs/shared/bootstrap.yaml": "relocated_bootstrap_0_1_1.yaml",
         "agent-inputs/SOUL.md": "relocated_soul_0_1_0.md",
         "agent-inputs/phase-two/instructions.md": "relocated_phase_two_0_7_0.md",
     }
@@ -47,7 +51,7 @@ def previous_content(name, content):
     return content
 
 
-def expected_sources(bundle):
+def expected_sources(bundle, historical=False):
     sources = {
         "SOUL.md": "agent-inputs/SOUL.md",
         "bootstrap.yaml": "agent-inputs/shared/bootstrap.yaml",
@@ -58,8 +62,10 @@ def expected_sources(bundle):
         "acceptance.md": f"agent-inputs/{bundle}/acceptance.md",
         "phase-instructions.md": f"agent-inputs/{bundle}/instructions.md",
     }
+    if bundle == "phase-two" and not historical:
+        sources.pop("phase-instructions.md")
     if bundle == "phase-two":
-        sources["protocol.md"] = "agent-inputs/phase-two/protocol.md"
+        sources["protocol.md"] = ("agent-inputs/phase-two/protocol.md" if historical else "agent-inputs/shared/protocol.md")
     return sources
 
 
@@ -67,7 +73,7 @@ def expected_sources(bundle):
 def test_active_source_paths_and_historical_relocation_contents(phase, profile):
     bundle = "phase-one-web" if profile == "web-extension" else phase
     assert input_sources(phase, profile) == expected_sources(bundle)
-    for name, path in expected_sources(bundle).items():
+    for name, path in expected_sources(bundle, historical=True).items():
         content = previous_content(name, relocation_fixture_content(name, path))
         assert hashlib.sha256(content).hexdigest() == LEGACY[bundle][name]["sha256"]
 
@@ -76,7 +82,7 @@ def test_active_source_paths_and_historical_relocation_contents(phase, profile):
 def test_relocated_sources_resume_old_manifest_without_rewriting_history(tmp_path, phase, profile):
     bundle = "phase-one-web" if profile == "web-extension" else phase
     root, run = tmp_path / "sources", tmp_path / "run"
-    for name, path in expected_sources(bundle).items():
+    for name, path in expected_sources(bundle, historical=True).items():
         content = relocation_fixture_content(name, path)
         for destination in (path, LEGACY[bundle][name]["source"]):
             target = root / destination
@@ -96,6 +102,9 @@ def test_relocated_sources_resume_old_manifest_without_rewriting_history(tmp_pat
     checkpoint = run / "trajectory.json"
     checkpoint.write_text('{"history": "original context"}')
     resumed = InputVersions(root, run)
+    # Replay the original relocation schema, not the later removal of Phase 2's
+    # instructions layer; its removal has a separate migration regression.
+    resumed.sources = expected_sources(bundle, historical=True)
     current = resumed.activate(resumed.prepare(), "resume")
     assert current["phase"] == phase
     assert current["task_profile"] == profile
@@ -110,7 +119,7 @@ def test_relocated_sources_resume_old_manifest_without_rewriting_history(tmp_pat
     assert json.loads((run / "input-revisions/legacy/input-manifest.json").read_text()) == previous
     assert checkpoint.read_text() == '{"history": "original context"}'
     for name, item in current["files"].items():
-        assert item["source"] == expected_sources(bundle)[name]
+        assert item["source"] == expected_sources(bundle, historical=True)[name]
         if name == "execution.md":
             assert previous["files"][name]["version"] == "0.8.1"
             assert item["version"] == "0.8.2"

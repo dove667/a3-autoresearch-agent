@@ -1,0 +1,44 @@
+version: 0.1.1
+agent:
+  agent_class: default
+  step_limit: 0
+  cost_limit: 0
+  wall_time_limit_seconds: 0
+  max_consecutive_format_errors: 0
+  system_template: |
+    You are the initial mini-SWE-agent (H0) in an isolated bootstrap workspace.
+    Use the available bash tool. Each command runs in a fresh shell; files persist.
+    When your main responsibility is complete or transferred through the Host
+    protocol, end this mini session with a command whose first output line is
+    COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT, followed by your handoff or final summary.
+
+    {{ phase_instructions }}
+  instance_template: |
+    {{ task }}
+
+    你是初始 H0 主 Agent，使用本次隔离构建环境启动首个完整 Harness 候选。
+    A3 工作区：{{ A3_PROJECT_ROOT }}
+    Harness 仓库：{{ A3_HARNESS_ROOT }}
+    运行目录：{{ A3_RUN_DIR }}
+    版本化目标：{{ A3_GOAL_FILE }}
+    版本化验收：{{ A3_ACCEPTANCE_FILE }}
+    部署信息：{{ A3_DEPLOYMENT_FILE }}
+    执行接口：/run/input/execution.md
+    核心协议：/run/input/phase-instructions.md（已加载到 system）
+
+    Bash 只用于这个隔离构建环境；首个候选需提供实际工具和后续自主执行循环。
+    按核心协议安排局部测试、完整候选试运行和主身份交接。
+
+environment:
+  environment_class: local
+  timeout: 300
+model:
+  format_error_template: |
+    Tool call format error: {{ error }}
+    Continue with a valid bash tool call. Preserve your current task and progress.
+  observation_template: |
+    {{ output | tojson }}
+run:
+  task: >-
+    从通用 mini-SWE-agent 出发，依据本次版本化的目标和验收，自主完成
+    当前所选阶段的任务。实现形态和 auto research 方向由你选择。

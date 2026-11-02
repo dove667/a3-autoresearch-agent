@@ -38,10 +38,11 @@ def input_sources(phase: str, task_profile: str = "standard") -> dict[str, str]:
         **SHARED_INPUT_SOURCES,
         "goal.md": f"agent-inputs/{bundle}/goal.md",
         "acceptance.md": f"agent-inputs/{bundle}/acceptance.md",
-        "phase-instructions.md": f"agent-inputs/{bundle}/instructions.md",
     }
+    if phase == "phase-one":
+        sources["phase-instructions.md"] = f"agent-inputs/{bundle}/instructions.md"
     if phase == "phase-two":
-        sources["protocol.md"] = "agent-inputs/phase-two/protocol.md"
+        sources["protocol.md"] = "agent-inputs/shared/protocol.md"
     return sources
 
 
@@ -229,7 +230,11 @@ class InputVersions:
                 data = path.read_bytes()
                 text = data.decode("utf-8")
                 match = VERSION.search(text)
-                if not match and (self.input_mode != "custom" or name in input_sources(self.phase)):
+                if not match and (
+                    self.input_mode != "custom"
+                    or name in input_sources(self.phase)
+                    or name == "phase-instructions.md"
+                ):
                     raise ValueError(f"Missing semantic version in {relative}")
                 contents[name] = text
                 files[name] = {
@@ -294,7 +299,9 @@ class InputVersions:
             legacy = revisions / "legacy"
             if not legacy.exists() and (self.run / "inputs").exists():
                 legacy.mkdir()
-                for name in (*self.sources, "common-instructions.md", "input-manifest.json"):
+                for name in dict.fromkeys((
+                    *self.sources, "phase-instructions.md", "common-instructions.md", "input-manifest.json"
+                )):
                     original = self.run / "inputs" / name
                     if original.is_file():
                         write_atomic(legacy / name, original.read_bytes())
@@ -337,6 +344,9 @@ class InputVersions:
                 old_prompt = target / "common-instructions.md"
                 if old_prompt.exists():
                     replacements[old_prompt] = None
+                retired_stage = target / "phase-instructions.md"
+                if "phase-instructions.md" not in proposal["contents"] and retired_stage.exists():
+                    replacements[retired_stage] = None
             workspace_guide = self.run / "workspace/harness/AGENTS.md"
             if workspace_guide.parent.exists():
                 replacements[workspace_guide] = proposal["contents"][
@@ -409,8 +419,10 @@ class InputVersions:
                 + "SOUL 是跨阶段长期角色原则；SOUL 不得覆盖当前阶段的 goal、acceptance、protocol 或权限边界。\n"
                 + self.contents["SOUL.md"]
                 + "\n\n"
-                + self.contents["phase-instructions.md"]
-                + "\n\n"
+                + (
+                    self.contents["phase-instructions.md"] + "\n\n"
+                    if "phase-instructions.md" in self.contents else ""
+                )
                 + self.contents["goal.md"]
                 + "\n\n"
                 + self.contents["acceptance.md"]

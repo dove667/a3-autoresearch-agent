@@ -149,3 +149,27 @@ def test_cli_invalid_report_does_not_emit_score(tmp_path):
     assert result.returncode == 2
     assert result.stdout == ""
     assert "not completed" in result.stderr
+
+
+@pytest.mark.parametrize("version", ["0.3.0", "0.3.1"])
+def test_reference_revision_has_identical_scientific_computation(version):
+    left, right = report(True), report(True, 1)
+    original = module.compare(left, right, repeats=100)
+    left["protocol_version"] = right["protocol_version"] = version
+    left["protocol_sha256"] = right["protocol_sha256"] = "d" * 64
+    result = module.compare(left, right, repeats=100)
+    assert result["protocol_version"] == version
+    result["protocol_version"] = "0.3.0"
+    assert result == original
+
+
+def test_protocol_versions_must_be_supported_and_paired():
+    for version in ("0.3.2", "0.4.0", "unknown"):
+        bad = report()
+        bad["protocol_version"] = version
+        with pytest.raises(ValueError, match="implements phase-two"):
+            module.compare(bad, bad, repeats=100)
+    other = report()
+    other["protocol_version"] = "0.3.1"
+    with pytest.raises(ValueError, match="differ in protocol_version"):
+        module.compare(report(), other, repeats=100)

@@ -1,6 +1,6 @@
 # Host提供的执行与验收入口
 
-Version: 0.9.0
+Version: 0.10.0
 
 部署方运行 gateway、容器引擎、模型认证与远程资源调度。候选 Harness 在独立容器内运行，
 通过 HTTP 请求这些固定能力。工具名称、研究逻辑、反思方法和版本选择由 Agent 设计。
@@ -21,6 +21,12 @@ Version: 0.9.0
 候选由模型驱动只说明执行主体成立。普通第一阶段 A/B/C/D 仍分别需要版本化标准要求的真实能力、
 版本、比较与选择、权限边界和跨会话记忆复用证据；创建会话、命名工具或保存报告均不能单独验收。
 web-extension profile 仅验证当前 E 项真实工具链路；历史 A–D 结论带来源继承，不重新认证，也不因 E 通过修复旧历史缺口。
+
+## 启动与恢复状态
+
+以当前版本化输入、实际加载代码、主身份与真实作业状态判断下一步；恢复前后核对在途操作，避免盲目重放或重复提交。已有工具、记忆与 skills 按需复用，仅修补当前任务的具体缺口，不因新任务默认重做通用能力建设。历史按需查询，不要求加载全部消息或补审前代。
+
+具体 run 的来源、任务切换、人工恢复或修复及旧终态说明由本轮 human feedback 提供，不在全局输入中预设。处理反馈遵循 SOUL 与当前验收/协议；输入一致性、反馈投递与恢复 API 见下文。
 
 ## 请求与权限
 
@@ -327,7 +333,7 @@ H0 的已保存执行结果可作为基线证据，无需为了每次改动再�
 
 ## 固定核心提示词
 
-`agent-inputs/shared/bootstrap.yaml` 仅维护初始 mini 的参数、Bash/提交约定与启动路径。完整的阶段协议分别维护在 `agent-inputs/phase-one/instructions.md` 与 `agent-inputs/phase-two/instructions.md`，由本轮 phase 选择。目标和验收来自对应的 `agent-inputs/<phase>/`；第二阶段还包含 protocol.md。
+`agent-inputs/shared/bootstrap.yaml` 仅维护初始 mini 的参数、Bash/提交约定与启动路径。第一阶段的专门任务协议维护在 `agent-inputs/phase-one/instructions.md`；第二阶段没有额外 instructions 文件，由 SOUL、goal、acceptance 与 protocol 组成主 Agent 核心输入。目标和验收来自对应的 `agent-inputs/<phase>/`；第二阶段另从 `agent-inputs/shared/protocol.md` 加载 protocol.md；共享存放不意味着第一阶段加载。
 
 第一阶段显式 task_profile=web-extension 时改选 `agent-inputs/phase-one-web/instructions.md` 与 `agent-inputs/phase-one-web/{goal,acceptance}.md`，仍映射到相同 `/run/input` 名称；三者正文注入主身份／接任候选，execution 保持可读，不叠加普通 A–D Prompt 或第二阶段 protocol。startup 与 input manifest 保存 task_profile，缺省 standard；同 run 恢复和输入更新保持原 profile，冲突选择拒绝。
 
@@ -337,11 +343,11 @@ H0 的已保存执行结果可作为基线证据，无需为了每次改动再�
 
 共享 `agent-inputs/SOUL.md` 版本化为 `/run/input/SOUL.md`，其长期行为原则与所选阶段协议一起提供给当前主 Agent 与接任候选；SOUL 不改变本轮目标、验收或权限，普通 worker 不自动接收该层。
 
-Host 只加载所选阶段的一份完整 Prompt，不叠加 common 或另一阶段 Prompt。主 Agent 与接任候选遵循同一份阶段协议，每轮启动版本化为 `inputs/phase-instructions.md`，摘要进入 `startup.json`。初始 mini 的 system 直接加载这份内容；Gateway 在转发当前主身份、待接任候选的每次模型请求时，以同一版本化内容作为 instructions 前缀，保留其专属 instructions、消息和工具定义。主身份来自 Host 记录，候选来自 `/evolution/trials`，不依据模型在提示词里自称的角色。
+Host 只加载所选阶段的输入，不叠加 common 或另一阶段 Prompt。第一阶段的任务协议版本化为 `inputs/phase-instructions.md`；新第二阶段不创建该文件或空壳。主 Agent 与接任候选遵循同一套版本化输入，摘要进入 `startup.json`。初始 mini 的 system 直接加载这套内容；Gateway 在转发当前主身份、待接任候选的每次模型请求时，以同一版本化内容作为 instructions 前缀，保留其专属 instructions、消息和工具定义。主身份来自 Host 记录，候选来自 `/evolution/trials`，不依据模型在提示词里自称的角色。
 
 普通 `/sessions` worker 包括局部测试 Agent，Host 不额外附加核心提示词；其完整提示词由主 Agent 编写。主身份交接后，接任候选继续得到核心协议，旧主身份不再获得新的附加层。部署准备检查不使用这份完整 auto research 协议。
 
-启动和 resume 读取仓库当前文件；仅编辑源文件不会更新运行中的输入，运行中更换版本由 Host 独立发布。每个直接发布的 Agent 输入都有 Version，清单见 `/run/input/input-manifest.json`。其中 revision 是整套输入的快照编号，generation 是发布尝试序号，失败回滚也会递增；由 Host 自动维护。Gateway 用量记录 input_revision、各文件版本与摘要；历史内容保存在 run 的 input-revisions。主 Agent 与接任候选会获得当前阶段的目标、验收和完整 Prompt（第二阶段另含 protocol.md），旧对话作为历史保留。普通 worker 的专属任务仍由主 Agent 提供。
+内置 preset 的启动和 resume 读取仓库当前文件；显式自定义输入按已记录快照冻结恢复，不回退到仓库模板。仅编辑源文件不会更新运行中的输入，运行中更换版本由 Host 独立发布。每个直接发布的 Agent 输入都有 Version，清单见 `/run/input/input-manifest.json`。其中 revision 是整套输入的快照编号，generation 是发布尝试序号，失败回滚也会递增；由 Host 自动维护。Gateway 用量记录 input_revision、各文件版本与摘要；历史内容保存在 run 的 input-revisions。主 Agent 与接任候选会获得 SOUL、当前阶段的目标和验收，第一阶段另含任务 instructions，第二阶段另含 protocol.md，旧对话作为历史保留。普通 worker 的专属任务仍由主 Agent 提供。
 
 输入发布入口不接受 Agent 令牌。已发出的模型请求不变，后续请求采用新版本；Agent 连续读取多个输入文件时，前后必须都是 manifest.status=active，且 revision 和 generation 都相同。updating 时等待，标识变化后重新读取。热加载不重建现有 Python 对象、不切换模型或 Docker 镜像；bootstrap 运行参数及固定基础设施代码变化须经 Host 重启/恢复才应用。
 
@@ -411,6 +417,6 @@ backbone、tokenizer 及相关预训练资源由人类提前准备、校验后�
 
 ## 人类反馈与源码版本
 
-部署方可在恢复时或运行期间显式登记人类反馈。Host 把它作为独立 user message 加入登记时主身份的下一次完整历史模型请求，原历史与 checkpoint 不改写。后续请求保持同一反馈位置，输入历史压缩或重建时重新定位并留下事件；具体文本、摘要和反馈 ID 在 Host 私有目录保存。反馈以独立输入投递，具体处理见本阶段 phase-instructions.md；普通文件和工具输出不因此变为反馈入口。该入口不自动广播给测试 worker 或后继身份。
+部署方可在恢复时或运行期间显式登记人类反馈。Host 把它作为独立 user message 加入登记时主身份的下一次完整历史模型请求，原历史与 checkpoint 不改写。后续请求保持同一反馈位置，输入历史压缩或重建时重新定位并留下事件；具体文本、摘要和反馈 ID 在 Host 私有目录保存。反馈以独立输入投递，具体解释遵循 SOUL，实验安排及证据按当前阶段 acceptance 与 protocol（如有）处理；普通文件和工具输出不因此变为反馈入口。该入口不自动广播给测试 worker 或后继身份。
 
 远程镜像提供 git 与只读 /opt/a3/.git，git -C /opt/a3 rev-parse HEAD 返回实际 A3 源码提交。/opt/a3/source-revision.json 保存镜像准备时的文件摘要及源工作区 dirty 标记，未提交改动需结合摘要和 git diff 核对；源码版本不代表训练权重版本。导出的浅仓库不复制 Host 的 remote、认证配置或 hooks。运行镜像中的文件可能是完整源码仓库的部署子集，git diff 应按实际路径解读；不要修改只读基线。

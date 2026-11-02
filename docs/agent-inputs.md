@@ -1,6 +1,6 @@
 # Agent 输入的版本与加载
 
-Version: 0.5.2
+Version: 0.6.0
 
 本文件面向维护输入的部署方；运行监督与审批见 [操作者文档](operator-supervision.md)。目标、验收、Prompt 和执行说明由部署方维护。使用内置 profile 时，新启动、`--resume-from` 和 `--run-harness` 采用启动时仓库里的当前文件，包括未提交的工作区内容。显式自定义输入目录则使用下述独立冻结快照，不回退到仓库模板。恢复保留原 run、身份、生成的 Harness 和模型对话历史；部署方 system Prompt 与所选阶段协议更新为当前版本。
 
@@ -21,15 +21,15 @@ python -m runtime.local.launch \
 - `SOUL.md`
 - `goal.md`
 - `acceptance.md`
-- `phase-instructions.md`
+- `phase-instructions.md`（仅第一阶段必需）
 - `bootstrap.yaml`
 - `execution.md`
 - `readiness-task.md`
 - `workspace-instructions.md`
 
-可选 `protocol.md`；若指定 `--phase phase-two` 则它必需。可选 `initial-feedback.md` 放入当次获批的人工干预说明。其他 UTF-8 文本文件或子目录也按原相对路径完整快照并挂载到 `/run/input`。必需文件沿用语义版本约定；附加资料和初始反馈可以没有 Version 行，仍记录内容哈希。禁止符号链接、非普通文件和 Host 保留路径（如 `deployment.json`、`input-manifest.json`、`history/`），避免输入冒充运行元数据。不会读取整个项目目录或自动寻找密钥；请只传专门整理的 Agent 输入目录。
+可选 `protocol.md`；若指定 `--phase phase-two` 则它必需，而 `phase-instructions.md` 不必提供，也不生成空壳。为兼容显式旧输入，第二阶段自定义目录若包含 `phase-instructions.md`，它仍需 Version 并作为附加阶段层注入、冻结与恢复；不能把该保留行为误认为新 preset 仍有该文件。可选 `initial-feedback.md` 放入当次获批的人工干预说明。其他 UTF-8 文本文件或子目录也按原相对路径完整快照并挂载到 `/run/input`。必需文件沿用语义版本约定；附加资料和初始反馈可以没有 Version 行，仍记录内容哈希。禁止符号链接、非普通文件和 Host 保留路径（如 `deployment.json`、`input-manifest.json`、`history/`），避免输入冒充运行元数据。不会读取整个项目目录或自动寻找密钥；请只传专门整理的 Agent 输入目录。
 
-SOUL、phase-instructions、goal、acceptance 以及存在的 protocol 正文直接进入主 Agent/接任候选的模型请求。其他文件**挂载可读但不自动全文注入**，可在目标/指令中说明用途。`initial-feedback.md` 经既有反馈内容校验后作为新 checkpoint 的第二条 user 消息注入，附 SHA256，task_context 记录来源文件与摘要；它不是运行中热加载。不要把这项通知当成验收通过标签。普通 worker 仍由主 Agent 分配任务。
+SOUL、goal、acceptance、存在的 phase-instructions 以及 protocol 正文直接进入主 Agent/接任候选的模型请求。其他文件**挂载可读但不自动全文注入**，可在目标/指令中说明用途。`initial-feedback.md` 经既有反馈内容校验后作为新 checkpoint 的第二条 user 消息注入，附 SHA256，task_context 记录来源文件与摘要；它不是运行中热加载。不要把这项通知当成验收通过标签。普通 worker 仍由主 Agent 分配任务。
 
 自定义验收用唯一命名标题，例如 `## skill_reuse. 真实工具闭环`，Host 据此检查 `acceptance.skill_reuse`，不限定 A–F。也可继续使用 `## A.` 等旧格式。至少需要一个验收项；重复 ID 或无可识别项会在启动前失败。
 
@@ -76,20 +76,20 @@ python -m runtime.local.launch \
 | --- | --- | --- |
 | `agent-inputs/<phase>/goal.md` | Agent：研究目标、范围、什么不算收益 | 操作者审批、接口操作手册 |
 | `agent-inputs/<phase>/acceptance.md` | Agent / 复核者：完成条件、证据与终态交付 | 将人工建议当通过标签 |
-| `agent-inputs/phase-two/protocol.md` | 第二阶段 Agent / 复核者：固定科学比较与归因规则 | 外界调度审批 |
+| `agent-inputs/shared/protocol.md` | 第二阶段 Agent / 复核者：固定科学比较与归因规则 | 外界调度审批 |
 | `agent-inputs/SOUL.md` | 主 Agent / 接任候选：跨阶段长期角色、主动工作和经验复用原则 | 新增阶段目标、修改科学计分或权限 |
-| `agent-inputs/<phase>/instructions.md` | 主 Agent / 接任候选：行动、角色、记忆、收到反馈后的处理 | 审核外界批准、教授 operator CLI |
+| `agent-inputs/phase-one*/instructions.md` | 第一阶段主 Agent / 接任候选：本轮专项能力任务流程 | 审核外界批准、教授 operator CLI |
 | `agent-inputs/shared/execution.md` → `execution.md` | Agent：真实可调用 API、状态、权限和生效技术事实 | 操作者 CLI 教程 |
 | 本文件 / [教程](tutorial.md) | 维护者 / 用户：输入装载、版本、使用入口 | 新增科学验收门槛 |
 | [operator-supervision.md](operator-supervision.md) | 用户 / 父助手 / 操作者：低频弱监督、每次干预的批准与执行核对 | 作为 Agent input 或替 Agent 做验收 |
 
-源码统一位于 `agent-inputs/`，容器内文件名保持不变：SOUL + 阶段 Prompt + goal + acceptance（第二阶段加 protocol）直接进入主身份/接任候选模型请求；execution 等其余输入保持 `/run/input` 可读。不是仅给模型链接而拿走规则正文。普通 worker 仍由主 Agent 提供任务。`docs/` 下操作者文档不加入 `runtime/local/input_versions.py` 清单，也不注入 Agent 请求；SOUL 的装载链有离线回归覆盖；是否实际采用仍以对应运行的输入版本和模型调用记录为准。
+源码统一位于 `agent-inputs/`，容器内文件名保持不变：SOUL + goal + acceptance，第一阶段另加任务 Prompt，第二阶段另加 protocol，直接进入主身份/接任候选模型请求；execution 等其余输入保持 `/run/input` 可读。不是仅给模型链接而拿走规则正文。普通 worker 仍由主 Agent 提供任务。`docs/` 下操作者文档不加入 `runtime/local/input_versions.py` 清单，也不注入 Agent 请求；SOUL 的装载链有离线回归覆盖；是否实际采用仍以对应运行的输入版本和模型调用记录为准。
 
-目录结构见 [统一输入目录](../agent-inputs/README.md)。本次仅整理源路径：除 execution 的源路径说明修正并递增到 0.8.2 外，输入正文与语义版本不变。源路径进入 manifest 摘要，因此启动／恢复时产生新 revision；历史 run 的 manifest、input-revisions 与旧源路径记录不追改。`docs/plans/` 保留当时设计与路径，不作为当前加载映射；当前映射以本页和 `input_versions.py` 为准。
+目录结构见 [统一输入目录](../agent-inputs/README.md)。早期目录统一迁移仅改路径并将 execution 递增到 0.8.2；这是历史迁移说明。当前第二阶段已移除单独 instructions，protocol 迁入 shared 但只在该阶段加载，各输入按实际改动独立递增版本。源路径进入 manifest 摘要，因此启动／恢复时产生新 revision；历史 run 的 manifest、input-revisions 与旧源路径记录不追改。`docs/plans/` 保留当时设计与路径，不作为当前加载映射；当前映射以本页和 `input_versions.py` 为准。
 
 ## 长期行为与 Agent 自有知识
 
-`agent-inputs/SOUL.md` 定义跨阶段的研究者角色、主动行动、经验复用与诚实反馈原则；阶段 Prompt 保留具体流程，goal/acceptance/protocol 分别保持目标、完成证据和科学规则职责。agent-inputs/SOUL.md 由 Host 版本化，作为 /run/input/SOUL.md 提供，并进入主身份与接任候选的模型输入，不靠 Agent 偶然发现文件。普通测试 worker 仍由主 Agent 编写具体任务，不自动承担全部研究目标。
+`agent-inputs/SOUL.md` 定义跨阶段的研究者角色、主动行动、经验复用与诚实反馈原则；第一阶段任务 Prompt 保留专项流程；第二阶段不再有独立 Prompt 文件，goal/acceptance/protocol 分别保持目标、完成证据和科学规则职责。agent-inputs/SOUL.md 由 Host 版本化，作为 /run/input/SOUL.md 提供，并进入主身份与接任候选的模型输入，不靠 Agent 偶然发现文件。普通测试 worker 仍由主 Agent 编写具体任务，不自动承担全部研究目标。
 
 Agent 自己积累的 skills 是工作区可复用知识与代码，不是部署方版本化指令或新增权限。实际 E 保留包尚无统一技能发现、加载和保存机制；这些工具能力交给下一轮第一阶段 F，由 Agent 自主实现，设计见 [F 任务草案](plans/2026-11-02-phase-one-skills-f.md)。F 的版本化输入已接入 skills-extension profile，但本次不会代写技能工具或启动实验。
 
@@ -102,8 +102,8 @@ SOUL 与 Prompt 发布只提供行为指导，不能证明实际 Agent 已创建
 | `agent-inputs/SOUL.md` | `/run/input/SOUL.md`，长期行为原则 |
 | `agent-inputs/<phase>/goal.md` | `/run/input/goal.md` |
 | `agent-inputs/<phase>/acceptance.md` | `/run/input/acceptance.md` |
-| `agent-inputs/<phase>/instructions.md` | `/run/input/phase-instructions.md`，所选阶段的完整主 Agent 协议 |
-| `agent-inputs/phase-two/protocol.md` | `/run/input/protocol.md`，仅第二阶段的评估协议 |
+| `agent-inputs/phase-one*/instructions.md` | `/run/input/phase-instructions.md`，第一阶段专项任务协议；新第二阶段无此层 |
+| `agent-inputs/shared/protocol.md` | `/run/input/protocol.md`，仅第二阶段选择加载的评估协议；shared 目录不代表通用注入 |
 | `agent-inputs/shared/bootstrap.yaml` | `/run/input/bootstrap.yaml`，初始 mini 的 Prompt 与启动配置 |
 | `agent-inputs/shared/execution.md` | `/run/input/execution.md` |
 | `agent-inputs/shared/readiness-task.md` | `/run/input/readiness-task.md`，部署验证任务 |
@@ -133,7 +133,7 @@ web-extension 的新副本将已知旧任务状态归档至 `inherited-task-stat
 
 发布开始时所有挂载先标记 status=updating（更新中），完成后才标记 active（可读取）。每次启动或更新的完整内容保存在 `input-revisions/revision-*/`；`input-events.jsonl` 保存切换记录。原始 `startup.json` 保持不变，恢复事件附带当前清单写入 `resume-events.jsonl`。旧运行首次升级时，原输入另存历史副本。
 
-普通挂载与主会话的私有输入挂载同步发布。主 Agent 与接任候选每次模型请求都获得当前阶段 Prompt、目标和验收正文；第二阶段还提供 protocol.md；普通测试 worker 的任务与 Prompt 继续由主 Agent 提供。用量日志记录请求采用的 input_revision、各文件版本与摘要。初始 mini 刷新部署方 system 消息，保留已有用户消息、模型回复和工具结果。
+普通挂载与主会话的私有输入挂载同步发布。主 Agent 与接任候选每次模型请求都获得 SOUL、目标和验收正文；第一阶段另提供专项 Prompt，第二阶段另提供 protocol.md；普通测试 worker 的任务与 Prompt 继续由主 Agent 提供。用量日志记录请求采用的 input_revision、各文件版本与摘要。初始 mini 刷新部署方 system 消息，保留已有用户消息、模型回复和工具结果。
 
 全部 worker 停止后，Host 先关闭更新入口，再按最终生效的验收版本作结构检查，并把该版本清单写入 outcome。历史结果保留各自产生时的版本；变更验收后仅按影响范围判断相关已有结论是否适用，不将其扩为全历史重审。各代交权前核查自己的实验闭环，后继继承已确认结论及证据引用，不承担前任过去的验收责任；最终汇总仍须如实保留未完成与未知。
 
@@ -156,3 +156,11 @@ F 输入接入不是技能工具实现；实际模型发现、读取、执行、
 恢复时与运行中均可显式登记反馈，完整操作和批准范围见 [操作者文档](operator-supervision.md#恢复时加入人类反馈)。反馈不是目标、验收或计分文件的替换；固定 0.1.0 封装协议生成独立 user message，以反馈 ID 和 SHA256 追踪。源文件可覆盖，无需用户手动改版本；封装协议变化需递增实现中的 PROTOCOL_VERSION 并同步文档。
 
 副本、登记/定位/成功转发事件与状态保存在 `.host/human-feedback/`，不自动监视源文件。同一身份最近同内容反馈去重；反馈只绑定登记时主身份，不广播到 worker 或后继。有效历史前缀摘要定位注入位置，工具调用与结果保持配对，重建上下文时记录重新定位。模型用量 human_feedback_ids 标识该请求携带的反馈；forwarded 不表示 Agent 已采纳。没有反馈时原请求路径不变。Agent 的范围核查、决定及影响留档见各阶段 Prompt，外界批准流程只由操作者承担。
+
+## 第二阶段核心输入与历史兼容
+
+新 preset 第二阶段只直接注入 SOUL、goal、acceptance、protocol；execution 等按 manifest 挂载可读。第一阶段（包括 G 的完整自定义输入）仍要求 phase-instructions。模型主身份/候选/普通 worker 的分工不变。
+
+显式恢复旧 preset 时沿用原有“当前仓库输入＋原历史”语义：旧 phase-instructions 保存在历史 revision/legacy，活动挂载和后续模型核心输入不再包含已删除层；不会仅因更新仓库就改动未恢复或正在运行的 run。旧 custom 无论是否含该可选层，都按原冻结清单校验和恢复，不从仓库补入或删除文件。
+
+具体 run 的来源、任务切换、人工恢复/修复与旧终态说明放入当次获批的 human feedback，不写成每次请求重复的全局校准文案。不预造尚未启动的第二阶段通知。当前 G 使用其已冻结输入，不因本次模板整理变化。

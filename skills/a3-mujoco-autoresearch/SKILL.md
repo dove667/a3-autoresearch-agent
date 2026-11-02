@@ -2,7 +2,7 @@
 name: a3-mujoco-autoresearch
 description: Develop and improve learned policies for the A3 dual-arm MuJoCo cookie-packing project. Use for method selection, ACT/Diffusion/Flow/VLA/world-model experiments, data and training diagnostics, paired closed-loop evaluation, and reusable research experience. Applies to research planning or authorized execution, not permission to start training or change the benchmark.
 metadata:
-  version: 0.1.3
+  version: 0.1.4
 ---
 
 # A3 MuJoCo autoresearch
@@ -47,7 +47,7 @@ Policy and Harness improvements may proceed in parallel when dependencies and re
 
 ## Evaluate without moving the target
 
-For the repository's phase-two protocol 0.3.0, development subsets are allowed. A formal complete grid is six task/difficulty cells × 20 episodes, same policy snapshot, paired baseline/candidate scenarios. Keep 2×5 at 500 steps and 2×10 at 3200, 20 Hz, and the declared task instructions/conditions. The final-test set is not a tuning set. Re-read the active protocol if it differs.
+For the repository's phase-two protocol 0.3.0/0.3.1 (the latter changes references only), development subsets are allowed. A formal complete grid is six task/difficulty cells × 20 episodes, same policy snapshot, paired baseline/candidate scenarios. Keep 2×5 at 500 steps and 2×10 at 3200, 20 Hz, and the declared task instructions/conditions. The final-test set is not a tuning set. Re-read the active protocol if it differs.
 
 Use [evaluation helper](references/evaluation-helper.md) for strict offline comparison of **explicitly normalized** reports. It validates keys and scientific comparability, reports cell results, computes full-grid G only for complete balanced coverage, and resamples paired scenario seeds together. It does not run simulation, authenticate provenance, certify acceptance, or decide whether to adopt a candidate.
 

@@ -1,4 +1,4 @@
-"""Offline paired A3 phase-two 0.3.0 comparison; see references/evaluation-helper.md."""
+"""Offline paired A3 phase-two 0.3.0/0.3.1 comparison; see references/evaluation-helper.md."""
 from __future__ import annotations
 
 import argparse
@@ -32,8 +32,8 @@ def validate(report):
     """Validate explicit normalized input. Does not authenticate referenced files."""
     if not isinstance(report, dict) or report.get("schema") != "a3-paired-evaluation-v1":
         raise ValueError("expected explicit a3-paired-evaluation-v1 input; raw reports need adaptation")
-    if report.get("protocol_version") != "0.3.0":
-        raise ValueError("this helper implements phase-two protocol 0.3.0 only")
+    if report.get("protocol_version") not in ("0.3.0", "0.3.1"):
+        raise ValueError("this helper implements phase-two protocol 0.3.0 and reference-only revision 0.3.1 only")
     digest(report.get("protocol_sha256"), "protocol_sha256")
     digest(report.get("conditions_sha256"), "conditions_sha256")
     digest(report.get("policy_snapshot_sha256"), "policy_snapshot_sha256")
@@ -92,7 +92,7 @@ def compare(baseline, candidate, repeats=10000, bootstrap_seed=0):
     if type(repeats) is not int or repeats < 100:
         raise ValueError("bootstrap repeats must be an integer >= 100")
     left, right = validate(baseline), validate(candidate)
-    for field in ("protocol_sha256", "conditions_sha256", "split"):
+    for field in ("protocol_version", "protocol_sha256", "conditions_sha256", "split"):
         if baseline[field] != candidate[field]:
             raise ValueError(f"baseline and candidate differ in {field}")
     if left.keys() != right.keys():
@@ -103,7 +103,7 @@ def compare(baseline, candidate, repeats=10000, bootstrap_seed=0):
     rng = random.Random(bootstrap_seed)
     output = {
         "schema": "a3-paired-comparison-v1",
-        "protocol_version": "0.3.0",
+        "protocol_version": baseline["protocol_version"],
         "split": baseline["split"],
         "paired_episodes": len(left),
         "baseline_snapshot": baseline["policy_snapshot_sha256"],

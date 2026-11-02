@@ -66,7 +66,7 @@ macOS 可在另一个终端运行 `pmset -g assertions`，检查活动的 `caffe
 
 ## 选择阶段
 
-目标与验收分别位于 `agent-inputs/phase-one/`、`agent-inputs/phase-two/`；完整 Prompt 分别位于 `agent-inputs/phase-one/instructions.md`、`agent-inputs/phase-two/instructions.md`。Host 每次选择一个阶段，向主 Agent 和接任候选提供对应阶段的完整输入，不叠加另一个阶段或 common Prompt。
+目标与验收分别位于 `agent-inputs/phase-one/`、`agent-inputs/phase-two/`；第一阶段专项指令位于 `agent-inputs/phase-one/instructions.md`；第二阶段无单独 instructions，直接组合 SOUL、goal、acceptance、shared/protocol（仍映射为 /run/input/protocol.md）。Host 每次选择一个阶段，向主 Agent 和接任候选提供对应阶段的完整输入，不叠加另一个阶段或 common Prompt。
 
 新运行默认第一阶段，也可显式写 `--phase phase-one`。第二阶段从明确选定的保留 Harness 开始，输入选择命令为：
 

@@ -1,4 +1,4 @@
-version: 0.1.1
+version: 0.1.2
 agent:
   agent_class: default
   step_limit: 0
@@ -24,7 +24,7 @@ agent:
     版本化验收：{{ A3_ACCEPTANCE_FILE }}
     部署信息：{{ A3_DEPLOYMENT_FILE }}
     执行接口：/run/input/execution.md
-    核心协议：/run/input/phase-instructions.md（已加载到 system）
+    核心输入：以 /run/input/input-manifest.json 为准，所选阶段核心正文已加载到 system
 
     Bash 只用于这个隔离构建环境；首个候选需提供实际工具和后续自主执行循环。
     按核心协议安排局部测试、完整候选试运行和主身份交接。
