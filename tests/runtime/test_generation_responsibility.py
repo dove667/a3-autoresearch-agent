@@ -23,6 +23,22 @@ def test_published_generation_contract(tmp_path, phase):
     instructions = versions.model_instructions()[1]
     prompt = (ROOT / f"agent-inputs/{phase}/instructions.md").read_text()
     assert prompt in instructions
+    if phase == "phase-two":
+        # Canonical requirements are injected acceptance/protocol, not duplicated
+        # in the thin stage bridge; execution remains mounted and referenced.
+        assert "每代在交权前核查自己负责的" in instructions
+        for clause in (
+            "假设先于执行 → 实际结果 → 保留/拒绝/证据不足决定",
+            "后继继承已确认结论，无需逐条重审前任",
+            "接手未完任务只承担接手后的新执行责任",
+            "前任历史缺口须标明归属",
+            "未完成或未知不得写成已确认",
+            "明确矛盾可针对性核查",
+        ):
+            assert clause in instructions
+        assert "主身份与候选试运行" in prompt
+        assert_generation_contract_version(prompt)
+        return
     for clause in (
         "每代主 Agent 只对自己负责的实验过程与决定承担验收责任",
         "先提出并记录假设，再执行，最后依据实际结果决定保留、拒绝或证据不足",
@@ -66,10 +82,12 @@ def test_research_web_is_optional_phase_two_function_integration():
     prompt = (ROOT / "agent-inputs/phase-two/instructions.md").read_text()
     execution = (ROOT / "agent-inputs/shared/execution.md").read_text()
     for endpoint in ("/web/status", "/web/search", "/web/fetch"):
-        assert endpoint in prompt and endpoint in execution
-    assert "不自动向模型注册函数工具" in prompt
-    assert "不重新运行第一阶段" in prompt
-    assert "未配置" in prompt or "未启用" in prompt
+        assert endpoint in execution
+        assert endpoint not in prompt
+    assert "不向模型自动注册 function tools" in execution
+    assert "不重跑通用冷启动或 E/F 能力建设" in prompt
+    assert "未配置" in execution
+    assert "execution.md" in prompt
     first_phase = (ROOT / "agent-inputs/phase-one/instructions.md").read_text()
     assert "/web/" not in first_phase
     for phase in ("phase-one", "phase-two"):

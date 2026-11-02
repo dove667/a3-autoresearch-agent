@@ -50,8 +50,16 @@ class PromptResponsibilitiesTests(unittest.TestCase):
     def test_feedback_is_agent_action_not_operator_approval(self):
         for phase in ("phase-one", "phase-two"):
             text = read(f"agent-inputs/{phase}/instructions.md")
-            for required in ("收到反馈", "采纳或不采纳", "不能", "旧条件", "来源"):
-                self.assertIn(required, text)
+            if phase == "phase-one":
+                for required in ("收到反馈", "采纳或不采纳", "不能", "旧条件", "来源"):
+                    self.assertIn(required, text)
+            else:
+                # Interpretation is SOUL; evidence is acceptance C; changed
+                # arrangements preserve protocol 3 rather than duplicate them.
+                for required in ("acceptance.md C", "protocol.md §3", "固定核心提示词"):
+                    self.assertIn(required, text)
+                self.assertIn("反馈本身不是实验结果或通过标签", read("agent-inputs/phase-two/acceptance.md"))
+                self.assertIn("不事后改写旧选择条件", read("agent-inputs/phase-two/protocol.md"))
             self.assertNotIn("用户明确批准", text)
         operator = read("docs/operator-supervision.md")
         for required in (
@@ -66,24 +74,19 @@ class PromptResponsibilitiesTests(unittest.TestCase):
 
     def test_research_skills_are_agent_owned_guidance(self):
         prompt = read("agent-inputs/phase-two/instructions.md")
-        for required in (
-            "## 可复用研究 skills",
-            "skills/INDEX.md",
-            "外部参考／待验证",
-            "本地验证",
-            "失效或被反证",
-            "不要求每轮新增 skill",
-            "不能覆盖当前目标、验收、科学协议或固定权限",
-            "continuation.json",
-            "恢复清单",
-            "不得把新增 skill 数量当作研究收益",
-            "检查实际注册与可调用状态，再决定复用或修补",
-        ):
+        for required in ("RSI", "skills", "不重跑通用冷启动或 E/F", "实际加载版本和可调用工具"):
             self.assertIn(required, prompt)
+        soul = read("agent-inputs/SOUL.md")
+        self.assertIn("记忆保存经历和证据", soul)
+        self.assertIn("不授予新权限", soul)
+        skill = read("skills/a3-mujoco-autoresearch/SKILL.md")
+        for required in ("counterexamples", "evidence", "retire stale advice", "retained or handed off"):
+            self.assertIn(required, skill)
+        self.assertNotIn("## 可复用研究 skills", prompt)
         with tempfile.TemporaryDirectory() as directory:
             versions = InputVersions(ROOT, Path(directory) / "run", phase="phase-two")
             proposal = versions.prepare()
-            self.assertEqual(proposal["files"]["phase-instructions.md"]["version"], "0.7.0")
+            self.assertEqual(proposal["files"]["phase-instructions.md"]["version"], "0.8.0")
             versions.activate(proposal, "start")
             self.assertIn(prompt, versions.model_instructions()[1])
         operator = read("docs/operator-supervision.md")
@@ -123,8 +126,15 @@ class PromptResponsibilitiesTests(unittest.TestCase):
         self.assertIn("无候选胜过基线", acceptance)
         self.assertIn("被拒绝的完整候选不要求接任", acceptance)
         prompt = read("agent-inputs/phase-two/instructions.md")
-        for required in ("不为填满等待时间强行制造改动", "优先微调", "离线资产"):
-            self.assertIn(required, prompt)
+        self.assertIn("优先适配、微调", prompt)
+        self.assertIn("不自行下载", prompt)
+        soul = read("agent-inputs/SOUL.md")
+        self.assertIn("不制造重复工作", soul)
+        self.assertNotIn("在等待其结果的时间里优先", prompt)
+        allocation = read("skills/rsi-harness-evolution/references/policy-harness-allocation.md")
+        self.assertIn("validation", allocation)
+        self.assertIn("remaining budget", allocation)
+        self.assertIn("Do not rewrite Host-owned SOUL", allocation)
 
 
 if __name__ == "__main__":

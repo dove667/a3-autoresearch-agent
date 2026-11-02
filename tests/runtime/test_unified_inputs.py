@@ -29,7 +29,15 @@ EXECUTION_RELOCATIONS = {
 def relocation_fixture_content(name, path):
     # This regression targets the historical relocation, not later input revisions.
     # Keep the frozen migration's content pinned against the pre-relocation hashes.
-    return RELOCATED_EXECUTION if name == "execution.md" else (ROOT / path).read_bytes()
+    if name == "execution.md":
+        return RELOCATED_EXECUTION
+    frozen = {
+        "agent-inputs/SOUL.md": "relocated_soul_0_1_0.md",
+        "agent-inputs/phase-two/instructions.md": "relocated_phase_two_0_7_0.md",
+    }
+    if path in frozen:
+        return (Path(__file__).parent / "fixtures" / frozen[path]).read_bytes()
+    return (ROOT / path).read_bytes()
 
 
 def previous_content(name, content):

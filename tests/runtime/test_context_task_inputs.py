@@ -28,6 +28,15 @@ def test_context_task_bundle_loads_g_and_initial_notice(tmp_path):
     assert manifest["input_mode"] == "custom"
     assert manifest["acceptance_checks"] == ["G"]
     assert manifest["task_profile"] == "standard"
+    assert manifest["files"]["SOUL.md"]["version"] == "0.2.0"
+    _, instructions = versions.model_instructions()
+    assert proposal["contents"]["SOUL.md"] in instructions
+    assert proposal["contents"]["phase-instructions.md"] in instructions
+    assert proposal["contents"]["goal.md"] in instructions
+    assert proposal["contents"]["acceptance.md"] in instructions
+    assert "protocol.md" not in proposal["contents"]
+    assert (ROOT / "agent-inputs/phase-two/instructions.md").read_text() not in instructions
+    assert manifest["acceptance_checks"] == ["G"]
     assert all(item["version"] for item in manifest["files"].values())
     source = HarnessStart(
         ["python", "agent.py", "--resume"],

@@ -1,8 +1,21 @@
 # Validation scope
 
-Version 0.1.0, prepared 2026-11-02. This is reference guidance and an optional experiment-record template, not a runtime implementation or a measured improvement.
+Version 0.2.0, prepared 2026-11-02. This is reference guidance and an optional experiment-record template, not a runtime implementation or a measured improvement.
 
 Source review: primary literature and official engineering documentation, plus the actual exported F module and repository execution/protocol contracts. Research examples were adapted into original conditional experiment cards, not copied code or promised results.
+
+## 0.2.0 prompt-layer refactor
+
+Changes from the tree at `141f98a`: add an on-demand Policy/Harness allocation baseline, update the skill router/catalog, shorten SOUL and deduplicate the Phase 2 bridge. No execution API, scientific goal/acceptance/protocol, runtime or live Agent changes.
+
+- Actual `InputVersions` tests verify selected Phase 2 layers and G-only custom inputs with the new SOUL, without injecting optional skills or maintainer notes.
+- Full offline repository regression: **580 passed**; Ruff and `git diff --check` pass.
+- Skill frontmatter validates; all 14 relative Markdown links in this skill resolve; catalog JSON parses.
+- Independent rule-ownership review found no blocking lost requirement. Unique stage rules remain explicit; duplicate scientific and API clauses route to unchanged canonical owners. The old waiting-time Harness bias is deliberately replaced, not claimed behavior-identical.
+
+This version has no live Agent experiment or new F runtime integration result; allocation examples are guidance, not measured improvements. Existing F interface observations below are historical evidence, not a newly executed integration check.
+
+## 0.1.0 historical checks
 
 Checks completed on the tree based on `28aeef6`:
 

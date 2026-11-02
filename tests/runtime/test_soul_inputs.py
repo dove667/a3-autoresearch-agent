@@ -106,3 +106,21 @@ def test_pre_soul_resume_adds_new_revision_without_rewriting_history(tmp_path):
     (root / "agent-inputs/SOUL.md").write_text("Version: 0.1.1\nchanged without bump\n")
     with pytest.raises(ValueError, match="SOUL.md changed without a version increment"):
         resumed.prepare()
+
+
+def test_repository_phase_two_layers_remain_selected_and_versioned(tmp_path):
+    """Exercise real input files, not synthetic layer placeholders."""
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    inputs = InputVersions(root, tmp_path / "run", phase="phase-two")
+    manifest = inputs.activate(inputs.prepare(), "start")
+    _, instructions = inputs.model_instructions()
+    assert manifest["files"]["SOUL.md"]["version"] == "0.2.0"
+    assert manifest["files"]["phase-instructions.md"]["version"] == "0.8.0"
+    for name in ("SOUL.md", "goal.md", "acceptance.md", "protocol.md", "phase-instructions.md"):
+        assert inputs.contents[name] in instructions
+    assert inputs.contents["execution.md"] not in instructions
+    assert "agent-inputs/phase-two/instructions.md" == manifest["files"]["phase-instructions.md"]["source"]
+    # Optional method references and maintainer review notes are not injected inputs.
+    assert not any(item["source"].startswith(("skills/", "docs/")) for item in manifest["files"].values())

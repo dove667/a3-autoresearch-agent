@@ -2,7 +2,7 @@
 name: rsi-harness-evolution
 description: Diagnose and improve an Agent's own harness with fixed model weights. Use for context, memory, skills, tools, planning, scheduling, recovery, observability and version-selection experiments, with quality-preserving evidence. Complements A3 policy research rather than tuning the robot policy itself.
 metadata:
-  version: 0.1.0
+  version: 0.2.0
 ---
 
 # RSI Harness evolution
@@ -10,6 +10,10 @@ metadata:
 Make the research Agent more effective at its real work by improving the software around the model. A useful change removes a demonstrated bottleneck, enables a missing capability, or improves reliable task quality. More modules, more agents and more reflection are not inherently improvements.
 
 **This skill is a starting repertoire, not an exhaustive search space or a checklist to finish.** Actively inspect your own trajectories, identify problems not listed here, invent alternative explanations and designs, and test them. Use the evidence to keep, revise or reject a candidate, including the advice in this skill. A listed technique may be unsuitable; an unlisted solution may be best. Preserve the current task and its scientific comparisons while exploring freely within it.
+
+## Choose the work before choosing a component
+
+Use [Policy/Harness allocation](references/policy-harness-allocation.md) when deciding whether to run a policy experiment, improve the research harness, repair reliability, or wait. It supplies an evidence-driven starting policy, not a fixed work ratio or a new acceptance gate. Improve your own selection heuristics from observed outcomes; it does not authorize changes to Host-owned inputs. Capability-only tasks remain confined to their selected goal.
 
 ## Find the next useful change
 
