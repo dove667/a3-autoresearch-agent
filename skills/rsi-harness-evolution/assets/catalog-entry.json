@@ -1,0 +1,33 @@
+{
+  "id": "rsi-harness-evolution",
+  "version": "0.1.0",
+  "status": "reference",
+  "comparison_status": "compare-not-proven",
+  "description": "Fixed-weight RSI Harness improvement: component diagnosis, context/memory/tools/control/recovery candidates and quality-preserving experiments.",
+  "keywords": [
+    "rsi",
+    "harness",
+    "self-evolution",
+    "context",
+    "memory",
+    "tools",
+    "recovery",
+    "scheduling",
+    "evaluation"
+  ],
+  "applicability": "Optional research guidance for the current task. Non-exhaustive alternatives, not mandatory architecture. Read local_source and selected references with ordinary read. Not executable through F skill_execute.",
+  "local_source": "skills/rsi-harness-evolution/SKILL.md",
+  "provenance": "Externally authored from primary sources and actual F interface inspection on 2026-11-02. No third-party code imported or live Agent performance experiment performed.",
+  "evidence": [
+    "skills/rsi-harness-evolution/references/sources.md",
+    "skills/rsi-harness-evolution/references/a3-integration.md",
+    "skills/rsi-harness-evolution/references/validation.md"
+  ],
+  "evidence_status": "literature-and-source-inspected; reference-only; no-local-efficiency-comparison",
+  "version_history": [
+    {
+      "version": "0.1.0",
+      "change": "Initial optional component repertoire, experiment template and honest evaluation/retention guidance."
+    }
+  ]
+}

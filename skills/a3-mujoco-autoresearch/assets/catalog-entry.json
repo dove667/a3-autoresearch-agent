@@ -1,6 +1,6 @@
 {
   "id": "a3-mujoco-autoresearch",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "status": "reference",
   "comparison_status": "compare-not-proven",
   "description": "A3 MuJoCo autoresearch and model training: ACT, Diffusion/Flow, VLA, world models, diagnostics and paired evaluation.",
@@ -37,6 +37,10 @@
     {
       "version": "0.1.2",
       "change": "Remove Host quota-setting and resource-administration guidance from the research skill. Retain conditional pipeline measurement, valid reuse, and attributable throughput experiments."
+    },
+    {
+      "version": "0.1.3",
+      "change": "Make the repertoire explicitly non-exhaustive: discover new problems, propose unlisted solutions, test them and revise skill guidance from evidence."
     }
   ]
 }

@@ -1,6 +1,6 @@
 # Agent 输入的版本与加载
 
-Version: 0.5.1
+Version: 0.5.2
 
 本文件面向维护输入的部署方；运行监督与审批见 [操作者文档](operator-supervision.md)。目标、验收、Prompt 和执行说明由部署方维护。使用内置 profile 时，新启动、`--resume-from` 和 `--run-harness` 采用启动时仓库里的当前文件，包括未提交的工作区内容。显式自定义输入目录则使用下述独立冻结快照，不回退到仓库模板。恢复保留原 run、身份、生成的 Harness 和模型对话历史；部署方 system Prompt 与所选阶段协议更新为当前版本。
 
@@ -66,7 +66,7 @@ python -m runtime.local.launch \
   --agent-inputs-dir "$inputs"
 ```
 
-本轮只有 `acceptance.G`；不传 E/F 专项 profile，不加载 phase-two protocol。初始反馈通过目录里的文件注入，不另传 `--initial-feedback-file`。若需要随新任务提供研究 skill，可把已检查的 `skills/a3-mujoco-autoresearch/` 纯文本文件树复制到该输入目录同名子路径；它会只读挂载，不自动注入正文或自动登记为 Agent 的活动 skill。正文读取、未来工作区复制及目录合并见 skill 自带集成说明，这不是 G 的新增验收项目。
+本轮只有 `acceptance.G`；不传 E/F 专项 profile，不加载 phase-two protocol。初始反馈通过目录里的文件注入，不另传 `--initial-feedback-file`。若需要随新任务提供研究 skill，可把已检查的 `skills/a3-mujoco-autoresearch/` 与 `skills/rsi-harness-evolution/` 纯文本文件树复制到该输入目录同名子路径（例如 `mkdir -p "$inputs/skills"` 后运行 `cp -R skills/a3-mujoco-autoresearch skills/rsi-harness-evolution "$inputs/skills/"`）。两者只读挂载，不自动注入正文或自动登记为 Agent 的活动 skill。正文读取、未来工作区复制及目录合并见 skill 自带集成说明，这不是 G 的新增验收项目。
 
 启动后应核实实际 input manifest、`acceptance_checks=["G"]`、新任务状态及初始反馈消息，不能只看仓库文件。自定义 run 的恢复使用其冻结输入；每次人工恢复的说明继续走已有 feedback 流程。G 通过保存退出，不自动开始第二阶段。准备输入或发布源码本身不证明 Agent 已实现上下文管理。
 

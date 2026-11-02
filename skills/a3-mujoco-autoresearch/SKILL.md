@@ -2,7 +2,7 @@
 name: a3-mujoco-autoresearch
 description: Develop and improve learned policies for the A3 dual-arm MuJoCo cookie-packing project. Use for method selection, ACT/Diffusion/Flow/VLA/world-model experiments, data and training diagnostics, paired closed-loop evaluation, and reusable research experience. Applies to research planning or authorized execution, not permission to start training or change the benchmark.
 metadata:
-  version: 0.1.2
+  version: 0.1.3
 ---
 
 # A3 MuJoCo autoresearch
@@ -18,6 +18,8 @@ For each next action, identify the limiting uncertainty: a broken adapter, insuf
 **A3 traps to check first:** absolute joint targets rather than deltas; 16D dual-arm versus published 8D left-arm action; inactive arm held at reset pose, not zero; observation state may include more than action channels; 20 Hz control; consistent camera preprocessing; commanded versus applied-action labels; chunk queues and reset; final count rather than transient peak. See the contract for source-qualified details.
 
 ## Select a research branch
+
+**These references are not an exhaustive search space or a task checklist.** Actively discover problems in the actual project and trajectories, propose methods or hypotheses outside this menu, and test them. Keep, revise or reject candidates using evidence; update the skill itself when new findings contradict its advice. Do not limit exploration to the named model families or implement every listed method for its own sake.
 
 These are options, not a mandatory ladder. Prefer the strongest executable baseline that fits current data, compute and target uncertainty; compare alternatives when the evidence warrants it.
 
