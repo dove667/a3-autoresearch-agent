@@ -1,0 +1,34 @@
+{
+  "id": "a3-mujoco-autoresearch",
+  "version": "0.1.0",
+  "status": "reference",
+  "comparison_status": "compare-not-proven",
+  "description": "A3 MuJoCo autoresearch and model training: ACT, Diffusion/Flow, VLA, world models, diagnostics and paired evaluation.",
+  "keywords": [
+    "a3",
+    "mujoco",
+    "autoresearch",
+    "training",
+    "act",
+    "diffusion",
+    "flow",
+    "vla",
+    "world-model",
+    "evaluation"
+  ],
+  "applicability": "Research planning and authorized execution for the declared A3 task. Recommendations are not local performance evidence. Read SKILL.md and selected references using the ordinary read tool. Helpers require an authorized job/execution tool, not skill_execute.",
+  "local_source": "skills/a3-mujoco-autoresearch/SKILL.md",
+  "provenance": "Externally authored baseline from primary-source research and inspected A3/LeRobot code on 2026-11-02; no third-party code copied and no policy training performed.",
+  "evidence": [
+    "skills/a3-mujoco-autoresearch/references/sources.md",
+    "skills/a3-mujoco-autoresearch/references/integration.md",
+    "skills/a3-mujoco-autoresearch/references/validation.md"
+  ],
+  "evidence_status": "literature-and-source-inspected; offline-helper-tests; no-local-policy-comparison",
+  "version_history": [
+    {
+      "version": "0.1.0",
+      "change": "Initial externally authored research reference and offline paired-evaluation helper."
+    }
+  ]
+}

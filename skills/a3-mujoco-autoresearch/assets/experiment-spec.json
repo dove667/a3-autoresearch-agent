@@ -1,0 +1,19 @@
+{
+  "experiment_id": "replace-with-unique-id",
+  "status": "planned",
+  "kind": "policy",
+  "hypothesis": "State a mechanism and an observable prediction.",
+  "evidence_refs": [],
+  "baseline": {"policy_snapshot": "", "data_snapshot": "", "harness_commit": ""},
+  "candidate": {"changed_variables": {}, "policy_snapshot": "", "data_snapshot": "", "harness_commit": ""},
+  "fixed_conditions": {"protocol_snapshot": "", "scenario_seeds": [], "inference_seeds": [], "task_difficulty_cells": [], "split": "development"},
+  "diagnostics": [],
+  "selection_conditions": "Specify before execution, including reliability and uncertainty.",
+  "stop_conditions": "Use the authorized budget and the scientific question, not a universal attempt count.",
+  "resource_estimate": {"training_gpu_hours": null, "evaluation_gpu_hours": null, "storage_bytes": null},
+  "job_ids": [],
+  "raw_result_refs": [],
+  "decision": null,
+  "limitations": [],
+  "next_action": null
+}
