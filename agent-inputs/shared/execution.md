@@ -1,6 +1,6 @@
 # Host提供的执行与验收入口
 
-Version: 0.11.1
+Version: 0.12.0
 
 部署方运行 gateway、容器引擎、模型认证与远程资源调度。候选 Harness 在独立容器内运行，
 通过 HTTP 请求这些固定能力。工具名称、研究逻辑、反思方法和版本选择由 Agent 设计。
@@ -374,6 +374,8 @@ Host 只加载所选阶段的输入，不叠加 common 或另一阶段 Prompt。
 部署信息 remote_limits 保存实际并发、单作业超时和本地 run 文件与新增远程数据的合计额度。timeout_seconds 为 0 表示不限时，run_storage_bytes 为 0 表示不启用这项额度；只读公共模型与数据不计入新增额度。所有后继和辅助 worker 的新增远程数据合并计入同一 run；Host 每五秒报告本地 run 文件占用，远程 watcher 使用最近报告与远程占用之和。
 
 额度检查在提交前执行，运行中的 watcher 每秒扫描，达到额度后停止自己的作业，保留文件和失败原因。并行写入及正常停止有延迟，可能短暂超过阈值；这是监测式额度，不是文件系统硬配额。收到 storage_limit 或 run storage limit reached 后保存状态并结束预算内任务，不以重复提交绕过额度。
+
+远程 **job** 的 `completed/failed/cancelled` 记录提交且容器确已退出后，Host 先把当前 Docker 保留日志、准确容器状态和作业来源归档到执行端 job 元数据目录，再自动删除该 job 容器；不删除工作区、outputs、导出快照或镜像。显式取消尚未启动的 created job 也先归档再非强制删除，不会为清理启动任务。查询仍返回退出码和最近最多 65536 字符输出，新增 `cleanup.status` 说明 removed、retained 或 missing_unarchived；retained 附原因。归档保存当前可读取的全部日志，不包含 Docker 已轮转丢弃的历史；超过 8 MiB、归档失败、额度不足、归属不明或状态变化时保留容器。归档字节计入 run 新增远程占用。失败清理会在后续该 job 状态查询/取消时重试；没有定时全局清理或 TTL 保证。该机制不适用于 Agent 会话容器，不改变会话 resume/交接。
 
 ## 新任务与 checkpoint 复用
 

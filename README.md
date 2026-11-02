@@ -23,6 +23,8 @@ bash scripts/build-bootstrap-image.sh
 bash scripts/start-rsi.sh --check
 ```
 
+远程已完成/失败/取消的 job 容器在日志和终态可靠归档后自动回收，工作区、输出和导出快照保留；归档失败或容器状态不确定则保留，后续状态查询会重试。此策略不清理其他人的容器、不删除镜像，也不新增定时任务；详见[执行接口](agent-inputs/shared/execution.md#远程资产输出与额度)。
+
 ## 三种运行方式
 
 macOS 上启动脚本会自动使用 `caffeinate -is` 包裹 Agent runtime，在运行期间防止空闲休眠，退出后释放。下列三种启动方式均包含这项保护。长程运行请接通电源、保持开盖，并避免关机或重启；屏幕可以自动熄灭。保持运行、后台执行与检查方法见[长程运行说明](docs/tutorial.md#长程运行与防休眠)。
