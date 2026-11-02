@@ -22,6 +22,16 @@ For mixed precision, unscale before clipping/inspection. During accumulation, ke
 
 Increasing accumulation preserves neither identical examples/order nor exact numerical behavior automatically. Record effective batch and compare both matched-work and matched-time learning. Low GPU utilization may be image decode/dataloader/simulation/serialization wait, not insufficient model size.
 
+## When simulation or collection is the bottleneck
+
+Do not infer the critical path from GPU utilization or model size. Use existing telemetry or a bounded representative sample to separate reset/startup, physics, rendering, policy inference, serialization, disk I/O, collection acceptance rate and training. Report actual wall time and controls/second or completed episodes/hour with task, horizon, worker count, effective CPU allocation and concurrency. A short rollout can underestimate long 2×10 episodes or overestimate performance by measuring only startup; give a range and assumptions rather than a precise unsupported full-run estimate.
+
+When a throughput probe already establishes that a full job will be impractical, preserve the partial evidence and estimate remaining time instead of finishing merely to obtain a benchmark number. A canceled probe remains partial; do not convert it into a completed scientific comparison. This is a targeted diagnostic when useful, not mandatory profiling before every experiment.
+
+Reuse compatible collected trajectories and matching incumbent evaluations. Add data where a hypothesis requires new coverage rather than recollecting the entire set. Development can use declared paired subsets; the final full-grid requirement and missing-episode accounting remain unchanged.
+
+The Agent may select worker counts, batching and scheduling **within the actual authorized job quota** and improve implementation throughput without changing the scientific contract. Increasing the Host/container CPU or resource ceiling is an external allocation decision, not an internal workaround. If scaling saturates that ceiling, report measured throughput, the bottleneck and the expected benefit of more resources. Do not bypass the limit or assume that more workers imply more allocated CPUs. Also avoid competing jobs oversubscribing one shared quota; measure effective throughput, not nominal worker count.
+
 ## Resume and artifact integrity
 
 Weights-only warm start is not exact training continuation. A continuation receipt can include optimizer/scheduler/scaler/EMA state, RNGs, data-sampler position, global step, processors, config and code/data hashes. Multiworker prefetch state makes exact mid-epoch continuation nontrivial: resume at a documented reproducible boundary or state the limitation. Check fresh-process reload outputs before a long job.

@@ -1,6 +1,6 @@
 {
   "id": "a3-mujoco-autoresearch",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "status": "reference",
   "comparison_status": "compare-not-proven",
   "description": "A3 MuJoCo autoresearch and model training: ACT, Diffusion/Flow, VLA, world models, diagnostics and paired evaluation.",
@@ -29,6 +29,10 @@
     {
       "version": "0.1.0",
       "change": "Initial externally authored research reference and offline paired-evaluation helper."
+    },
+    {
+      "version": "0.1.1",
+      "change": "Clarify measured end-to-end bottlenecks, simulation/data reuse, partial throughput probes and Host resource-allocation boundary; no new execution or quota authority."
     }
   ]
 }
