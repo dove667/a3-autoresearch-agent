@@ -99,7 +99,7 @@ def test_phase_rules_follow_main_and_trial_roles_without_affecting_workers(tmp_p
 
 
 def test_initial_system_template_includes_the_selected_phase_rules():
-    config = yaml.safe_load(Path("configs/rsi-bootstrap.yaml").read_text())
+    config = yaml.safe_load(Path("agent-inputs/shared/bootstrap.yaml").read_text())
     rendered = Template(config["agent"]["system_template"], undefined=StrictUndefined).render(
         phase_instructions="FROZEN PHASE"
     )

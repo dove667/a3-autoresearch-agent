@@ -1,0 +1,108 @@
+{
+  "phase-one": {
+    "SOUL.md": {
+      "source": "SOUL.md",
+      "sha256": "4458bf321e80d1e20857b05ac404e68621c850680adbdc87199d343ee8b442e9"
+    },
+    "bootstrap.yaml": {
+      "source": "configs/rsi-bootstrap.yaml",
+      "sha256": "a5f0f0c9fc2cf431a3a3506e01e615bf03506c5fdc938bfe7183577f103d8c36"
+    },
+    "execution.md": {
+      "source": "runtime/local/README.md",
+      "sha256": "2976dead2a2709faf2ee141ed169d7522657a10da25bf85ea97b772649d021f2"
+    },
+    "readiness-task.md": {
+      "source": "runtime/local/readiness-task.md",
+      "sha256": "e704f9209f3049ea7cc080ab0ae15f6de6f1b8e67902157bd141c2f0e7cdf020"
+    },
+    "workspace-instructions.md": {
+      "source": "configs/prompts/workspace.md",
+      "sha256": "672302e7b7670635e8ae90dd21b3a7ea909809194990b9e5e0c93446db458271"
+    },
+    "goal.md": {
+      "source": "evals/phase-one/goal.md",
+      "sha256": "b34f5854d7ca5ac47d0aec676bedec28c3ac36eb5627f0c08959380fa6a633e5"
+    },
+    "acceptance.md": {
+      "source": "evals/phase-one/acceptance.md",
+      "sha256": "b38ba4a31f55430a50d90b089e9ddb3658c3d4c9ab15bc0c8fa4724c37cdc197"
+    },
+    "phase-instructions.md": {
+      "source": "configs/prompts/phase-one.md",
+      "sha256": "32cc41aa81c3015cae126b08cb29dc1474d84625c95b9a05af9a6e3e22a1fcf5"
+    }
+  },
+  "phase-one-web": {
+    "SOUL.md": {
+      "source": "SOUL.md",
+      "sha256": "4458bf321e80d1e20857b05ac404e68621c850680adbdc87199d343ee8b442e9"
+    },
+    "bootstrap.yaml": {
+      "source": "configs/rsi-bootstrap.yaml",
+      "sha256": "a5f0f0c9fc2cf431a3a3506e01e615bf03506c5fdc938bfe7183577f103d8c36"
+    },
+    "execution.md": {
+      "source": "runtime/local/README.md",
+      "sha256": "2976dead2a2709faf2ee141ed169d7522657a10da25bf85ea97b772649d021f2"
+    },
+    "readiness-task.md": {
+      "source": "runtime/local/readiness-task.md",
+      "sha256": "e704f9209f3049ea7cc080ab0ae15f6de6f1b8e67902157bd141c2f0e7cdf020"
+    },
+    "workspace-instructions.md": {
+      "source": "configs/prompts/workspace.md",
+      "sha256": "672302e7b7670635e8ae90dd21b3a7ea909809194990b9e5e0c93446db458271"
+    },
+    "goal.md": {
+      "source": "evals/phase-one-web/goal.md",
+      "sha256": "26170e87c8ec5622774edefcc05c7e1e061775564699d2ec61577122e7c7ab4e"
+    },
+    "acceptance.md": {
+      "source": "evals/phase-one-web/acceptance.md",
+      "sha256": "0c6f99e6ac5e4b879b80af0c0cbf70907f5226c9de0ef81d08a3f6c3630d14b9"
+    },
+    "phase-instructions.md": {
+      "source": "configs/prompts/phase-one-web.md",
+      "sha256": "b4ed36e3e9c923316f2e0a58bf98f1062aed6adc6bc01732bc054aa3a4ce5606"
+    }
+  },
+  "phase-two": {
+    "SOUL.md": {
+      "source": "SOUL.md",
+      "sha256": "4458bf321e80d1e20857b05ac404e68621c850680adbdc87199d343ee8b442e9"
+    },
+    "bootstrap.yaml": {
+      "source": "configs/rsi-bootstrap.yaml",
+      "sha256": "a5f0f0c9fc2cf431a3a3506e01e615bf03506c5fdc938bfe7183577f103d8c36"
+    },
+    "execution.md": {
+      "source": "runtime/local/README.md",
+      "sha256": "2976dead2a2709faf2ee141ed169d7522657a10da25bf85ea97b772649d021f2"
+    },
+    "readiness-task.md": {
+      "source": "runtime/local/readiness-task.md",
+      "sha256": "e704f9209f3049ea7cc080ab0ae15f6de6f1b8e67902157bd141c2f0e7cdf020"
+    },
+    "workspace-instructions.md": {
+      "source": "configs/prompts/workspace.md",
+      "sha256": "672302e7b7670635e8ae90dd21b3a7ea909809194990b9e5e0c93446db458271"
+    },
+    "goal.md": {
+      "source": "evals/phase-two/goal.md",
+      "sha256": "03adbcff1db7f6939d46d3e4f16c890e5f4c893534c6548bff4f392f43fd8616"
+    },
+    "acceptance.md": {
+      "source": "evals/phase-two/acceptance.md",
+      "sha256": "f0519cc78987bfa6738a71ccad7e2be032371f84b6eab7f59da436de7ee8a35a"
+    },
+    "phase-instructions.md": {
+      "source": "configs/prompts/phase-two.md",
+      "sha256": "1a702f1d4d2ebae061976dab093a48ce8e3adfb9227d9edad34c79be9de072ee"
+    },
+    "protocol.md": {
+      "source": "evals/phase-two/protocol.md",
+      "sha256": "8d584f86c1d7c5753f51c1aa853d299ecea22a8da99c8c15d80c484367f453df"
+    }
+  }
+}

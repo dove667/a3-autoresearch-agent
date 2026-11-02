@@ -12,11 +12,11 @@ import yaml
 from jinja2 import Environment, TemplateError
 
 SHARED_INPUT_SOURCES = {
-    "SOUL.md": "SOUL.md",
-    "bootstrap.yaml": "configs/rsi-bootstrap.yaml",
-    "execution.md": "runtime/local/README.md",
-    "readiness-task.md": "runtime/local/readiness-task.md",
-    "workspace-instructions.md": "configs/prompts/workspace.md",
+    "SOUL.md": "agent-inputs/SOUL.md",
+    "bootstrap.yaml": "agent-inputs/shared/bootstrap.yaml",
+    "execution.md": "agent-inputs/shared/execution.md",
+    "readiness-task.md": "agent-inputs/shared/readiness-task.md",
+    "workspace-instructions.md": "agent-inputs/shared/workspace.md",
 }
 PHASES = ("phase-one", "phase-two")
 TASK_PROFILES = ("standard", "web-extension")
@@ -32,12 +32,12 @@ def input_sources(phase: str, task_profile: str = "standard") -> dict[str, str]:
     bundle = "phase-one-web" if task_profile == "web-extension" else phase
     sources = {
         **SHARED_INPUT_SOURCES,
-        "goal.md": f"evals/{bundle}/goal.md",
-        "acceptance.md": f"evals/{bundle}/acceptance.md",
-        "phase-instructions.md": f"configs/prompts/{bundle}.md",
+        "goal.md": f"agent-inputs/{bundle}/goal.md",
+        "acceptance.md": f"agent-inputs/{bundle}/acceptance.md",
+        "phase-instructions.md": f"agent-inputs/{bundle}/instructions.md",
     }
     if phase == "phase-two":
-        sources["protocol.md"] = "evals/phase-two/protocol.md"
+        sources["protocol.md"] = "agent-inputs/phase-two/protocol.md"
     return sources
 
 

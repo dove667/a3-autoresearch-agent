@@ -18,7 +18,7 @@ class PromptResponsibilitiesTests(unittest.TestCase):
         for phase in ("phase-one", "phase-two"):
             sources = input_sources(phase)
             self.assertEqual(len(sources), 9 if phase == "phase-two" else 8)
-            self.assertEqual(sources["execution.md"], "runtime/local/README.md")
+            self.assertEqual(sources["execution.md"], "agent-inputs/shared/execution.md")
             self.assertFalse(any(path.startswith("docs/") for path in sources.values()))
             for path in sources.values():
                 text = read(path)
@@ -38,18 +38,18 @@ class PromptResponsibilitiesTests(unittest.TestCase):
                 versions = InputVersions(ROOT, Path(directory) / "run", phase=phase)
                 versions.activate(versions.prepare(), "start")
                 instructions = versions.model_instructions()[1]
-                self.assertIn(read(f"configs/prompts/{phase}.md"), instructions)
-                self.assertIn(read(f"evals/{phase}/goal.md"), instructions)
-                self.assertIn(read(f"evals/{phase}/acceptance.md"), instructions)
+                self.assertIn(read(f"agent-inputs/{phase}/instructions.md"), instructions)
+                self.assertIn(read(f"agent-inputs/{phase}/goal.md"), instructions)
+                self.assertIn(read(f"agent-inputs/{phase}/acceptance.md"), instructions)
                 if phase == "phase-two":
-                    self.assertIn(read("evals/phase-two/protocol.md"), instructions)
+                    self.assertIn(read("agent-inputs/phase-two/protocol.md"), instructions)
                 self.assertNotIn("每次热加载或中断前", instructions)
                 self.assertNotIn("父助手先说明目标 run", instructions)
                 self.assertNotIn("runtime.local.reload_feedback", instructions)
 
     def test_feedback_is_agent_action_not_operator_approval(self):
         for phase in ("phase-one", "phase-two"):
-            text = read(f"configs/prompts/{phase}.md")
+            text = read(f"agent-inputs/{phase}/instructions.md")
             for required in ("收到反馈", "采纳或不采纳", "不能", "旧条件", "来源"):
                 self.assertIn(required, text)
             self.assertNotIn("用户明确批准", text)
@@ -65,7 +65,7 @@ class PromptResponsibilitiesTests(unittest.TestCase):
             self.assertIn(required, operator)
 
     def test_research_skills_are_agent_owned_guidance(self):
-        prompt = read("configs/prompts/phase-two.md")
+        prompt = read("agent-inputs/phase-two/instructions.md")
         for required in (
             "## 可复用研究 skills",
             "skills/INDEX.md",
@@ -92,7 +92,7 @@ class PromptResponsibilitiesTests(unittest.TestCase):
         self.assertIn("forwarded", operator)
 
     def test_scientific_rules_remain_in_protocol(self):
-        text = read("evals/phase-two/protocol.md")
+        text = read("agent-inputs/phase-two/protocol.md")
         for required in (
             "120 回合",
             "| 2×5 | 20 回合 | 20 回合 | 20 回合 | 10 |",
@@ -117,12 +117,12 @@ class PromptResponsibilitiesTests(unittest.TestCase):
             "中间候选不得用最终测试结果调参",
         ):
             self.assertIn(required, text)
-        acceptance = read("evals/phase-two/acceptance.md")
+        acceptance = read("agent-inputs/phase-two/acceptance.md")
         self.assertIn("最终测试集对初始基线和已选定的最终 Policy 各完成 120 回合", acceptance)
         self.assertIn("同一快照和协议的结果可复用", acceptance)
         self.assertIn("无候选胜过基线", acceptance)
         self.assertIn("被拒绝的完整候选不要求接任", acceptance)
-        prompt = read("configs/prompts/phase-two.md")
+        prompt = read("agent-inputs/phase-two/instructions.md")
         for required in ("不为填满等待时间强行制造改动", "优先微调", "离线资产"):
             self.assertIn(required, prompt)
 

@@ -7,15 +7,12 @@
 ├── runtime/
 │   ├── local/             本地启动器、Gateway、候选版本、协议检查与恢复
 │   └── remote/            远程作业 Controller、镜像构建与验证入口
-├── configs/
-│   ├── rsi-bootstrap.yaml  初始 mini 的运行参数与工具约定
-│   └── prompts/
-│       ├── phase-one.md    第一阶段完整主 Agent Prompt
-│       ├── phase-two.md    第二阶段完整主 Agent Prompt
-│       └── workspace.md    固定工作区与接口说明
-├── evals/
-│   ├── phase-one/          冷启动 goal.md 与 acceptance.md
-│   └── phase-two/          联合优化 goal.md、acceptance.md 与 protocol.md
+├── agent-inputs/           部署方提供给 Agent 的全部版本化输入
+│   ├── SOUL.md             跨阶段长期角色原则
+│   ├── shared/             bootstrap、execution、workspace、readiness-task
+│   ├── phase-one/          冷启动 goal、acceptance、instructions
+│   ├── phase-one-web/      E-only goal、acceptance、instructions
+│   └── phase-two/          联合优化 goal、acceptance、protocol、instructions
 ├── tests/runtime/          本地和远程基础设施的回归测试
 ├── scripts/                薄启动入口
 ├── third_party/            固定版本的 mini-SWE-agent submodule
@@ -30,7 +27,7 @@
 | --- | --- | --- |
 | `runtime/local/` | Host 固定的模型转发、身份与权限、候选生命周期、Git 版本、协议检查、诊断、冷启动和恢复 | 是 |
 | `runtime/remote/` | 按归属运行远程 Docker 作业、分配资源、构建执行镜像 | 是 |
-| `configs/`、`evals/` | 通用配置与当前能力目标；每次运行另存版本化副本 | 是 |
+| `agent-inputs/` | 全部部署方 Agent 输入（README 仅作维护者导航）；每次运行另存版本化副本 | 是 |
 | `tests/runtime/` | 验证固定部署逻辑，不承担 A3 自身的开发测试 | 是 |
 | `reports/` | 可选的本地报告工程，保存展示用正文、数据与图像 | 否 |
 | `third_party/` | 第三方原始源码与独立 Git 历史 | submodule |
@@ -109,7 +106,7 @@ artifacts/rsi/run-*/
 
 启动流程与参数见[使用教程](tutorial.md)，执行单元和调用关系见[系统架构](architecture.md)。`continuation.py` 负责跨轮结果的机械保存与读取；`retained.json` 是运行结果，Agent 的记忆实现仍归属其生成的 Harness。
 
-`configs/prompts/phase-one.md` 和 `configs/prompts/phase-two.md` 分别是对应阶段的完整主 Agent 协议。Host 按本轮 `phase` 选择其中一份，版本化到 `inputs/phase-instructions.md`；目标与验收从 `evals/<phase>/` 读取。第二阶段另加载本阶段 protocol.md；不存在额外 common Prompt。测试 Agent 和普通 worker 不由 Host 自动加载主 Agent 协议，其提示词由主 Agent 编写。
+`agent-inputs/phase-one/instructions.md` 和 `agent-inputs/phase-two/instructions.md` 分别是对应阶段的完整主 Agent 协议。Host 按本轮 `phase` 选择其中一份，版本化到 `inputs/phase-instructions.md`；目标与验收从 `agent-inputs/<phase>/` 读取。第二阶段另加载本阶段 protocol.md；不存在额外 common Prompt。测试 Agent 和普通 worker 不由 Host 自动加载主 Agent 协议，其提示词由主 Agent 编写。
 
 每轮 `.host/` 由 Host 私有维护，保存恢复所需身份与注册表、进程锁；不挂载给 Agent，不作为可分享产物。`resume-events.jsonl` 记录原 run 内的恢复事件。
 

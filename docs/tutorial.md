@@ -66,7 +66,7 @@ macOS 可在另一个终端运行 `pmset -g assertions`，检查活动的 `caffe
 
 ## 选择阶段
 
-目标与验收分别位于 `evals/phase-one/`、`evals/phase-two/`；完整 Prompt 分别位于 `configs/prompts/phase-one.md`、`configs/prompts/phase-two.md`。Host 每次选择一个阶段，向主 Agent 和接任候选提供对应阶段的完整输入，不叠加另一个阶段或 common Prompt。
+目标与验收分别位于 `agent-inputs/phase-one/`、`agent-inputs/phase-two/`；完整 Prompt 分别位于 `agent-inputs/phase-one/instructions.md`、`agent-inputs/phase-two/instructions.md`。Host 每次选择一个阶段，向主 Agent 和接任候选提供对应阶段的完整输入，不叠加另一个阶段或 common Prompt。
 
 新运行默认第一阶段，也可显式写 `--phase phase-one`。第二阶段从明确选定的保留 Harness 开始，输入选择命令为：
 
@@ -80,7 +80,7 @@ bash scripts/start-rsi.sh --phase phase-two --run-harness "artifacts/rsi/<run-id
 
 ## 初始运行：从通用 SWE Agent 构建 Harness
 
-先阅读或调整 `evals/phase-one/goal.md` 和 `evals/phase-one/acceptance.md`。当前阶段一包含四项：一次 Policy 优化尝试、一次轨迹反思驱动的 Harness 优化、受限执行与跨实验隔离、持久记忆的跨会话检索与实际复用。专项实现由 SWE Agent 决定。
+先阅读或调整 `agent-inputs/phase-one/goal.md` 和 `agent-inputs/phase-one/acceptance.md`。当前阶段一包含四项：一次 Policy 优化尝试、一次轨迹反思驱动的 Harness 优化、受限执行与跨实验隔离、持久记忆的跨会话检索与实际复用。专项实现由 SWE Agent 决定。
 
 ```bash
 bash scripts/start-rsi.sh
@@ -102,7 +102,7 @@ $$
 
 run ID 使用 Host 系统本地时间，格式为 `run-YYYYMMDD-HHMMSS-ffffff`，最后六位是微秒。例如 `run-20261031-110415-123456` 表示 2026 年 10 月 31 日 11:04:15.123456 启动。创建目录时若仍重名，会追加 `-2`、`-3` 等序号，分别保存并发运行。
 
-初始 SWE 只启动一次，自主组织实现、迭代与验收；需要交接时，由 SWE 自己创建后继并传递状态。Host 保留正在运行的后继和 Gateway，不定时重建 Agent，不因未完成而重派任务。全部 worker 停止后记录结果；未完成如实记录，不自动重新开始。结果字段见 [Host 执行接口](../runtime/local/README.md#整轮结束与未完成交接)。
+初始 SWE 只启动一次，自主组织实现、迭代与验收；需要交接时，由 SWE 自己创建后继并传递状态。Host 保留正在运行的后继和 Gateway，不定时重建 Agent，不因未完成而重派任务。全部 worker 停止后记录结果；未完成如实记录，不自动重新开始。结果字段见 [Host 执行接口](../agent-inputs/shared/execution.md#整轮结束与未完成交接)。
 
 ## 中断恢复：保留原任务继续推进
 
@@ -126,7 +126,7 @@ bash scripts/start-rsi.sh --resume-from "artifacts/rsi/<run-id>" --feedback-file
 
 通知说明修复了什么、基础设施检查不替代哪些 Agent 验收，以及继续工作的边界。`registered` 不等于已送达；检查 HumanFeedback 的 `forwarded` 事件及 model-usage 的 `human_feedback_ids` 才能确认成功转发。通知经现有独立 user feedback 进入完整历史，不另建上下文；同一反馈不会在历史中重复追加。若上次 blocked 恢复后又因旧上下文自停，只有已完成 attempt 的原 blocked 归档与当前主身份关联核验通过，并显式提供通知，才恢复该窄情况；不是放开普通 incomplete 或已完成任务。
 
-同一个 `--resume-from` 也支持：当前主 Agent 因有效外部 blocked 主动 self-stop 后，由操作者明确恢复。Host 必须已停止，Docker 停止已确认，主身份未完成、未 closed、未交权，checkpoint 和外部阻塞证据有效。保留同 run、身份、工作区、模型和全部历史；旧 terminal／console／outcome 先归档，再把活动 outcome 设为 continue，并仅轮换相同 scope 的临时 token。不会自动重试、重注入反馈或复活其他已停止 worker。若出现 `.host/blocked-resume/<attempt>/attempt.json` pending，CLI 拒绝重复启动，先核查实际 container 和归档，不直接删除 pending 或改停止标志。详见[恢复协议](../runtime/local/README.md#上下文-checkpoint-与-resume)。
+同一个 `--resume-from` 也支持：当前主 Agent 因有效外部 blocked 主动 self-stop 后，由操作者明确恢复。Host 必须已停止，Docker 停止已确认，主身份未完成、未 closed、未交权，checkpoint 和外部阻塞证据有效。保留同 run、身份、工作区、模型和全部历史；旧 terminal／console／outcome 先归档，再把活动 outcome 设为 continue，并仅轮换相同 scope 的临时 token。不会自动重试、重注入反馈或复活其他已停止 worker。若出现 `.host/blocked-resume/<attempt>/attempt.json` pending，CLI 拒绝重复启动，先核查实际 container 和归档，不直接删除 pending 或改停止标志。详见[恢复协议](../agent-inputs/shared/execution.md#上下文-checkpoint-与-resume)。
 
 恢复直接使用指定的原 run 目录，保持 run ID、时间戳、当前主 Agent 身份、全部工作区文件与版本库。目标、验收、执行说明和部署方 Prompt 加载启动时仓库当前文件，记录版本号与摘要。startup.json 不改写，恢复时间和输入清单另记在 resume-events.jsonl。初始 mini 保留原 `trajectory.json` 中的用户/模型对话、工具结果与调用/费用统计，刷新部署方 system 消息后继续，不重新加入整套任务；不透明 provider 上下文按原样保留。
 
@@ -144,7 +144,7 @@ Ctrl-C 中断时暂停候选 Docker，并保留远程作业及其权限；远程
 
 ## 版本迭代：从已保留的 Harness 开始新任务
 
-上一轮完成并保留 $H_1$ 后，可以修改当前 `evals/`，再启动下一轮：
+上一轮完成并保留 $H_1$ 后，可以修改当前 `agent-inputs/`，再启动下一轮：
 
 ```bash
 bash scripts/start-rsi.sh --run-harness "artifacts/rsi/<run-id>"
@@ -177,7 +177,7 @@ bash scripts/start-rsi.sh --phase phase-one --task-profile web-extension \
 
 新副本中已知旧任务状态先归档到 `inherited-task-state/` 并记录摘要：task.txt 使用 E 目标，trajectory 从空文件继续追加，旧 progress 完成状态转为继承记录，旧 run-outcome 改为 continue。仅处理新副本，源快照和长期记忆不改；普通同 run resume 保留本轮状态；显式外部 blocked 恢复只归档并解除旧 terminal 声明，不做新任务初始化。Harness 自己更新 resume／continuation 的保存逻辑，确保新工具模块、记忆及必要源码／来源引用不会被旧固定清单遗漏或覆盖。
 
-只加载 [E 目标](../evals/phase-one-web/goal.md)、[E 验收](../evals/phase-one-web/acceptance.md)和[专用协议](../configs/prompts/phase-one-web.md)。保留 Harness 自己实现工具并让实际模型成功 search、fetch 公开正文，完成来源引用和离线错误 fixture；不训练、下载模型／PDF、运行 A3 或 GPU 实验。只做必要局部检查，不强制完整 H0/H1 或 A–D 循环。完成 E、结果包与 continuation 后退出；配置、key、额度或网络阻断时保存 blocked 后停止，不能把离线测试当真实通过。
+只加载 [E 目标](../agent-inputs/phase-one-web/goal.md)、[E 验收](../agent-inputs/phase-one-web/acceptance.md)和[专用协议](../agent-inputs/phase-one-web/instructions.md)。保留 Harness 自己实现工具并让实际模型成功 search、fetch 公开正文，完成来源引用和离线错误 fixture；不训练、下载模型／PDF、运行 A3 或 GPU 实验。只做必要局部检查，不强制完整 H0/H1 或 A–D 循环。完成 E、结果包与 continuation 后退出；配置、key、额度或网络阻断时保存 blocked 后停止，不能把离线测试当真实通过。
 
 此 profile 仅适用于第一阶段 retained 来源，不接受冷启动或第二阶段。普通第一阶段仍按原 A–D 目标运行。恢复本轮中断用 `--resume-from <本轮目录>`，自动保持 web-extension profile 与本轮上下文；显式冲突 profile 被拒绝。E 完成的新保留结果可作为 `--phase phase-two --run-harness <E轮目录>` 的来源，但 E 完成不认证前轮整个历史。配置沿用项目根目录私有 `.env`，无需分享 key。启动、发布反馈、热加载或中断须遵守[操作者授权规则](operator-supervision.md)。
 
@@ -270,7 +270,7 @@ bash scripts/start-rsi.sh --verify-deployment
 
 `--resume-from` 可以恢复已经自动删除 container 的主 Agent：Host 根据原工作区的 `resume.json` 重新创建 Docker，沿用原 run、身份、上下文和记忆；已完成的辅助 worker 不重跑。恢复能力依赖 Harness 退出前保存有效 checkpoint，通过自身停止接口明确结束的会话不自动重启；操作者明确恢复有效外部 blocked 当前主身份时，适用上文的窄例外。
 
-Agent 写下完成或阻塞说明后，其运行程序还需要实际退出。生成的 Harness 应在自身循环中实现正常退出分支；Host 也提供 `POST /sessions/self/stop`，允许候选保存状态后只结束自己，后继和远程作业继续保留。该终结操作可能在 HTTP 响应返回前结束进程，不能把保存放在调用之后。Host 不根据验收声明自动杀进程，也不自动重启通过此接口结束的 session。接口详见 [Host 执行说明](../runtime/local/README.md#独立候选执行)。
+Agent 写下完成或阻塞说明后，其运行程序还需要实际退出。生成的 Harness 应在自身循环中实现正常退出分支；Host 也提供 `POST /sessions/self/stop`，允许候选保存状态后只结束自己，后继和远程作业继续保留。该终结操作可能在 HTTP 响应返回前结束进程，不能把保存放在调用之后。Host 不根据验收声明自动杀进程，也不自动重启通过此接口结束的 session。接口详见 [Host 执行说明](../agent-inputs/shared/execution.md#独立候选执行)。
 
 ## 版本快照与独立工作区
 
@@ -286,11 +286,11 @@ Docker 只挂载自己的源码目录，Git 对象库和其他 worktree 留在 H
 
 常规演化中，主 Agent 先提出 Harness 改动和验收清单，启动一个完整候选进行实际执行；检查结果后决定保留或拒绝。拒绝回到当前版本，保留则让同一候选进程成为下一代主 Agent，原主 Agent 保存交接后退出。无需人工提供下一轮任务。Policy 优化可以在这些迭代之间进行。E-only profile 只做实现与实际加载所需的局部验证；需要主身份更替时遵守此协议，不无条件追加完整演化或 Policy 实验。
 
-`evolution.json` 记录主身份、版本化清单、候选版本和选择理由。原始轨迹与各 session 代码仍保留在 run 中。主身份交接不等同于故障 resume：新一代的消息和记忆如何承接由 SWE 实现；网络故障恢复则要求显式 checkpoint。详见 [执行协议](../runtime/local/README.md#主身份与候选试运行)。
+`evolution.json` 记录主身份、版本化清单、候选版本和选择理由。原始轨迹与各 session 代码仍保留在 run 中。主身份交接不等同于故障 resume：新一代的消息和记忆如何承接由 SWE 实现；网络故障恢复则要求显式 checkpoint。详见 [执行协议](../agent-inputs/shared/execution.md#主身份与候选试运行)。
 
 ## 调整核心提示词
 
-`configs/rsi-bootstrap.yaml` 只维护初始 mini 的运行参数、Bash/提交约定和路径。主 Agent 和接任候选使用 `configs/prompts/<phase>.md` 中所选阶段的完整协议。调整要求时修改对应阶段的文件并递增版本，再启动或显式热加载。Host 为这两类身份提供同一份阶段输入；局部测试 Agent 与普通 worker 的完整提示词由主 Agent 编写。
+`agent-inputs/shared/bootstrap.yaml` 只维护初始 mini 的运行参数、Bash/提交约定和路径。主 Agent 和接任候选使用 `agent-inputs/<phase>/instructions.md` 中所选阶段的完整协议。调整要求时修改对应阶段的文件并递增版本，再启动或显式热加载。Host 为这两类身份提供同一份阶段输入；局部测试 Agent 与普通 worker 的完整提示词由主 Agent 编写。
 
 编辑源文件不会自动影响已经运行的实验；恢复启动会采用当前版本。每次热加载或中断前须用户明确批准；具体审批、预览、发布与生效核对见 [外界监督与运行干预](operator-supervision.md#热加载版本化输入)。版本规则、职责表和装载链见 [Agent 输入管理](agent-inputs.md)。
 
@@ -313,7 +313,7 @@ A3_REMOTE_GPU_CAPACITY_MB 与 A3_REMOTE_GPU_HEADROOM_MB 分别设置每卡可预
 
 阶段二沿用所选保留 Harness，并开始新的模型上下文。预训练 backbone、tokenizer 和相关资源由人类在执行端准备；模型目录和离线缓存只读提供，作业不下载缺失依赖。下载的 ACT backbone 是否构成完整可运行 Policy，应按资产清单判断。
 
-训练产生的 checkpoint、数据和视频由 Agent 自己选择保留。固定 Host 提供 exports：先封存稳定文件，验证 ready 后明确授权给后继，后继作业只读加载。接口、文件路径和清理规则见 [Host 大文件交接说明](../runtime/local/README.md#大文件只读交接)。这不需要人类组织交接包。
+训练产生的 checkpoint、数据和视频由 Agent 自己选择保留。固定 Host 提供 exports：先封存稳定文件，验证 ready 后明确授权给后继，后继作业只读加载。接口、文件路径和清理规则见 [Host 大文件交接说明](../agent-inputs/shared/execution.md#大文件只读交接)。这不需要人类组织交接包。
 
 跨轮复用时，Agent 将引用写入 continuation.json 的 remote_exports；运行结束后的 retained.json 同时保存代码版本和大文件引用。用户仍使用 `--phase phase-two --run-harness <明确选定的run目录>` 启动。源数据与授权需要保留在同一执行端资源根目录，不能删掉仍被后续运行引用的快照。模型、数据训练及六格真实成绩由正式 auto research 产生，环境检查不计为正式结果。
 

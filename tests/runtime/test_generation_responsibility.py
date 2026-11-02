@@ -21,7 +21,7 @@ def test_published_generation_contract(tmp_path, phase):
     versions = InputVersions(ROOT, tmp_path / "run", phase=phase)
     versions.activate(versions.prepare(), "start")
     instructions = versions.model_instructions()[1]
-    prompt = (ROOT / f"configs/prompts/{phase}.md").read_text()
+    prompt = (ROOT / f"agent-inputs/{phase}/instructions.md").read_text()
     assert prompt in instructions
     for clause in (
         "每代主 Agent 只对自己负责的实验过程与决定承担验收责任",
@@ -42,7 +42,7 @@ def test_published_generation_contract(tmp_path, phase):
 
 @pytest.mark.parametrize("phase", ["phase-one", "phase-two"])
 def test_acceptance_is_run_coverage_not_repeated_generation_gate(phase):
-    acceptance = (ROOT / f"evals/{phase}/acceptance.md").read_text()
+    acceptance = (ROOT / f"agent-inputs/{phase}/acceptance.md").read_text()
     assert "各代已确认结论与证据引用" in acceptance
     assert "不是每代重复执行全部验收的门槛" in acceptance
     assert "未完成或未知不得写成已确认" in acceptance
@@ -51,10 +51,10 @@ def test_acceptance_is_run_coverage_not_repeated_generation_gate(phase):
 
 
 def test_protocol_and_execution_preserve_local_handoff_boundary():
-    protocol = (ROOT / "evals/phase-two/protocol.md").read_text()
+    protocol = (ROOT / "agent-inputs/phase-two/protocol.md").read_text()
     assert "不因主身份交接而重复最终 120 回合网格或已完成的三个配对实例" in protocol
     assert "每代核对自己负责的实验" in protocol
-    execution = (ROOT / "runtime/local/README.md").read_text()
+    execution = (ROOT / "agent-inputs/shared/execution.md").read_text()
     assert "交权前完成自己负责的实验闭环核查" in execution
     assert "候选在接任前无需完成整个 run" in execution
     assert "不重新执行或审计前任原实验" in execution
@@ -63,15 +63,15 @@ def test_protocol_and_execution_preserve_local_handoff_boundary():
 
 
 def test_research_web_is_optional_phase_two_function_integration():
-    prompt = (ROOT / "configs/prompts/phase-two.md").read_text()
-    execution = (ROOT / "runtime/local/README.md").read_text()
+    prompt = (ROOT / "agent-inputs/phase-two/instructions.md").read_text()
+    execution = (ROOT / "agent-inputs/shared/execution.md").read_text()
     for endpoint in ("/web/status", "/web/search", "/web/fetch"):
         assert endpoint in prompt and endpoint in execution
     assert "不自动向模型注册函数工具" in prompt
     assert "不重新运行第一阶段" in prompt
     assert "未配置" in prompt or "未启用" in prompt
-    first_phase = (ROOT / "configs/prompts/phase-one.md").read_text()
+    first_phase = (ROOT / "agent-inputs/phase-one/instructions.md").read_text()
     assert "/web/" not in first_phase
     for phase in ("phase-one", "phase-two"):
-        acceptance = (ROOT / f"evals/{phase}/acceptance.md").read_text()
+        acceptance = (ROOT / f"agent-inputs/{phase}/acceptance.md").read_text()
         assert "/web/" not in acceptance

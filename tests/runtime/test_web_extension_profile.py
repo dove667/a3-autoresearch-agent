@@ -31,7 +31,7 @@ def test_profile_inputs_acceptance_reload_and_archive(tmp_path):
     assert manifest["acceptance_checks"] == ["E"]
     assert versions.acceptance_checks() == ("E",)
     assert "protocol.md" not in manifest["files"]
-    assert manifest["files"]["goal.md"]["source"] == "evals/phase-one-web/goal.md"
+    assert manifest["files"]["goal.md"]["source"] == "agent-inputs/phase-one-web/goal.md"
     assert "web-extension" in versions.model_instructions()[1]
     restored = input_versions.InputVersions(root, run)
     assert restored.task_profile == "web-extension"
@@ -41,7 +41,7 @@ def test_profile_inputs_acceptance_reload_and_archive(tmp_path):
     wrong = dict(proposal, task_profile="standard")
     with pytest.raises(ValueError, match="profile"):
         versions.activate(wrong, "update")
-    (root / "evals/phase-one-web/goal.md").write_text("Version: 0.1.0\nchanged")
+    (root / "agent-inputs/phase-one-web/goal.md").write_text("Version: 0.1.0\nchanged")
     with pytest.raises(ValueError, match="version increment"):
         restored.prepare()
 

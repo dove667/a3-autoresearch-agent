@@ -120,7 +120,7 @@ sequenceDiagram
 
 即时改文件不会自动生成新 commit。Agent 可以通过 `/versions` 保存候选，并在比较后明确选择保留结果。各 run 使用自己的版本存储，跨轮来源由 `parent_run` 与 `source_version` 关联，代码版本树与 session 父子树分别追踪。
 
-会话产物接口支持按字节偏移分段读取长轨迹，每段仍受响应大小限制。协调者可保存偏移并增量取回追加内容，完整轨迹无需因超过单次传输限制而删除或覆盖。该接口负责受控传输；经验提炼、检索和模型上下文组织由 Agent 的 Harness 实现。参数见[Host 执行入口](../runtime/local/README.md)。
+会话产物接口支持按字节偏移分段读取长轨迹，每段仍受响应大小限制。协调者可保存偏移并增量取回追加内容，完整轨迹无需因超过单次传输限制而删除或覆盖。该接口负责受控传输；经验提炼、检索和模型上下文组织由 Agent 的 Harness 实现。参数见[Host 执行入口](../agent-inputs/shared/execution.md)。
 
 初始 mini-SWE-agent 是构建者；经 `/sessions` 运行的生成代码是候选 Harness。候选内模型的实际工具调用及其返回结果构成执行轨迹，远程 `/jobs` 承担仿真和评测计算。执行证据按这条调用链归属，验收不要求每个候选再次创建一层模型。完整能力仍由版本化的 A/B/C/D 标准检验。
 
@@ -204,7 +204,7 @@ Agent 自己保存模型消息、工具调用、实验结果、反思和选择�
 
 `gateway-events.jsonl` 的请求关联号帮助区分等待模型、候选容量和远程调用；当前远程调用耗时包含 SSH 与 Controller 处理，尚未完整分拆依赖加载和计算时段。基础设施健康、进程正常退出、A/B/C/D 验收分别核对，实际完成状态来自目标与原始执行证据。
 
-对应实现为本地 `launch.py`、`host_gateway.py`、`candidate_runtime.py`、`candidate_versions.py`、`continuation.py` 和 `recovery.py`，远程为 `remote_jobs.py`。完整 HTTP 字段见 [Host 执行接口](../runtime/local/README.md)。
+对应实现为本地 `launch.py`、`host_gateway.py`、`candidate_runtime.py`、`candidate_versions.py`、`continuation.py` 和 `recovery.py`，远程为 `remote_jobs.py`。完整 HTTP 字段见 [Host 执行接口](../agent-inputs/shared/execution.md)。
 
 父版本选择以显式来源为准。最近运行指针只用于定位启动记录，不定义搜索父节点；多个合法分支之间的选择由外部调用者或 Harness 搜索策略作出。每轮的 retained.json 记录本轮明确选择的对外结果，不代表所有候选之间的全局最优。
 
@@ -222,13 +222,13 @@ H0 自行提出改动并先写验收清单，再启动一个加载 H1 的候选�
 
 局部验证 worker 使用普通 `/sessions`，按明确的局部任务完成后退出；主 Agent 将有效改动整合进完整 Harness，才创建接任候选。主 Agent 负责提供实际工具、输入、交接状态与执行程序，并在创建前检查其与验收清单是否一致。一次性测试程序只承担局部验证。
 
-Host 的 `/evolution` 协议记录清单、版本、决策与唯一主身份，不评判改动收益。具体实现、验收内容、模型上下文与记忆交接由 SWE 自行设计。所有 worker 停止后，从最终主身份归档结果，外部监督者才复核 ABCD。接口见 [Host 执行入口](../runtime/local/README.md#主身份与候选试运行)。
+Host 的 `/evolution` 协议记录清单、版本、决策与唯一主身份，不评判改动收益。具体实现、验收内容、模型上下文与记忆交接由 SWE 自行设计。所有 worker 停止后，从最终主身份归档结果，外部监督者才复核 ABCD。接口见 [Host 执行入口](../agent-inputs/shared/execution.md#主身份与候选试运行)。
 
 ## 核心协议与 Agent 自己的提示词
 
 初始 mini 的 Bash 工具、提交标记和工作区路径属于 bootstrap 专用配置；跨代共性的目标职责、权限、测试和交接规则集中维护。
 
-主 Agent 与待接任候选通过 Host 获得同一份版本化阶段协议。来源为 `configs/prompts/<phase>.md`，目标与验收来源为 `evals/<phase>/`。phase-one 和 phase-two 各自完整，Host 每次只加载所选阶段；第二阶段另附本阶段 protocol.md，不叠加 common Prompt。新 run 显式选择阶段，恢复沿用已记录的阶段，热加载只更新该阶段。初始 mini 在 system 中加载；生成后的模型调用由 Gateway 根据实际身份附带，避免代际交接遗漏。主 Agent 仍自行编写专属提示词、任务及工具。普通测试 Agent 与 worker 的完整提示词由主 Agent 设计，Host 不给这些身份额外附加核心协议。
+主 Agent 与待接任候选通过 Host 获得同一份版本化阶段协议。来源为 `agent-inputs/<phase>/instructions.md`，目标与验收来源为 `agent-inputs/<phase>/`。phase-one 和 phase-two 各自完整，Host 每次只加载所选阶段；第二阶段另附本阶段 protocol.md，不叠加 common Prompt。新 run 显式选择阶段，恢复沿用已记录的阶段，热加载只更新该阶段。初始 mini 在 system 中加载；生成后的模型调用由 Gateway 根据实际身份附带，避免代际交接遗漏。主 Agent 仍自行编写专属提示词、任务及工具。普通测试 Agent 与 worker 的完整提示词由主 Agent 设计，Host 不给这些身份额外附加核心协议。
 
 角色由 Host 的主身份和 trial 记录判断。启动与恢复采用仓库当前输入，模型对话、工具和专属指令继续保留。运行期间只有 Host 操作者可预览并确认热加载；确认绑定内容摘要，后续请求使用新版本。用量和结束结果记录具体输入清单，完整内容归档在 input-revisions。详见 [输入版本管理](agent-inputs.md)。
 

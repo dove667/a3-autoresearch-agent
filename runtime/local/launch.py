@@ -187,7 +187,7 @@ def prepare_workspace(workspace: Path, a3: Path, harness: Path = ROOT) -> None:
     snapshot_checkout(harness, workspace / "harness")
     (workspace / "run").mkdir()
     (workspace / "harness/AGENTS.md").write_text(
-        (ROOT / "configs/prompts/workspace.md").read_text()
+        (ROOT / "agent-inputs/shared/workspace.md").read_text()
     )
 
 

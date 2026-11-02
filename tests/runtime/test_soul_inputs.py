@@ -14,7 +14,7 @@ PROFILES = [("phase-one", "standard"), ("phase-one", "web-extension"), ("phase-t
 
 def source_bundle(tmp_path, phase="phase-one", profile="standard"):
     root = tmp_path / "source"
-    for name, relative in {**input_sources(phase, profile), "SOUL.md": "SOUL.md"}.items():
+    for name, relative in input_sources(phase, profile).items():
         path = root / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         content = f"Version: 0.1.0\n{name} UNIQUE CONTENT\n"
@@ -34,9 +34,9 @@ def test_soul_is_published_hashed_and_forwarded_with_selected_stage(tmp_path, ph
     (run / "private-inputs").mkdir(parents=True)
     inputs = InputVersions(root, run, phase=phase, task_profile=profile)
     manifest = inputs.activate(inputs.prepare(), "start")
-    soul = (root / "SOUL.md").read_bytes()
+    soul = (root / "agent-inputs/SOUL.md").read_bytes()
     assert manifest["files"]["SOUL.md"] == {
-        "source": "SOUL.md",
+        "source": "agent-inputs/SOUL.md",
         "version": "0.1.0",
         "sha256": hashlib.sha256(soul).hexdigest(),
     }
@@ -90,7 +90,7 @@ def test_pre_soul_resume_adds_new_revision_without_rewriting_history(tmp_path):
     assert json.loads((legacy / "input-manifest.json").read_text()) == previous
     assert not (legacy / "SOUL.md").exists()
     assert checkpoint.read_text() == '{"history": "original context"}'
-    (root / "SOUL.md").write_text("Version: 0.1.1\nupdated soul\n")
+    (root / "agent-inputs/SOUL.md").write_text("Version: 0.1.1\nupdated soul\n")
     updated = resumed.activate(resumed.prepare(), "hot_reload")
     assert updated["files"]["SOUL.md"]["version"] == "0.1.1"
     assert "updated soul" in resumed.model_instructions()[1]
@@ -98,6 +98,6 @@ def test_pre_soul_resume_adds_new_revision_without_rewriting_history(tmp_path):
         run / "input-revisions" / current["revision"] / "SOUL.md"
     ).read_text() != "Version: 0.1.1\nupdated soul\n"
     assert {p.name: p.read_bytes() for p in archive.iterdir()} == original
-    (root / "SOUL.md").write_text("Version: 0.1.1\nchanged without bump\n")
+    (root / "agent-inputs/SOUL.md").write_text("Version: 0.1.1\nchanged without bump\n")
     with pytest.raises(ValueError, match="SOUL.md changed without a version increment"):
         resumed.prepare()

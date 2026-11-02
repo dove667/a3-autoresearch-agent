@@ -33,13 +33,13 @@ macOS 上启动脚本会自动使用 `caffeinate -is` 包裹 Agent runtime，在
 bash scripts/start-rsi.sh
 ```
 
-启动通用 mini-SWE-agent，在独立 Docker 工作区中依据 `evals/phase-one/goal.md` 与 `evals/phase-one/acceptance.md` 构建并演化 auto research Harness。运行无需逐轮人工确认；Agent 可以自行创建候选、测试和继续迭代。
+启动通用 mini-SWE-agent，在独立 Docker 工作区中依据 `agent-inputs/phase-one/goal.md` 与 `agent-inputs/phase-one/acceptance.md` 构建并演化 auto research Harness。运行无需逐轮人工确认；Agent 可以自行创建候选、测试和继续迭代。
 
 初始 SWE 只启动一次。每代主 Agent 为改动写下验收清单，启动一个新 Harness 候选；拒绝则回收候选，保留则由同一个候选接任主 Agent，原主 Agent 退出。Policy 优化可穿插进行。Host 保活 worker，不重新派发任务。全部 worker 停止后再复核结果，详见[使用教程](docs/tutorial.md)。
 
 文档按读者职责分工，见 [职责表与输入装载链](docs/agent-inputs.md#文档职责与读者)。用户和父助手的低频监督、每次热加载或中断前的明确批准及操作核对统一见 [操作者监督](docs/operator-supervision.md)。这些文档不加入 Agent 输入。
 
-两个阶段分别维护完整 Prompt：[phase-one](configs/prompts/phase-one.md) 与 [phase-two](configs/prompts/phase-two.md)。Host 每次只向主 Agent 和接任候选提供所选阶段的 Prompt；测试 Agent 的提示词由主 Agent 编写。第二阶段从保留版本接续的输入选择见[使用教程](docs/tutorial.md#选择阶段)，正式运行前的准备见[第二阶段方案](docs/plans/2026-10-31-phase-two.md)。
+部署方给 Agent 的输入统一维护于 [agent-inputs/](agent-inputs/README.md)。两个阶段分别维护完整 Prompt：[phase-one](agent-inputs/phase-one/instructions.md) 与 [phase-two](agent-inputs/phase-two/instructions.md)。Host 每次只向主 Agent 和接任候选提供所选阶段的 Prompt；测试 Agent 的提示词由主 Agent 编写。第二阶段从保留版本接续的输入选择见[使用教程](docs/tutorial.md#选择阶段)，正式运行前的准备见[第二阶段方案](docs/plans/2026-10-31-phase-two.md)。
 
 运行目录使用 Host 本地时间命名，例如 `artifacts/rsi/run-20261031-110415-123456/`，可直接看出启动日期和时间；末段为微秒。
 
@@ -55,11 +55,11 @@ $$
 bash scripts/start-rsi.sh --resume-from "artifacts/rsi/<run-id>"
 ```
 
-`--resume-from` 也可由操作者明确恢复因有效外部 blocked 而主动停止的当前主 Agent：保持同 run、身份、工作区、模型与完整上下文，归档旧终态后继续；不恢复已完成 run、已交权旧主或已关闭 worker。不是自动重试；失败留下 pending 时先核查，不直接重启。详见[恢复协议](runtime/local/README.md#上下文-checkpoint-与-resume)。
+`--resume-from` 也可由操作者明确恢复因有效外部 blocked 而主动停止的当前主 Agent：保持同 run、身份、工作区、模型与完整上下文，归档旧终态后继续；不恢复已完成 run、已交权旧主或已关闭 worker。不是自动重试；失败留下 pending 时先核查，不直接重启。详见[恢复协议](agent-inputs/shared/execution.md#上下文-checkpoint-与-resume)。
 
 将 `<run-id>` 替换为要恢复的运行标识。恢复保留模型对话、工具结果和生成的 Harness，通过原 checkpoint 继续；目标、验收和部署方 Prompt 加载启动时的当前版本。缺少恢复入口、会话已主动提交或存在结果不明的工具调用时会明确报错。
 
-恢复沿用原 run 目录、时间戳、主身份、工作区与资源权限，轨迹继续追加。中断会保留可恢复状态；详细行为见[恢复说明](docs/tutorial.md#中断恢复保留原任务继续推进)。修改 `evals/` 后开展新任务，应使用下面的版本迭代入口。
+恢复沿用原 run 目录、时间戳、主身份、工作区与资源权限，轨迹继续追加。中断会保留可恢复状态；详细行为见[恢复说明](docs/tutorial.md#中断恢复保留原任务继续推进)。修改 `agent-inputs/` 后开展新任务，应使用下面的版本迭代入口。
 
 ### 版本迭代：明确选择父版本
 
@@ -67,7 +67,7 @@ bash scripts/start-rsi.sh --resume-from "artifacts/rsi/<run-id>"
 bash scripts/start-rsi.sh --run-harness "artifacts/rsi/<run-id>"
 ```
 
-将 `<run-id>` 替换为选定运行的实际标识。启动器读取该运行明确保留的结果，加载代码并自动提供授权历史，版本化当前 `evals/` 作为新目标。被选择的父版本成为本轮起点：
+将 `<run-id>` 替换为选定运行的实际标识。启动器读取该运行明确保留的结果，加载代码并自动提供授权历史，版本化当前 `agent-inputs/` 作为新目标。被选择的父版本成为本轮起点：
 
 $$
 H_1 \xrightarrow{\text{next run}} H_2 \xrightarrow{\text{next run}} H_3.

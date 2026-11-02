@@ -41,18 +41,18 @@ def test_only_selected_phase_enters_model_request(tmp_path, phase, task_profile)
     assert manifest["task_profile"] == task_profile
     bundle = "phase-one-web" if task_profile == "web-extension" else phase
     files = manifest["files"]
-    assert files["phase-instructions.md"]["source"] == f"configs/prompts/{bundle}.md"
-    assert files["goal.md"]["source"] == f"evals/{bundle}/goal.md"
+    assert files["phase-instructions.md"]["source"] == f"agent-inputs/{bundle}/instructions.md"
+    assert files["goal.md"]["source"] == f"agent-inputs/{bundle}/goal.md"
     assert "common-instructions.md" not in files
     instructions = calls[-1]["instructions"]
-    assert (ROOT / f"configs/prompts/{bundle}.md").read_text() in instructions
+    assert (ROOT / f"agent-inputs/{bundle}/instructions.md").read_text() in instructions
     other = "phase-one" if phase == "phase-two" else "phase-two"
-    assert (ROOT / f"configs/prompts/{other}.md").read_text() not in instructions
+    assert (ROOT / f"agent-inputs/{other}/instructions.md").read_text() not in instructions
     if task_profile == "web-extension":
         assert manifest["acceptance_checks"] == ["E"]
-        assert (ROOT / "configs/prompts/phase-one.md").read_text() not in instructions
+        assert (ROOT / "agent-inputs/phase-one/instructions.md").read_text() not in instructions
     if phase == "phase-two":
-        assert (ROOT / "evals/phase-two/protocol.md").read_text() in instructions
+        assert (ROOT / "agent-inputs/phase-two/protocol.md").read_text() in instructions
     else:
         assert "protocol.md" not in files
 
