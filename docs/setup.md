@@ -74,11 +74,35 @@ TAVILY_API_KEY='<在本机填写自己的 key>'
 A3_WEB_ENABLED='1'
 ```
 
-仓库 `.env.example` 仅保留空 key，默认 `A3_WEB_ENABLED=0`。真实 key 只由 Host 读取，不复制到候选、执行服务器、Git、提示词或日志。用户自行管理 Tavily 账户额度与计费设置；Host 不自动购买、升级套餐或修改计费，若用户启用付费则可能产生费用。搜索固定使用 basic（每次 1 credit，见 [Tavily 官方额度说明](https://docs.tavily.com/documentation/api-credits)）。搜索和 fetch 不设每 run 累计次数上限；仍保留并发、超时、响应大小与安全限制。各代、候选和同 run 恢复共用持久尝试计数，失败也计数，恢复不清零；这不是账户余额，Host 不轮询余额 API。
+仓库 `.env.example` 仅保留空 key，默认 `A3_WEB_ENABLED=0`。真实 key 只由 Host 读取，不复制到候选、执行服务器、Git、提示词或日志。用户自行管理 Tavily 账户额度与计费设置；Host 不自动购买、升级套餐或修改计费，若用户启用付费则可能产生费用。搜索固定使用 basic（每次提供商请求 1 credit，见 [Tavily 官方额度说明](https://docs.tavily.com/documentation/api-credits)）。搜索和 fetch 不设每 run 累计次数上限；仍保留并发、超时、响应大小与安全限制。各代、候选和同 run 恢复共用持久尝试计数，失败也计数，恢复不清零；这不是账户余额，Host 不轮询余额 API。
 
 `A3_WEB_SEARCH_LIMIT` 和 `A3_WEB_FETCH_LIMIT` 已移除，旧 `.env` 中即使保留这些值也会被忽略；已配置的 key 无需更改。旧 run 的有限 limit 在新版 Host 读取时迁移为 null，保留累计 used 与审计历史。接口返回 `no_run_cap:true`；提供商 429 限流与 432/433 额度耗尽分别报告，前者有限退避，后者在额度或配置改变前不重复请求。网关不自动重试；可继续其他离线工作。
 
-网页正文由 Host 直接抓取，仅支持受约束的公开 HTTP(S) HTML/纯文本；不执行 JavaScript，也不用于 PDF、模型或依赖下载。DNS 校验及固定连接地址/TLS 校验约束此网关，不代表所有公网地址均可达，也不代表候选容器已部署通用出站防火墙。远程作业的离线设置不变。
+网页正文改由 Tavily Basic Extract 在提供商服务器读取，Host 只访问固定 `api.tavily.com`，不解析或连接目标网站，也不运行本地浏览器或 JavaScript。`/web/fetch` 仍接收 `url` 与 `max_chars`，返回提取正文而非原始 HTTP 页面，不是 PDF、模型或依赖下载器。Host 对目标 URL 做公开域名外形的词法检查，拒绝 IP、明显本地名称、凭据和不允许的端口；这不是目标域名的独立 DNS／重定向安全验证，实际抓取安全由提供商负责，不保证任意页面可读取。远程作业仍离线。
+
+当前 Mac 可沿用已经运行的 Shadowrocket 本地 HTTP 代理：在 `/Users/dove/Projects/a3-research-agent/.env` **保留现有 key 和其他设置**，仅加入以下非敏感项：
+
+```dotenv
+A3_TAVILY_HTTP_PROXY='http://127.0.0.1:1082'
+```
+
+此选项仅影响 Tavily search／extract API，不更改系统代理、全局环境或其他网络链路。省略时直连 Tavily；只接受无凭据的数字回环 HTTP 代理地址。代理仅建立到固定 `api.tavily.com:443` 的 CONNECT 隧道，不携带 API 认证；隧道内仍端到端校验 Tavily TLS 证书及域名，API key 只在 TLS 内发送。Agent 不能选择代理、上游地址或自定义代理头；代理不可用时安全失败，不绕过或关闭 TLS 验证。配置仅在经批准启动／恢复 Host 时加载；本次修改本身不重启 E。
+
+Basic Extract 按每 5 个成功提取 URL 消耗 1 credit，失败 URL 提取不收费（[官方额度说明](https://docs.tavily.com/documentation/api-credits)）。本地失败尝试仍计数；若提供商已成功处理而本地超时／响应丢失，不能据本地失败推断未扣费。没有 per-run 总次数上限、不自动开启付费的规则不变。
+
+### 本地研究结果缓存
+
+默认在同项目 Host 私有 `artifacts/web-cache` 中跨 run 复用成功搜索和提取正文；不缓存失败，不保存 key 或原始查询元数据，不交给候选直接挂载。默认配置可保留，也可在 Host `.env` 显式设置：
+
+```dotenv
+A3_WEB_CACHE_MAX_BYTES='500000000'
+A3_WEB_SEARCH_TTL_SECONDS='86400'
+A3_WEB_FETCH_TTL_SECONDS='604800'
+```
+
+容量为 500,000,000 字节（约 500 MB），搜索有效期 24 小时，正文 7 天；容量为 0 关闭全部缓存，单项 TTL 为 0 关闭该操作的缓存，三项配置均为非负整数。满后 LRU 淘汰较久未用的条目，不限制研究请求次数。容量按缓存文件计量，锁文件、目录与文件系统分配有少量额外开销，不保证物理磁盘占用精确等于配置值；可容纳页数取决于正文长度和序列化开销，不能准确保证。
+
+未过期缓存命中不请求提供商、不新增该次提供商 credit；`retrieved_at` 保留原检索时间，新服务时间另记。显式 `refresh:true` 绕过缓存重新请求，可能消耗 credit；过期结果不会静默当新结果返回。Host 累计调用数与提供商请求尝试数分开（后者保守包含网络／提供商失败，不证明请求到达或扣费），均不是账户余额。Harness 仍须保存来源、时间、适用版本及谨慎解释，缓存不替代持久研究记忆或真实工具调用证据。
 
 配置与代码在下一次经批准启动的新 run 使用；不会自动改动当前运行。沿用明确选定的第一阶段保留 H1，可先用 `--phase phase-one --task-profile web-extension --run-harness <第一阶段run目录>` 只补 E，再将新保留结果用于第二阶段。H1 自己实现、注册和测试检索工具，外层 Host 不代写工具，不重跑或重新认证 A–D。也可按第二阶段自身目标按需接入。项目根目录私有 `.env`／`A3_RSI_ENV_FILE` 加载方式不变，已有 key 不需重填或发送给助手。
 

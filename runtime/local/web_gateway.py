@@ -17,11 +17,12 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from html.parser import HTMLParser
 from pathlib import Path
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import unquote, urljoin, urlsplit
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator
 
 from runtime.local.gateway_diagnostics import CURRENT_REQUEST
+from runtime.local.web_cache import CacheBusy, WebCache
 
 MAX_BYTES = 2 * 1024 * 1024
 DNS_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_prefix="web-dns")
@@ -29,6 +30,7 @@ DNS_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_pref
 
 class SearchRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    refresh: StrictBool = False
     query: str = Field(min_length=1, max_length=1000)
     max_results: int = Field(default=5, ge=1, le=10, strict=True)
     domains: list[str] | None = Field(default=None, max_length=20)
@@ -56,8 +58,33 @@ class SearchRequest(BaseModel):
 
 class FetchRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    refresh: StrictBool = False
     url: str = Field(min_length=1, max_length=4096)
     max_chars: int = Field(default=16000, ge=1, le=16000, strict=True)
+
+
+def local_http_proxy(value):
+    """Host-only explicit numeric loopback HTTP proxy; never consult proxy env vars."""
+    try:
+        parsed = urlsplit(value)
+        if (
+            parsed.scheme != "http"
+            or not parsed.hostname
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.path
+            or "?" in value
+            or "#" in value
+            or any(ord(c) <= 32 or ord(c) == 127 for c in value)
+            or not parsed.port
+            or not ipaddress.ip_address(parsed.hostname).is_loopback
+        ):
+            raise ValueError
+        return parsed.hostname, parsed.port
+    except (ValueError, TypeError):
+        raise ValueError(
+            "A3_TAVILY_HTTP_PROXY must be an explicit numeric loopback HTTP proxy"
+        ) from None
 
 
 @dataclass(frozen=True)
@@ -65,13 +92,33 @@ class WebConfig:
     enabled: bool = False
     api_key: str = field(default="", repr=False)
 
+    tavily_http_proxy: str = field(default="", repr=False)
+
+    cache_max_bytes: int = 500_000_000
+    search_ttl_seconds: int = 86400
+    fetch_ttl_seconds: int = 604800
+
+    def __post_init__(self):
+        for value in (self.cache_max_bytes, self.search_ttl_seconds, self.fetch_ttl_seconds):
+            if type(value) is not int or value < 0:
+                raise ValueError("Web cache settings must be nonnegative integers")
+        if self.tavily_http_proxy:
+            local_http_proxy(self.tavily_http_proxy)
+
     @classmethod
     def from_env(cls):
         enabled = os.environ.get("A3_WEB_ENABLED", "0")
         if enabled not in ("0", "1"):
             raise ValueError("A3_WEB_ENABLED must be 0 or 1")
         # Removed legacy A3_WEB_SEARCH_LIMIT / A3_WEB_FETCH_LIMIT are ignored.
-        return cls(enabled == "1", os.environ.get("TAVILY_API_KEY", "").strip())
+        return cls(
+            enabled == "1",
+            os.environ.get("TAVILY_API_KEY", "").strip(),
+            os.environ.get("A3_TAVILY_HTTP_PROXY", ""),
+            int(os.environ.get("A3_WEB_CACHE_MAX_BYTES", "500000000")),
+            int(os.environ.get("A3_WEB_SEARCH_TTL_SECONDS", "86400")),
+            int(os.environ.get("A3_WEB_FETCH_TTL_SECONDS", "604800")),
+        )
 
 
 class WebError(Exception):
@@ -200,6 +247,101 @@ class PinnedConnection(http.client.HTTPConnection):
             raise
 
 
+class TavilyProxyConnection(PinnedConnection):
+    """Only tunnel the constant vendor identity; authenticate after verified TLS."""
+
+    def __init__(self, proxy, timeout):
+        self.proxy_host, self.proxy_port = local_http_proxy(proxy)
+        super().__init__(
+            PublicTarget(
+                "https://api.tavily.com", "api.tavily.com", self.proxy_host, 443, "https", "/"
+            ),
+            timeout,
+        )
+
+    def connect(self):
+        sock = socket.socket(
+            socket.AF_INET6 if ":" in self.proxy_host else socket.AF_INET, socket.SOCK_STREAM
+        )
+        try:
+            self.network_socket = sock
+            sock.settimeout(remaining(self.deadline))
+            sock.connect((self.proxy_host, self.proxy_port))
+            sock.sendall(b"CONNECT api.tavily.com:443 HTTP/1.1\r\nHost: api.tavily.com:443\r\n\r\n")
+            # The standard parser bounds status/header lines and header count.
+            response = http.client.HTTPResponse(sock, method="CONNECT")
+            try:
+                response.begin()
+                if response.status != 200:
+                    raise WebError("proxy_error", 502)
+            finally:
+                response.close()
+            sock.settimeout(remaining(self.deadline))
+            sock = ssl.create_default_context().wrap_socket(
+                sock, server_hostname="api.tavily.com", do_handshake_on_connect=False
+            )
+            self.network_socket = sock
+            sock.settimeout(remaining(self.deadline))
+            sock.do_handshake()
+            remaining(self.deadline)
+            self.sock = sock
+        except BaseException:
+            sock.close()
+            raise
+
+
+def validate_extract_url(url):
+    """Lexical public-DNS-name policy, not DNS verification. Tavily fetches the URL."""
+    try:
+        parsed = urlsplit(url)
+        host = (parsed.hostname or "").encode("idna").decode("ascii").lower().rstrip(".")
+        if (
+            parsed.scheme not in ("http", "https")
+            or parsed.username is not None
+            or parsed.password is not None
+            or "\\" in url
+            or any(ord(c) <= 32 or ord(c) == 127 for c in url)
+            or (parsed.port is not None and parsed.port not in (80, 443))
+        ):
+            raise ValueError
+        if not re.fullmatch(
+            r"(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}", host
+        ):
+            raise ValueError
+        if host.split(".")[-1] in {
+            "localhost",
+            "local",
+            "localdomain",
+            "alt",
+            "internal",
+            "test",
+            "invalid",
+            "example",
+            "onion",
+            "home",
+            "lan",
+            "corp",
+            "intranet",
+            "arpa",
+        }:
+            raise ValueError
+        try:
+            ipaddress.ip_address(host)
+        except ValueError:
+            pass
+        else:
+            raise ValueError
+        path = unquote(parsed.path).lower()
+        if re.search(
+            r"\.(pdf|zip|gz|bz2|xz|tar|7z|exe|dll|bin|pt|pth|ckpt|safetensors|gguf|onnx|h5|hdf5|npy|npz|pkl|pickle|png|jpe?g|gif|webp|mp[34]|wav|woff2?)(?:/|$)",
+            path,
+        ):
+            raise WebError("unsupported_content")
+        return parsed._replace(fragment="").geturl()
+    except (ValueError, UnicodeError):
+        raise WebError("unsafe_url") from None
+
+
 class TextHTML(HTMLParser):
     def __init__(self):
         super().__init__(convert_charrefs=True)
@@ -237,6 +379,7 @@ def remaining(deadline):
 def fetch_public(
     url, max_chars, *, resolver=socket.getaddrinfo, connection_factory=PinnedConnection
 ):
+    # Legacy helper only: WebGateway never invokes local target fetching.
     deadline = time.monotonic() + 20
     for hop in range(4):
         future = DNS_POOL.submit(resolve_public_url, url, resolver)
@@ -313,21 +456,22 @@ def fetch_public(
 
 
 class WebGateway:
-    def __init__(self, root: Path, config: WebConfig):
+    def __init__(self, root: Path, config: WebConfig, *, cache_root: Path | None = None):
         self.root, self.config = root, config
+        self.cache = WebCache(cache_root or root / "cache", max_bytes=config.cache_max_bytes)
         self.parallel = threading.BoundedSemaphore(2)
         self.lock = threading.Lock()
         self.search_connection_factory = PinnedConnection
-        self.fetcher = fetch_public
+        self.fetcher = self.extract
 
-    def budget(self, reserve=None):
+    def budget(self, reserve=None, *, provider=None):
         """Persistent attempt accounting; legacy name/file retained for compatibility."""
         try:
-            return self._account_usage(reserve)
+            return self._account_usage(reserve, provider=provider)
         except OSError:
             raise WebError("budget_unavailable", 503) from None
 
-    def _account_usage(self, reserve=None):
+    def _account_usage(self, reserve=None, *, provider=None):
         self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
         with self.lock, (self.root / "budget.lock").open("a") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
@@ -345,6 +489,14 @@ class WebGateway:
                     raise WebError("budget_unavailable", 503) from None
             else:
                 state = {kind: {"limit": None, "used": 0} for kind in ("search", "fetch")}
+            provider_counts = state.setdefault("provider_requests", {"search": 0, "fetch": 0})
+            if not isinstance(provider_counts, dict) or any(
+                type(provider_counts.get(kind)) is not int or provider_counts[kind] < 0
+                for kind in ("search", "fetch")
+            ):
+                raise WebError("budget_unavailable", 503)
+            if provider:
+                provider_counts[provider] += 1
             # Migrate finite legacy limits under the same cross-process lock, never
             # reset used counts or touch historical audit events.
             migrated = any(state[kind]["limit"] is not None for kind in ("search", "fetch"))
@@ -352,7 +504,7 @@ class WebGateway:
                 state[kind]["limit"] = None
             if reserve:
                 state[reserve]["used"] += 1
-            if reserve or migrated or not path.exists():
+            if reserve or provider or migrated or not path.exists():
                 temporary = path.with_suffix(".tmp")
                 with temporary.open("w") as stream:
                     json.dump(state, stream)
@@ -371,6 +523,9 @@ class WebGateway:
             "enabled": self.config.enabled,
             "configured": bool(self.config.api_key),
             "provider": "tavily",
+            "proxy_configured": bool(self.config.tavily_http_proxy),
+            "transport_mode": "http_connect" if self.config.tavily_http_proxy else "direct",
+            "fetch_backend": "tavily_extract",
             "capabilities": {
                 "search": "POST /web/search",
                 "fetch": "POST /web/fetch",
@@ -379,6 +534,13 @@ class WebGateway:
             "budget": self.budget(),
             "no_run_cap": True,
             "cached": False,
+            "cache": {
+                "enabled": self.config.cache_max_bytes > 0,
+                "max_bytes": self.config.cache_max_bytes,
+                "search_ttl_seconds": self.config.search_ttl_seconds,
+                "fetch_ttl_seconds": self.config.fetch_ttl_seconds,
+                "warning": self.cache.warning,
+            },
             "max_parallel": 2,
             "search_max_results": 10,
             "fetch_max_chars": 16000,
@@ -397,56 +559,7 @@ class WebGateway:
         }
         if body.domains is not None:
             payload["include_domains"] = body.domains
-        deadline = time.monotonic() + 15
-        future = DNS_POOL.submit(resolve_public_url, "https://api.tavily.com/search")
-        try:
-            target = future.result(timeout=remaining(deadline))
-        except concurrent.futures.TimeoutError:
-            future.cancel()
-            raise WebError("timeout", 504) from None
-        connection = self.search_connection_factory(target, remaining(deadline))
-        try:
-            connection.request(
-                "POST",
-                "/search",
-                body=json.dumps(payload).encode(),
-                headers={
-                    "Host": "api.tavily.com",
-                    "Authorization": "Bearer " + self.config.api_key,
-                    "Content-Type": "application/json",
-                    "Accept": "application/json",
-                    "Accept-Encoding": "identity",
-                },
-            )
-            response = connection.getresponse()
-            if response.status != 200:
-                code, status = {
-                    401: ("provider_auth_error", 502),
-                    429: ("provider_rate_limited", 429),
-                    432: ("provider_quota_exhausted", 429),
-                    433: ("provider_quota_exhausted", 429),
-                }.get(response.status, ("provider_error", 502))
-                # Never return provider bodies/headers: they may contain secrets.
-                raise WebError(code, status)
-            if response.getheader("Content-Encoding", "identity").lower() != "identity":
-                raise WebError("unsupported_encoding", 422)
-            chunks, size = [], 0
-            while True:
-                remaining(deadline)
-                chunk = response.read1(min(65536, MAX_BYTES + 1 - size))
-                remaining(deadline)
-                if not chunk:
-                    break
-                size += len(chunk)
-                if size > MAX_BYTES:
-                    raise WebError("response_too_large", 413)
-                chunks.append(chunk)
-            data = json.loads(b"".join(chunks))
-        except Exception:
-            remaining(deadline)
-            raise
-        finally:
-            connection.finish()
+        data = self._vendor_post("/search", payload, 15)
         if not isinstance(data, dict) or not isinstance(data.get("results"), list):
             raise WebError("provider_error", 502)
         sources = []
@@ -476,6 +589,102 @@ class WebGateway:
             )
         return sources
 
+    def _vendor_post(self, path, payload, timeout):
+        if path not in ("/search", "/extract"):
+            raise WebError("provider_error", 502)
+        deadline = time.monotonic() + timeout
+        if self.config.tavily_http_proxy:
+            connection = TavilyProxyConnection(self.config.tavily_http_proxy, remaining(deadline))
+        else:
+            future = DNS_POOL.submit(resolve_public_url, "https://api.tavily.com" + path)
+            try:
+                target = future.result(timeout=remaining(deadline))
+            except concurrent.futures.TimeoutError:
+                future.cancel()
+                raise WebError("timeout", 504) from None
+            connection = self.search_connection_factory(target, remaining(deadline))
+        try:
+            connection.request(
+                "POST",
+                path,
+                body=json.dumps(payload).encode(),
+                headers={
+                    "Host": "api.tavily.com",
+                    "Authorization": "Bearer " + self.config.api_key,
+                    "Content-Type": "application/json",
+                    "Accept": "application/json",
+                    "Accept-Encoding": "identity",
+                },
+            )
+            response = connection.getresponse()
+            if response.status != 200:
+                code, status = {
+                    401: ("provider_auth_error", 502),
+                    429: ("provider_rate_limited", 429),
+                    432: ("provider_quota_exhausted", 429),
+                    433: ("provider_quota_exhausted", 429),
+                }.get(response.status, ("provider_error", 502))
+                # Never return provider bodies/headers: they may contain secrets.
+                raise WebError(code, status)
+            if response.getheader("Content-Encoding", "identity").lower() != "identity":
+                raise WebError("unsupported_encoding", 422)
+            length = response.getheader("Content-Length")
+            if length and (not length.isdigit() or int(length) > MAX_BYTES):
+                raise WebError("response_too_large", 413)
+            chunks, size = [], 0
+            while True:
+                remaining(deadline)
+                chunk = response.read1(min(65536, MAX_BYTES + 1 - size))
+                remaining(deadline)
+                if not chunk:
+                    break
+                size += len(chunk)
+                if size > MAX_BYTES:
+                    raise WebError("response_too_large", 413)
+                chunks.append(chunk)
+            data = json.loads(b"".join(chunks))
+        except Exception:
+            remaining(deadline)
+            raise
+        finally:
+            connection.finish()
+        return data
+
+    def extract(self, url, max_chars):
+        url = validate_extract_url(url)
+        data = self._vendor_post(
+            "/extract",
+            {
+                "urls": [url],
+                "extract_depth": "basic",
+                "include_images": False,
+                "include_favicon": False,
+                "format": "markdown",
+            },
+            20,
+        )
+        if not isinstance(data, dict) or not isinstance(data.get("results"), list):
+            raise WebError("provider_error", 502)
+        failures = data.get("failed_results", [])
+        if not isinstance(failures, list):
+            raise WebError("provider_error", 502)
+        if any(isinstance(item, dict) and item.get("url") == url for item in failures):
+            raise WebError("extraction_failed", 502)
+        for entry in data["results"]:
+            if not isinstance(entry, dict) or entry.get("url") != url:
+                continue
+            content = entry.get("raw_content")
+            if not isinstance(content, str) or not content.strip():
+                continue
+            return {
+                "url": url,
+                "title": str(entry.get("title") or "")[:1000],
+                "text": content[:max_chars],
+                "published_at": None,
+                "truncated": len(content) > max_chars,
+            }
+        raise WebError("extraction_failed", 502)
+
     def execute(self, operation, body, owner):
         request = CURRENT_REQUEST.get()
         request_id = request["request_id"] if request else uuid.uuid4().hex
@@ -495,20 +704,57 @@ class WebGateway:
                 raise WebError("busy", 429)
             budget_state = self.budget(operation)
             reserved = True
-            sources = (
-                self.search(body)
-                if operation == "search"
-                else [self.fetcher(body.url, body.max_chars)]
-            )
-            return {
-                "request_id": request_id,
-                "provider": "tavily" if operation == "search" else "public_http",
-                "retrieved_at": datetime.now(UTC).isoformat(),
-                "sources": sources,
-                "truncated": any(s["truncated"] for s in sources),
-                "cached": False,
-                "untrusted": True,
+            # Validate fetch inputs even for hits; never cache an unsafe URL request.
+            if operation == "fetch":
+                validate_extract_url(body.url)
+            material = {
+                "version": "tavily-basic-v1",
+                "operation": operation,
+                "options": body.model_dump(exclude={"refresh"}),
             }
+            key = hashlib.sha256(json.dumps(material, sort_keys=True).encode()).hexdigest()
+            ttl = (
+                self.config.search_ttl_seconds
+                if operation == "search"
+                else self.config.fetch_ttl_seconds
+            )
+            with self.cache.lock(key):
+                payload = None if body.refresh else self.cache.get(key, ttl)
+                cached = payload is not None
+                if payload is None:
+                    # Conservative miss attempts, including provider/network failures.
+                    budget_state = self.budget(provider=operation)
+                    sources = (
+                        self.search(body)
+                        if operation == "search"
+                        else [self.fetcher(body.url, body.max_chars)]
+                    )
+                    payload = {
+                        "provider": "tavily",
+                        "retrieved_at": datetime.now(UTC).isoformat(),
+                        "sources": sources,
+                        "truncated": any(s["truncated"] for s in sources),
+                        "untrusted": True,
+                    }
+                    if ttl > 0:
+                        self.cache.put(key, payload)
+                served = datetime.now(UTC)
+                return {
+                    **payload,
+                    "request_id": request_id,
+                    "cached": cached,
+                    "served_at": served.isoformat(),
+                    "cache_warning": self.cache.warning,
+                    "cache_age_seconds": max(
+                        0.0,
+                        (served - datetime.fromisoformat(payload["retrieved_at"])).total_seconds(),
+                    )
+                    if cached
+                    else 0.0,
+                }
+        except CacheBusy:
+            code = "cache_busy"
+            raise WebError(code, 429) from None
         except TimeoutError:
             code = "timeout"
             raise WebError(code, 504) from None
@@ -530,6 +776,7 @@ class WebGateway:
                 "time": datetime.now(UTC).isoformat(),
                 "wall_seconds": time.monotonic() - started,
                 "budget_reserved": reserved,
+                "cache_warning": self.cache.warning,
                 "budget": budget_state,
             }
             with self.lock:

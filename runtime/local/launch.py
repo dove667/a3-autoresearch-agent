@@ -614,7 +614,9 @@ def launch_run(args, run: Path, a3: Path, image: str, start) -> None:
             raise ValueError("Human feedback currently requires a generated Harness main session")
         registration = human_feedback.register(args.feedback_file, actor)
         print("Human feedback registered: " + json.dumps(registration), flush=True)
-    web_gateway = WebGateway(run / ".host" / "web", WebConfig.from_env())
+    web_gateway = WebGateway(
+        run / ".host" / "web", WebConfig.from_env(), cache_root=ROOT / "artifacts" / "web-cache"
+    )
     app = create_app(
         web_gateway=web_gateway,
         model_name=os.environ["MODEL_NAME"],

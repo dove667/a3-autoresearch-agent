@@ -1,6 +1,6 @@
 # 第一阶段补充任务：保留 Harness 的联网研究工具
 
-Version: 0.1.0
+Version: 0.2.0
 
 本任务只补充 E 项：在明确沿用的第一阶段保留 Harness 上，由运行中的 Harness 自己实现并实际使用 Host 网页网关工具，为第二阶段提供可复用的联网研究能力。不是重新冷启动第一阶段，也不是第二阶段训练或 Policy 实验。
 
@@ -12,7 +12,7 @@ Version: 0.1.0
 
 ## 本轮目标
 
-自行将 Host 的 status、basic search、公开 HTML/纯文本 fetch 接入真实模型 function tools：实现 schema、注册、执行分派、结果解析、来源存储与引用、稳定错误处理。Host 只提供执行接口和权限上限，不替 Harness 编写专项工具。
+自行将 Host 的 status、basic search、经 Tavily Basic Extract 的公开网页正文 fetch 接入真实模型 function tools：实现 schema、注册、执行分派、结果解析、来源存储与引用、稳定错误处理。Host 只提供执行接口和权限上限，不替 Harness 编写专项工具。
 
 让实际模型通过这些工具完成一个有界的公开 A3／机器人学习技术问题：成功搜索，读取至少一个公开网页正文，并结合来源、版本与适用条件给出谨慎解释。搜索摘要不能冒充全文；外部建议不是实验结论，不照搬超参数或声称本地收益。
 

@@ -390,7 +390,9 @@ def test_empty_search_timeout_busy_shutdown(tmp_path, monkeypatch):
 
     svc.search = timeout
     assert (
-        c.post("/web/search", json={"query": "x"}, headers=headers).json()["detail"]["code"]
+        c.post("/web/search", json={"query": "x", "refresh": True}, headers=headers).json()[
+            "detail"
+        ]["code"]
         == "timeout"
     )
     svc.parallel.acquire()
@@ -577,7 +579,7 @@ def test_no_cumulative_run_cap(tmp_path, operation, count):
 
 def test_legacy_limits_migrate_without_resetting_usage_or_history(tmp_path):
     svc = service(tmp_path)
-    svc.root.mkdir(parents=True)
+    svc.root.mkdir(parents=True, exist_ok=True)
     old = {"search": {"limit": 100, "used": 100}, "fetch": {"limit": 200, "used": 200}}
     (svc.root / "budget.json").write_text(json.dumps(old))
     history = '{"historical": "unchanged"}\n'
@@ -595,7 +597,7 @@ def test_legacy_limits_migrate_without_resetting_usage_or_history(tmp_path):
 @pytest.mark.parametrize("used", [-1, True, "100", None])
 def test_invalid_accounting_fails_closed_without_overwrite(tmp_path, used):
     svc = service(tmp_path)
-    svc.root.mkdir(parents=True)
+    svc.root.mkdir(parents=True, exist_ok=True)
     raw = json.dumps({"search": {"limit": 100, "used": used}, "fetch": {"limit": 200, "used": 0}})
     (svc.root / "budget.json").write_text(raw)
     with pytest.raises(web.WebError, match="budget_unavailable"):
