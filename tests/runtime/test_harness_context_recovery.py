@@ -529,3 +529,204 @@ def test_persistently_overlong_summary_still_blocks_with_original_evidence(tmp_p
     assert len(calls) <= 8
     assert any(request.get("compact_retry") for request in calls)
     assert json.loads(pathlib.Path(calls[0]["source"]).read_text()) == original
+
+
+def test_unconsumed_tool_result_fits_alone_and_reaches_next_decision(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    context = load_context()
+    context.WINDOW, context.RESERVE = 10000, 2000
+    result_text = "CURRENT-OBSERVATION: experiment rejected; evidence at result.json. " + "x" * 5000
+    original = [
+        {"role": "user", "content": "old background " * 600},
+        {"type": "function_call", "name": "read", "call_id": "fresh", "arguments": "{}"},
+        {"type": "function_call_output", "call_id": "fresh", "output": result_text},
+    ]
+    result, _ = context.prepare(original, [], lambda *args: completed())
+    assert result[-1]["output"] == result_text
+    assert context.paired(result)
+
+
+def test_complete_fresh_tool_batch_is_not_summarized_to_meet_soft_target(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    context = load_context()
+    context.WINDOW, context.RESERVE = 12000, 2000
+    calls = [
+        {"type": "function_call", "name": "read", "call_id": str(i), "arguments": "{}"}
+        for i in range(8)
+    ]
+    outputs = [
+        {"type": "function_call_output", "call_id": str(i), "output": f"FRESH-{i} " + "z" * 500}
+        for i in range(8)
+    ]
+    original = [{"role": "user", "content": "old " * 2200}] + calls + outputs
+    result, _ = context.prepare(original, [], lambda *args: completed())
+    assert result[-len(calls + outputs) :] == calls + outputs
+    assert context.paired(result)
+
+
+def test_oversized_result_archive_has_bounded_preview_and_lossless_source(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    context = load_context()
+    original = [
+        {"type": "function_call", "name": "read", "call_id": "large", "arguments": "{}"},
+        {
+            "type": "function_call_output",
+            "call_id": "large",
+            "output": "START-FACT " + "m" * 150000 + " END-FACT",
+        },
+    ]
+    result, _ = context.prepare(original, [], lambda *args: completed())
+    view = json.loads(result[-1]["output"])
+    assert "START-FACT" in view["preview"] and "END-FACT" in view["preview"]
+    assert view["preview_complete"] is False
+    assert json.loads(pathlib.Path(view["path"]).read_text()) == original[-1]
+    assert len(result[-1]["output"].encode()) < 12000
+
+
+def test_repeated_read_compact_cycles_deliver_new_observation_without_closing_task(
+    tmp_path, monkeypatch
+):
+    monkeypatch.chdir(tmp_path)
+    context = load_context()
+    context.WINDOW, context.RESERVE = 16000, 4000
+    state = [
+        {"role": "user", "content": "Task remains open until the Agent decides from evidence."}
+    ]
+    for i in range(24):
+        fact = f"CURRENT-RESULT-{i}: observed but not a passed acceptance. " + "k" * 5000
+        state += [
+            {"type": "function_call", "name": "read", "call_id": str(i), "arguments": "{}"},
+            {"type": "function_call_output", "call_id": str(i), "output": fact},
+        ]
+        state, _ = context.prepare(state, [], lambda *args: completed())
+        assert state[-1]["output"] == fact
+        assert context.paired(state)
+    assert not (tmp_path / "run-outcome.json").exists()
+    assert not (tmp_path / "decision.json").exists()
+
+
+def test_checkpoint_publication_preserves_declared_handoff_metadata(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    context = load_context()
+    for name in ["resume.json", "continuation.json"]:
+        (tmp_path / name).write_text(
+            json.dumps(
+                {
+                    "command": ["python", "agent.py", "--resume"],
+                    "files": [],
+                    "remote_exports": ["export-example"],
+                    "provenance": {"scope": "untested research state"},
+                }
+            )
+        )
+    agent_functions(context)["save_manifest"]()
+    for name in ["resume.json", "continuation.json"]:
+        saved = json.loads((tmp_path / name).read_text())
+        assert saved["remote_exports"] == ["export-example"]
+        assert saved["provenance"] == {"scope": "untested research state"}
+
+
+def test_invalid_existing_manifest_does_not_silently_reset_handoff_state(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    context = load_context()
+    (tmp_path / "continuation.json").write_text("{bad")
+    with pytest.raises(ValueError):
+        agent_functions(context)["save_manifest"]()
+    assert (tmp_path / "continuation.json").read_text() == "{bad"
+
+
+def test_protected_batch_does_not_carry_avoidable_old_tail(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    context = load_context()
+    context.WINDOW, context.RESERVE = 16000, 4000
+    original = [{"role": "user", "content": "old " * 3250}]
+    for i in range(2):
+        original += [
+            {"type": "function_call", "name": "read", "call_id": str(i), "arguments": "{}"},
+            {"type": "function_call_output", "call_id": str(i), "output": "x" * 2400},
+        ]
+    fresh = [
+        {"type": "function_call", "name": "read", "call_id": "fresh", "arguments": "{}"},
+        {"type": "function_call_output", "call_id": "fresh", "output": "CURRENT " + "z" * 7500},
+    ]
+    result, _ = context.prepare(original + fresh, [], lambda *args: completed())
+    assert result[-2:] == fresh
+    assert context.message_cost(result) <= context.decision_budget([])
+
+
+def test_summary_does_not_spend_calls_on_opaque_provider_ciphertext(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    context = load_context()
+    original = [
+        {
+            "role": "user",
+            "content": "Confirmed decision rejected; source decision.json, no re-audit requested.",
+        },
+        {
+            "type": "reasoning",
+            "encrypted_content": "OPAQUE-CIPHER-SENTINEL-" * 16000,
+            "summary": [],
+        },
+    ]
+    original += [{"role": "user", "content": "Later bounded observation."} for _ in range(6)]
+    requests = []
+    result, record = context.prepare(
+        original, [], lambda *args: requests.append(args[-1]) or completed()
+    )
+    assert len(requests) == 1
+    assert "OPAQUE-CIPHER-SENTINEL" not in json.dumps(requests)
+    assert json.loads(pathlib.Path(record["source"]).read_text()) == original
+    assert result
+
+
+def test_token_soft_target_does_not_swallow_fresh_batch_with_tools(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    context = load_context()
+    context.TOKEN_CONFIG = {
+        "trigger_tokens": 64000,
+        "target_tokens": 32000,
+        "summary_input_tokens": 48000,
+        "injected_reserve_tokens": 20000,
+        "summary_reserve_tokens": 2000,
+        "feedback_refs": [],
+    }
+    context.metric = lambda value: context.size(value) // 4 + 1
+    tools = [{"type": "function", "name": "read", "description": "bounded read " * 100}]
+    fresh = [
+        {"type": "reasoning", "encrypted_content": "opaque-new-turn-state"},
+        {"type": "function_call", "name": "read", "call_id": "fresh", "arguments": "{}"},
+        {"type": "function_call_output", "call_id": "fresh", "output": "NEW DATA " * 4500},
+    ]
+    original = [{"role": "user", "content": "old history " * 20000}] + fresh
+    result, record = context.prepare(original, tools, lambda *args: completed())
+    assert result[-3:] == fresh
+    assert context.paired(result)
+    assert context.message_cost(result) <= context.decision_budget(tools)
+    assert record["budget_unit"] == "estimated_tokens"
+
+
+def test_control_character_preview_is_bounded_without_mutating_archive(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    context = load_context()
+    original = {"type": "function_call_output", "call_id": "x", "output": "\x00😀" * 20000}
+    view = context.archived_output(original, 2048)
+    assert context.size(view) <= 2048
+    assert json.loads(pathlib.Path(json.loads(view["output"])["path"]).read_text()) == original
+
+
+@pytest.mark.parametrize("broken", ["{bad", "[]"])
+def test_invalid_second_manifest_keeps_both_manifests_and_checkpoint(tmp_path, monkeypatch, broken):
+    monkeypatch.chdir(tmp_path)
+    context = load_context()
+    (tmp_path / "resume.json").write_text(
+        json.dumps({"files": [], "remote_exports": ["export-kept"]})
+    )
+    (tmp_path / "continuation.json").write_text(broken)
+    (tmp_path / "checkpoint.json").write_text('[{"role":"user","content":"last valid state"}]')
+    before = {
+        name: (tmp_path / name).read_bytes()
+        for name in ["resume.json", "continuation.json", "checkpoint.json"]
+    }
+    with pytest.raises((ValueError, TypeError)):
+        agent_functions(context)["checkpoint"]([{"role": "user", "content": "new state"}])
+    assert all((tmp_path / name).read_bytes() == raw for name, raw in before.items())

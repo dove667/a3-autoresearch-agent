@@ -41,6 +41,36 @@ a temporary error from a new Host does not silently disable token control. A leg
 Harness that sends summaries to the ordinary model endpoint must be updated to use
 the explicit summary operation before a separate summary route can apply.
 
+## Deliver observations before compacting them
+
+The overlay prepares context **before** the next model decision. The final complete
+tool-call/result batch is therefore a new observation, not already-read history.
+If that batch fits with working-memory headroom, it remains intact while older
+history is archived or summarized. A lower compression target does not justify
+moving that new observation into the summary. Call/result pairing is preserved.
+
+A result too large to fit is retained losslessly in a content-addressed archive,
+with a bounded, explicitly partial head/tail preview and its original character
+count. The preview is not a complete inspection or a new pending research task.
+Retrieve only needed details in small pages. This avoids replacing a requested
+observation with only another archive pointer. Archiving records storage state;
+it does not prove that a model understood the output or completed a check.
+
+Summary preparation excludes only opaque `encrypted_content` from reasoning
+items. The full original snapshot retains it, recent provider-state items remain
+with their fresh tool batch, and readable message content is unchanged. Ciphertext
+is not semantic evidence that a different summary model can interpret.
+
+Checkpoint publication also preserves existing handoff metadata, including declared
+remote export references. Invalid existing manifests fail rather than silently
+resetting their state. These measures do not automatically close experiments or
+make keep/reject decisions: the Agent must still record those decisions from the
+actual evidence. Stale research files and a semantic-summary error remain separate
+possible causes; the transport fix does not certify autonomous long-run convergence.
+The generated main publishes `run-outcome.json` at its workspace root; only the
+initial builder uses the `run/` subdirectory. Saving a checkpoint does not update
+Agent-authored experiment decisions or stale job ledgers.
+
 ## Fixed roles and narrow summary operation
 
 `MODEL_NAME`, `MODEL_CLASS` and `A3_MODEL_REASONING_EFFORT` remain the primary model

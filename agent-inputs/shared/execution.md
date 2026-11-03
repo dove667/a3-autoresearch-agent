@@ -1,6 +1,6 @@
 # Host提供的执行与验收入口
 
-Version: 0.13.1
+Version: 0.13.2
 
 部署方运行 gateway、容器引擎、模型认证与远程资源调度。候选 Harness 在独立容器内运行，
 通过 HTTP 请求这些固定能力。工具名称、研究逻辑、反思方法和版本选择由 Agent 设计。
@@ -220,7 +220,7 @@ CPU 仍可用于轻量元数据检查、预处理、日志分析、命令帮助�
 
 第二阶段是否收尾先以本轮 goal.md 的持续研究与停止条件为准；A–D 阶段性通过不单独触发 complete，其他阶段仍按各自目标正常完成退出。
 
-当前主 Agent 使用 `/workspace/run/run-outcome.json` 声明终态。验收细节与证据格式仍由 Agent 组织；这份清单在所有 worker 停止后用于记录结果：
+生成后的主 Agent 在自己的工作区根目录使用 `/workspace/run-outcome.json` 声明状态和终态；只有初始构建者使用 `/workspace/run/run-outcome.json`。Host 按当前主身份的实际工作区读取清单，不会合并两个路径的内容。Agent 应在任务或作业状态变化后更新自己的状态引用，保留已有决定与未完成项；保存 checkpoint 不会替 Agent 自动更新科研决定。验收细节与证据格式仍由 Agent 组织；这份清单在所有 worker 停止后用于记录结果：
 
 ```json
 {

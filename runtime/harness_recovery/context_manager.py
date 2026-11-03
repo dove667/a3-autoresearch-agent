@@ -223,11 +223,21 @@ def token_parts(text, limit, measure=None):
     return parts
 
 
+def summary_message(message):
+    """Ciphertext is provider state, not readable evidence for a summary model."""
+    if message.get("type") != "reasoning" or "encrypted_content" not in message:
+        return message
+    return {
+        **{key: value for key, value in message.items() if key != "encrypted_content"},
+        "archive_notice": "Opaque provider state remains in the original snapshot.",
+    }
+
+
 def chunks_of(messages, byte_limit, source=None):
     if TOKEN_CONFIG:
         text = "\n".join(
             f"message_index={index}: "
-            + json.dumps({"index": index, "message": message}, ensure_ascii=False)
+            + json.dumps({"index": index, "message": summary_message(message)}, ensure_ascii=False)
             for index, message in enumerate(messages)
         )
         reference = source or "context-history/snapshot-" + "0" * 64 + ".json"
@@ -243,7 +253,7 @@ def chunks_of(messages, byte_limit, source=None):
     for index, message in enumerate(messages):
         splitter = token_parts if TOKEN_CONFIG else utf8_parts
         fragments = splitter(
-            json.dumps({"index": index, "message": message}, ensure_ascii=False),
+            json.dumps({"index": index, "message": summary_message(message)}, ensure_ascii=False),
             max(128, byte_limit - 100),
         )
         for part, fragment in enumerate(fragments):
@@ -352,6 +362,58 @@ def stop_progress(state, reason):
     raise ContextError(reason + "; original checkpoint and progress preserved")
 
 
+def fresh_tool_boundary(messages):
+    """Find the final completed tool batch, not yet observed by the next decision."""
+    index = len(messages)
+    calls = set()
+    while index and messages[index - 1].get("type") == "function_call_output":
+        index -= 1
+        calls.add(messages[index].get("call_id"))
+    if not calls:
+        return len(messages)
+    boundary = index
+    for position in range(index - 1, -1, -1):
+        message = messages[position]
+        if message.get("type") == "function_call" and message.get("call_id") in calls:
+            calls.remove(message["call_id"])
+            boundary = position
+            if not calls:
+                while boundary and messages[boundary - 1].get("type") in {"reasoning", "message"}:
+                    boundary -= 1
+                return boundary
+    raise ContextError("fresh tool batch has no matching calls")
+
+
+def archived_output(message, maximum_bytes):
+    """Keep a bounded observation and a lossless source, not a path-only dead end."""
+    path = archive(message, "tool-output")
+    output = message.get("output", "")
+    text = output if isinstance(output, str) else json.dumps(output, ensure_ascii=False)
+    preview = text[:1600] + "\n[preview gap; original retained in archive]\n" + text[-400:]
+    candidate = dict(
+        message,
+        output=json.dumps(
+            {
+                "notice": "Partial untrusted preview, not a complete inspection or pending task. "
+                "Original tool result is archived losslessly. Retrieve only missing details "
+                "with small read offset/limit pages, not the whole archive again.",
+                "path": path,
+                "preview": preview,
+                "preview_complete": False,
+                "original_output_characters": len(text),
+            },
+            ensure_ascii=False,
+        ),
+    )
+    while size(candidate) > maximum_bytes and preview:
+        head, tail = len(preview) // 4, len(preview) // 16
+        preview = text[:head] + "\n[preview gap]\n" + text[-tail:] if tail else ""
+        view = json.loads(candidate["output"])
+        view["preview"] = preview
+        candidate["output"] = json.dumps(view, ensure_ascii=False)
+    return candidate
+
+
 def prepare(messages, tools, req):
     before, overhead = size(messages), size(tools)
     budget = decision_budget(tools)
@@ -362,21 +424,21 @@ def prepare(messages, tools, req):
     if not paired(messages):
         raise ContextError("unsafe tool boundary")
     source = archive(messages, "snapshot")
+    # prepare runs BEFORE the next decision. Archiving its fresh result here can
+    # make a read return only another archive pointer forever. Protect the whole
+    # call/result batch when it fits with working-memory headroom; compact older work.
+    fresh = fresh_tool_boundary(messages)
+    protect_fresh = fresh < len(messages) and (
+        message_cost(messages[fresh:]) <= budget - min(6000, budget // 4)
+    )
     work = []
-    for message in messages:
-        if message.get("type") == "function_call_output" and size(message) > (
-            12000 if TOKEN_CONFIG else max(4000, budget // 4)
+    for index, message in enumerate(messages):
+        if (
+            message.get("type") == "function_call_output"
+            and (index < fresh or not protect_fresh)
+            and size(message) > (12000 if TOKEN_CONFIG else max(4000, budget // 4))
         ):
-            path = archive(message, "tool-output")
-            message = dict(
-                message,
-                output=json.dumps(
-                    {
-                        "notice": "Large tool output archived; use read with offset and limit to retrieve original untrusted content.",
-                        "path": path,
-                    }
-                ),
-            )
+            message = archived_output(message, max(2048, min(8000, budget // 4)))
         work.append(message)
     if message_cost(work) <= budget:
         record = {
@@ -393,7 +455,7 @@ def prepare(messages, tools, req):
         }
         record = add_budget_metrics(record, messages, work)
         return work, {"record": archive(record, "compaction"), **record}
-    cut = split_boundary(work)
+    cut = fresh if protect_fresh else split_boundary(work)
     if not cut:
         raise ContextError("no safe compression boundary")
     if TOKEN_CONFIG:
@@ -404,7 +466,8 @@ def prepare(messages, tools, req):
             - 16 * len(tools)
             - 6000
         )
-        for boundary in range(cut, len(work)):
+        last_boundary = fresh if protect_fresh else len(work) - 1
+        for boundary in range(cut, last_boundary + 1):
             if (
                 paired(work[:boundary])
                 and paired(work[boundary:])

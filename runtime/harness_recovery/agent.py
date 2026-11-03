@@ -182,11 +182,16 @@ def save_manifest():
         "resume.json",
         "continuation.json",
     }
+    manifests = {}
     for manifest in ("resume.json", "continuation.json"):
         try:
-            files.update(json.loads(pathlib.Path(manifest).read_text()).get("files", []))
-        except (OSError, ValueError):
-            pass
+            data = json.loads(pathlib.Path(manifest).read_text())
+        except FileNotFoundError:
+            data = {}
+        if not isinstance(data, dict):
+            raise TypeError("Existing handoff manifest must be an object")
+        manifests[manifest] = data
+        files.update(data.get("files", []))
     for path in pathlib.Path(".").rglob("*"):
         if (
             path.is_file()
@@ -202,7 +207,8 @@ def save_manifest():
         ("resume.json", ["python", "agent.py", "--resume"]),
         ("continuation.json", ["python", "agent.py", "--resume"]),
     ]:
-        context_manager.atomic(filename, json.dumps({"command": command, "files": files}))
+        data = {**manifests[filename], "command": command, "files": files}
+        context_manager.atomic(filename, json.dumps(data))
 
 
 def checkpoint(messages):

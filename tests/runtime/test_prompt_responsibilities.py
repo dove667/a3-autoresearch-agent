@@ -157,7 +157,7 @@ class PromptResponsibilitiesTests(unittest.TestCase):
         self.assertIn("优先适配、微调", prompt)
         self.assertIn("不自行下载", prompt)
         soul = read("agent-inputs/SOUL.md")
-        self.assertIn("不制造重复工作", soul)
+        self.assertIn("避免重复作业", soul)
         self.assertNotIn("在等待其结果的时间里优先", prompt)
         allocation = read("skills/rsi-harness-evolution/references/policy-harness-allocation.md")
         self.assertIn("validation", allocation)
