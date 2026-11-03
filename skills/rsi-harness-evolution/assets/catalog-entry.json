@@ -1,6 +1,6 @@
 {
   "id": "rsi-harness-evolution",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "status": "reference",
   "comparison_status": "compare-not-proven",
   "description": "Fixed-weight RSI Harness improvement: component diagnosis, context/memory/tools/control/recovery candidates and quality-preserving experiments.",
@@ -32,6 +32,10 @@
     {
       "version": "0.2.0",
       "change": "Add phase-aware Policy/Harness allocation baseline and on-demand examples; clarify bounded work, useful parallelism and evidence-driven refinement of Agent-owned selection heuristics."
+    },
+    {
+      "version": "0.2.1",
+      "change": "Actively delegate valuable independent Policy/data/training and Harness work when resources permit; clarify bounded worker handoffs, dependency integration and timely decisions without mandatory parallelism."
     }
   ]
 }
