@@ -34,9 +34,9 @@ a before-handoff check. All triggers share a 10-minute cooldown, exact-snapshot
 cache and one inflight reservation. Periodic work takes priority when due; cooldown
 or an inflight analysis can defer it, not create concurrent analysis calls.
 
-These are starting thresholds, not proven optimal values. Observed deployment
-windows had about 145 normal responses and 28–35 input-document reads per half hour;
-the repetition threshold targets that pattern without flagging one legitimate read.
+These are starting thresholds, not proven optimal values. The repetition threshold
+aims to distinguish sustained duplicate reads from one legitimate retrieval;
+validate it against the deployment's representative work, waits and false alarms.
 At most six new analysis reservations per hour are normally possible, each with
 the request bounds above; this is not a claim about actual money or enforced provider
 billing. The 60-second polls themselves never invoke a model. Identity polls and
