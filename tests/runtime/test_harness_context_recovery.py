@@ -248,3 +248,42 @@ def test_manifest_flush_failure_does_not_publish_new_checkpoint(tmp_path, monkey
     with pytest.raises(OSError):
         functions["checkpoint"]([{"role": "user", "content": "Source: new-history.json"}])
     assert json.loads((tmp_path / "checkpoint.json").read_text()) == old
+
+
+def test_summary_headroom_does_not_recursively_split_a_feasible_plan(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    context = load_context()
+    calls = []
+
+    def provider(*args):
+        calls.append(args)
+        response = completed()
+        response["output"][0]["content"][0]["text"] = "Preserved mock state. " + "x" * 5000
+        return response
+
+    result, record = context.prepare(messages(90000), [], provider)
+    assert result and context.paired(result)
+    assert record["cumulative_summary_calls"] <= 8
+    assert len(calls) <= 8
+
+
+def test_oversized_summary_is_diagnosed_and_restart_is_bounded(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    calls = []
+
+    def provider(*args):
+        calls.append(args)
+        response = completed()
+        response["output"][0]["content"][0]["text"] = "Unbounded summary. " + "x" * 12000
+        return response
+
+    for _ in range(10):
+        context = load_context()
+        with pytest.raises(context.ContextError):
+            context.prepare(messages(50000), [], provider)
+    assert len(calls) <= 8
+    failure_records = list((tmp_path / "context-history").glob("summary-failure-*.json"))
+    assert any(
+        json.loads(p.read_text())["reason"] == "summary_text_exceeds_memory_budget"
+        for p in failure_records
+    )

@@ -11,6 +11,13 @@ intervention in the new package provenance and initial human feedback.
 
 - Summary attempts are charged before dispatch and persisted with completed
   fragments. A restart reuses completed work rather than resetting the call limit.
+- Working memory has a validated UTF-8 size ceiling (at most 6,000 bytes).
+  Summary requests target a shorter compact state and preserve document paths and
+  read coverage instead of copying reference documentation. Fragment planning
+  reserves this memory headroom before dispatch. Oversized responses receive a
+  diagnostic and bounded retries, rather than silent truncation. Provider adapters
+  may discard requested token limits; the recorded 800-token output setting is a
+  request, not an assumed provider guarantee.
 - Transient failures receive at most three attempts per fragment with bounded
   backoff, within eight calls for the same checkpoint, tools, implementation and
   budget. An infeasible plan blocks before a request. Persistent failures remain
