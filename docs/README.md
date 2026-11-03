@@ -11,6 +11,7 @@
 - [第二阶段方案](plans/2026-10-31-phase-two.md)：完整网格下的 Policy 与 Harness 联合优化；独立目标、评估与完整 Prompt 已接入阶段选择；离线环境、预算配置与只读大文件交接入口已提供，真实训练和评测由 Agent 执行。
 - [研究网页网关原方案](plans/2026-11-02-research-web-gateway.md)：历史设计与验证记录；当前采用 [Tavily 搜索／正文提取、专用本地代理与结果缓存](plans/2026-11-02-tavily-proxy-extract.md)，配置入口见环境配置。
 - [Agent 输入版本与热加载](agent-inputs.md)：版本号维护、恢复加载规则和警告确认。
+- [上下文恢复补丁与模型配置](context-reliability.md)：可选派生包、持久调用预算、状态保存及推理参数。
 - [Host 执行接口](../agent-inputs/shared/execution.md)：给生成后的 Harness 使用的固定部署能力。
 
 从首次使用开始，先读使用教程；理解运行机制再读系统架构，查找文件归属时读目录职责。

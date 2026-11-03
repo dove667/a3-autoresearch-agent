@@ -42,6 +42,7 @@ from runtime.local.input_versions import (
     resolve_task_profile,
 )
 from runtime.local.isolation_fixture import IsolationFixtures
+from runtime.local.model_settings import read_model_request_options
 from runtime.local.recovery import stage_recovery
 from runtime.local.run_resume import (
     begin_blocked_resume,
@@ -631,6 +632,7 @@ def main() -> None:
 
 
 def launch_run(args, run: Path, a3: Path, image: str, start) -> None:
+    model_request_options = read_model_request_options(os.environ)
     package = (start.command, start.files) if start else None
     kind = (
         "deployment-checks" if args.verify_deployment else "retained-harness" if package else "rsi"
@@ -794,6 +796,7 @@ def launch_run(args, run: Path, a3: Path, image: str, start) -> None:
         model_name=os.environ["MODEL_NAME"],
         sessions={token: run_id},
         forward_model=litellm.responses,
+        model_request_options=model_request_options,
         remote_call=remote_for_run,
         usage_log=run / "model-usage.jsonl",
         sandbox=sandbox,
@@ -838,6 +841,7 @@ def launch_run(args, run: Path, a3: Path, image: str, start) -> None:
                     "authorization": "Bearer $A3_GATEWAY_TOKEN",
                     "model": "openai/sandbox-model",
                     "model_class": "litellm_response",
+                    "model_request_options": model_request_options,
                     "cost_tracking": "ignore_errors",
                     "usage_accounting": "host gateway model-usage.jsonl; alias prices are unknown",
                     "model_api_base": endpoint + "/v1",
@@ -926,6 +930,9 @@ def launch_run(args, run: Path, a3: Path, image: str, start) -> None:
                         "phase": input_versions.phase,
                         "task_profile": input_versions.task_profile,
                         "mode": kind,
+                        "model_request_options": model_request_options,
+                        "model": os.environ["MODEL_NAME"],
+                        "model_class": os.environ["MODEL_CLASS"],
                         "package": str(args.run_harness or args.resume_from),
                         "parent_run": start.previous_run.name if start.previous_run else None,
                         "source_version": start.source_version,
@@ -997,8 +1004,10 @@ def launch_run(args, run: Path, a3: Path, image: str, start) -> None:
                         ),
                         "container_id": env.container_id,
                         "model": os.environ["MODEL_NAME"],
+                        "model_class": os.environ["MODEL_CLASS"],
                         "parent_run": parent.name if parent else None,
                         "mode": kind,
+                        "model_request_options": model_request_options,
                     },
                     indent=2,
                 )
@@ -1014,14 +1023,17 @@ def launch_run(args, run: Path, a3: Path, image: str, start) -> None:
         template_vars["phase_instructions"] = phase_instructions
 
         def execute_builder(reason: str, trajectory: Path) -> None:
-            model = get_model(
-                config={
-                    "model_name": os.environ["MODEL_NAME"],
-                    "model_class": os.environ["MODEL_CLASS"],
-                    "cost_tracking": os.environ.get("MODEL_COST_TRACKING", "default"),
-                    **config.get("model", {}),
-                }
-            )
+            model_config = {
+                **config.get("model", {}),
+                "model_name": os.environ["MODEL_NAME"],
+                "model_class": os.environ["MODEL_CLASS"],
+                "cost_tracking": os.environ.get("MODEL_COST_TRACKING", "default"),
+            }
+            model_config["model_kwargs"] = {
+                **model_config.get("model_kwargs", {}),
+                **model_request_options,
+            }
+            model = get_model(config=model_config)
             agent_args = {**config["agent"], "output_path": trajectory}
             agent_args.pop("agent_class", None)
             agent = ContextAgent(model, env, **agent_args)

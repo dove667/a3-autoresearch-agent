@@ -25,6 +25,7 @@ from runtime.local.comparison_checks import check_comparison
 from runtime.local.evolution import EvolutionState
 from runtime.local.gateway_diagnostics import CURRENT_REQUEST, GatewayDiagnostics
 from runtime.local.input_versions import InputVersions
+from runtime.local.model_settings import validate_model_request_options
 from runtime.local.run_state import RunStateStore
 from runtime.local.web_gateway import FetchRequest, SearchRequest, WebConfig, WebError, WebGateway
 
@@ -139,7 +140,10 @@ def create_app(
     resource_monitor: Callable | None = None,
     human_feedback=None,
     web_gateway=None,
+    model_request_options: dict | None = None,
 ) -> FastAPI:
+    fixed_model_options = validate_model_request_options(model_request_options)
+
     @asynccontextmanager
     async def lifespan(app):
         # Poll independently of model calls and Agent status requests, including during H0.
@@ -862,6 +866,7 @@ def create_app(
             raise HTTPException(422, "Only client-executed function tools are supported")
         arguments = {key: value for key, value in body.items() if key != "model"}
         arguments.pop("stream", None)
+        arguments.update(validate_model_request_options(fixed_model_options))
         with session_lock:
             trial = evolution.trials.get(experiment, {}) if evolution else {}
             receives_phase = bool(
@@ -904,6 +909,14 @@ def create_app(
             "wall_seconds": time.monotonic() - started,
             "usage": data.get("usage"),
         }
+        if fixed_model_options:
+            entry["model_request_options"] = fixed_model_options
+            entry["response_model"] = data.get("model")
+            reasoning = data.get("reasoning")
+            entry["response_reasoning_effort"] = (
+                reasoning.get("effort") if isinstance(reasoning, dict) else None
+            )
+            entry["response_service_tier"] = data.get("service_tier")
         if feedback_ids:
             entry["human_feedback_ids"] = feedback_ids
         if receives_phase:
