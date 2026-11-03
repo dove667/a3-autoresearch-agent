@@ -287,3 +287,170 @@ def test_oversized_summary_is_diagnosed_and_restart_is_bounded(tmp_path, monkeyp
         json.loads(p.read_text())["reason"] == "summary_text_exceeds_memory_budget"
         for p in failure_records
     )
+
+
+def test_large_output_archival_alone_avoids_summary_and_keeps_original(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    context = load_context()
+    original = [
+        {"role": "user", "content": "Keep the unknown result unknown."},
+        {"type": "function_call", "name": "read", "call_id": "read-large", "arguments": "{}"},
+        {
+            "type": "function_call_output",
+            "call_id": "read-large",
+            "output": "reference-data " * 10000,
+        },
+    ]
+    calls = []
+    result, record = context.prepare(original, [], lambda *args: calls.append(args) or completed())
+    assert calls == []
+    assert context.paired(result)
+    reference = json.loads(result[-1]["output"])["path"]
+    assert json.loads(pathlib.Path(reference).read_text()) == original[-1]
+    assert record["kind"] == "archive_only"
+    assert record["cumulative_summary_calls"] == 0
+
+
+def test_token_mode_uses_host_reserve_and_archive_fast_path(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.syspath_prepend(str(pathlib.Path(__file__).resolve().parents[2] / "runtime/local"))
+    context = load_context()
+    config = {
+        "enabled": True,
+        "unit": "estimated_tokens",
+        "tokenizer": "o200k_base",
+        "trigger_tokens": 6000,
+        "target_tokens": 3000,
+        "summary_input_tokens": 16000,
+        "injected_reserve_tokens": 1000,
+        "summary_reserve_tokens": 512,
+        "main_context_tokens": 500000,
+        "summary_context_tokens": 500000,
+        "feedback_refs": [],
+    }
+    requests = []
+    context.configure(lambda method, path, data=None: config)
+    original = [
+        {"type": "function_call", "call_id": "r", "name": "read", "arguments": "{}"},
+        {"type": "function_call_output", "call_id": "r", "output": "read reference data " * 20000},
+    ]
+    result, record = context.prepare(
+        original, [], lambda *args: requests.append(args) or completed()
+    )
+    assert not requests and context.paired(result)
+    assert record["kind"] == "archive_only" and record["budget_unit"] == "estimated_tokens"
+    assert record["after_estimated_tokens"] < config["trigger_tokens"]
+
+
+def test_token_compaction_uses_summary_operation_and_preserves_pairing(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.syspath_prepend(str(pathlib.Path(__file__).resolve().parents[2] / "runtime/local"))
+    context = load_context()
+    config = {
+        "enabled": True,
+        "unit": "estimated_tokens",
+        "tokenizer": "o200k_base",
+        "trigger_tokens": 6000,
+        "target_tokens": 3000,
+        "summary_input_tokens": 16000,
+        "injected_reserve_tokens": 1000,
+        "summary_reserve_tokens": 512,
+        "main_context_tokens": 500000,
+        "summary_context_tokens": 500000,
+        "feedback_refs": [],
+    }
+    context.configure(lambda method, path, data=None: config)
+    requests = []
+
+    def provider(method, path, body):
+        requests.append((method, path, body))
+        return completed()
+
+    result, record = context.prepare(messages(80000), [], provider)
+    assert context.paired(result)
+    assert all(path == "/v1/summary" for _, path, _ in requests)
+    assert all(set(body) == {"previous", "fragment", "source"} for _, _, body in requests)
+    assert record["budget_unit"] == "estimated_tokens" and record["after_estimated_tokens"] < 6000
+    assert record["after_estimated_tokens"] < record["before_estimated_tokens"]
+
+
+def test_temporary_config_error_does_not_silently_select_legacy_mode():
+    context = load_context()
+    with pytest.raises(context.ContextError):
+        context.configure(lambda *args: {"http_error": 503})
+
+
+@pytest.mark.parametrize("failure", [{"http_error": 502}, {"status": "completed", "output": []}])
+def test_token_mode_persistent_failure_remains_bounded_across_restart(
+    tmp_path, monkeypatch, failure
+):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.syspath_prepend(str(pathlib.Path(__file__).resolve().parents[2] / "runtime/local"))
+    config = {
+        "enabled": True,
+        "unit": "estimated_tokens",
+        "tokenizer": "o200k_base",
+        "trigger_tokens": 6000,
+        "target_tokens": 3000,
+        "summary_input_tokens": 16000,
+        "injected_reserve_tokens": 1000,
+        "summary_reserve_tokens": 512,
+        "main_context_tokens": 500000,
+        "summary_context_tokens": 500000,
+        "feedback_refs": [],
+    }
+    requests = []
+    for _ in range(10):
+        context = load_context()
+        context.configure(lambda *args: config)
+        with pytest.raises(context.ContextError):
+            context.prepare(messages(80000), [], lambda *args: requests.append(args) or failure)
+    assert len(requests) <= 8
+
+
+def test_escaping_heavy_summary_is_sized_like_host_envelope(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from runtime.local.host_gateway import create_app
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.syspath_prepend(str(pathlib.Path(__file__).resolve().parents[2] / "runtime/local"))
+    provider_calls = []
+    client = TestClient(
+        create_app(
+            model_name="fixed/main",
+            sessions={"token": "main"},
+            main_owner="main",
+            usage_log=tmp_path / "usage.jsonl",
+            remote_call=lambda *args: {},
+            forward_model=lambda **kw: provider_calls.append(kw) or completed(),
+            context_budget={
+                "main_context_tokens": 500000,
+                "worker_context_tokens": 500000,
+                "summary_context_tokens": 500000,
+                "trigger_tokens": 64000,
+                "target_tokens": 32000,
+                "summary_input_tokens": 48000,
+            },
+        )
+    )
+    rejected = []
+
+    def request(method, path, data=None):
+        response = client.request(
+            method, path, headers={"Authorization": "Bearer token"}, json=data
+        )
+        if response.status_code >= 400:
+            rejected.append(response.status_code)
+            return {"http_error": response.status_code}
+        return response.json()
+
+    context = load_context()
+    context.configure(request)
+    original = [{"role": "user", "content": '\\" ' * 40000}] + [
+        {"role": "user", "content": "recent fixed fact"} for _ in range(6)
+    ]
+    result, record = context.prepare(original, [], request)
+    assert context.paired(result) and not rejected
+    assert provider_calls and len(provider_calls) <= 8
+    assert record["after_estimated_tokens"] < record["before_estimated_tokens"]

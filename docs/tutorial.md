@@ -25,6 +25,8 @@ cp .env.example .env
 | 配置 | 用途 |
 | --- | --- |
 | `MODEL_NAME`、`MODEL_CLASS` | 模型标识与 mini 的模型适配器；认证按模型服务要求保存在 Host |
+| `A3_WORKER_MODEL_NAME`、`A3_SUMMARY_MODEL_NAME` | 可选的固定辅助／摘要模型；主身份和候选行为验证仍使用主模型，配置见[上下文与模型路由](context-reliability.md) |
+| `A3_MODEL_CONTEXT_TOKENS` | 启用经核实窗口的token预算；辅助模型必须同时配置各自窗口，不能把文件字节数当token数 |
 | `MODEL_COST_TRACKING` | 成本统计方式；没有真实价格时费用保持未知 |
 | `A3_PROJECT_ROOT` | 本地 A3 Git 工作区，供启动器制作隔离副本 |
 | `A3_LOCAL_IMAGE` | 执行初始构建与候选 Harness 的本地镜像 |

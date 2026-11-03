@@ -42,7 +42,8 @@ from runtime.local.input_versions import (
     resolve_task_profile,
 )
 from runtime.local.isolation_fixture import IsolationFixtures
-from runtime.local.model_settings import read_model_request_options
+from runtime.local.model_context import read_context_budget
+from runtime.local.model_settings import read_model_request_options, read_role_models
 from runtime.local.recovery import stage_recovery
 from runtime.local.run_resume import (
     begin_blocked_resume,
@@ -633,6 +634,8 @@ def main() -> None:
 
 def launch_run(args, run: Path, a3: Path, image: str, start) -> None:
     model_request_options = read_model_request_options(os.environ)
+    role_models = read_role_models(os.environ)
+    context_budget = read_context_budget(os.environ)
     package = (start.command, start.files) if start else None
     kind = (
         "deployment-checks" if args.verify_deployment else "retained-harness" if package else "rsi"
@@ -797,6 +800,8 @@ def launch_run(args, run: Path, a3: Path, image: str, start) -> None:
         sessions={token: run_id},
         forward_model=litellm.responses,
         model_request_options=model_request_options,
+        role_models=role_models,
+        context_budget=context_budget,
         remote_call=remote_for_run,
         usage_log=run / "model-usage.jsonl",
         sandbox=sandbox,
@@ -842,6 +847,8 @@ def launch_run(args, run: Path, a3: Path, image: str, start) -> None:
                     "model": "openai/sandbox-model",
                     "model_class": "litellm_response",
                     "model_request_options": model_request_options,
+                    "model_roles": role_models,
+                    "context_budget": context_budget,
                     "cost_tracking": "ignore_errors",
                     "usage_accounting": "host gateway model-usage.jsonl; alias prices are unknown",
                     "model_api_base": endpoint + "/v1",
@@ -931,6 +938,8 @@ def launch_run(args, run: Path, a3: Path, image: str, start) -> None:
                         "task_profile": input_versions.task_profile,
                         "mode": kind,
                         "model_request_options": model_request_options,
+                        "model_roles": role_models,
+                        "context_budget": context_budget,
                         "model": os.environ["MODEL_NAME"],
                         "model_class": os.environ["MODEL_CLASS"],
                         "package": str(args.run_harness or args.resume_from),
@@ -1008,6 +1017,8 @@ def launch_run(args, run: Path, a3: Path, image: str, start) -> None:
                         "parent_run": parent.name if parent else None,
                         "mode": kind,
                         "model_request_options": model_request_options,
+                        "model_roles": role_models,
+                        "context_budget": context_budget,
                     },
                     indent=2,
                 )

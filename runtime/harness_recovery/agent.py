@@ -7,6 +7,8 @@ import time
 import urllib.error
 import urllib.request
 
+os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
+
 import context_manager
 import skill_tools
 import web_tools
@@ -265,6 +267,7 @@ empty = 0
 while True:
     try:
         try:
+            context_manager.configure(req)
             prepared, record = context_manager.prepare(messages, tools, req)
         except Exception as e:  # noqa: BLE001 - preserve recoverable state on unexpected failures
             log(
