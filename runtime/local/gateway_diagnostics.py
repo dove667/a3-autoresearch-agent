@@ -13,8 +13,9 @@ CURRENT_REQUEST = contextvars.ContextVar("gateway_request", default=None)
 
 
 class GatewayDiagnostics:
-    def __init__(self, path: Path):
+    def __init__(self, path: Path, observe=None):
         self.path = path
+        self.observe = observe
         self.lock = threading.Lock()
 
     def write(self, event: dict) -> None:
@@ -58,13 +59,14 @@ class GatewayDiagnostics:
                 return response
             finally:
                 route = request.scope.get("route")
-                self.write(
-                    {
-                        **entry,
-                        "event": "finished",
-                        "status_code": status,
-                        "route": getattr(route, "path", "unmatched"),
-                        "wall_seconds": time.monotonic() - started,
-                    }
-                )
+                finished = {
+                    **entry,
+                    "event": "finished",
+                    "status_code": status,
+                    "route": getattr(route, "path", "unmatched"),
+                    "wall_seconds": time.monotonic() - started,
+                }
+                self.write(finished)
+                if self.observe is not None:
+                    self.observe(finished)
                 CURRENT_REQUEST.reset(context)

@@ -29,7 +29,32 @@ from runtime.local.model_context import ContextBudget
 from runtime.local.model_settings import validate_model_request_options, validate_role_models
 from runtime.local.run_state import RunStateStore
 from runtime.local.token_count import count_tokens, estimate_request_tokens
+from runtime.local.trajectory_analysis import TrajectoryAnalyzer
+from runtime.local.trajectory_telemetry import TrajectoryTelemetry
 from runtime.local.web_gateway import FetchRequest, SearchRequest, WebConfig, WebError, WebGateway
+
+
+class AnalysisRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    trigger: Literal["manual", "repetition", "no_progress", "before_handoff", "periodic"] = "manual"
+
+
+class AnalysisResponseRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    analysis_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    decision: Literal["adopt", "reject", "defer"]
+    reason: str = Field(min_length=1, max_length=500)
+
+
+class ObservationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    read_calls: int = Field(ge=0, le=1_000_000_000, strict=True)
+    repeated_reads: int = Field(ge=0, le=1_000_000_000, strict=True)
+    retrieved_characters: int = Field(ge=0, le=1_000_000_000, strict=True)
+    delivered_reads: int = Field(ge=0, le=1_000_000_000, strict=True)
+    open_items: int = Field(ge=0, le=1_000_000_000, strict=True)
+    waiting_items: int = Field(ge=0, le=1_000_000_000, strict=True)
+    closed_items: int = Field(ge=0, le=1_000_000_000, strict=True)
 
 
 class SummaryRequest(BaseModel):
@@ -229,7 +254,15 @@ def create_app(
                 budget_monitor.join(timeout=1)
 
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
-    diagnostics = GatewayDiagnostics(usage_log.with_name("gateway-events.jsonl"))
+    telemetry = TrajectoryTelemetry()
+    analyzer = TrajectoryAnalyzer(
+        forward_model,
+        fixed_roles.get(
+            "worker", {"model_name": model_name, "request_options": fixed_model_options}
+        ),
+        state_store,
+    )
+    diagnostics = GatewayDiagnostics(usage_log.with_name("gateway-events.jsonl"), telemetry.record)
     diagnostics.attach(app)
     log_lock = threading.Lock()
     session_lock = threading.RLock()
@@ -263,12 +296,15 @@ def create_app(
             evolution.transitions = saved["transitions"]
         if fixtures is not None:
             fixtures.records = restored_state.get("fixtures", {})
+        for actor, values in restored_state.get("telemetry_observations", {}).items():
+            telemetry.observe(actor, ObservationRequest.model_validate(values).model_dump())
 
     def save_checkpoint():
         with session_lock:
             if state_store is not None:
                 state_store.update(
                     gateway={
+                        "telemetry_observations": dict(telemetry.observations),
                         "sessions": dict(sessions),
                         "root_owners": sorted(root_owners),
                         "children": children,
@@ -392,6 +428,85 @@ def create_app(
                     request["experiment_id"] = experiment
                 return experiment
         raise HTTPException(401, "Invalid experiment token")
+
+    def telemetry_scope(actor, descendants=False):
+        def allowed(candidate):
+            if candidate == actor:
+                return True
+            if not descendants:
+                return False
+            seen = set()
+            while candidate in scope_parents and candidate not in seen:
+                seen.add(candidate)
+                candidate = scope_parents[candidate]
+                if candidate == actor:
+                    return True
+            return False
+
+        return allowed
+
+    @app.get("/telemetry")
+    def read_telemetry(
+        authorization: Annotated[str | None, Header()] = None,
+        scope: Literal["self", "descendants"] = "self",
+    ):
+        with session_lock:
+            actor = owner(authorization)
+            return telemetry.snapshot(telemetry_scope(actor, scope == "descendants"))
+
+    @app.post("/telemetry/observations")
+    def record_observations(
+        body: ObservationRequest,
+        authorization: Annotated[str | None, Header()] = None,
+    ):
+        with session_lock:
+            actor = owner(authorization)
+            telemetry.observe(actor, body.model_dump())
+            save_checkpoint()
+            return {"recorded": True}
+
+    def analyzer_owner(authorization):
+        actor = owner(authorization)
+        current_main = evolution.main_owner if evolution else main_owner
+        if current_main is None or actor != current_main:
+            raise HTTPException(403, "Only the current main Agent can request analysis")
+        return actor
+
+    @app.get("/analysis")
+    def read_analysis(authorization: Annotated[str | None, Header()] = None):
+        with session_lock:
+            return analyzer.latest(analyzer_owner(authorization))
+
+    @app.get("/analysis/{analysis_id}")
+    def read_analysis_report(
+        analysis_id: str,
+        authorization: Annotated[str | None, Header()] = None,
+    ):
+        with session_lock:
+            return analyzer.get(analyzer_owner(authorization), analysis_id)
+
+    @app.post("/analysis")
+    def request_analysis(
+        body: AnalysisRequest | None = None,
+        authorization: Annotated[str | None, Header()] = None,
+    ):
+        with session_lock:
+            accepting_resources()
+            actor = analyzer_owner(authorization)
+            snapshot = telemetry.snapshot(telemetry_scope(actor, True))
+        from fastapi.responses import JSONResponse
+
+        report = analyzer.analyze(actor, snapshot, body.trigger if body else "manual")
+        return JSONResponse(report, status_code=202 if report["status"] == "running" else 200)
+
+    @app.post("/analysis/response")
+    def respond_to_analysis(
+        body: AnalysisResponseRequest,
+        authorization: Annotated[str | None, Header()] = None,
+    ):
+        with session_lock:
+            actor = analyzer_owner(authorization)
+            return analyzer.respond(actor, body.analysis_id, body.decision, body.reason)
 
     web_service = web_gateway or WebGateway(usage_log.parent / ".host" / "web", WebConfig())
 
@@ -993,7 +1108,25 @@ def create_app(
         try:
             response = forward_model(model=route["model_name"], **arguments)
             data = response.model_dump(mode="json") if hasattr(response, "model_dump") else response
+            request = CURRENT_REQUEST.get()
+            if request is not None:
+                usage = data.get("usage")
+                usage = usage if isinstance(usage, dict) else {}
+                request["model_observation"] = {
+                    "role": role,
+                    "wall_seconds": time.monotonic() - started,
+                    **{
+                        key: usage.get(key)
+                        for key in ("input_tokens", "output_tokens", "total_tokens")
+                    },
+                }
         except Exception as error:  # noqa: BLE001 — never return provider or SSH credential details
+            request = CURRENT_REQUEST.get()
+            if request is not None:
+                request["model_observation"] = {
+                    "role": role,
+                    "wall_seconds": time.monotonic() - started,
+                }
             diagnostics.error("model_provider", error)
             raise HTTPException(502, "Model forwarding failed") from None
         if human_feedback is not None:

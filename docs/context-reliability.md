@@ -1,8 +1,7 @@
 # Context recovery and model roles
 
 The optional overlay in `runtime/harness_recovery/` adapts a compatible retained
-Harness without changing its historical ready version. Copy `agent.py` and
-`context_manager.py`, plus the shared `runtime/local/token_count.py` as a flat
+Harness without changing its historical ready version. Copy `agent.py`, `context_manager.py`, `memory_state.py` and `analyzer_client.py`, plus the shared `runtime/local/token_count.py` as a flat
 `token_count.py`, into an explicitly derived package. Preserve its compatible
 `web_tools.py`, `skill_tools.py`, memory and evidence. Record source/version hashes
 and the intervention; an old acceptance record does not certify new code.
@@ -151,3 +150,32 @@ token/byte separation, persistent retry accounting and storage/journal failure.
 Real validation must separately check actual response models/options, semantic
 corrections/unknowns, source reads, normal tool work after recovery, and reference
 reachability. Neither a process exit code nor a mock response proves those facts.
+
+
+## Durable operational memory and bounded analysis
+
+The optional overlay now returns normal text reads as bounded character-page objects:
+`path`, whole-file `sha256`, `offset`, `end`, `total`, `eof`, and `content`.
+Offsets refer to decoded characters, not UTF-8 bytes. Pages are bounded by actual
+serialized size. Optional top-level JSON field selection retains its existing
+contract. `operational-state.json` records retrieved ranges separately from exact
+page payloads included in a successful completed model request. Neither proves
+understanding. Sparse coverage is bounded with an explicit incompleteness marker;
+gaps are never merged into unread coverage. Views and receipts have finite caps.
+
+The `progress` tool records explicit Agent-authored open/waiting/closed items and
+workspace-relative evidence references; it does not write acceptance or decisions.
+Missing/large/changed evidence is uncertain, not automatically passed or reopened.
+Current operational facts are attached as a bounded ephemeral frame on each normal
+decision, outside rolling summaries and the saved model history. Its estimated
+cost is reserved before compression. The exact frame is archived, references and
+new modules enter ordinary resume/continuation manifests, and a corrupt sidecar
+fails closed rather than silently resetting it. One previous sidecar and separate
+progress-item archives bound redundant storage while preserving task changes.
+
+Same-task resume and handoff preserve this ledger and analyzer cadence. A genuinely
+new task archives and resets task-specific operational state and analysis schedule
+in the new copy only; skills, lessons, source packages and old archives remain.
+The analyzer contract, automatic schedule and limits are described in
+[trajectory analysis](trajectory-analysis.md). This is an implemented opt-in overlay,
+not evidence of production loading or long-run research improvement.

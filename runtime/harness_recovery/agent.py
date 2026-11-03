@@ -9,7 +9,9 @@ import urllib.request
 
 os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
 
+import analyzer_client
 import context_manager
+import memory_state
 import skill_tools
 import web_tools
 
@@ -17,7 +19,7 @@ BASE = os.environ["A3_GATEWAY_URL"]
 TOKEN = os.environ["A3_GATEWAY_TOKEN"]
 
 
-def req(method, path, data=None):
+def req(method, path, data=None, *, timeout=300):
     r = urllib.request.Request(
         BASE + path,
         data=None if data is None else json.dumps(data).encode(),
@@ -28,7 +30,7 @@ def req(method, path, data=None):
         method=method,
     )
     try:
-        with urllib.request.urlopen(r, timeout=300) as x:
+        with urllib.request.urlopen(r, timeout=timeout) as x:
             return json.loads(x.read())
     except urllib.error.HTTPError as e:
         return {"http_error": e.code, "body": e.read().decode()[:10000]}
@@ -49,12 +51,20 @@ def select_json_fields(raw, fields, path):
     value = json.loads(raw)
     if not isinstance(value, dict):
         raise ValueError("field selection requires a JSON object")  # noqa: TRY004 - preserve tool contract
-    return {
+    result = {
         "path": path,
         "sha256": hashlib.sha256(raw).hexdigest(),
         "fields": {k: value[k] for k in fields if k in value},
         "missing_fields": [k for k in fields if k not in value],
     }
+    if context_manager.size(result) > 10000:
+        return {
+            "path": path,
+            "sha256": result["sha256"],
+            "error": "field_selection_exceeds_page_budget",
+            "notice": "Selected values were not delivered. Use bounded character pages with offset/limit and source hash.",
+        }
+    return result
 
 
 def tool(name, a):
@@ -62,6 +72,8 @@ def tool(name, a):
         return web_tools.dispatch(name, a)
     if name in skill_tools.ROUTES:
         return skill_tools.dispatch(name, a)
+    if name == "progress":
+        return memory_state.progress(a)
     if name == "gateway":
         path = a["path"]
         if not any(
@@ -73,10 +85,19 @@ def tool(name, a):
                 "/checks/comparison",
                 "/fixtures/isolation",
                 "/evolution",
+                "/telemetry",
+                "/analysis",
             ]
         ):
             return "path not allowed"
-        return req(a["method"], path, a.get("body"))
+        if a["method"] == "POST" and path == "/evolution/trials":
+            analyzer.trigger("before_handoff")
+        result = req(a["method"], path, a.get("body"))
+        try:
+            memory_state.record_gateway(a["method"], path, result)
+        except Exception:  # noqa: BLE001 — preserve the result of an already executed operation
+            log({"operational_receipt": "gateway_update_failed"})
+        return result
     if name in ("read", "write", "list"):
         p = pathlib.Path(a["path"]).resolve()
         roots = [
@@ -91,13 +112,16 @@ def tool(name, a):
                 return "read only"
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_text(a["content"])
+            try:
+                memory_state.record_write(p)
+            except Exception:  # noqa: BLE001 — the file write already succeeded
+                log({"operational_receipt": "write_update_failed"})
             return "written"
         if name == "list":
             return [str(x) for x in p.iterdir()][:300]
         if a.get("fields") is not None:
             return select_json_fields(p.read_bytes(), a["fields"], str(p))
-        s = p.read_text()
-        return s[a.get("offset", 0) : a.get("offset", 0) + a.get("limit", 30000)]
+        return memory_state.read_page(p, a.get("offset", 0), a.get("limit", 4000))
     if name == "wait":
         time.sleep(min(a.get("seconds", 5), 30))
         return "waited"
@@ -108,7 +132,10 @@ def dispatch_tool_call(call):
     arguments = {}
     try:
         arguments = json.loads(call["arguments"])
-        return tool(call["name"], arguments)
+        result = tool(call["name"], arguments)
+        if call["name"] == "read":
+            memory_state.record_page(call["call_id"], result)
+        return result
     except FileNotFoundError:
         return {"error": "file_not_found", "path": arguments.get("path")}
     except PermissionError:
@@ -123,9 +150,10 @@ def spec(name, props, required):
         "name": name,
         "description": {
             "gateway": 'Call Host APIs. For remote job creation POST /jobs body {command:["python","-m","module","--help"],gpu:false,files:{}}; command MUST be an array. GET /jobs/{id} checks your own job. Other paths /sessions, /versions, /checks/comparison, /fixtures/isolation, /evolution. Jobs execute isolated code, not local host commands.',
-            "read": "Read text file in workspace, public A3, or frozen inputs. For JSON metadata, optional fields selects only specified top-level keys and returns a whole-file SHA256 plus explicit missing_fields; without fields text offsets are unchanged.",
+            "read": "Read a bounded character page with content, whole-file SHA256, offset/end/total and EOF. limit is 1..8000, default 4000. Same-path changed hashes are different sources. Optional fields selects top-level JSON keys instead.",
             "write": "Write text in workspace.",
             "list": "List accessible directory.",
+            "progress": "List or explicitly update bounded operational items with evidence references. These are your claims, not validated scientific acceptance; closed items remain recorded across summaries.",
             "wait": "Wait for asynchronous jobs.",
         }[name],
         "parameters": {
@@ -160,6 +188,17 @@ tools = (
                 },
             },
             ["path"],
+        ),
+        spec(
+            "progress",
+            {
+                "action": {"type": "string", "enum": ["list", "update"]},
+                "id": S,
+                "status": {"type": "string", "enum": ["open", "waiting", "closed"]},
+                "note": S,
+                "evidence": {"type": "array", "items": S},
+            },
+            ["action"],
         ),
         spec("write", {"path": S, "content": S}, ["path", "content"]),
         spec("list", {"path": S}, ["path"]),
@@ -269,12 +308,22 @@ try:
 except Exception as e:  # noqa: BLE001 - preserve recoverable state on unexpected failures
     log({"recovery_error": str(e)})
     sys.exit(1)
+analyzer = analyzer_client.start(req, memory_state.signals)
 empty = 0
 while True:
     try:
         try:
             context_manager.configure(req)
-            prepared, record = context_manager.prepare(messages, tools, req)
+            operational_data = memory_state.view()
+            operational_data["independent_analysis"] = analyzer.view()
+            operational = {
+                "role": "user",
+                "content": json.dumps(operational_data, ensure_ascii=False),
+            }
+            state_reference = context_manager.archive(operational, "operational-view")
+            prepared, record = context_manager.prepare(
+                messages, tools, req, extra_messages=[operational]
+            )
         except Exception as e:  # noqa: BLE001 - preserve recoverable state on unexpected failures
             log(
                 {
@@ -295,12 +344,20 @@ while True:
         checkpoint(messages)
         request = {
             "model": "openai/sandbox-model",
-            "instructions": "You are an autonomous A3 research agent. Use tools, preserve evidence and checkpoints, follow frozen inputs and host protocol. Never reveal credentials.",
-            "input": messages,
+            "instructions": "You are an autonomous A3 research agent. Use tools, preserve evidence and checkpoints, follow frozen inputs and host protocol. Review independent analyzer findings and explicitly adopt, reject or defer with reasons via /analysis/response; do not blindly follow advice. Record operational decisions with progress when useful. Never reveal credentials.",
+            "input": messages + [operational],
             "tools": tools,
         }
         log({"model_request_tools": tools})
+        try:
+            req("POST", "/telemetry/observations", memory_state.counters(), timeout=2)
+        except Exception:  # noqa: BLE001 — optional telemetry never blocks research
+            log({"optional_telemetry": "unavailable"})
+        log({"operational_view": state_reference})
         resp = req("POST", "/v1/responses", request)
+        if resp.get("status") == "completed":
+            memory_state.mark_delivered(messages)
+            memory_state.decision_completed()
         log({"response": resp})
         out = resp.get("output", [])
         if not out:

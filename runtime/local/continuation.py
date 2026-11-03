@@ -31,6 +31,57 @@ def prepare_fresh_task(start: HarnessStart, task: str) -> tuple[HarnessStart, di
         raise ValueError("Unsupported checkpoint format; Harness needs an explicit new-task entry")
     files = dict(start.files)
     files["checkpoint.json"] = json.dumps([{"role": "user", "content": task}], ensure_ascii=False)
+    # Operational progress and analyzer cadence belong to this task, not to the
+    # inherited research capabilities. Preserve them as history in the new copy.
+    reset = {
+        "operational-state.json": {
+            "version": 1,
+            "revision": 0,
+            "reads": {},
+            "items": {},
+            "counters": {},
+        },
+        "operational-state.json.previous": {
+            "version": 1,
+            "revision": 0,
+            "reads": {},
+            "items": {},
+            "counters": {},
+        },
+        "analysis-client/schedule.json": {
+            "version": 1,
+            "last_poll": None,
+            "last_attempt": None,
+            "last_periodic": None,
+            "samples": [],
+            "latest": None,
+        },
+    }
+    present = {name: start.files[name] for name in reset if name in start.files}
+    identity = json.dumps([start.source_version, task, present], sort_keys=True)
+    prefix = (
+        "inherited-task-state/operational/" + hashlib.sha256(identity.encode()).hexdigest() + "/"
+    )
+    operational_archives = {}
+    for name, inherited_content in present.items():
+        target = prefix + name
+        if target in files and files[target] != inherited_content:
+            raise ValueError("Operational task archive collision")
+        files[target] = inherited_content
+        files[name] = json.dumps(reset[name])
+        operational_archives[name] = target
+    if operational_archives:
+        for name in ("resume.json", "continuation.json"):
+            if name not in files:
+                continue
+            declaration = json.loads(files[name])
+            if not isinstance(declaration, dict) or not isinstance(declaration.get("files"), list):
+                raise TypeError("Invalid inherited operational file declaration")
+            declaration["files"] = sorted(
+                set(declaration["files"]) | set(operational_archives.values())
+            )
+            files[name] = json.dumps(declaration)
+
     return (
         replace(start, command=start.command.copy(), files=files),
         {
@@ -38,6 +89,7 @@ def prepare_fresh_task(start: HarnessStart, task: str) -> tuple[HarnessStart, di
             "previous_message_count": len(messages),
             "source_checkpoint_sha256": hashlib.sha256(content.encode()).hexdigest(),
             "initial_message_count": 1,
+            "operational_task_archives": operational_archives,
         },
     )
 

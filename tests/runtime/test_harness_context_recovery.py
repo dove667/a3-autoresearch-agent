@@ -730,3 +730,17 @@ def test_invalid_second_manifest_keeps_both_manifests_and_checkpoint(tmp_path, m
     with pytest.raises((ValueError, TypeError)):
         agent_functions(context)["checkpoint"]([{"role": "user", "content": "new state"}])
     assert all((tmp_path / name).read_bytes() == raw for name, raw in before.items())
+
+
+def test_changed_operational_frame_replans_without_resetting_spent_calls(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    context = load_context()
+    source = "context-history/snapshot-" + "a" * 64 + ".json"
+    state = context.load_progress(source, [], ["old plan"], decision_limit=10000)
+    state["calls"] = 5
+    context.save_progress(state)
+    changed = context.load_progress(
+        source, [], ["new plan", "another fragment"], decision_limit=9000
+    )
+    assert changed["calls"] == 5 and changed["pending"] == ["new plan", "another fragment"]
+    assert changed["summary"] == ""

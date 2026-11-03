@@ -303,9 +303,11 @@ def save_progress(state):
     atomic(ROOT / "compaction-progress.json", json.dumps(payload, ensure_ascii=False))
 
 
-def load_progress(source, tools, chunks):
+def load_progress(source, tools, chunks, *, decision_limit=None):
     identity = {
         "source": source,
+        "decision_limit": decision_limit,
+        "plan_sha256": hashlib.sha256(json.dumps(chunks).encode()).hexdigest(),
         "tools": tools,
         "window": WINDOW,
         "reserve": RESERVE,
@@ -316,6 +318,7 @@ def load_progress(source, tools, chunks):
     }
     fingerprint = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
     path = ROOT / "compaction-progress.json"
+    accounting = None
     if path.exists():
         try:
             previous = json.loads(path.read_text())
@@ -341,15 +344,20 @@ def load_progress(source, tools, chunks):
             if previous.get("blocked"):
                 raise ContextError("unchanged compaction is blocked: " + previous["blocked"])
             return previous
+        if (
+            previous.get("identity", {}).get("source") == source
+            and previous.get("identity", {}).get("implementation") == identity["implementation"]
+        ):
+            accounting = previous
         archive(previous, "prior-compaction-progress")
     state = {
         "fingerprint": fingerprint,
         "identity": identity,
         "pending": chunks,
         "summary": "",
-        "calls": 0,
-        "usage": [],
-        "request_sizes": [],
+        "calls": accounting["calls"] if accounting else 0,
+        "usage": accounting["usage"][:] if accounting else [],
+        "request_sizes": accounting["request_sizes"][:] if accounting else [],
         "blocked": None,
     }
     save_progress(state)
@@ -414,9 +422,9 @@ def archived_output(message, maximum_bytes):
     return candidate
 
 
-def prepare(messages, tools, req):
+def prepare(messages, tools, req, *, extra_messages=None):
     before, overhead = size(messages), size(tools)
-    budget = decision_budget(tools)
+    budget = decision_budget(tools) - (message_cost(extra_messages) if extra_messages else 0)
     if budget <= 0:
         raise ContextError("reserved request budget exhausted")
     if message_cost(messages) <= budget:
@@ -491,7 +499,9 @@ def prepare(messages, tools, req):
     )
     if fragment_limit < 256:
         raise ContextError("summary reserve leaves no bounded fragment space")
-    state = load_progress(source, tools, chunks_of(old, fragment_limit, source))
+    state = load_progress(
+        source, tools, chunks_of(old, fragment_limit, source), decision_limit=budget
+    )
     failures = 0
     while state["pending"]:
         if TOKEN_CONFIG and (
