@@ -10,10 +10,21 @@ import urllib.request
 os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
 
 import analyzer_client
+import compaction
 import context_manager
+import recall as recall_tools
+import spill as spill_tools
 import memory_state
-import skill_tools
-import web_tools
+# The derived harness ships without the generated extension modules. Their
+# absence must not stop the loop: lookups below tolerate empty ROUTES/TOOLS.
+try:
+    import skill_tools
+except ImportError:
+    skill_tools = None
+try:
+    import web_tools
+except ImportError:
+    web_tools = None
 
 BASE = os.environ["A3_GATEWAY_URL"]
 TOKEN = os.environ["A3_GATEWAY_TOKEN"]
@@ -68,9 +79,13 @@ def select_json_fields(raw, fields, path):
 
 
 def tool(name, a):
-    if name in web_tools.ROUTES:
+    if name == "recall":
+        return recall_tools.recall_tool(a)
+    if name == "memory":
+        return recall_tools.memory_tool(a)
+    if name in getattr(web_tools, "ROUTES", {}):
         return web_tools.dispatch(name, a)
-    if name in skill_tools.ROUTES:
+    if name in getattr(skill_tools, "ROUTES", {}):
         return skill_tools.dispatch(name, a)
     if name == "progress":
         return memory_state.progress(a)
@@ -135,6 +150,11 @@ def dispatch_tool_call(call):
         result = tool(call["name"], arguments)
         if call["name"] == "read":
             memory_state.record_page(call["call_id"], result)
+        # First-level compression: an oversized tool result never enters history
+        # whole; the model receives a bounded head plus the stored path. The
+        # receipt above still records the original page, not the spill reference.
+        if isinstance(result, str):
+            return spill_tools.maybe_spill(result, label=call.get("name") or "result")
         return result
     except FileNotFoundError:
         return {"error": "file_not_found", "path": arguments.get("path")}
@@ -155,6 +175,16 @@ def spec(name, props, required):
             "list": "List accessible directory.",
             "progress": "List or explicitly update bounded operational items with evidence references. These are your claims, not validated scientific acceptance; closed items remain recorded across summaries.",
             "wait": "Wait for asynchronous jobs.",
+            "recall": (
+                "Search original history by keyword over an n..m round window "
+                "(n=1 is the most recent round). Use after compaction or whenever "
+                "earlier evidence is missing. Returns labelled snippets from the "
+                "original messages; never reconstruct missing details from memory."
+            ),
+            "memory": (
+                "Append a durable note to memory.jsonl (action=write) or read/list "
+                "entries (action=read|list). Notes survive compaction and new sessions."
+            ),
         }[name],
         "parameters": {
             "type": "object",
@@ -203,10 +233,36 @@ tools = (
         spec("write", {"path": S, "content": S}, ["path", "content"]),
         spec("list", {"path": S}, ["path"]),
         spec("wait", {"seconds": {"type": "integer"}}, []),
+        spec(
+            "recall",
+            {
+                "keywords": {"type": "array", "items": S},
+                "n": {"type": "integer"},
+                "m": {"type": "integer"},
+                "window": {"type": "integer"},
+                "limit": {"type": "integer"},
+            },
+            ["keywords", "n", "m"],
+        ),
+        spec(
+            "memory",
+            {"action": S, "content": S, "key": S, "kind": S},
+            ["action"],
+        ),
     ]
-    + web_tools.TOOLS
-    + skill_tools.TOOLS
+    + list(getattr(web_tools, "TOOLS", []))
+    + list(getattr(skill_tools, "TOOLS", []))
 )
+
+
+INSTRUCTIONS = (
+    "You are an autonomous A3 research agent. Use tools, preserve evidence and "
+    "checkpoints, follow frozen inputs and host protocol. Review independent "
+    "analyzer findings and explicitly adopt, reject or defer with reasons via "
+    "/analysis/response; do not blindly follow advice. Record operational "
+    "decisions with progress when useful. Never reveal credentials."
+)
+compactor = compaction.ForkCompactor(req, tools=list(tools), instructions=INSTRUCTIONS)
 
 
 def save_manifest():
@@ -302,6 +358,8 @@ if os.path.exists("checkpoint.json") and "--resume" in sys.argv:
 else:
     with open("task.txt", encoding="utf-8") as stream:
         messages = [{"role": "user", "content": stream.read()}]
+    if not pathlib.Path(recall_tools.HISTORY_PATH).exists():
+        recall_tools.append_history_many(messages)
 try:
     if pathlib.Path("checkpoint.json").exists():
         messages = recover_journal(messages)
@@ -314,37 +372,29 @@ while True:
     try:
         try:
             context_manager.configure(req)
-            operational_data = memory_state.view()
-            operational_data["independent_analysis"] = analyzer.view()
-            operational = {
-                "role": "user",
-                "content": json.dumps(operational_data, ensure_ascii=False),
-            }
-            state_reference = context_manager.archive(operational, "operational-view")
-            prepared, record = context_manager.prepare(
-                messages, tools, req, extra_messages=[operational]
-            )
-        except Exception as e:  # noqa: BLE001 - preserve recoverable state on unexpected failures
-            log(
-                {
-                    "context_error": str(e),
-                    "state": "original checkpoint preserved; recovery required",
-                }
-            )
-            context_manager.atomic(
-                "context-failure.json",
-                json.dumps({"error": str(e), "state": "uncompacted checkpoint preserved"}),
-            )
-            save_manifest()
-            break
-        if record:
-            checkpoint(prepared)
-            messages = prepared
-            log({"context_compaction": record})
+        except Exception as e:  # noqa: BLE001 - token budgets are optional for the fork path
+            log({"context_config_error": str(e)})
+        operational_data = memory_state.view()
+        operational_data["independent_analysis"] = analyzer.view()
+        operational = {
+            "role": "user",
+            "content": json.dumps(operational_data, ensure_ascii=False),
+        }
+        state_reference = context_manager.archive(operational, "operational-view")
+        # Asynchronous fork: this decision keeps the full history; a finished
+        # compaction result is applied before a later decision, never mid-flight.
+        # The operational view rides outside history, so only its size is budgeted.
+        messages, compaction_record = compactor.before_request(
+            messages, extra_bytes=context_manager.size(operational)
+        )
+        if compaction_record:
+            log({"context_compaction": compaction_record})
+            if compaction_record.get("kind") == "applied":
+                checkpoint(messages)
         checkpoint(messages)
         request = {
             "model": "openai/sandbox-model",
-            "instructions": "You are an autonomous A3 research agent. Use tools, preserve evidence and checkpoints, follow frozen inputs and host protocol. Review independent analyzer findings and explicitly adopt, reject or defer with reasons via /analysis/response; do not blindly follow advice. Record operational decisions with progress when useful. Never reveal credentials.",
+            "instructions": INSTRUCTIONS,
             "input": messages + [operational],
             "tools": tools,
         }
@@ -374,6 +424,7 @@ while True:
         context_manager.atomic("pending-calls.json", json.dumps(journal, ensure_ascii=False))
         save_manifest()
         messages.extend(out)
+        recall_tools.append_history_many(out)
         for c in calls:
             result = dispatch_tool_call(c)
             journal["results"][c["call_id"]] = result
@@ -386,13 +437,13 @@ while True:
                     "result": result,
                 }
             )
-            messages.append(
-                {
-                    "type": "function_call_output",
-                    "call_id": c["call_id"],
-                    "output": json.dumps(result, ensure_ascii=False),
-                }
-            )
+            output = {
+                "type": "function_call_output",
+                "call_id": c["call_id"],
+                "output": json.dumps(result, ensure_ascii=False),
+            }
+            messages.append(output)
+            recall_tools.append_history(output)
         checkpoint(messages)
         context_manager.atomic("pending-calls.json", "null")
         save_manifest()
@@ -412,3 +463,14 @@ while True:
     except Exception as e:  # noqa: BLE001 - preserve recoverable state on unexpected failures
         log({"loop_error": type(e).__name__, "state": "checkpoint and journal retained"})
         break
+
+# Let a running fork finish so the next process can apply its result, and apply
+# one already-finished result before exiting.
+try:
+    compactor.wait(timeout=300)
+    messages, final_record = compactor.before_request(messages)
+    if final_record:
+        log({"context_compaction": final_record})
+        checkpoint(messages)
+except Exception as e:  # noqa: BLE001 - shutdown must not lose the checkpoint
+    log({"compaction_shutdown_error": type(e).__name__})

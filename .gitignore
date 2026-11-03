@@ -16,3 +16,11 @@ build/
 dist/
 .DS_Store
 /human-feedback.md
+
+# Recovery-harness runtime artefacts (workspace state, never source)
+history.jsonl
+memory.jsonl
+compaction-result.json
+operational-state.json
+/context-history/
+/.autorun-spill/

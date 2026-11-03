@@ -130,11 +130,18 @@ def atomic(path, text):
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temporary, path)
-        directory = os.open(path.parent, os.O_RDONLY)
         try:
-            os.fsync(directory)
+            directory = os.open(path.parent, os.O_RDONLY)
+        except OSError:
+            # Windows cannot open a directory descriptor. File contents were
+            # fsynced above; only the rename durability hint is skipped there.
+            directory = None
+        try:
+            if directory is not None:
+                os.fsync(directory)
         finally:
-            os.close(directory)
+            if directory is not None:
+                os.close(directory)
     finally:
         try:
             temporary.unlink(missing_ok=True)
