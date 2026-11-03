@@ -420,6 +420,8 @@ while True:
         operational_data = memory_state.view()
         operational_data["independent_analysis"] = analyzer.view()
         operational_data["assignments"] = work_assignments.view()
+        if WORKER_TASK is not None:
+            operational_data["worker_delivery"] = work_assignments.worker_delivery_status(WORKER_TASK)
         operational = {
             "role": "user",
             "content": json.dumps(operational_data, ensure_ascii=False),

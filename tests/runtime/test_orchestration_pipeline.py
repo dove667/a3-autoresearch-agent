@@ -120,7 +120,8 @@ class ProcessSandbox:
 
 
 @pytest.fixture
-def pipeline(tmp_path, monkeypatch):
+def pipeline(tmp_path, monkeypatch, request):
+    invalid_delivery = getattr(request, "param", False)
     main = tmp_path / "main"
     main.mkdir()
     monkeypatch.chdir(main)
@@ -156,7 +157,8 @@ def pipeline(tmp_path, monkeypatch):
         role = task["role"]
         assert "bounded " + role + " worker" in request["instructions"]
         assert "not the main coordinator" in request["instructions"]
-        provider_calls.append({"role": role, "request": request})
+        turn = 1 + sum(entry["role"] == role for entry in provider_calls)
+        provider_calls.append({"role": role, "request": request, "repair": turn > 1})
         rendezvous.wait(timeout=10)
         evidence = json.dumps({"role": role, "fixture": "synthetic, no model/GPU experiment"})
         job_id = ("a" if role == "policy" else "b") * 32
@@ -169,6 +171,29 @@ def pipeline(tmp_path, monkeypatch):
             "evidence": [{"path": "research/result.json", "sha256": sha(evidence)}],
             "exports": [export_id],
         }
+        if invalid_delivery and turn == 2:
+            frames = [
+                json.loads(entry["content"])
+                for entry in request["input"]
+                if isinstance(entry.get("content"), str) and entry["content"].startswith("{")
+            ]
+            delivery = frames[-1]["worker_delivery"]
+            assert delivery["status"] == "invalid" and "workspace-relative" in delivery["reason"]
+            return {
+                "status": "completed",
+                "output": [
+                    {
+                        "type": "function_call",
+                        "call_id": role + "repair",
+                        "name": "write",
+                        "arguments": json.dumps(
+                            {"path": "worker-result.json", "content": json.dumps(report)}
+                        ),
+                    }
+                ],
+            }
+        if invalid_delivery:
+            report["evidence"][0]["path"] = "/outputs/fixture/result.json"
         operations = [
             ("gateway", {"method": "GET", "path": "/evolution"}),
             ("write", {"path": str(tmp_path / "outside-worker.txt"), "content": "must be denied"}),
@@ -330,6 +355,7 @@ def pipeline(tmp_path, monkeypatch):
             thread.join(timeout=3)
 
 
+@pytest.mark.parametrize("pipeline", [False, True], indirect=True)
 def test_real_policy_and_harness_worker_loops_route_collect_and_decide(pipeline, tmp_path):
     assignments, req, sandbox, provider_calls, remote_calls, bridge_errors, client = pipeline
     assigned = {}
@@ -403,7 +429,8 @@ def test_real_policy_and_harness_worker_loops_route_collect_and_decide(pipeline,
         )
         assert decided["status"] == "decided"
     assert {entry["role"] for entry in provider_calls} == {"policy", "harness"}
-    assert len(provider_calls) == len(remote_calls) == 2
+    assert len(remote_calls) == 2  # Delivery repair must not replay research jobs.
+    assert len(provider_calls) == (4 if any(p["repair"] for p in provider_calls) else 2)
     assert not bridge_errors
     assert not (tmp_path / "outside-worker.txt").exists()
     assert all(

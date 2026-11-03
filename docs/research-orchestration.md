@@ -30,7 +30,12 @@ These are independent operations, not a required sequence for every coordination
 A worker runs `python agent.py --resume --worker-task worker-task.json`. Its own completion
 contract is worker-result.json, not the entire run's acceptance. Resume/continuation preserves
 that entry command; reports remain claims for the main Agent to evaluate. Reports accept only the declared fields,
-with a text summary of at most 4000 characters; detailed logs belong in hashed evidence files. A worker cannot
+with a text summary of at most 4000 characters; detailed logs belong in hashed evidence files.
+Evidence paths name local worker-workspace files. Remote `/outputs` paths are provenance,
+not local evidence: transfer through an authorized artifact interface or seal/grant exports.
+A worker receives a bounded `worker_delivery` status in its operational frame, including
+validation failures; invalid local delivery does not silently become scientific failure
+or a successful terminal result. Reports and evidence remain unchanged by validation. A worker cannot
 promote itself or inherit another identity's credentials. Test helpers and candidate-validation
 sessions retain their distinct model-purpose contract.
 

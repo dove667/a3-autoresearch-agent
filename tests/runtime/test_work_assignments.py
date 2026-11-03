@@ -455,3 +455,42 @@ def test_worker_report_requires_bounded_text_summary(tmp_path, monkeypatch, summ
     )
     with pytest.raises(ValueError, match="bounded report"):
         m.dispatch(gateway, {"action": "collect", "id": "policy-check"})
+
+
+@pytest.mark.parametrize("remote_path", ["/outputs/audit/raw.json", "../other/raw.json"])
+def test_invalid_worker_delivery_explains_local_evidence_boundary(
+    tmp_path, monkeypatch, remote_path
+):
+    m = load(tmp_path, monkeypatch)
+    task = {"id": "audit", "role": "harness", "deliverables": ["research/audit.json"]}
+    (tmp_path / "worker-result.json").write_text(
+        json.dumps(
+            {
+                "id": "audit",
+                "role": "harness",
+                "status": "blocked",
+                "evidence": [{"path": remote_path, "sha256": "a" * 64}],
+            }
+        )
+    )
+    result = m.worker_delivery_status(task)
+    assert not result["ready"] and result["status"] == "invalid"
+    assert "workspace-relative" in result["reason"]
+    assert not m.worker_result_ready(task)
+
+
+def test_worker_delivery_reports_hash_mismatch_without_altering_evidence(tmp_path, monkeypatch):
+    m = load(tmp_path, monkeypatch)
+    task = {"id": "audit", "role": "harness", "deliverables": []}
+    (tmp_path / "evidence.json").write_text("original")
+    report = {
+        "id": "audit",
+        "role": "harness",
+        "status": "blocked",
+        "evidence": [{"path": "evidence.json", "sha256": "a" * 64}],
+    }
+    (tmp_path / "worker-result.json").write_text(json.dumps(report))
+    result = m.worker_delivery_status(task)
+    assert result["status"] == "invalid" and "hash" in result["reason"]
+    assert (tmp_path / "evidence.json").read_text() == "original"
+    assert json.loads((tmp_path / "worker-result.json").read_text()) == report

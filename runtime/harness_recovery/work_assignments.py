@@ -32,12 +32,15 @@ WORKER_INSTRUCTIONS = (
     "Harness changes. Preserve original evidence, inputs and code hashes. GPU model work "
     "must use authorized gpu:true jobs; do not alter Host limits or other identities. "
     "Return worker-result.json with id, role, status complete|blocked, summary, evidence "
-    "entries with path and sha256, and exports listing ready IDs granted to current main. "
+    "entries with workspace-relative local path and sha256 (remote /outputs paths are not "
+    "local evidence), and exports listing ready IDs granted to current main. "
     "Use only these report fields, summary at most 4000 characters; put detailed logs in evidence files. Include every "
     "declared deliverable. A report is a claim for the coordinator to assess, not proof "
     "of adoption. Use worker-task.coordinator_session_id as the explicit session_id in "
     "export grants; to_main is not an API alias. This ID is not a credential. If the "
     "recipient changed, report that boundary instead of guessing or bypassing scope. "
+    "The operational worker_delivery frame explains missing/invalid reports; correct only "
+    "actual delivery defects without changing results. "
     "Save recoverable job/asset references before exiting. Do not start "
     "unassigned work, manufacture results or try to become main."
 )
@@ -512,30 +515,47 @@ def worker_task(argv):
     return task
 
 
-def worker_result_ready(task):
-    if task is None or not pathlib.Path("worker-result.json").is_file():
-        return False
+def worker_delivery_status(task):
+    """Explain local delivery validation without changing reports or acceptance."""
+    if task is None:
+        return {"ready": False, "status": "not_worker"}
+    if not pathlib.Path("worker-result.json").is_file():
+        return {"ready": False, "status": "missing", "reason": "No worker-result.json yet"}
     try:
         report = json.loads(pathlib.Path("worker-result.json").read_text())
+        if not isinstance(report, dict):
+            raise TypeError("Worker result must be a JSON object")
         if (
             report.get("id") != task["id"]
             or report.get("role") != task["role"]
             or report.get("status") not in {"complete", "blocked"}
         ):
-            return False
+            raise ValueError("Report identity, role or terminal status does not match this task")
         evidence = report.get("evidence")
         if not isinstance(evidence, list) or len(evidence) > 16:
-            return False
+            raise ValueError("Use at most 16 local evidence references")
         hashes = {}
         for item in evidence:
-            name = relative_path(item["path"])
+            try:
+                name = relative_path(item["path"])
+            except (ValueError, KeyError, TypeError) as error:
+                raise ValueError(
+                    "Evidence must be workspace-relative; remote /outputs needs authorized "
+                    "artifact transfer to local files or a sealed, granted export"
+                ) from error
             raw = text_file(name).encode()
             if digest(raw) != item.get("sha256"):
-                return False
+                raise ValueError("Evidence hash mismatch for " + name[:200])
             hashes[name] = item["sha256"]
-        return report["status"] == "blocked" or set(task["deliverables"]) <= hashes.keys()
-    except (OSError, ValueError, TypeError, KeyError):
-        return False
+        if report["status"] == "complete" and not set(task["deliverables"]) <= hashes.keys():
+            raise ValueError("Complete report must include every declared deliverable path")
+        return {"ready": True, "status": report["status"], "evidence_count": len(hashes)}
+    except (OSError, ValueError, TypeError, KeyError) as error:
+        return {"ready": False, "status": "invalid", "reason": str(error)[:1000]}
+
+
+def worker_result_ready(task):
+    return worker_delivery_status(task)["ready"]
 
 
 def entry_command(task):
