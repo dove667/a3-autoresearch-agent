@@ -41,6 +41,8 @@ WORKER_INSTRUCTIONS = (
     "recipient changed, report that boundary instead of guessing or bypassing scope. "
     "The operational worker_delivery frame explains missing/invalid reports; correct only "
     "actual delivery defects without changing results. "
+    "Report paths are relative to your worker workspace. After collection the "
+    "coordinator must use evidence_paths, not reinterpret your archive paths as its own. "
     "Save recoverable job/asset references before exiting. Do not start "
     "unassigned work, manufacture results or try to become main."
 )
@@ -307,6 +309,11 @@ def collect(req, state, identifier):
         worker_status=status.get("status"),
         result=report,
         evidence_hashes=hashes,
+        evidence_paths={
+            name: (pathlib.PurePosixPath("orchestration/results") / identifier / name).as_posix()
+            for name in hashes
+        },
+        evidence_source_session=session,
         exports=exports,
     )
     save(state)

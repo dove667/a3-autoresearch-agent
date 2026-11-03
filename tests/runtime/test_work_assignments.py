@@ -142,6 +142,11 @@ def test_result_is_verified_and_decision_does_not_forge_acceptance(tmp_path, mon
     )
     result = m.dispatch(gateway, {"action": "collect", "id": "policy-check"})
     assert result["status"] == "awaiting_decision"
+    assert result["evidence_paths"] == {
+        "result.json": "orchestration/results/policy-check/result.json"
+    }
+    assert result["evidence_source_session"] == "worker-1"
+    assert gateway.files["worker-result.json"] == json.dumps(result["result"])
     decided = m.dispatch(
         gateway,
         {

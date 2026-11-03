@@ -1,5 +1,16 @@
 # Research coordination and bounded workers
 
+Worker evidence paths are relative to the worker workspace. Collection preserves
+the original report bytes and returns `evidence_paths` plus
+`evidence_source_session`: use those coordinator-relative paths after collection.
+Reports may cite a worker-local archive which is now under
+`orchestration/results/<assignment>/context-history/`; a bare citation is not a
+file in the coordinator's `context-history/` directory. Recovery accepts a legacy
+bare summary citation only when exactly one collection receipt identifies its
+full SHA256 and the collected bytes verify. Missing own tool-output previews,
+corrupt files, symlinks and ambiguous citations still require explicit recovery;
+no other session or filesystem is searched or granted by this compatibility rule.
+
 The main Agent chooses direction, assigns Policy and Harness work, coordinates dependencies,
 inspects evidence and makes decisions. Concrete research implementation, collection, training
 and evaluation belong to workers. This division does not require another worker for a simple

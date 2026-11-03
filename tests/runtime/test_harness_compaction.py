@@ -74,6 +74,43 @@ class Gateway:
         return completed(self.summary)
 
 
+def test_collected_worker_citation_survives_compaction_and_resume():
+    import hashlib
+
+    with workspace() as root:
+        raw = b'{"output":"sealed worker result"}'
+        sha = hashlib.sha256(raw).hexdigest()
+        reference = f"context-history/tool-output-{sha}.json"
+        target = root / "orchestration/results/delivery" / reference
+        target.parent.mkdir(parents=True)
+        target.write_bytes(raw)
+        (root / "orchestration/assignments.json").write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "assignments": {
+                        "delivery": {"session_id": "worker", "evidence_hashes": {reference: sha}}
+                    },
+                }
+            )
+        )
+        messages = history(rounds=6, filler=900)
+        messages[0] = {"role": "user", "content": compaction.CHECKPOINT_PREAMBLE + reference}
+        original = json.loads(json.dumps(messages))
+        recall.ensure_history(messages)
+        gateway = Gateway(summary=GOOD_SUMMARY + "\nWorker evidence: " + reference)
+        fork = compaction.ForkCompactor(gateway)
+        fork.start(messages)
+        fork.wait(5)
+        replacement, record = fork.apply_ready(messages)
+        assert record["kind"] == "applied"
+        assert cm.paired(replacement)
+        recall.ensure_history(replacement)  # The startup check of a fresh process.
+        assert messages == original and target.read_bytes() == raw
+        assert not (root / reference).exists()
+        assert gateway.calls and all(c["method"] == "POST" for c in gateway.calls)
+
+
 def tool_pair(call_id, text):
     return [
         {"type": "function_call", "call_id": call_id, "name": "read", "arguments": "{}"},

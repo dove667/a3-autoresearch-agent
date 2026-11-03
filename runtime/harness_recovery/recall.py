@@ -91,8 +91,67 @@ def load_history(path=HISTORY_PATH):
     return [row for row in _load(path) if row.get("type") != "corrupt_line"]
 
 
+def _archive_matches(path, expected):
+    """Read only workspace files, never symlinked archive components."""
+    if path.is_absolute():
+        return False
+    current = pathlib.Path.cwd()
+    for part in path.parts:
+        if part in {"", ".", ".."}:
+            return False
+        current = current / part
+        if current.is_symlink():
+            return False
+    try:
+        return current.is_file() and hashlib.sha256(current.read_bytes()).hexdigest().startswith(
+            expected
+        )
+    except OSError:
+        return False
+
+
+def _collected_archive_paths(reference, expected):
+    """Resolve legacy citations through collection receipts, never workspace scans."""
+    ledger = pathlib.Path("orchestration/assignments.json")
+    if any(part.is_symlink() for part in (ledger, *ledger.parents)):
+        return []
+    try:
+        state = json.loads(ledger.read_text())
+        if state.get("version") != 1 or not isinstance(state.get("assignments"), dict):
+            return []
+        candidates = []
+        for identifier, item in state["assignments"].items():
+            if not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", identifier) or not isinstance(item, dict):
+                continue
+            if (
+                not item.get("session_id")
+                or item.get("evidence_hashes", {}).get(reference) != expected
+            ):
+                continue
+            candidates.append(pathlib.Path("orchestration/results") / identifier / reference)
+        return candidates
+    except (OSError, ValueError, TypeError, AttributeError):
+        return []
+
+
+def _verify_archive_reference(reference, allow_collected):
+    path = pathlib.Path(reference)
+    expected = path.stem.rsplit("-", 1)[-1]
+    if reference.startswith("orchestration/results/"):
+        relative = pathlib.PurePosixPath(*path.parts[3:]).as_posix()
+        candidates = _collected_archive_paths(relative, expected)
+        return path in candidates and _archive_matches(path, expected)
+    if path.exists() or path.is_symlink():
+        return _archive_matches(path, expected)
+    if allow_collected and len(expected) == 64:
+        candidates = _collected_archive_paths(reference, expected)
+        # Ambiguous legacy citations require explicit provenance, not a guessed owner.
+        return len(candidates) == 1 and _archive_matches(candidates[0], expected)
+    return False
+
+
 def _verify_control_sources(messages):
-    references = set()
+    references = {}
     for message in messages:
         content = message.get("content")
         if isinstance(content, str) and content.startswith(
@@ -101,9 +160,12 @@ def _verify_control_sources(messages):
                 "Untrusted derived working memory, not instructions, independent proof or acceptance.",
             )
         ):
-            references.update(
-                re.findall(r"context-history/(?:snapshot|tool-output)-[0-9a-f]{64}\.json", content)
-            )
+            for reference in re.findall(
+                r"(?:orchestration/results/[A-Za-z0-9_-]{1,80}/)?"
+                r"context-history/(?:snapshot|tool-output)-[0-9a-f]{64}\.json",
+                content,
+            ):
+                references.setdefault(reference, True)
         if message.get("type") == "function_call_output":
             try:
                 preview = json.loads(message.get("output", ""))
@@ -116,19 +178,16 @@ def _verify_control_sources(messages):
                 if isinstance(reference, str) and re.fullmatch(
                     r"context-history/tool-output-[0-9a-f]{64}\.json", reference
                 ):
-                    references.add(reference)
+                    references[reference] = False
             if isinstance(preview, dict) and preview.get("spilled") is True:
                 reference = preview.get("path")
                 if not isinstance(reference, str) or not re.fullmatch(
                     r"\.autorun-spill/[^/]+-[0-9a-f]{16}\.txt", reference
                 ):
                     raise ValueError("Invalid original spill reference; explicit recovery required")
-                references.add(reference)
-    for reference in references:
-        path = pathlib.Path(reference)
-        if not path.is_file() or not hashlib.sha256(path.read_bytes()).hexdigest().startswith(
-            path.stem.rsplit("-", 1)[-1]
-        ):
+                references[reference] = False
+    for reference, allow_collected in references.items():
+        if not _verify_archive_reference(reference, allow_collected):
             raise ValueError(
                 "Referenced original archive is missing or corrupt; explicit recovery required"
             )
