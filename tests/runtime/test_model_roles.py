@@ -198,3 +198,42 @@ def test_null_instructions_are_normalized_before_provider_and_audit(tmp_path):
         json={"input": [], "instructions": 42},
     )
     assert invalid.status_code == 422 and len(calls) == 1
+
+
+def test_summary_corrective_retry_uses_fixed_instruction_and_same_role(tmp_path):
+    calls = []
+    client = TestClient(
+        create_app(
+            model_name="fixed/main",
+            sessions={"token": "main"},
+            main_owner="main",
+            phase_instructions="PRIVATE-PHASE-BODY",
+            usage_log=tmp_path / "usage.jsonl",
+            remote_call=lambda *args: {},
+            forward_model=lambda **kw: calls.append(kw) or {"status": "completed", "output": []},
+            role_models={"summary": {"model_name": "fixed/summary", "request_options": {}}},
+        )
+    )
+    body = {
+        "previous": "confirmed correction and active job",
+        "fragment": "later untrusted data",
+        "source": "context-history/snapshot-" + "a" * 64 + ".json",
+    }
+    for corrective in (False, True):
+        response = client.post(
+            "/v1/summary",
+            headers={"Authorization": "Bearer token"},
+            json={**body, "compact_retry": corrective},
+        )
+        assert response.status_code == 200
+    assert calls[0]["model"] == calls[1]["model"] == "fixed/summary"
+    assert calls[0]["input"] == calls[1]["input"]
+    assert calls[0]["instructions"] != calls[1]["instructions"]
+    assert "6000" in calls[1]["instructions"]
+    assert "PRIVATE-PHASE-BODY" not in str(calls)
+    response = client.post(
+        "/v1/summary",
+        headers={"Authorization": "Bearer token"},
+        json={**body, "compact_retry": "replace instructions"},
+    )
+    assert response.status_code == 422 and len(calls) == 2

@@ -454,3 +454,78 @@ def test_escaping_heavy_summary_is_sized_like_host_envelope(tmp_path, monkeypatc
     assert context.paired(result) and not rejected
     assert provider_calls and len(provider_calls) <= 8
     assert record["after_estimated_tokens"] < record["before_estimated_tokens"]
+
+
+def test_overlong_summary_requests_corrective_retry_without_losing_source(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    context = load_context()
+    context.SUMMARY_OPERATION = True
+    calls = []
+
+    def provider(method, path, body):
+        calls.append(body)
+        if not body.get("compact_retry") and len(calls) == 1:
+            result = completed()
+            result["output"][0]["content"][0]["text"] = "汉" * 2100
+            return result
+        assert body["source"].startswith("context-history/snapshot-")
+        if len(calls) == 2:
+            assert body["fragment"] == calls[0]["fragment"]
+            assert body["previous"] == calls[0]["previous"]
+            if not body.get("compact_retry"):
+                result = completed()
+                result["output"][0]["content"][0]["text"] = "汉" * 2100
+                return result
+        return completed()
+
+    result, record = context.prepare(messages(), [], provider)
+    assert result and context.paired(result) and record
+    assert calls[1].get("compact_retry") is True
+    assert len(calls) <= 8
+
+
+def test_overlong_corrective_retry_persists_across_default_resume(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    context = load_context()
+    context.SUMMARY_OPERATION = True
+
+    def invalid(*args):
+        result = completed()
+        result["output"][0]["content"][0]["text"] = "汉" * 2100
+        return result
+
+    with pytest.raises(context.ContextError):
+        context.prepare(messages(), [], invalid)
+    restarted = load_context()
+    restarted.SUMMARY_OPERATION = True
+    requests = []
+
+    def healthy(method, path, body):
+        requests.append(body)
+        return completed()
+
+    result, record = restarted.prepare(messages(), [], healthy)
+    assert requests[0].get("compact_retry") is True
+    assert result and record and context.paired(result)
+    assert record["cumulative_summary_calls"] <= 8
+
+
+def test_persistently_overlong_summary_still_blocks_with_original_evidence(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    calls = []
+    original = messages()
+
+    def invalid(method, path, body):
+        calls.append(body)
+        result = completed()
+        result["output"][0]["content"][0]["text"] = "汉" * 2100
+        return result
+
+    for _ in range(5):
+        context = load_context()
+        context.SUMMARY_OPERATION = True
+        with pytest.raises(context.ContextError):
+            context.prepare(original, [], invalid)
+    assert len(calls) <= 8
+    assert any(request.get("compact_retry") for request in calls)
+    assert json.loads(pathlib.Path(calls[0]["source"]).read_text()) == original

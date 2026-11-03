@@ -65,7 +65,8 @@ Only the current main may assign the ordinary-session `candidate_validation`
 purpose. It changes neither artifact/data permissions nor the existing formal
 trial/decision mechanism. Role and requested/actual model options are audited.
 
-`POST /v1/summary` accepts only `previous`, `fragment` and a relative
+`POST /v1/summary` accepts `previous`, `fragment`, an optional strict boolean
+`compact_retry`, and a relative
 `context-history/snapshot-<SHA256>.json` source reference. It cannot receive client
 instructions, tools, model selection or credentials. The Host supplies concise
 source/uncertainty/correction instructions rather than repeating the whole phase
@@ -92,6 +93,12 @@ same checkpoint, tools, implementation and configuration. Transient failures hav
 at most three attempts per fragment with bounded backoff, within that total.
 A plan that cannot finish in the remaining budget blocks honestly before spending
 more. Corrupt accounting is rejected rather than silently reset.
+Oversized responses keep the original previous memory and transcript fragment.
+A persisted corrective-retry flag selects a fixed, tighter Host instruction on
+the next existing attempt; it cannot select arbitrary instructions, tools or
+models. The correction does not raise the 6000 UTF-8 byte limit, truncate evidence
+or reset the cumulative attempt budget. Token reserves cover the larger fixed
+corrective prompt, even on normal summary attempts.
 
 Resume and continuation manifests are published before checkpoints that may cite
 new archives. File and parent-directory writes are synchronized. The tool journal
