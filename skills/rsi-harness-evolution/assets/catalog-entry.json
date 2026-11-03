@@ -1,6 +1,6 @@
 {
   "id": "rsi-harness-evolution",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "status": "reference",
   "comparison_status": "compare-not-proven",
   "description": "Fixed-weight RSI Harness improvement: component diagnosis, context/memory/tools/control/recovery candidates and quality-preserving experiments.",
@@ -40,6 +40,10 @@
     {
       "version": "0.2.2",
       "change": "Clarify autonomous work ordering by expected goal/performance and information benefit versus total cost, risk and opportunity cost; examples and skill order do not prescribe a research sequence."
+    },
+    {
+      "version": "0.2.3",
+      "change": "Prioritize explicit Harness-worker adoption decisions at safe Policy-work boundaries, with bounded follow-up validation and timely integration or handoff; preserve running jobs, scientific review and existing ownership rules."
     }
   ]
 }

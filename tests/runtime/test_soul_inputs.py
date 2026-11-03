@@ -116,7 +116,7 @@ def test_repository_phase_two_layers_remain_selected_and_versioned(tmp_path):
     inputs = InputVersions(root, tmp_path / "run", phase="phase-two")
     manifest = inputs.activate(inputs.prepare(), "start")
     _, instructions = inputs.model_instructions()
-    assert manifest["files"]["SOUL.md"]["version"] == "0.2.2"
+    assert manifest["files"]["SOUL.md"]["version"] == "0.2.3"
     assert "phase-instructions.md" not in manifest["files"]
     for name in ("SOUL.md", "goal.md", "acceptance.md", "protocol.md"):
         assert inputs.contents[name] in instructions
