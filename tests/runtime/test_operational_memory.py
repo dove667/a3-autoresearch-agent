@@ -217,7 +217,8 @@ def test_fresh_job_wait_is_explicit_and_expires(tmp_path, monkeypatch):
     assert m.signals()["progress_updates"] == 1
 
 
-def test_receipt_failure_cannot_hide_successful_job_result(tmp_path, monkeypatch):
+@pytest.mark.parametrize("diagnostic_fails", [False, True])
+def test_receipt_failure_cannot_hide_successful_job_result(tmp_path, monkeypatch, diagnostic_fails):
     import ast
     from types import SimpleNamespace
 
@@ -228,18 +229,30 @@ def test_receipt_failure_cannot_hide_successful_job_result(tmp_path, monkeypatch
     def fail(*args):
         raise OSError("receipt failed")
 
+    monkeypatch.syspath_prepend(str(ROOT))
+    import work_assignments
+
+    def request(method, path, data=None):
+        if path == "/sessions/self":
+            return {"session_id": "worker"}
+        if path == "/evolution":
+            return {"http_error": 403}
+        return result
+
     namespace = {
+        "work_assignments": work_assignments,
         "web_tools": SimpleNamespace(ROUTES={}),
         "skill_tools": SimpleNamespace(ROUTES={}),
         "memory_state": SimpleNamespace(record_gateway=fail),
-        "req": lambda *args: result,
-        "log": lambda value: None,
+        "req": request,
+        "log": fail if diagnostic_fails else lambda value: None,
     }
     exec(compile(ast.Module(body=nodes, type_ignores=[]), "tool-fixture", "exec"), namespace)  # noqa: S102 - selected trusted local function only
     assert namespace["tool"]("gateway", {"method": "POST", "path": "/jobs", "body": {}}) == result
 
 
-def test_receipt_failure_cannot_hide_successful_file_write(tmp_path):
+@pytest.mark.parametrize("diagnostic_fails", [False, True])
+def test_receipt_failure_cannot_hide_successful_file_write(tmp_path, diagnostic_fails):
     import ast
     from types import SimpleNamespace
 
@@ -255,7 +268,7 @@ def test_receipt_failure_cannot_hide_successful_file_write(tmp_path):
         "skill_tools": SimpleNamespace(ROUTES={}),
         "memory_state": SimpleNamespace(record_write=fail),
         "pathlib": SimpleNamespace(Path=lambda name: p),
-        "log": lambda value: None,
+        "log": fail if diagnostic_fails else lambda value: None,
     }
     exec(compile(ast.Module(body=nodes, type_ignores=[]), "tool-fixture", "exec"), namespace)  # noqa: S102 - selected trusted local function only
     assert (
@@ -291,3 +304,35 @@ def test_large_json_selection_returns_explicit_bounded_not_delivered(tmp_path, m
     result = ns["select_json_fields"](raw, ["rows"], "/workspace/report.json")
     assert result["error"] == "field_selection_exceeds_page_budget" and "fields" not in result
     assert result["sha256"] == hashlib.sha256(raw).hexdigest() and len(json.dumps(result)) < 1000
+
+
+def test_fresh_task_archives_fork_sidecars_and_old_history_without_loading_them(tmp_path):
+    from runtime.local.continuation import HarnessStart, prepare_fresh_task
+
+    old = {
+        "checkpoint.json": '[{"role":"user","content":"old goal"}]',
+        "compaction-result.json": '{"checkpoint":[{"role":"user","content":"old summary"}]}',
+        "compaction-epoch.json": '{"version":1,"id":"old-task"}',
+        "history.jsonl": '{"role":"user","content":"old raw goal"}\n',
+        "context-history/compaction-progress.json": '{"old":"spent-call-journal"}',
+        "context-failure.json": '{"error":"old failure"}',
+        "memory.jsonl": '{"lesson":"retain long-term experience"}\n',
+    }
+    names = list(old) + ["resume.json", "continuation.json"]
+    for name in ["resume.json", "continuation.json"]:
+        old[name] = json.dumps({"command": ["python", "agent.py", "--resume"], "files": names})
+    start = HarnessStart(["python", "agent.py", "--resume"], dict(old), source_version="prior")
+    fresh, context = prepare_fresh_task(start, "new goal")
+    assert start.files == old
+    assert json.loads(fresh.files["checkpoint.json"])[0]["content"] == "new goal"
+    assert json.loads(fresh.files["compaction-result.json"]) is None
+    assert json.loads(fresh.files["compaction-epoch.json"])["id"] is None
+    assert fresh.files["history.jsonl"] == ""
+    assert "context-history/compaction-progress.json" not in fresh.files
+    assert "context-failure.json" not in fresh.files
+    assert fresh.files["memory.jsonl"] == old["memory.jsonl"]
+    for name in ["resume.json", "continuation.json"]:
+        declared = json.loads(fresh.files[name])["files"]
+        assert all(path in fresh.files for path in declared)
+    for name, archive in context["operational_task_archives"].items():
+        assert fresh.files[archive] == old[name]

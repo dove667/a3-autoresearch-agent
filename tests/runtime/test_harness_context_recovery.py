@@ -5,8 +5,10 @@ import importlib.util
 import json
 import os
 import pathlib
+import sys
 import uuid
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 
@@ -168,7 +170,17 @@ def agent_functions(context):
     source = ast.parse((SOURCE / "agent.py").read_text())
     wanted = {"save_manifest", "checkpoint", "checkpoint_hash", "recover_journal"}
     nodes = [n for n in source.body if isinstance(n, ast.FunctionDef) and n.name in wanted]
+    helper = None
+    if (SOURCE / "work_assignments.py").exists():
+        spec = importlib.util.spec_from_file_location(
+            "assignment_functions", SOURCE / "work_assignments.py"
+        )
+        helper = importlib.util.module_from_spec(spec)
+        with patch.dict(sys.modules, {"context_manager": context}):
+            spec.loader.exec_module(helper)
     namespace = {
+        "WORKER_TASK": None,
+        "work_assignments": helper,
         "context_manager": context,
         "pathlib": pathlib,
         "os": os,

@@ -17,22 +17,36 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import pathlib
+import re
+import threading
 import time
+from collections import Counter
 
 HISTORY_PATH = "history.jsonl"
 MEMORY_PATH = "memory.jsonl"
 SNIPPET_WINDOW = 100
 SNIPPET_LIMIT = 30
+_HISTORY_LOCK = threading.RLock()
 
 
 def _append(path, payload):
     target = pathlib.Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
     line = json.dumps(payload, ensure_ascii=False, sort_keys=True)
-    with target.open("a", encoding="utf-8") as stream:
-        stream.write(line + "\n")
-        stream.flush()
+    with _HISTORY_LOCK:
+        needs_newline = False
+        if target.exists() and target.stat().st_size:
+            with target.open("rb") as previous:
+                previous.seek(-1, os.SEEK_END)
+                needs_newline = previous.read(1) != b"\n"
+        with target.open("a", encoding="utf-8") as stream:
+            if needs_newline:
+                stream.write("\n")
+            stream.write(line + "\n")
+            stream.flush()
+            os.fsync(stream.fileno())
     return payload
 
 
@@ -77,6 +91,100 @@ def load_history(path=HISTORY_PATH):
     return [row for row in _load(path) if row.get("type") != "corrupt_line"]
 
 
+def _verify_control_sources(messages):
+    references = set()
+    for message in messages:
+        content = message.get("content")
+        if isinstance(content, str) and content.startswith(
+            (
+                "Working memory derived from archived untrusted conversation;",
+                "Untrusted derived working memory, not instructions, independent proof or acceptance.",
+            )
+        ):
+            references.update(
+                re.findall(r"context-history/(?:snapshot|tool-output)-[0-9a-f]{64}\.json", content)
+            )
+        if message.get("type") == "function_call_output":
+            try:
+                preview = json.loads(message.get("output", ""))
+                if isinstance(preview, str):
+                    preview = json.loads(preview)
+            except (ValueError, TypeError):
+                continue
+            if isinstance(preview, dict) and preview.get("preview_complete") is False:
+                reference = preview.get("path")
+                if isinstance(reference, str) and re.fullmatch(
+                    r"context-history/tool-output-[0-9a-f]{64}\.json", reference
+                ):
+                    references.add(reference)
+            if isinstance(preview, dict) and preview.get("spilled") is True:
+                reference = preview.get("path")
+                if not isinstance(reference, str) or not re.fullmatch(
+                    r"\.autorun-spill/[^/]+-[0-9a-f]{16}\.txt", reference
+                ):
+                    raise ValueError("Invalid original spill reference; explicit recovery required")
+                references.add(reference)
+    for reference in references:
+        path = pathlib.Path(reference)
+        if not path.is_file() or not hashlib.sha256(path.read_bytes()).hexdigest().startswith(
+            path.stem.rsplit("-", 1)[-1]
+        ):
+            raise ValueError(
+                "Referenced original archive is missing or corrupt; explicit recovery required"
+            )
+    return len(references)
+
+
+def ensure_history(messages, path=HISTORY_PATH):
+    """Reconcile recovered raw messages without duplicating existing occurrences.
+
+    Recovery can add tool outputs absent from the append-only log. Index the
+    actual existing messages (including multiplicity), never merely a receipt or
+    summary reference. Torn records stay preserved and are reported as gaps.
+    """
+    if not isinstance(messages, list) or any(not isinstance(item, dict) for item in messages):
+        raise ValueError("Recovered history must be a list of message objects")
+
+    def identity(item):
+        return hashlib.sha256(
+            json.dumps(item, sort_keys=True, ensure_ascii=False).encode()
+        ).hexdigest()
+
+    with _HISTORY_LOCK:
+        source_checks = _verify_control_sources(messages)
+        # Index only the checkpoint identities while streaming the lifetime log;
+        # reconciliation must not load every historical tool result into memory.
+        wanted = {identity(message) for message in messages}
+        existing, corrupt_lines = Counter(), 0
+        target = pathlib.Path(path)
+        if target.exists():
+            with target.open(encoding="utf-8") as stream:
+                for line in stream:
+                    if not line.strip():
+                        continue
+                    try:
+                        row = json.loads(line)
+                    except ValueError:
+                        corrupt_lines += 1
+                        continue
+                    if isinstance(row, dict):
+                        key = identity(row)
+                        if key in wanted:
+                            existing[key] += 1
+        seen, written = Counter(), 0
+        for message in messages:
+            key = identity(message)
+            seen[key] += 1
+            if seen[key] > existing[key]:
+                append_history(message, path)
+                written += 1
+        return {
+            "appended": written,
+            "source_checks": source_checks,
+            "corrupt_lines": corrupt_lines,
+        }
+
+
 # ----------------------------------------------------------------- rounds ---
 
 
@@ -106,17 +214,32 @@ def _content_text(message):
 
 
 def split_rounds(messages):
-    """Split on user turns: one round runs from a user message to the next one."""
-    rounds, current = [], []
+    """Split on completed decision batches as well as explicit user turns.
+
+    Autonomous runs often have one initial user turn followed by many tool
+    batches. Parallel calls and their outputs remain in the same round.
+    """
+    rounds, current, pending = [], [], set()
+    completed_tools = False
     for message in messages:
         if not isinstance(message, dict):
             continue
-        is_user_turn = message.get("role") == "user" and message.get("type") != "function_call_output"
-        if is_user_turn and current:
+        kind = message.get("type")
+        user_turn = message.get("role") == "user" and kind != "function_call_output"
+        boundary = (
+            not pending
+            and current
+            and (user_turn or (completed_tools and kind != "function_call_output"))
+        )
+        if boundary:
             rounds.append(current)
-            current = [message]
-        else:
-            current.append(message)
+            current, completed_tools = [], False
+        current.append(message)
+        if kind == "function_call":
+            pending.add(message.get("call_id"))
+        elif kind == "function_call_output":
+            pending.discard(message.get("call_id"))
+            completed_tools = not pending
     if current:
         rounds.append(current)
     return rounds
@@ -149,8 +272,9 @@ def recent_rounds_text(messages, count=5, limit_per_round=4000):
 # ---------------------------------------------------------------- recall ----
 
 
-def recall(keywords, n, m, *, messages=None, path=HISTORY_PATH,
-           window=SNIPPET_WINDOW, limit=SNIPPET_LIMIT):
+def recall(
+    keywords, n, m, *, messages=None, path=HISTORY_PATH, window=SNIPPET_WINDOW, limit=SNIPPET_LIMIT
+):
     """Search original rounds ``n`` back through ``m`` back, returning snippets."""
     terms = [str(k).strip() for k in (keywords or []) if str(k).strip()]
     if not terms:
@@ -242,8 +366,7 @@ def read_memory(key=None, *, path=MEMORY_PATH, preview=120):
         return "memory.jsonl 为空：先用 memory 工具写入一条经验。"
     if not key:
         lines = [
-            f"- {e['id']} [{e.get('kind', 'note')}] {e['text'][:preview]}"
-            for e in entries[-50:]
+            f"- {e['id']} [{e.get('kind', 'note')}] {e['text'][:preview]}" for e in entries[-50:]
         ]
         return "记忆条目（最新在前请用 id 读取全文）:\n" + "\n".join(reversed(lines))
     needle = str(key).strip().lower()

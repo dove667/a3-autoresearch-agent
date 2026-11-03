@@ -1,6 +1,6 @@
 # Agent 输入的版本与加载
 
-Version: 0.6.1
+Version: 0.6.2
 
 本文件面向维护输入的部署方；运行监督与审批见 [操作者文档](operator-supervision.md)。目标、验收、Prompt 和执行说明由部署方维护。使用内置 profile 时，新启动、`--resume-from` 和 `--run-harness` 采用启动时仓库里的当前文件，包括未提交的工作区内容。显式自定义输入目录则使用下述独立冻结快照，不回退到仓库模板。恢复保留原 run、身份、生成的 Harness 和模型对话历史；部署方 system Prompt 与所选阶段协议更新为当前版本。
 
@@ -66,7 +66,13 @@ python -m runtime.local.launch \
   --agent-inputs-dir "$inputs"
 ```
 
-本轮只有 `acceptance.G`；不传 E/F 专项 profile，不加载 phase-two protocol。初始反馈通过目录里的文件注入，不另传 `--initial-feedback-file`。若需要随新任务提供研究 skill，可把已检查的 `skills/a3-mujoco-autoresearch/` 与 `skills/rsi-harness-evolution/` 纯文本文件树复制到该输入目录同名子路径（例如 `mkdir -p "$inputs/skills"` 后运行 `cp -R skills/a3-mujoco-autoresearch skills/rsi-harness-evolution "$inputs/skills/"`）。两者只读挂载，不自动注入正文或自动登记为 Agent 的活动 skill。正文读取、未来工作区复制及目录合并见 skill 自带集成说明，这不是 G 的新增验收项目。
+本轮只有 `acceptance.G`；不传 E/F 专项 profile，不加载 phase-two protocol。初始反馈通过目录里的文件注入，不另传 `--initial-feedback-file`。若需要随新任务提供研究 skill，可把已检查的 `skills/research-orchestrator/`、`skills/a3-mujoco-autoresearch/` 与 `skills/rsi-harness-evolution/` 纯文本文件树复制到该输入目录同名子路径。复制时排除运行生成的缓存，例如 `mkdir -p "$inputs/skills"` 后运行 `rsync -a --exclude='__pycache__/' --exclude='*.pyc' --exclude='*.tmp' skills/research-orchestrator skills/a3-mujoco-autoresearch skills/rsi-harness-evolution "$inputs/skills/"`；仍须核对输入只含 UTF-8 普通文件。三者只读挂载，不自动注入正文或自动登记为 Agent 的活动 skill。正文读取、未来工作区复制及目录合并见 skill 自带集成说明，这不是 G 的新增验收项目。
+
+### 研究协作的职责与装载
+
+SOUL 只保留主 Agent 协调、方向、派发和判断，Policy/Harness worker 负责具体实现与执行的职责摘要。[research-orchestrator](../skills/research-orchestrator/SKILL.md) 维护工作包、证据回传、显式资产授权和安全交权细节；RSI 的 allocation 维护工作价值权衡，A3 skill 维护可选研究方法。简单协调由主 Agent 直接完成，不要求为每次读状态或记决定再创建 worker。
+
+新 skill 的 [catalog fragment](../skills/research-orchestrator/assets/catalog-entry.json) 沿用 F 的 reference-only 形式：`skill_discover` 查元数据，`skill_read` 返回元数据，正文按 `local_source` 用普通 read 读取，不增加通用 `skill_execute`。需要持久采用时，在获准的新工作区合并 `skills/index.json` 的 skills 数组并检查保留声明。复制目录、更新 SOUL 或合并 catalog 本身不会安装自动派发、限制主工具或迁移旧 worker 的监督权；实际执行保障须检查已加载的 Harness 代码和验证证据。源码准备不表示当前 run 已采用，也不授权热加载。
 
 启动后应核实实际 input manifest、`acceptance_checks=["G"]`、新任务状态及初始反馈消息，不能只看仓库文件。自定义 run 的恢复使用其冻结输入；每次人工恢复的说明继续走已有 feedback 流程。G 通过保存退出，不自动开始第二阶段。准备输入或发布源码本身不证明 Agent 已实现上下文管理。
 

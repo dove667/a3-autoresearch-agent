@@ -34,6 +34,9 @@ def prepare_fresh_task(start: HarnessStart, task: str) -> tuple[HarnessStart, di
     # Operational progress and analyzer cadence belong to this task, not to the
     # inherited research capabilities. Preserve them as history in the new copy.
     reset = {
+        "compaction-result.json": None,
+        "compaction-epoch.json": {"version": 1, "id": None},
+        "orchestration/assignments.json": {"version": 1, "assignments": {}},
         "operational-state.json": {
             "version": 1,
             "revision": 0,
@@ -58,7 +61,12 @@ def prepare_fresh_task(start: HarnessStart, task: str) -> tuple[HarnessStart, di
             "latest": None,
         },
     }
-    present = {name: start.files[name] for name in reset if name in start.files}
+    replacements = {name: json.dumps(value) for name, value in reset.items()}
+    replacements["history.jsonl"] = ""
+    removed = {"context-history/compaction-progress.json", "context-failure.json"}
+    present = {
+        name: start.files[name] for name in set(replacements) | removed if name in start.files
+    }
     identity = json.dumps([start.source_version, task, present], sort_keys=True)
     prefix = (
         "inherited-task-state/operational/" + hashlib.sha256(identity.encode()).hexdigest() + "/"
@@ -69,7 +77,10 @@ def prepare_fresh_task(start: HarnessStart, task: str) -> tuple[HarnessStart, di
         if target in files and files[target] != inherited_content:
             raise ValueError("Operational task archive collision")
         files[target] = inherited_content
-        files[name] = json.dumps(reset[name])
+        if name in removed:
+            files.pop(name, None)
+        else:
+            files[name] = replacements[name]
         operational_archives[name] = target
     if operational_archives:
         for name in ("resume.json", "continuation.json"):
@@ -79,7 +90,7 @@ def prepare_fresh_task(start: HarnessStart, task: str) -> tuple[HarnessStart, di
             if not isinstance(declaration, dict) or not isinstance(declaration.get("files"), list):
                 raise TypeError("Invalid inherited operational file declaration")
             declaration["files"] = sorted(
-                set(declaration["files"]) | set(operational_archives.values())
+                (set(declaration["files"]) - removed) | set(operational_archives.values())
             )
             files[name] = json.dumps(declaration)
 

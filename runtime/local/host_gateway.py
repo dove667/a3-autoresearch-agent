@@ -813,8 +813,22 @@ def create_app(
 
     @app.get("/sessions/self")
     def self_status(authorization: Annotated[str | None, Header()] = None):
-        record = own_session(authorization)
-        return deployment_call(sandbox.status, record["owner"], record["owner"])
+        with session_lock:
+            record = own_session(authorization)
+            actor = record["owner"]
+            current = evolution.main_owner if evolution else main_owner
+            previous_main = actor == current or bool(
+                evolution
+                and any(
+                    item.get("from") == actor or item.get("to") == actor
+                    for item in evolution.transitions
+                )
+            )
+            return {
+                **deployment_call(sandbox.status, actor, actor),
+                "is_main": actor == current,
+                "has_been_main": previous_main,
+            }
 
     @app.post("/sessions/self/stop")
     def stop_self(body: SessionStopRequest, authorization: Annotated[str | None, Header()] = None):

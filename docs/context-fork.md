@@ -1,77 +1,68 @@
 # 上下文压缩与记忆（fork / Recall / spill）
 
-本页描述 `runtime/harness_recovery/` 里新增的三段机制。它们是候选 Harness 的运行时能力，不改 Host 权限、不改 A3 物理与判定。
+`runtime/harness_recovery/` 提供可选派生 Harness 的 spill、异步整理和原文回查。
+源码同步不代表当前进程已加载；部署须保留原现场并记录人工干预。它们不改变 Host 权限、
+A3 物理、评测条件或科学判断。
 
-## 三层降级
+## 三层处理
 
-| 层 | 实现 | 触发 | 是否调模型 |
-| --- | --- | --- | --- |
-| 1 spill | `spill.py` | 单个工具结果超过 `AUTORUN_SPILL_BYTES`（默认 50000 字节） | 否 |
-| 2 fork 摘要 | `compaction.py` | 请求估算超过预算（默认 `WINDOW - RESERVE` = 48000 字节，含运营视图） | 是，异步 |
-| 3 fallback checkpoint | `compaction.py` | 摘要为空、报错、或分块超预算 | 否 |
+| 层 | 实现 | 边界 |
+| --- | --- | --- |
+| 工具输出 spill | `spill.py` | 超过默认 50000 UTF-8 字节的字符串结果归档，返回有缺口标识的预览和来源 |
+| fork 整理 | `compaction.py` | 字节软阈提示后台开始；下一主请求仍须满足实际 Host token 硬预算 |
+| 回查检查点 | `compaction.py`、`recall.py` | 摘要失败时明确未总结，不伪造完成；原文、最新完整工具批次和当前任务必须保全 |
 
-spill 把超限结果写入 `.autorun-spill/<tool>-<sha16>.txt`，模型只看到头 2000 字符、字节数、路径和 `head_complete: false`，需要更多内容时用 `read` 按 offset/limit 取页。`read` 的页收据仍记录原始页，不是 spill 引用。
+有界 read 页的收据记录原始页；spill 预览不是完整交付或已理解。JSON 等结构化结果仍由
+上下文预算和归档机制控制，不能假设所有返回类型都经过字符串 spill。
 
-## 异步 fork 时序
+## 安全异步边界
 
-1. 决策前调用 `compactor.before_request(messages, extra_bytes=...)`。
-2. 有已完成的压缩结果 → 就地替换历史：`checkpoint 消息 + 最近 5 轮原始消息 + 该结果之后新增的消息`。替换前校验 `function_call` 与 `function_call_output` 配对，不配对则放弃替换并标记 `apply_skipped`（保留未压缩历史与磁盘证据）。
-3. 没有结果且超预算 → 快照历史、启动 daemon 线程，**当前这一步继续使用完整历史**。
-4. 线程结束后写 `compaction-result.json`（原子写）：
-   - 状态 `ready`：结构化摘要；`fallback`：降级检查点。
-   - 附带 `prefix_length`、`tail`、`sections`、`strategy`、`calls`、`error`。
-5. 下一步决策前应用；应用后若体积未下降 10%，不立即再 fork，等历史真实增长后才重试，避免空转烧钱。
+`before_request(messages, extra_messages=[operational])` 先检查消息配对，再检查可用结果。
+有安全余量时可在后台启动 fork，同时继续正常决策。工具 schema、操作状态与 Host 注入预留
+参与硬预算；UTF-8 字节软阈不能冒充 token 窗口。硬预算不够时最多等待默认 2 秒（可配置但
+夹在 0–30 秒），仍不满足则诚实阻塞并保全检查点，不发送已知超限的主请求。
 
-退出前 `compactor.wait()` 并尝试应用一次，保证跨进程也能接上。
+fork 复用 `context_manager.prepare` 的分块、专用摘要协议、纠正重试与持久调用 journal，
+可请求更低的安全压缩目标；不另造绕开预算的摘要通道。仅归档工具输出时保留原 goal 原字节，
+不会把合法任务误包装为压缩背景。未见最新工具结果的模型不能靠整理自动宣布其已消费。
 
-## KV-cache 复用
+退出只短暂等待并调用 `apply_ready` 应用已有结果，不启动新的摘要循环。后台未完成的调用
+记录为不确定，重启不机械重放。
 
-摘要请求复用主请求的 `model`、`instructions`、`tools` 与**完整消息前缀**，只在尾部追加一条压缩指令的 user 消息：
+## 模型角色与缓存
 
-```
-input = messages + [{"role": "user", "content": STRUCTURED_INSTRUCTION}]
-```
+支持专用摘要接口的 Host 使用 `/v1/summary`，只接收 previous、fragment、source 等固定字段，
+并选择已配置的 summary 模型和推理参数。摘要无主工具、无完整阶段正文或人工反馈正文；
+反馈只给 ID/哈希引用，完整通知仍进入正常决策。旧 Host 的兼容路径也使用精简摘要指令。
 
-这样 provider 的 prefix cache 能命中同一前缀。未压缩部分过大时（超过 `SUMMARY_INPUT_BYTES` = 24000 字节）退回 `context_manager.chunks_of` 分块，最多 `MAX_SUMMARY_CALLS`（8）次，仍复用同一 model/tools。
+不会为了尝试 prefix cache 复制主 Agent 的全部 instructions、tools 和历史去普通模型接口。
+同模型不保证缓存复用，输入、前缀和服务条件都影响观测。只能用实际返回的 cached_tokens
+统计已知样本；未记录与真实 0 必须区分。固定八节是历史格式参考，不是 Host 摘要的硬验收条件。
 
-## 结构化 checkpoint
+## 发布、恢复和任务归属
 
-摘要必须输出固定八节 Markdown：Primary request and intent / Key technical concepts / Files and code / Errors and fixes / Pending tasks / Current work / Next step / Key context。缺节时追加重写提示并重试一次；仍缺则记录 `sections` 但保留摘要（不静默丢弃）。
+`compaction-result.json` version 2 绑定任务 epoch、原消息前缀长度和哈希、原文来源与
+replacement 哈希。应用须核验来源和工具配对；旧任务、异源 checkpoint 或缺失来源不能替换
+当前目标。结果返回给调用方后，由真正保存的 checkpoint 确认应用；中断时可幂等重放，不能
+先标 applied 再丢失结果。
 
-外层用 `<compacted-checkpoint>` 包裹，前置一段说明：把它当既定背景、需要细节用 Recall、不要靠推测补全。
+新任务只在新副本归档/reset epoch、result 和 history，移除旧的进行中压缩 journal 与旧故障状态，
+修正 continuation 文件清单。原包和长期主动 memory 保留。同任务恢复保留调用预算和现场。
 
-## 记忆与 Recall
+## 原文回查与主动记忆
 
-| 文件 | 作用 |
-| --- | --- |
-| `history.jsonl` | 每条模型可见消息的完整原文，append-only，压缩不删 |
-| `memory.jsonl` | Agent 主动写的经验条目（id/ts/kind/text/sha256/refs），append-only |
+- `history.jsonl`：append-only 的实际消息原文。恢复 checkpoint 和 pending 工具结果后先做
+  幂等补录，保留相同消息的出现次数；流式扫描避免每次载入整个长期日志。
+- `memory.jsonl`：Agent 主动记录的经验、决定与引用。它是 Agent 的声明，不替代科研证据。
+- `recall(keywords,n,m,...)`：返回有原文位置的有界片段。轮边界同时处理 user turn 和完整
+  模型工具批次；连续工具调用不能被错误地当成一个无限大的“轮”。
 
-工具：
+摘要、preview 和 spill 的控制引用指向的原文须存在且与声明一致。损坏尾部保留并明确报告，
+缺失原文不能冒充成功索引。较早已归档的历史不应靠摘要凭空还原，按其来源路径回查。
 
-- `recall(keywords, n, m, window=100, limit=30)`：在「n 轮前到 m 轮前」的原文中按关键字返回约 100 字片段，带 `[12~10轮前]` 定位标签。轮次以 user 消息切分。
-- `memory(action=write|read|list, content, key, kind)`：写入或读取长期记忆条目。
+## 验证范围
 
-## 摘要失败时的降级提示
-
-`fallback` 检查点由四段组成，顺序固定：
-
-1. `FALLBACK_PREFIX`：说明较早对话没有写入摘要；
-2. `FALLBACK_RULES`：用 Recall 检索原文的调用示例与轮次含义、用 memory 读条目、以 Recall 结果为准、不确定就检索；
-3. `memory.jsonl` 条目索引（截断到 2000 字符）；
-4. 最近 5 轮短期记忆原文。
-
-即：固定前缀 + 说明 + Recall 指引 + 最近 5 轮原文，绝不静默留下空摘要。
-
-## 相关环境变量
-
-- `AUTORUN_SPILL_BYTES`：spill 阈值，`<=0` 关闭。
-- `A3_CONTEXT_*` / `CONTEXT_WINDOW_ESTIMATE` / `CONTEXT_RESERVE_ESTIMATE` / `CONTEXT_SUMMARY_INPUT_ESTIMATE`：沿用 `context_manager` 的预算。
-
-## 平台修正
-
-`context_manager.atomic()` 原先用 `os.open(目录, O_RDONLY)` + `os.fsync` 保证 rename 持久性；Windows 无法打开目录描述符，会让所有 checkpoint 写入抛 `PermissionError`。现在该 fsync 在不可用时跳过，文件内容仍先 fsync 再 `os.replace`。
-
-## 验收
-
-`tests/runtime/test_harness_compaction.py` 覆盖 14 个行为门：spill 阈值/落盘/环境变量、八节结构、不阻塞的 fork 与应用、KV 前缀复用、幂等应用、不配对保守跳过、失败降级内容、Recall 轮次检索、memory 读写。可用 `python tests/runtime/test_harness_compaction.py` 直接运行（无需 pytest）。
+`test_harness_compaction.py` 覆盖原有 spill/Recall/memory；`test_fork_host_compatibility.py`
+使用真实 FastAPI Host 和假 provider，覆盖专用角色/反馈边界、实际 token 预算和操作状态预留、
+初始目标加连续工具调用、旧结果污染、归档-only 目标保留、配对/来源校验、恢复幂等与退出不发新调用。
+这些隔离测试不是长期稳定性、真实摘要质量或研究性能改善的证明。

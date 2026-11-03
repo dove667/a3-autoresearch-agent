@@ -233,3 +233,29 @@ def test_cancelled_worker_stop_request_does_not_block_main_recovery(tmp_path):
         "self_stop_requested": True,
     }
     runtime.resume_sessions({}, "main")
+
+
+def test_self_role_flags_do_not_expose_other_identities_and_follow_saved_handoff(tmp_path):
+    client, backend, store, _, root, old, own = setup(tmp_path)
+    new = client.post("/sessions", headers=root, json={"command": ["true"]}).json()["session_id"]
+    saved = store.load()["gateway"]
+    saved["evolution"]["main_owner"] = new
+    saved["evolution"]["transitions"] = [{"from": old, "to": new, "version_id": "tested"}]
+    app = create_app(
+        model_name="test/model",
+        sessions={},
+        main_owner=new,
+        sandbox=backend,
+        restored_state=saved,
+        usage_log=tmp_path / "resumed-usage.jsonl",
+        forward_model=lambda **kwargs: {"output": []},
+        remote_call=lambda *args: {},
+    )
+    restored = TestClient(app)
+    old_status = restored.get("/sessions/self", headers=own).json()
+    new_status = restored.get(
+        "/sessions/self", headers={"Authorization": "Bearer " + backend.tokens[new]}
+    ).json()
+    assert old_status["is_main"] is False and old_status["has_been_main"] is True
+    assert new_status["is_main"] is True and new_status["has_been_main"] is True
+    assert new not in json.dumps(old_status) and old not in json.dumps(new_status)

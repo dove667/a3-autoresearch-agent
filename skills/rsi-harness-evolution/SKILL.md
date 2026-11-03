@@ -2,7 +2,7 @@
 name: rsi-harness-evolution
 description: Diagnose and improve an Agent's own harness with fixed model weights. Use for context, memory, skills, tools, planning, scheduling, recovery, observability and version-selection experiments, with quality-preserving evidence. Complements A3 policy research rather than tuning the robot policy itself.
 metadata:
-  version: 0.2.3
+  version: 0.2.4
 ---
 
 # RSI Harness evolution
@@ -14,6 +14,8 @@ Make the research Agent more effective at its real work by improving the softwar
 ## Choose the work before choosing a component
 
 Use [Policy/Harness allocation](references/policy-harness-allocation.md) when deciding whether to run a policy experiment, improve the research harness, repair reliability, or wait. It supplies an evidence-driven starting policy, not a fixed work ratio or a new acceptance gate. Improve your own selection heuristics from observed outcomes; it does not authorize changes to Host-owned inputs. Capability-only tasks remain confined to their selected goal.
+
+The main Agent coordinates and judges; Harness workers perform concrete implementation, testing and integration. Use [Research orchestration](../research-orchestrator/SKILL.md) for bounded assignments, evidence return, explicit asset grants and safe succession. Simple coordination does not require another worker. This reference does not install or prove automatic role enforcement in a running Harness.
 
 ## Find the next useful change
 
@@ -38,7 +40,7 @@ Load only the relevant references. Search primary sources when a mechanism or im
 2. **Define the comparison.** Freeze representative task inputs, initial state, expected deliverables, quality criteria and measured costs before execution. Use the optional [experiment record](assets/experiment-spec.json) or existing memory, not a second mandatory database.
 3. **Change and exercise the real path.** Make a scoped candidate, test likely failure modes, and verify the running process actually loads it. A standalone utility test is not evidence that the full harness used the utility.
 4. **Compare quality before cost.** Run matched workloads, preserve failures and unknown metrics, and separate external wait from controllable overhead. See [evaluation](references/evaluation.md). Do not obtain savings by removing required work, weakening evidence or changing the robot benchmark.
-5. **Keep, revise or reject.** State the observed scope and uncertainty. A feature can be functionally useful without demonstrated efficiency gain. When a Harness worker completes testing, prioritize its adoption decision at the next safe Policy-work boundary; follow [Policy/Harness allocation](references/policy-harness-allocation.md) for bounded follow-up validation, integration and handoff through the existing trial/selection mechanism.
+5. **Keep, revise or reject.** State the observed scope and uncertainty. A feature can be functionally useful without demonstrated efficiency gain. The main prioritizes a completed worker's adoption decision; [Research orchestration](../research-orchestrator/SKILL.md) defines bounded follow-up validation and integration through the existing trial/selection mechanism.
 6. **Preserve and learn.** Save code/config/input versions, results, decision and recovery references. Update reusable guidance with applicability and counterexamples. The next generation inherits confirmed conclusions without re-auditing all predecessors.
 
 Harness and policy research can proceed in parallel when they have independent dependencies and enough resources, but measure their contributions separately. Do not let speculative harness construction replace the actual research task. During a capability-only task such as G, use these methods to complete that task; the menu does not add phase-two experiments or acceptance requirements.

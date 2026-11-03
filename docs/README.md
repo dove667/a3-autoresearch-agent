@@ -12,6 +12,7 @@
 - [研究网页网关原方案](plans/2026-11-02-research-web-gateway.md)：历史设计与验证记录；当前采用 [Tavily 搜索／正文提取、专用本地代理与结果缓存](plans/2026-11-02-tavily-proxy-extract.md)，配置入口见环境配置。
 - [Agent 输入版本与热加载](agent-inputs.md)：版本号维护、恢复加载规则和警告确认。
 - [上下文恢复补丁与模型配置](context-reliability.md)：可选派生包、持久调用预算、状态保存及推理参数。
+- [主从研究协作](research-orchestration.md)：协调职责、独立任务上下文、资产回传、交权和未封存资产恢复边界。
 - [安全运行视图与独立分析](trajectory-analysis.md)：脱敏耗时／事件、自动周期与事件触发、建议回应和故障边界。
 - [Host 执行接口](../agent-inputs/shared/execution.md)：给生成后的 Harness 使用的固定部署能力。
 

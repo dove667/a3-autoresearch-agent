@@ -429,9 +429,13 @@ def archived_output(message, maximum_bytes):
     return candidate
 
 
-def prepare(messages, tools, req, *, extra_messages=None):
+def prepare(messages, tools, req, *, extra_messages=None, budget_limit=None):
     before, overhead = size(messages), size(tools)
     budget = decision_budget(tools) - (message_cost(extra_messages) if extra_messages else 0)
+    if budget_limit is not None:
+        if type(budget_limit) is not int or budget_limit <= 0:
+            raise ContextError("invalid explicit compression budget")
+        budget = min(budget, budget_limit)
     if budget <= 0:
         raise ContextError("reserved request budget exhausted")
     if message_cost(messages) <= budget:

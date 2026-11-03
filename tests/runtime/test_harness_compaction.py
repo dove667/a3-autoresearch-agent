@@ -12,6 +12,8 @@ import sys
 import tempfile
 import time
 
+import pytest
+
 SOURCE = pathlib.Path(
     os.environ.get(
         "HARNESS_SOURCE",
@@ -21,10 +23,10 @@ SOURCE = pathlib.Path(
 if str(SOURCE) not in sys.path:
     sys.path.insert(0, str(SOURCE))
 
-import compaction  # noqa: E402
-import context_manager as cm  # noqa: E402
-import recall  # noqa: E402
-import spill  # noqa: E402
+import compaction
+import context_manager as cm
+import recall
+import spill
 
 SECTIONS = compaction.SECTION_TITLES
 GOOD_SUMMARY = "\n".join(f"## {title}\n- point" for title in SECTIONS)
@@ -83,11 +85,12 @@ def history(rounds=6, filler=900, completed_last=True):
     messages = [{"role": "user", "content": "ROUND-0-START " + "a" * 100}]
     messages.append({"role": "assistant", "content": [{"type": "output_text", "text": "ack"}]})
     for index in range(1, rounds):
+        messages.append({"role": "user", "content": f"ROUND-{index}-QUESTION " + "q" * 120})
         messages.append(
-            {"role": "user", "content": f"ROUND-{index}-QUESTION " + "q" * 120}
-        )
-        messages.append(
-            {"role": "assistant", "content": [{"type": "output_text", "text": "working " + "b" * 40}]}
+            {
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": "working " + "b" * 40}],
+            }
         )
         pair = tool_pair(f"call_{index}", "evidence " + "e" * filler)
         messages.extend(pair)
@@ -176,22 +179,24 @@ def test_fork_does_not_block_and_applies_later():
         assert cm.paired(applied)
 
 
-def test_summary_request_reuses_main_prefix_for_kv_cache():
+def test_legacy_summary_uses_narrow_instructions_without_main_tools():
     with workspace():
         gateway = Gateway()
         compactor = compaction.ForkCompactor(
-            gateway, tools=[{"type": "function", "name": "read"}],
-            instructions="MAIN-INSTRUCTIONS", trigger_bytes=2000,
+            gateway,
+            tools=[{"type": "function", "name": "read"}],
+            instructions="MAIN-INSTRUCTIONS",
+            trigger_bytes=2000,
         )
         messages = history()
         compactor.before_request(messages)
         compactor.wait(timeout=10)
         body = gateway.calls[0]["body"]
-        assert body["instructions"] == "MAIN-INSTRUCTIONS"
-        assert body["tools"] == [{"type": "function", "name": "read"}]
-        assert body["input"][: len(messages)] == messages, "main prefix not replayed"
-        assert body["input"][-1]["role"] == "user"
-        assert "## Primary request and intent" in body["input"][-1]["content"]
+        assert body["instructions"] != "MAIN-INSTRUCTIONS"
+        assert "tools" not in body
+        assert body["max_output_tokens"] == 800
+        assert "untrusted" in body["instructions"]
+        assert "ROUND-0-START" in json.dumps(body)
 
 
 def test_apply_is_idempotent():
@@ -214,12 +219,9 @@ def test_unpaired_result_is_skipped_not_forced():
             Gateway(), tools=[], instructions="I", trigger_bytes=1000, keep_rounds=5
         )
         messages = history(completed_last=False)
-        compactor.before_request(messages)
-        compactor.wait(timeout=10)
-        kept, record = compactor.before_request(messages)
-        if record and record["kind"] == "apply_skipped":
-            assert kept is messages
-            assert cm.paired(kept) is False  # original preserved for inspection
+        with pytest.raises(cm.ContextError, match="tool call/result"):
+            compactor.before_request(messages)
+        assert not pathlib.Path(compaction.RESULT_PATH).exists()
 
 
 # ---------------------------------------------------------------- fallback ---
@@ -237,12 +239,11 @@ def test_summary_failure_builds_recall_checkpoint():
         compactor.wait(timeout=10)
         applied, record = compactor.before_request(messages)
         assert record["kind"] == "applied" and record["status"] == "fallback"
-        text = applied[0]["content"]
-        assert text.startswith(compaction.CHECKPOINT_PREAMBLE)
+        text = "\n".join(str(message.get("content", "")) for message in applied)
+        assert compaction.CHECKPOINT_PREAMBLE in text
         assert compaction.FALLBACK_PREFIX in text
         assert "Recall" in text and "keywords" in text
-        assert "最近 5 轮短期记忆原文" in text
-        assert "ROUND-5-QUESTION" in text
+        assert "ROUND-5-QUESTION" in json.dumps(applied)
         assert "已确认 2x10 任务需 3200 步" in text
 
 
@@ -284,9 +285,9 @@ def test_memory_write_then_read_and_list():
 
 def test_memory_tool_dispatch_and_empty_write():
     with workspace():
-        assert json.loads(json.dumps(recall.memory_tool(
-            {"action": "write", "content": "note A"}
-        )))["id"]
+        assert json.loads(json.dumps(recall.memory_tool({"action": "write", "content": "note A"})))[
+            "id"
+        ]
         assert "note A" in recall.memory_tool({"action": "read", "key": "note A"})
         assert "error" in recall.memory_tool({"action": "write", "content": "  "})
 

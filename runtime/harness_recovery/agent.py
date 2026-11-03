@@ -12,9 +12,10 @@ os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
 import analyzer_client
 import compaction
 import context_manager
+import memory_state
 import recall as recall_tools
 import spill as spill_tools
-import memory_state
+
 # The derived harness ships without the generated extension modules. Their
 # absence must not stop the loop: lookups below tolerate empty ROUTES/TOOLS.
 try:
@@ -25,6 +26,7 @@ try:
     import web_tools
 except ImportError:
     web_tools = None
+import work_assignments
 
 BASE = os.environ["A3_GATEWAY_URL"]
 TOKEN = os.environ["A3_GATEWAY_TOKEN"]
@@ -87,6 +89,8 @@ def tool(name, a):
         return web_tools.dispatch(name, a)
     if name in getattr(skill_tools, "ROUTES", {}):
         return skill_tools.dispatch(name, a)
+    if name == "delegate":
+        return work_assignments.dispatch(req, a)
     if name == "progress":
         return memory_state.progress(a)
     if name == "gateway":
@@ -105,13 +109,17 @@ def tool(name, a):
             ]
         ):
             return "path not allowed"
+        work_assignments.guard_gateway(req, a["method"], path, a.get("body"))
         if a["method"] == "POST" and path == "/evolution/trials":
             analyzer.trigger("before_handoff")
         result = req(a["method"], path, a.get("body"))
         try:
             memory_state.record_gateway(a["method"], path, result)
         except Exception:  # noqa: BLE001 — preserve the result of an already executed operation
-            log({"operational_receipt": "gateway_update_failed"})
+            try:
+                log({"operational_receipt": "gateway_update_failed"})
+            except OSError:
+                pass  # Optional diagnostics cannot hide an executed operation.
         return result
     if name in ("read", "write", "list"):
         p = pathlib.Path(a["path"]).resolve()
@@ -130,7 +138,10 @@ def tool(name, a):
             try:
                 memory_state.record_write(p)
             except Exception:  # noqa: BLE001 — the file write already succeeded
-                log({"operational_receipt": "write_update_failed"})
+                try:
+                    log({"operational_receipt": "write_update_failed"})
+                except OSError:
+                    pass  # Optional diagnostics cannot hide an executed operation.
             return "written"
         if name == "list":
             return [str(x) for x in p.iterdir()][:300]
@@ -173,6 +184,7 @@ def spec(name, props, required):
             "read": "Read a bounded character page with content, whole-file SHA256, offset/end/total and EOF. limit is 1..8000, default 4000. Same-path changed hashes are different sources. Optional fields selects top-level JSON keys instead.",
             "write": "Write text in workspace.",
             "list": "List accessible directory.",
+            "delegate": "Coordinate bounded policy/harness worker assignments: assign, collect verified reports, decide, or list. Workers use fresh contexts and existing identities; no new permission or automatic scientific adoption.",
             "progress": "List or explicitly update bounded operational items with evidence references. These are your claims, not validated scientific acceptance; closed items remain recorded across summaries.",
             "wait": "Wait for asynchronous jobs.",
             "recall": (
@@ -230,6 +242,25 @@ tools = (
             },
             ["action"],
         ),
+        spec(
+            "delegate",
+            {
+                "action": {
+                    "type": "string",
+                    "enum": ["assign", "collect", "decide", "list", "reconcile"],
+                },
+                "id": S,
+                "role": {"type": "string", "enum": ["policy", "harness"]},
+                "objective": S,
+                "stop_condition": S,
+                "deliverables": {"type": "array", "items": S},
+                "context_files": {"type": "array", "items": S},
+                "read_only_exports": {"type": "array", "items": S},
+                "decision": {"type": "string", "enum": ["adopt", "reject", "follow_up"]},
+                "reason": S,
+            },
+            ["action"],
+        ),
         spec("write", {"path": S, "content": S}, ["path", "content"]),
         spec("list", {"path": S}, ["path"]),
         spec("wait", {"seconds": {"type": "integer"}}, []),
@@ -255,13 +286,8 @@ tools = (
 )
 
 
-INSTRUCTIONS = (
-    "You are an autonomous A3 research agent. Use tools, preserve evidence and "
-    "checkpoints, follow frozen inputs and host protocol. Review independent "
-    "analyzer findings and explicitly adopt, reject or defer with reasons via "
-    "/analysis/response; do not blindly follow advice. Record operational "
-    "decisions with progress when useful. Never reveal credentials."
-)
+WORKER_TASK = work_assignments.worker_task(sys.argv)
+INSTRUCTIONS = work_assignments.decision_instructions(WORKER_TASK)
 compactor = compaction.ForkCompactor(req, tools=list(tools), instructions=INSTRUCTIONS)
 
 
@@ -299,8 +325,8 @@ def save_manifest():
         p for p in files if pathlib.Path(p).is_file() or p in ("resume.json", "continuation.json")
     )
     for filename, command in [
-        ("resume.json", ["python", "agent.py", "--resume"]),
-        ("continuation.json", ["python", "agent.py", "--resume"]),
+        ("resume.json", work_assignments.entry_command(WORKER_TASK)),
+        ("continuation.json", work_assignments.entry_command(WORKER_TASK)),
     ]:
         data = {**manifests[filename], "command": command, "files": files}
         context_manager.atomic(filename, json.dumps(data))
@@ -363,6 +389,8 @@ else:
 try:
     if pathlib.Path("checkpoint.json").exists():
         messages = recover_journal(messages)
+    recall_tools.ensure_history(messages)
+    work_assignments.install_input_skills()
 except Exception as e:  # noqa: BLE001 - preserve recoverable state on unexpected failures
     log({"recovery_error": str(e)})
     sys.exit(1)
@@ -370,12 +398,28 @@ analyzer = analyzer_client.start(req, memory_state.signals)
 empty = 0
 while True:
     try:
+        if work_assignments.should_retire(req, WORKER_TASK):
+            checkpoint(messages)
+            log({"role_transition": "former_main_saved_and_exiting"})
+            break
         try:
             context_manager.configure(req)
-        except Exception as e:  # noqa: BLE001 - token budgets are optional for the fork path
-            log({"context_config_error": str(e)})
+        except Exception as e:  # noqa: BLE001 - preserve the checkpoint when Host budgets are unknown
+            log({"context_config_error": type(e).__name__, "state": "checkpoint preserved"})
+            context_manager.atomic(
+                "context-failure.json",
+                json.dumps(
+                    {
+                        "error": "context_config_unavailable",
+                        "state": "original checkpoint preserved",
+                    }
+                ),
+            )
+            save_manifest()
+            break
         operational_data = memory_state.view()
         operational_data["independent_analysis"] = analyzer.view()
+        operational_data["assignments"] = work_assignments.view()
         operational = {
             "role": "user",
             "content": json.dumps(operational_data, ensure_ascii=False),
@@ -385,7 +429,7 @@ while True:
         # compaction result is applied before a later decision, never mid-flight.
         # The operational view rides outside history, so only its size is budgeted.
         messages, compaction_record = compactor.before_request(
-            messages, extra_bytes=context_manager.size(operational)
+            messages, extra_messages=[operational]
         )
         if compaction_record:
             log({"context_compaction": compaction_record})
@@ -447,17 +491,26 @@ while True:
         checkpoint(messages)
         context_manager.atomic("pending-calls.json", "null")
         save_manifest()
+        if work_assignments.worker_result_ready(WORKER_TASK):
+            break
         if "--test" in sys.argv and calls:
             break
         if not calls:
-            if pathlib.Path("run-outcome.json").exists() and json.loads(
-                pathlib.Path("run-outcome.json").read_text()
-            ).get("status") in ("complete", "blocked"):
+            if (
+                WORKER_TASK is None
+                and pathlib.Path("run-outcome.json").exists()
+                and json.loads(pathlib.Path("run-outcome.json").read_text()).get("status")
+                in ("complete", "blocked")
+            ):
                 break
             messages.append(
                 {
                     "role": "user",
-                    "content": "Continue autonomously; do not stop until all acceptance passes or a genuine external blocker is documented. Check actual Host main identity before any handoff. Save evidence and state.",
+                    "content": (
+                        "Continue only the bounded worker assignment; save worker-result.json and stop when delivered, or preserve a real blocker."
+                        if WORKER_TASK
+                        else "Continue autonomously as coordinator; delegate concrete research, assess evidence and preserve state under the current goal. Check actual Host main identity before handoff."
+                    ),
                 }
             )
     except Exception as e:  # noqa: BLE001 - preserve recoverable state on unexpected failures
@@ -467,8 +520,8 @@ while True:
 # Let a running fork finish so the next process can apply its result, and apply
 # one already-finished result before exiting.
 try:
-    compactor.wait(timeout=300)
-    messages, final_record = compactor.before_request(messages)
+    compactor.wait(timeout=2)
+    messages, final_record = compactor.apply_ready(messages)
     if final_record:
         log({"context_compaction": final_record})
         checkpoint(messages)
