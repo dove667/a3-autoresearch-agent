@@ -37,6 +37,7 @@ from runtime.local.web_gateway import FetchRequest, SearchRequest, WebConfig, We
 class AnalysisRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     trigger: Literal["manual", "repetition", "no_progress", "before_handoff", "periodic"] = "manual"
+    enqueue_only: bool = False
 
 
 class AnalysisResponseRequest(BaseModel):
@@ -493,6 +494,8 @@ def create_app(
         with session_lock:
             accepting_resources()
             actor = analyzer_owner(authorization)
+            if body and body.enqueue_only:
+                return analyzer.enqueue(body.trigger)
             snapshot = telemetry.snapshot(telemetry_scope(actor, True))
         from fastapi.responses import JSONResponse
 

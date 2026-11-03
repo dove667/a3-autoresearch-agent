@@ -6,14 +6,23 @@ import math
 import pathlib
 import threading
 import time
+import uuid
 
 import context_manager
 
 POLL_SECONDS = 60
 PERIOD_SECONDS = 30 * 60
 COOLDOWN_SECONDS = 10 * 60
+MAX_RETRY_SECONDS = 60 * 60
+TRIGGERS = {"periodic", "repetition", "no_progress", "before_handoff"}
 REQUEST_TIMEOUT = 2
 SCHEDULE_PATH = pathlib.Path("analysis-client/schedule.json")
+
+
+class RequestUnavailable(ValueError):
+    def __init__(self, status=None):
+        super().__init__("Analyzer service unavailable")
+        self.status = status
 
 
 class Controller:
@@ -28,6 +37,7 @@ class Controller:
     def __init__(self, req, signals, *, waiting=None, clock=time.time, path=SCHEDULE_PATH):
         self.req, self.signals, self.waiting = req, signals, waiting
         self.clock, self.path = clock, pathlib.Path(path)
+        self.handoff_path = self.path.with_suffix(".handoff.json")
         self.lock = threading.RLock()
         self.stopped = threading.Event()
         self.disabled = False
@@ -46,6 +56,27 @@ class Controller:
             )
             if self.state.get("version") != 1 or not isinstance(self.state.get("samples"), list):
                 raise ValueError("Invalid analyzer schedule")
+            # Keep version-1 snapshots readable; no failed attempt becomes success.
+            self.state.setdefault("started_at", self.state.get("last_periodic"))
+            self.state.setdefault("pending", {})
+            self.state.setdefault("attempt", None)
+            self.state.setdefault("failures", 0)
+            self.state.setdefault("retry_at", 0)
+            if not isinstance(self.state["pending"], dict) or any(
+                key not in TRIGGERS
+                or type(value) not in (int, float)
+                or not math.isfinite(value)
+                or value < 0
+                for key, value in self.state["pending"].items()
+            ):
+                raise ValueError("Invalid pending analyzer signals")
+            attempt = self.state["attempt"]
+            if attempt is not None and (
+                not isinstance(attempt, dict) or not isinstance(attempt.get("reasons"), dict)
+            ):
+                raise ValueError("Invalid analyzer reservation")
+            if type(self.state["failures"]) is not int or not 0 <= self.state["failures"] <= 4:
+                raise ValueError("Invalid failure count")
             latest = self.state.get("latest")
             if latest is not None and (
                 not isinstance(latest, dict)
@@ -59,6 +90,9 @@ class Controller:
                 "last_periodic",
                 "progress_at",
                 "last_event_check",
+                "started_at",
+                "retry_at",
+                "last_handoff_check",
             ):
                 value = self.state.get(key)
                 if value is not None and (
@@ -75,14 +109,26 @@ class Controller:
 
     def _request(self, method, path, data=None):
         value = self.req(method, path, data, timeout=REQUEST_TIMEOUT)
-        if not isinstance(value, dict) or value.get("http_error"):
-            raise ValueError("Analyzer service unavailable")
+        if not isinstance(value, dict):
+            raise RequestUnavailable()
+        if value.get("http_error"):
+            status = value["http_error"]
+            raise RequestUnavailable(status if type(status) is int else None)
         return value
 
     def _is_main(self):
         own = self._request("GET", "/sessions/self")
         evolution = self._request("GET", "/evolution")
-        return bool(own.get("session_id")) and own["session_id"] == evolution.get("main_owner")
+        session_id = own.get("session_id")
+        if not session_id or session_id != evolution.get("main_owner"):
+            return False
+        if self.state.get("main_identity") not in (None, session_id):
+            # Old-main private reports are not readable by its successor. Keep queued
+            # reasons, but let the successor request its own authorized snapshot.
+            self.state["attempt"] = None
+            self.state["latest"] = None
+        self.state["main_identity"] = session_id
+        return True
 
     def _observe(self, now):
         values = self.signals()
@@ -117,7 +163,60 @@ class Controller:
         )
         return repeated, stalled
 
-    def _check(self, requested=None):
+    def _enqueue(self, trigger, now, *, distinct=False):
+        # Coalesce each kind; keep a signal even if its rolling window later expires.
+        pending = self.state["pending"]
+        attempt = self.state.get("attempt")
+        previous = pending.get(trigger)
+        if (
+            distinct
+            and attempt
+            and previous is not None
+            and (attempt["reasons"].get(trigger) == previous)
+        ):
+            pending[trigger] = max(now, previous + 0.000001)
+        else:
+            pending.setdefault(trigger, now)
+
+    def _collect_handoff(self, now):
+        if not self.handoff_path.exists():
+            return False
+        notice = json.loads(self.handoff_path.read_text())
+        notice_id = notice.get("id")
+        if notice_id is None:  # Fresh-task reset.
+            return False
+        if not isinstance(notice_id, str) or len(notice_id) != 32:
+            raise ValueError("Invalid persisted handoff signal")
+        if notice_id != self.state.get("handoff_seen"):
+            self._enqueue("before_handoff", now, distinct=True)
+            self.state["handoff_seen"] = notice_id
+            return True
+        return False
+
+    def _finish_attempt(self, report, now):
+        attempt = self.state.get("attempt")
+        if attempt is None or report.get("status") == "running":
+            return
+        if report.get("status") == "completed":
+            if "periodic" in attempt["reasons"]:
+                self.state["last_periodic"] = now
+            for trigger, observed_at in attempt["reasons"].items():
+                if self.state["pending"].get(trigger) == observed_at:
+                    self.state["pending"].pop(trigger, None)
+            self.state["failures"] = 0
+            self.state["retry_at"] = 0
+        else:
+            failures = min(self.state["failures"] + 1, 4)
+            self.state["failures"] = failures
+            delay = min(COOLDOWN_SECONDS * 2 ** (failures - 1), MAX_RETRY_SECONDS)
+            provider_retry = report.get("retry_not_before", 0)
+            if type(provider_retry) not in (int, float) or not math.isfinite(provider_retry):
+                provider_retry = 0
+            self.state["retry_at"] = max(now + delay, provider_retry)
+        self.state["attempt"] = None
+        self._save()
+
+    def _check(self):
         if not self.lock.acquire(blocking=False):
             return self.view()
         try:
@@ -126,53 +225,101 @@ class Controller:
             try:
                 now = self.clock()
                 last_poll = self.state.get("last_poll")
-                if requested is None and last_poll is not None and now - last_poll < POLL_SECONDS:
+                # Handoff is durably enqueued by trigger even when this lock is busy.
+                has_notice = self.handoff_path.exists()
+                if last_poll is not None and now - last_poll < POLL_SECONDS and not has_notice:
                     return self.view()
-                if requested is not None:
-                    attempted = self.state.get("last_attempt")
-                    if attempted is not None and now - attempted < COOLDOWN_SECONDS:
-                        return self.view()
-                    checked = self.state.get("last_event_check")
-                    if checked is not None and now - checked < POLL_SECONDS:
-                        return self.view()
-                    self.state["last_event_check"] = now
+                # Notices can remain on disk indefinitely; throttle network independently.
+                new_notice = self._collect_handoff(now)
+                self._save()
+                checked = self.state.get("last_event_check")
+                handoff_checked = self.state.get("last_handoff_check")
+                urgent = new_notice and (
+                    handoff_checked is None or now - handoff_checked >= POLL_SECONDS
+                )
+                if checked is not None and now - checked < POLL_SECONDS and not urgent:
+                    return self.view()
+                if urgent:
+                    self.state["last_handoff_check"] = now
                 self.state["last_poll"] = now
+                self.state["last_event_check"] = now
                 self._save()
                 if not self._is_main():
                     return self.view()
-                if self.state.get("last_periodic") is None:
-                    self.state["last_periodic"] = now
+                if self.state["started_at"] is None:
+                    self.state["started_at"] = now
+                if self.state.get("handoff_seen") != self.state.get("handoff_host_sent"):
+                    self._request(
+                        "POST", "/analysis", {"trigger": "before_handoff", "enqueue_only": True}
+                    )
+                    self.state["handoff_host_sent"] = self.state.get("handoff_seen")
+                    self._save()
                 repeated, stalled = self._observe(now)
+                if repeated:
+                    self._enqueue("repetition", now, distinct=True)
+                if stalled:
+                    self._enqueue("no_progress", now, distinct=True)
+                baseline = self.state.get("last_periodic")
+                if (
+                    now - (self.state["started_at"] if baseline is None else baseline)
+                    >= PERIOD_SECONDS
+                ):
+                    self._enqueue("periodic", now)
                 self._save()
                 latest = self._request("GET", "/analysis")
                 self.state["latest"] = latest
+                for signal in latest.get("deferred_triggers", []):
+                    if signal in TRIGGERS:
+                        self._enqueue(signal, now)
+                attempt = self.state.get("attempt")
+                if attempt and attempt.get("analysis_id"):
+                    report = latest
+                    if report.get("analysis_id") != attempt["analysis_id"]:
+                        try:
+                            report = self._request("GET", "/analysis/" + attempt["analysis_id"])
+                        except RequestUnavailable as error:
+                            if error.status != 404:
+                                raise
+                            # Bounded Host history may legitimately evict an old
+                            # reserved report. It is unknown, never a new success.
+                            report = {"status": "evicted"}
+                    self._finish_attempt(report, now)
+                elif attempt and latest.get("status") != "running":
+                    # Crash between durable reservation and saving the POST response.
+                    # The Host may have accepted it; never infer success from an
+                    # unrelated old report. Reconcile as uncertain with bounded delay,
+                    # then let the Host fingerprint cache prevent duplicate work.
+                    self._finish_attempt({"status": "interrupted"}, now)
                 self._save()
-                if latest.get("status") == "running":
+                if latest.get("status") == "running" or self.state.get("attempt"):
                     return self.view()
-                periodic = now - self.state["last_periodic"] >= PERIOD_SECONDS
-                trigger = requested or (
-                    "periodic"
-                    if periodic
-                    else "repetition"
-                    if repeated
-                    else "no_progress"
-                    if stalled
-                    else None
-                )
+                pending = self.state["pending"]
                 attempted = self.state.get("last_attempt")
-                if trigger is None or (
-                    attempted is not None and now - attempted < COOLDOWN_SECONDS
+                if (
+                    not pending
+                    or now < self.state["retry_at"]
+                    or (attempted is not None and now - attempted < COOLDOWN_SECONDS)
                 ):
                     return self.view()
+                # One fresh snapshot can cover all currently pending signals. Periodic
+                # takes precedence so handoff/repetition bursts cannot starve it.
+                trigger = next(
+                    key
+                    for key in ("periodic", "before_handoff", "repetition", "no_progress")
+                    if key in pending
+                )
                 self.state["last_attempt"] = now
-                if trigger == "periodic":
-                    self.state["last_periodic"] = now
+                self.state["attempt"] = {"reasons": dict(pending), "analysis_id": None}
                 self.state["progress_at"] = now
                 self.state["progress_decisions"] = self.state["counters"]["decisions"]
                 self.state["samples"] = [[now, self.state["counters"]["repeated_static_reads"]]]
-                self._save()  # Includes failed/uncertain POSTs in the shared cooldown.
-                report = self._request("POST", "/analysis", {"trigger": trigger})
-                # POST returns one report; preserve the GET backlog until refreshed.
+                self._save()  # Reserve before POST, including uncertain/failed requests.
+                try:
+                    report = self._request("POST", "/analysis", {"trigger": trigger})
+                except Exception:
+                    self._finish_attempt({"status": "failed"}, now)
+                    raise
+                self.state["attempt"]["analysis_id"] = report.get("analysis_id")
                 self.state["latest"] = {
                     **{
                         key: latest[key]
@@ -181,8 +328,9 @@ class Controller:
                     },
                     **report,
                 }
+                self._finish_attempt(report, now)
                 self._save()
-            except Exception as error:  # noqa: BLE001 - advisory failures must not gate research
+            except Exception as error:  # noqa: BLE001 - advisory failures never gate research
                 self.state["last_error"] = type(error).__name__
             return self.view()
         finally:
@@ -194,7 +342,16 @@ class Controller:
     def trigger(self, event):
         if event != "before_handoff":
             raise ValueError("Only the before_handoff lifecycle event is supported")
-        return self._check(event)
+        if self.disabled or self.stopped.is_set():
+            return self.view()
+        try:
+            # A separate atomic notice coalesces lifecycle bursts without waiting for
+            # background network I/O. Its ID is acknowledged in the durable schedule.
+            context_manager.atomic(self.handoff_path, json.dumps({"id": uuid.uuid4().hex}))
+        except Exception as error:  # noqa: BLE001 - do not block the lifecycle operation
+            self.state["last_error"] = type(error).__name__
+            return self.view()
+        return self._check()
 
     def view(self):
         """Return advisory data and a response contract; never apply suggestions."""

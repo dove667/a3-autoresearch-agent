@@ -48,6 +48,7 @@ def prepare_fresh_task(start: HarnessStart, task: str) -> tuple[HarnessStart, di
             "items": {},
             "counters": {},
         },
+        "analysis-client/schedule.handoff.json": {"id": None},
         "analysis-client/schedule.json": {
             "version": 1,
             "last_poll": None,

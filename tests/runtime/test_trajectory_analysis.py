@@ -76,7 +76,7 @@ def public_report(report):
     return {
         key: value
         for key, value in report.items()
-        if key not in {"pending_reports", "omitted_pending_reports", "history"}
+        if key not in {"pending_reports", "omitted_pending_reports", "history", "deferred_triggers"}
     }
 
 
@@ -237,6 +237,7 @@ def test_cooldown_dedup_failures_and_restart_consume_calls(tmp_path):
     state = store.load()["trajectory_analysis"]
     state["calls"] = 100_000
     state["last_started"] = 0
+    state["retry_not_before"] = 0
     store.update(trajectory_analysis=state)
     client = client_for(tmp_path, broken, store)
     client.post("/telemetry/observations", headers=HEADERS, json={**OBSERVATIONS, "read_calls": 12})
@@ -599,3 +600,123 @@ def test_recent_events_are_scoped_bounded_numeric_and_independent_copies():
     from runtime.local.trajectory_analysis import MAX_INPUT_BYTES
 
     assert len(json.dumps(all_events).encode()) <= MAX_INPUT_BYTES
+
+
+def test_failed_snapshot_retries_after_persisted_backoff_then_dedups_success(tmp_path, monkeypatch):
+    import runtime.local.trajectory_analysis as module
+
+    now = [1000]
+    monkeypatch.setattr(module.time, "time", lambda: now[0])
+    attempts = []
+
+    def transient(**kwargs):
+        attempts.append(now[0])
+        if len(attempts) < 3:
+            raise TimeoutError("private provider text")
+        return advisory()
+
+    store = RunStateStore(tmp_path)
+    route = {"model_name": "worker", "request_options": {}}
+    analyzer = TrajectoryAnalyzer(transient, route, store)
+    snapshot = {"observed_events": 1}
+
+    def settle(instance):
+        for _ in range(200):
+            if not instance.inflight:
+                return instance.latest("main")
+            time.sleep(0.005)
+        raise AssertionError("mock did not finish")
+
+    analyzer.analyze("main", snapshot, "periodic")
+    first = settle(analyzer)
+    assert first["status"] == "failed"
+    assert first["retry_not_before"] == 1600
+    now[0] = 1599
+    analyzer = TrajectoryAnalyzer(transient, route, store)
+    assert analyzer.analyze("main", snapshot)["analysis_id"] == first["analysis_id"]
+    assert len(attempts) == 1
+    now[0] = 1600
+    analyzer.analyze("main", snapshot)
+    second = settle(analyzer)
+    assert second["retry_not_before"] == 2800
+    assert len(attempts) == 2
+    now[0] = 2799
+    # A changing snapshot cannot bypass service-failure backoff.
+    from fastapi import HTTPException
+
+    try:
+        analyzer.analyze("main", {"observed_events": 2})
+        assert False
+    except HTTPException as error:
+        assert error.status_code == 429
+    now[0] = 2800
+    analyzer = TrajectoryAnalyzer(transient, route, store)
+    analyzer.analyze("main", snapshot)
+    success = settle(analyzer)
+    assert success["status"] == "completed"
+    now[0] += 10000
+    assert analyzer.analyze("main", snapshot)["analysis_id"] == success["analysis_id"]
+    assert len(attempts) == 3
+
+
+def test_handoff_signal_survives_host_restart_and_is_consumed_only_on_success(tmp_path):
+    store = RunStateStore(tmp_path)
+    client = client_for(tmp_path, advisory, store)
+    queued = client.post(
+        "/analysis", headers=HEADERS, json={"trigger": "before_handoff", "enqueue_only": True}
+    )
+    assert queued.status_code == 200
+    assert queued.json()["deferred_triggers"] == ["before_handoff"]
+    assert store.load()["trajectory_analysis"]["calls"] == 0
+    client = client_for(tmp_path, advisory, store)
+    assert client.get("/analysis", headers=HEADERS).json()["deferred_triggers"] == [
+        "before_handoff"
+    ]
+    request_and_finish(client)
+    assert client.get("/analysis", headers=HEADERS).json()["deferred_triggers"] == []
+
+
+def test_new_handoff_during_analysis_remains_pending_and_is_visible_to_successor(tmp_path):
+    entered, release = threading.Event(), threading.Event()
+
+    def blocking(**kwargs):
+        entered.set()
+        assert release.wait(2)
+        return advisory()
+
+    store = RunStateStore(tmp_path)
+    analyzer = TrajectoryAnalyzer(blocking, {"model_name": "worker", "request_options": {}}, store)
+    analyzer.enqueue("before_handoff")
+    analyzer.analyze("old-main", {"observed_events": 1})
+    assert entered.wait(2)
+    try:
+        analyzer.enqueue("before_handoff")
+    finally:
+        release.set()
+    for _ in range(200):
+        if not analyzer.inflight:
+            break
+        time.sleep(0.005)
+    assert analyzer.latest("new-main")["deferred_triggers"] == ["before_handoff"]
+    assert analyzer.latest("new-main")["status"] == "not_requested"
+    restored = TrajectoryAnalyzer(advisory, analyzer.route, store)
+    assert restored.latest("new-main")["deferred_triggers"] == ["before_handoff"]
+
+
+def test_queued_signal_failure_is_not_consumed_or_reported_as_success(tmp_path):
+    def broken(**kwargs):
+        raise TimeoutError("private")
+
+    store = RunStateStore(tmp_path)
+    client = client_for(tmp_path, broken, store)
+    client.post(
+        "/analysis", headers=HEADERS, json={"trigger": "before_handoff", "enqueue_only": True}
+    )
+    result = request_and_finish(client)
+    assert result["status"] == "failed"
+    assert result["deferred_triggers"] == ["before_handoff"]
+    cached = client.post("/analysis", headers=HEADERS).json()
+    assert cached["analysis_id"] == result["analysis_id"]
+    assert client.get("/analysis", headers=HEADERS).json()["deferred_triggers"] == [
+        "before_handoff"
+    ]

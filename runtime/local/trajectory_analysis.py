@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from runtime.local.trajectory_telemetry import TrajectoryTelemetry, bounded_number
 
 COOLDOWN_SECONDS = 600
+MAX_RETRY_SECONDS = 3600
 MAX_RECORDS = 32
 MAX_PENDING_REPORTS = 3
 MAX_INPUT_BYTES = 24576
@@ -61,6 +62,10 @@ class TrajectoryAnalyzer:
             "identity": "trajectory-analyzer-" + uuid.uuid4().hex,
             "calls": 0,
             "last_started": 0,
+            "deferred_triggers": {},
+            "signal_sequence": 0,
+            "failure_streak": 0,
+            "retry_not_before": 0,
             "records": [],
             "evicted_reports": 0,
             "evicted_pending_reports": 0,
@@ -71,7 +76,15 @@ class TrajectoryAnalyzer:
         for record in self.state["records"]:
             if record["status"] == "running":
                 record["status"] = "interrupted"
+                self._record_failure(record)
         self._save()
+
+    def _record_failure(self, record):
+        streak = min(self.state["failure_streak"] + 1, 4)
+        self.state["failure_streak"] = streak
+        delay = min(COOLDOWN_SECONDS * 2 ** (streak - 1), MAX_RETRY_SECONDS)
+        self.state["retry_not_before"] = time.time() + delay
+        record["retry_not_before"] = self.state["retry_not_before"]
 
     def _save(self):
         if self.store is not None:
@@ -87,6 +100,7 @@ class TrajectoryAnalyzer:
             )
             pending = [r for r in records if self._pending(r)]
             result.update(
+                deferred_triggers=sorted(self.state["deferred_triggers"]),
                 pending_reports=[
                     {
                         key: record[key]
@@ -138,6 +152,7 @@ class TrajectoryAnalyzer:
                 "usage",
                 "trigger",
                 "response",
+                "retry_not_before",
             )
             if key in record
         }
@@ -151,6 +166,22 @@ class TrajectoryAnalyzer:
             self._save()
             return self._public(record)
 
+    def enqueue(self, trigger):
+        with self.lock:
+            self.state["signal_sequence"] += 1
+            self.state["deferred_triggers"][trigger] = self.state["signal_sequence"]
+            self._save()
+            return {
+                "status": "queued",
+                "advisory_only": True,
+                "deferred_triggers": sorted(self.state["deferred_triggers"]),
+            }
+
+    def _acknowledge_signals(self, signals):
+        for trigger, sequence in signals.items():
+            if self.state["deferred_triggers"].get(trigger) == sequence:
+                self.state["deferred_triggers"].pop(trigger, None)
+
     def analyze(self, actor, snapshot, trigger="manual"):
         serialized = json.dumps(snapshot, sort_keys=True)
         if len(serialized.encode()) > MAX_INPUT_BYTES:
@@ -159,13 +190,23 @@ class TrajectoryAnalyzer:
         with self.lock:
             if self.inflight:
                 raise HTTPException(409, "Analysis already in progress")
-            for record in self.state["records"]:
-                if record["owner"] == actor and record["fingerprint"] == fingerprint:
-                    return self._public(record)
             now = time.time()
-            if now - self.state["last_started"] < COOLDOWN_SECONDS:
-                raise HTTPException(429, "Analysis cooldown active")
+            for record in reversed(self.state["records"]):
+                if record["owner"] == actor and record["fingerprint"] == fingerprint:
+                    if record["status"] == "completed":
+                        self._acknowledge_signals(dict(self.state["deferred_triggers"]))
+                        self._save()
+                        return self._public(record)
+                    if now < max(record.get("retry_not_before", 0), self.state["retry_not_before"]):
+                        return self._public(record)
+                    break
+            if now < max(
+                self.state["last_started"] + COOLDOWN_SECONDS,
+                self.state["retry_not_before"],
+            ):
+                raise HTTPException(429, "Analysis cooldown or failure backoff active")
             record = {
+                "queued_signals": dict(self.state["deferred_triggers"]),
                 "owner": actor,
                 "fingerprint": fingerprint,
                 "analysis_id": uuid.uuid4().hex,
@@ -191,6 +232,7 @@ class TrajectoryAnalyzer:
             except RuntimeError:
                 self.inflight = False
                 record["status"] = "failed"
+                self._record_failure(record)
                 self._save()
             return self._public(record)
 
@@ -251,6 +293,12 @@ class TrajectoryAnalyzer:
             with self.lock:
                 result["wall_seconds"] = round(time.monotonic() - started, 6)
                 record.update(result)
+                if record["status"] == "completed":
+                    self._acknowledge_signals(record.get("queued_signals", {}))
+                    self.state["failure_streak"] = 0
+                    self.state["retry_not_before"] = 0
+                else:
+                    self._record_failure(record)
                 try:
                     self._save()
                 finally:

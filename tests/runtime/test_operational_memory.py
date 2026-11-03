@@ -148,6 +148,7 @@ def test_new_task_archives_operational_state_but_keeps_source_immutable(tmp_path
             "operational-state.json": json.dumps(
                 {"version": 1, "items": {"old": {"status": "closed"}}}
             ),
+            "analysis-client/schedule.handoff.json": json.dumps({"id": "a" * 32}),
             "analysis-client/schedule.json": json.dumps(
                 {"version": 1, "last_attempt": 123, "latest": {"analysis_id": "old"}}
             ),
@@ -163,6 +164,7 @@ def test_new_task_archives_operational_state_but_keeps_source_immutable(tmp_path
     )
     assert json.loads(fresh.files["operational-state.json"])["items"] == {}
     assert json.loads(fresh.files["analysis-client/schedule.json"])["last_attempt"] is None
+    assert json.loads(fresh.files["analysis-client/schedule.handoff.json"])["id"] is None
     for name, archive in context["operational_task_archives"].items():
         assert fresh.files[archive] == before[name]
 

@@ -1,6 +1,7 @@
 """Synthetic scheduling only: no provider, real conversation or remote job."""
 
 import importlib.util
+import itertools
 import json
 import pathlib
 import sys
@@ -40,6 +41,8 @@ def rig(tmp_path, monkeypatch):
             return {"main_owner": remote["main_owner"]}
         if method == "POST":
             assert path == "/analysis"
+            if data.get("enqueue_only"):
+                return {"status": "queued"}
             assert json.loads((tmp_path / "schedule.json").read_text())["last_attempt"] == clock[0]
             if remote.get("fail"):
                 raise TimeoutError("synthetic failure")
@@ -59,7 +62,11 @@ def rig(tmp_path, monkeypatch):
 
 
 def posts(calls):
-    return [call[2]["trigger"] for call in calls if call[0] == "POST"]
+    return [
+        call[2]["trigger"]
+        for call in calls
+        if call[0] == "POST" and not call[2].get("enqueue_only")
+    ]
 
 
 def test_periodic_runs_without_repetition_or_stagnation_and_during_training_wait(rig):
@@ -224,7 +231,7 @@ def test_damaged_schedule_is_preserved_and_blocks_client_calls(rig, tmp_path):
     assert calls == [] and path.read_text() == "{broken"
 
 
-def test_background_network_does_not_block_view_or_other_triggers(rig):
+def test_background_network_does_not_block_view_or_other_triggers(rig, tmp_path):
     module, now, stats, _, _, _ = rig
     entered, release = threading.Event(), threading.Event()
 
@@ -233,7 +240,9 @@ def test_background_network_does_not_block_view_or_other_triggers(rig):
         assert release.wait(2)
         raise TimeoutError("synthetic timeout")
 
-    client = module.Controller(slow_request, lambda: stats, clock=lambda: now[0])
+    client = module.Controller(
+        slow_request, lambda: stats, clock=lambda: now[0], path=tmp_path / "schedule.json"
+    )
     # Avoid any local file access in this concurrency-only check.
     client._save = lambda: None
     thread = threading.Thread(target=client.poll)
@@ -329,3 +338,216 @@ def test_corrupt_valid_json_advisory_disables_without_requests(tmp_path, monkeyp
     controller = analyzer_client.Controller(lambda *a, **k: calls.append(a), dict, path=path)
     assert controller.poll()["status"] == "disabled" and not calls
     assert path.read_text() == raw
+
+
+def test_periodic_failure_remains_due_and_retries_after_backoff(rig):
+    _, now, _, remote, calls, make = rig
+    client = make()
+    client.poll()
+    baseline = client.state.get("last_periodic")
+    now[0] += 1800
+    remote["post"] = {"status": "failed", "analysis_id": "f" * 32}
+    client.poll()
+    assert client.state.get("last_periodic") == baseline
+    remote["latest"] = remote["post"]
+    client = make()
+    now[0] += 540
+    client.poll()
+    assert posts(calls) == ["periodic"]
+    now[0] += 60
+    remote["post"] = {"status": "completed", "analysis_id": "a" * 32}
+    client.poll()
+    assert posts(calls) == ["periodic", "periodic"]
+    assert client.state["last_periodic"] == now[0]
+
+
+def test_single_handoff_during_cooldown_survives_restart_and_is_drained(rig):
+    _, now, _, remote, calls, make = rig
+    remote["post"] = {"status": "completed", "analysis_id": "a" * 32}
+    client = make()
+    client.trigger("before_handoff")
+    now[0] += 60
+    client.trigger("before_handoff")
+    client = make()
+    now[0] += 540
+    client.poll()
+    assert posts(calls) == ["before_handoff", "before_handoff"]
+
+
+def test_pending_repetition_does_not_expire_while_analysis_runs(rig):
+    _, now, stats, remote, calls, make = rig
+    client = make()
+    client.poll()
+    remote["latest"] = {"status": "running", "analysis_id": "a" * 32}
+    now[0] += 60
+    stats["repeated_static_reads"] = 10
+    client.poll()
+    now[0] += 660
+    remote["latest"] = {"status": "completed", "analysis_id": "a" * 32}
+    client = make()
+    client.poll()
+    assert posts(calls) == ["repetition"]
+
+
+def test_handoff_event_coalesces_and_does_not_replace_due_periodic(rig):
+    _, now, _, remote, calls, make = rig
+    client = make()
+    client.poll()
+    now[0] += 1800
+    remote["latest"] = {"status": "running", "analysis_id": "a" * 32}
+    for _ in range(50):
+        client.trigger("before_handoff")
+    assert posts(calls) == []
+    remote["latest"] = {"status": "completed", "analysis_id": "a" * 32}
+    remote["post"] = {"status": "completed", "analysis_id": "b" * 32}
+    now[0] += 60
+    client = make()
+    client.poll()
+    assert posts(calls) == ["periodic"]
+    assert client.state["last_periodic"] == now[0]
+    now[0] += 600
+    client.poll()
+    assert len(posts(calls)) == 1
+
+
+def test_persistent_failure_uses_capped_backoff_without_false_periodic_success(rig):
+    _, now, _, remote, calls, make = rig
+    client = make()
+    client.poll()
+    now[0] += 1800
+    remote["post"] = {"status": "failed", "analysis_id": "f" * 32}
+    remote["latest"] = remote["post"]
+    attempt_times = []
+    for _ in range(241):
+        before = len(posts(calls))
+        client = make()
+        client.poll()
+        if len(posts(calls)) > before:
+            attempt_times.append(now[0])
+        now[0] += 60
+    assert len(attempt_times) <= 7
+    assert [b - a for a, b in itertools.pairwise(attempt_times)][:4] == [600, 1200, 2400, 3600]
+    assert client.state.get("last_periodic") is None
+
+
+def test_single_handoff_notice_persists_even_when_background_lock_is_busy(rig):
+    _, now, _, remote, calls, make = rig
+    client = make()
+    held, release = threading.Event(), threading.Event()
+
+    def hold_lock():
+        with client.lock:
+            held.set()
+            assert release.wait(2)
+
+    worker = threading.Thread(target=hold_lock)
+    worker.start()
+    try:
+        assert held.wait(2)
+        client.trigger("before_handoff")
+        assert posts(calls) == []
+    finally:
+        release.set()
+        worker.join(2)
+    remote["post"] = {"status": "completed", "analysis_id": "a" * 32}
+    client = make()
+    now[0] += 60
+    client.poll()
+    assert posts(calls) == ["before_handoff"]
+
+
+def test_successor_reads_host_queued_handoff_without_old_private_report(rig):
+    _, _, _, remote, calls, make = rig
+    remote["latest"] = {"status": "not_requested", "deferred_triggers": ["before_handoff"]}
+    remote["post"] = {"status": "completed", "analysis_id": "b" * 32}
+    remote["session_id"] = remote["main_owner"] = "successor"
+    client = make()
+    client.poll()
+    assert posts(calls) == ["before_handoff"]
+    assert not any(path.startswith("/analysis/") for _, path, _ in calls)
+
+
+def test_new_handoff_arriving_during_analysis_is_not_acknowledged_as_old(rig):
+    _, now, _, remote, calls, make = rig
+    remote["post"] = {"status": "running", "analysis_id": "a" * 32}
+    client = make()
+    client.trigger("before_handoff")
+    now[0] += 60
+    remote["latest"] = remote["post"]
+    client.trigger("before_handoff")
+    now[0] += 60
+    remote["latest"] = {"status": "completed", "analysis_id": "a" * 32}
+    client.poll()
+    now[0] += 480
+    remote["post"] = {"status": "completed", "analysis_id": "b" * 32}
+    client = make()
+    client.poll()
+    assert posts(calls) == ["before_handoff", "before_handoff"]
+
+
+def test_async_periodic_completion_updates_clock_only_after_observed_success(rig):
+    _, now, _, remote, calls, make = rig
+    client = make()
+    client.poll()
+    now[0] += 1800
+    remote["post"] = {"status": "running", "analysis_id": "a" * 32}
+    client.poll()
+    assert client.state["last_periodic"] is None
+    now[0] += 60
+    remote["latest"] = remote["post"]
+    client = make()
+    client.poll()
+    assert client.state["last_periodic"] is None
+    remote["latest"] = {"status": "completed", "analysis_id": "a" * 32}
+    now[0] += 60
+    client.poll()
+    assert client.state["last_periodic"] == now[0]
+    assert posts(calls) == ["periodic"]
+
+
+def test_restart_of_reserved_post_without_id_is_reconciled_not_permanently_stuck(rig):
+    _, now, _, remote, calls, make = rig
+    client = make()
+    client.poll()
+    client.state["pending"] = {"periodic": now[0]}
+    client.state["attempt"] = {"reasons": {"periodic": now[0]}, "analysis_id": None}
+    client.state["last_attempt"] = now[0]
+    client._save()  # Simulate crash after reservation, before the returned ID was saved.
+    now[0] += 60
+    client = make()
+    client.poll()
+    assert client.state["attempt"] is None
+    assert "periodic" in client.state["pending"]
+    assert client.state["last_periodic"] is None
+    now[0] += 600
+    remote["post"] = {"status": "completed", "analysis_id": "c" * 32}
+    client.poll()
+    assert posts(calls) == ["periodic"]
+    assert client.state["last_periodic"] == now[0]
+
+
+def test_evicted_reserved_report_does_not_block_future_periodic_checks(rig):
+    module, now, stats, remote, calls, make = rig
+    client = make()
+    client.poll()
+    client.state["pending"] = {"periodic": now[0]}
+    client.state["attempt"] = {"reasons": {"periodic": now[0]}, "analysis_id": "a" * 32}
+    client.state["last_attempt"] = now[0]
+    client._save()
+    base_request = client.req
+
+    def request(method, path, data=None, **options):
+        if path == "/analysis/" + "a" * 32:
+            return {"http_error": 404}
+        return base_request(method, path, data, **options)
+
+    now[0] += 60
+    client = module.Controller(request, lambda: stats, clock=lambda: now[0], path=client.path)
+    remote["latest"] = {"status": "completed", "analysis_id": "b" * 32}
+    client.poll()
+    assert client.state["attempt"] is None
+    assert client.state["last_periodic"] is None
+    now[0] += 600
+    remote["post"] = {"status": "completed", "analysis_id": "c" * 32}
+    client.poll()
+    assert posts(calls) == ["periodic"]

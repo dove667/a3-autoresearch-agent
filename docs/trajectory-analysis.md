@@ -16,7 +16,7 @@ The current main Agent explicitly invokes `POST /analysis` with no body (or `{}`
 
 The response has `advisory_only: true`, an opaque analysis ID, a status, and up to three enum-only suggestions. Actions include reducing repeated reads, reviewing failures/waiting items, checkpointing progress or continuing observation. Evidence and confidence are also fixed enums. Arbitrary model text, unexpected fields, tool calls, multiple answers and oversized output are rejected. The main Agent must evaluate suggestions itself and explicitly post `analysis_id`, `decision` (`adopt`, `reject`, `defer`) and a reason of 1–500 characters to `POST /analysis/response`. The exact report must belong to the current main. Dispositions are persisted and owner-returned; their reasons are excluded from telemetry and every analyzer input. This records consideration without forcing research to halt. `GET /analysis/{analysis_id}` retrieves an exact retained report for the current main. `GET /analysis` also exposes the oldest three unanswered completed reports under `pending_reports`, plus `omitted_pending_reports`; answering one reveals the next pending item. Pending summaries contain only IDs, status, trigger and fixed-vocabulary suggestions. The `history` object explicitly labels its Host-run scope, 32-report retention limit and cumulative `evicted_reports`/`evicted_pending_reports`, so bounded history is not presented as complete. New periodic reports remain permitted while older findings await a response. They are never operator feedback, pass/fail judgments, authorization, or automatically executed decisions.
 
-Each call has at most 24,576 input bytes, 2,000 requested output tokens and 8,192 accepted output bytes. A Host-wide ledger permits one inflight call, a ten-minute cooldown and at most one model call per analysis. Exact repeated sanitized snapshots return their cached result for that owner. Control requests do not change the snapshot, preventing an analysis request itself from creating a new window. Reservations, failures and results persist in the existing private `RunStateStore` under top-level `trajectory_analysis`; callers must supply the Host's state store for durable restart behavior. Interrupted calls become `interrupted` and consume their reservation. Failed calls are cached and consume the cooldown; there is no automatic Host retry. The provider call receives `timeout=60` and `num_retries=0`, supported by the installed LiteLLM Responses adapter. Its current global retry default is unset. This installed adapter can let a changed global retry count override zero; operators must preserve the unset global retry setting. A custom transport that ignores its timeout can retain the sole inflight reservation; the Host never starts a replacement or nested worker to evade that limit. The ledger retains the latest 32 analyses, including their cached results and fingerprints; deduplication covers that bounded history. There is no lifetime analysis count cap. Provider error strings and raw outputs are never persisted there. Accepted numeric analyzer usage and actual elapsed provider/validation time are returned separately; unknown costs stay unknown.
+Each call has at most 24,576 input bytes, 2,000 requested output tokens and 8,192 accepted output bytes. A Host-wide ledger permits one inflight call, a ten-minute cooldown and at most one model call per analysis. Exact repeated sanitized snapshots return their cached result for that owner. Control requests do not change the snapshot, preventing an analysis request itself from creating a new window. Reservations, failures and results persist in the existing private `RunStateStore` under top-level `trajectory_analysis`; callers must supply the Host's state store for durable restart behavior. Interrupted calls become `interrupted` and consume their reservation. Failed calls consume the cooldown and carry a persisted retry deadline. The same failed snapshot is cached until that deadline, then may be requested again; it is not cached forever. Consecutive provider failures/interrupted calls back off for 10, 20, 40 and then at most 60 minutes between requests, across snapshots and restarts; a completed call resets the failure streak. The Host does not autonomously retry or bypass cooldown. Successful unchanged snapshots remain reusable without a new provider call. The provider call receives `timeout=60` and `num_retries=0`, supported by the installed LiteLLM Responses adapter. Its current global retry default is unset. This installed adapter can let a changed global retry count override zero; operators must preserve the unset global retry setting. A custom transport that ignores its timeout can retain the sole inflight reservation; the Host never starts a replacement or nested worker to evade that limit. The ledger retains the latest 32 analyses, including their cached results and fingerprints; deduplication covers that bounded history. There is no lifetime analysis count cap. Provider error strings and raw outputs are never persisted there. Accepted numeric analyzer usage and actual elapsed provider/validation time are returned separately; unknown costs stay unknown.
 
 Integration requires allowing `/telemetry` (including `/telemetry/observations`) and `/analysis` through the Agent gateway proxy. Main-client triggers can request repetition/no-progress analysis after at least ten minutes, a low-frequency thirty-minute fallback, and a before-handoff check; all requests share the same Host cooldown and deduplication. The Host does not recursively trigger analysis or nest workers. No Host restart, hotload, live model call or existing run mutation is part of implementation or testing. Tests use fake providers and `RunStateStore` fixtures. Production Host launch already supplies its state store.
 
@@ -32,7 +32,25 @@ or at least 20 completed normal decisions and 10 minutes without a recorded
 operational update or newly observed terminal job result. Trial creation requests
 a before-handoff check. All triggers share a 10-minute cooldown, exact-snapshot
 cache and one inflight reservation. Periodic work takes priority when due; cooldown
-or an inflight analysis can defer it, not create concurrent analysis calls.
+or an inflight analysis defers pending signals, never creates concurrent calls.
+The queue coalesces one entry per signal type. A completed periodic request (including
+reuse of a successful identical snapshot) advances the periodic clock; failure,
+interruption, HTTP errors and mere dispatch do not. Failed attempts retain pending
+reasons with capped 10/20/40/60-minute retry delays. This guarantees continued
+scheduled attempts at bounded rates, not successful reports during provider failure.
+A successful snapshot covers the reasons present at dispatch; newly arriving lifecycle
+signals are kept for a later check. Unanswered reports do not block periodic work.
+
+`POST /analysis` also accepts `enqueue_only: true` to persist an enum-only signal
+without invoking a model or bypassing cooldown. `GET /analysis` returns
+`deferred_triggers` to the current main, independently of old-main private reports.
+The before-trial hook writes an atomic local notice and enqueues it at the Host;
+these survive same-task restarts. After an identity handoff the new main can request
+analysis of its own authorized snapshot, without accessing the predecessor's reports.
+No handoff waits for analysis completion. If the Host cannot accept the signal before
+an old process is irreversibly stopped, its local notice is only recoverable with
+that workspace; delivery across a lost workspace cannot be guaranteed. Client
+schedule/notice files are part of ordinary continuation manifests.
 
 These are starting thresholds, not proven optimal values. The repetition threshold
 aims to distinguish sustained duplicate reads from one legitimate retrieval;
@@ -55,5 +73,6 @@ retain diagnostics and cooldown and leave research running; a damaged client
 schedule is preserved instead of resetting rate limits. Same-task resume retains
 cadence; a new task archives/resets task-scoped counters and reports in its new copy.
 Simulation tests cover normal training waits, repetition, false-progress noise,
-periodic coverage, failures, restarts and non-main identities. They do not establish
+periodic coverage, failed-cache retry deadlines, bounded persistent failure, queued
+handoff/repetition during cooldown and inflight work, restarts and non-main identities. They do not establish
 long-run analyzer usefulness or an absence of false positives and negatives.
