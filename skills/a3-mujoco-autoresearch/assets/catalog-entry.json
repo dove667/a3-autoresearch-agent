@@ -1,6 +1,6 @@
 {
   "id": "a3-mujoco-autoresearch",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "status": "reference",
   "comparison_status": "compare-not-proven",
   "description": "A3 MuJoCo autoresearch and model training: ACT, Diffusion/Flow, VLA, world models, diagnostics and paired evaluation.",
@@ -45,6 +45,10 @@
     {
       "version": "0.1.4",
       "change": "Accept reference-only protocol 0.3.1 in offline helper, retain 0.3.0 support, require matched protocol version and digests; scientific computations unchanged."
+    },
+    {
+      "version": "0.1.5",
+      "change": "Remove an implied preference for cheap deployment probes; compare data, training, deployment and Harness alternatives from expected benefit, total cost, uncertainty and results without a fixed order."
     }
   ]
 }

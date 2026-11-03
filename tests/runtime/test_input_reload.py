@@ -187,11 +187,12 @@ def custom_setup(tmp_path):
         p = directory / name
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_bytes((root / source).read_bytes())
+    (directory / "SOUL.md").write_text("Version: 1.0.0\nfixture baseline principle\n")
     versions = InputVersions(root, tmp_path / "custom-run", custom_dir=directory)
     versions.activate(versions.prepare(), "start")
     replacement = tmp_path / "replacement"
     shutil.copytree(directory, replacement)
-    (replacement / "SOUL.md").write_text("Version: 0.2.2\nnew authorized collaboration principle\n")
+    (replacement / "SOUL.md").write_text("Version: 1.0.1\nnew authorized collaboration principle\n")
     calls = []
     client = TestClient(
         create_app(
@@ -253,7 +254,7 @@ def test_custom_source_selection_is_explicit_operator_owned_and_keeps_history(tm
     assert calls[-1]["input"] == [{"role": "user", "content": "unchanged history"}]
     shutil.rmtree(replacement)
     restored = InputVersions(versions.source_root, versions.run)
-    assert restored.prepare()["contents"]["SOUL.md"].startswith("Version: 0.2.2")
+    assert restored.prepare()["contents"]["SOUL.md"].startswith("Version: 1.0.1")
 
 
 def test_custom_source_changed_after_preview_is_not_activated(tmp_path):
@@ -263,7 +264,7 @@ def test_custom_source_changed_after_preview_is_not_activated(tmp_path):
     preview = client.get(
         "/control/inputs", headers=operator, params={"source_dir": str(replacement)}
     ).json()
-    (replacement / "SOUL.md").write_text("Version: 0.2.3\nchanged after preview\n")
+    (replacement / "SOUL.md").write_text("Version: 1.0.2\nchanged after preview\n")
     assert (
         client.post(
             "/control/inputs",
@@ -281,7 +282,7 @@ def test_custom_source_selection_rejects_invalid_replacement(tmp_path, damage):
     operator = {"Authorization": "Bearer operator-secret"}
     before = versions.manifest.copy()
     if damage == "same-version":
-        (replacement / "SOUL.md").write_text("Version: 0.2.1\nchanged without version\n")
+        (replacement / "SOUL.md").write_text("Version: 1.0.0\nchanged without version\n")
     elif damage == "extra-file":
         (replacement / "unexpected.txt").write_text("outside current file set")
     else:
@@ -326,7 +327,7 @@ def test_custom_source_digest_binds_directory_even_for_identical_contents(tmp_pa
         ).status_code
         == 409
     )
-    assert versions.manifest["files"]["SOUL.md"]["version"] == "0.2.1"
+    assert versions.manifest["files"]["SOUL.md"]["version"] == "1.0.0"
 
 
 def test_reload_cli_selects_custom_directory_without_replacing_history(
@@ -354,5 +355,5 @@ def test_reload_cli_selects_custom_directory_without_replacing_history(
     digest = versions.prepare_directory(replacement)["digest"]
     monkeypatch.setattr(sys, "argv", args + ["--confirm", digest])
     reload_inputs.main()
-    assert versions.manifest["files"]["SOUL.md"]["version"] == "0.2.2"
+    assert versions.manifest["files"]["SOUL.md"]["version"] == "1.0.1"
     assert (versions.run / "input-revisions" / original / "SOUL.md").is_file()

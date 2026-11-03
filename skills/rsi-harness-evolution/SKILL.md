@@ -2,7 +2,7 @@
 name: rsi-harness-evolution
 description: Diagnose and improve an Agent's own harness with fixed model weights. Use for context, memory, skills, tools, planning, scheduling, recovery, observability and version-selection experiments, with quality-preserving evidence. Complements A3 policy research rather than tuning the robot policy itself.
 metadata:
-  version: 0.2.1
+  version: 0.2.2
 ---
 
 # RSI Harness evolution

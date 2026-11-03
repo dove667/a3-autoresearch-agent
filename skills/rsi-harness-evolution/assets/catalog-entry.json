@@ -1,6 +1,6 @@
 {
   "id": "rsi-harness-evolution",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "status": "reference",
   "comparison_status": "compare-not-proven",
   "description": "Fixed-weight RSI Harness improvement: component diagnosis, context/memory/tools/control/recovery candidates and quality-preserving experiments.",
@@ -36,6 +36,10 @@
     {
       "version": "0.2.1",
       "change": "Actively delegate valuable independent Policy/data/training and Harness work when resources permit; clarify bounded worker handoffs, dependency integration and timely decisions without mandatory parallelism."
+    },
+    {
+      "version": "0.2.2",
+      "change": "Clarify autonomous work ordering by expected goal/performance and information benefit versus total cost, risk and opportunity cost; examples and skill order do not prescribe a research sequence."
     }
   ]
 }
