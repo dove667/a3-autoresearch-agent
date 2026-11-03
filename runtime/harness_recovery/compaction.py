@@ -80,7 +80,7 @@ class ForkCompactor:
         summary_budget=None,
         keep_rounds=KEEP_ROUNDS,
         result_path=RESULT_PATH,
-        hard_wait_seconds=2,
+        hard_wait_seconds=300,
     ):
         self.req, self.tools = req, list(tools or [])
         self.instructions, self.model = instructions, model
@@ -88,7 +88,7 @@ class ForkCompactor:
         self.summary_budget = summary_budget  # Legacy constructor compatibility; Host owns budgets.
         self.keep_rounds = max(1, int(keep_rounds))
         self.result_path = pathlib.Path(result_path)
-        self.hard_wait_seconds = max(0, min(float(hard_wait_seconds), 30))
+        self.hard_wait_seconds = max(0, min(float(hard_wait_seconds), 300))
         self._thread, self._lock = None, threading.Lock()
         self.last_error, self._last_after_bytes = None, 0
 

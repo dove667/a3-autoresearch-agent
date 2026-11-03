@@ -455,3 +455,44 @@ def test_archive_only_preserves_original_goal_and_worker_assignment_bytes(module
     assert cm.size(prepared) < cm.size(original) and cm.paired(prepared)
     assert prepared[0] == original[0]
     assert prepared[0]["content"].encode("utf-8") == goal_bytes
+
+
+def test_hard_limit_waits_for_slow_summary_without_oversize_decision(modules, monkeypatch):
+    """Simulate a 60s summary deadline without sleeping for a minute."""
+    cm, module = modules["context_manager"], modules["compaction"]
+    cm.WINDOW, cm.RESERVE = 10000, 4000
+    release = threading.Event()
+
+    def provider(*args):
+        assert release.wait(5)
+        return {
+            "status": "completed",
+            "output": [
+                {
+                    "type": "message",
+                    "content": [
+                        {
+                            "type": "output_text",
+                            "text": "Keep original goal; source evidence remains authoritative. Pending work is not complete.",
+                        }
+                    ],
+                }
+            ],
+        }
+
+    fork = module.ForkCompactor(provider)
+    actual_wait = fork.wait
+
+    def virtual_wait(timeout=None):
+        if timeout is not None and timeout >= 60:
+            release.set()
+            actual_wait(5)
+
+    monkeypatch.setattr(fork, "wait", virtual_wait)
+    try:
+        result, record = fork.before_request(tool_history())
+        assert cm.paired(result) and cm.message_cost(result) <= fork._budget()
+        assert record["kind"] == "applied"
+    finally:
+        release.set()
+        actual_wait(5)
