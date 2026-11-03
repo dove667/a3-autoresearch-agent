@@ -1,6 +1,6 @@
 {
   "id": "a3-mujoco-autoresearch",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "status": "reference",
   "comparison_status": "compare-not-proven",
   "description": "A3 MuJoCo autoresearch and model training: ACT, Diffusion/Flow, VLA, world models, diagnostics and paired evaluation.",
@@ -14,7 +14,9 @@
     "flow",
     "vla",
     "world-model",
-    "evaluation"
+    "evaluation",
+    "visual-diagnostics",
+    "video"
   ],
   "applicability": "Research planning and authorized execution for the declared A3 task. Recommendations are not local performance evidence. Read SKILL.md and selected references using the ordinary read tool. Helpers require an authorized job/execution tool, not skill_execute.",
   "local_source": "skills/a3-mujoco-autoresearch/SKILL.md",
@@ -22,7 +24,8 @@
   "evidence": [
     "skills/a3-mujoco-autoresearch/references/sources.md",
     "skills/a3-mujoco-autoresearch/references/integration.md",
-    "skills/a3-mujoco-autoresearch/references/validation.md"
+    "skills/a3-mujoco-autoresearch/references/validation.md",
+    "skills/a3-mujoco-autoresearch/references/training-diagnostics.md"
   ],
   "evidence_status": "literature-and-source-inspected; offline-helper-tests; no-local-policy-comparison",
   "version_history": [
@@ -49,6 +52,10 @@
     {
       "version": "0.1.5",
       "change": "Remove an implied preference for cheap deployment probes; compare data, training, deployment and Harness alternatives from expected benefit, total cost, uncertainty and results without a fixed order."
+    },
+    {
+      "version": "0.1.6",
+      "change": "Add optional video/trace process diagnosis and bounded visual inspection; distinguish native diagnostic retention, partial observations and new replay evidence without adding evaluation gates. Native diagnostics source-inspected at A3 7c34d38; no simulation or model experiment performed."
     }
   ]
 }

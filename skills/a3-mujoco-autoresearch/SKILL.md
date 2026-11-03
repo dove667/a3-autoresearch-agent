@@ -2,7 +2,7 @@
 name: a3-mujoco-autoresearch
 description: Develop and improve learned policies for the A3 dual-arm MuJoCo cookie-packing project. Use for method selection, ACT/Diffusion/Flow/VLA/world-model experiments, data and training diagnostics, paired closed-loop evaluation, and reusable research experience. Applies to research planning or authorized execution, not permission to start training or change the benchmark.
 metadata:
-  version: 0.1.5
+  version: 0.1.6
 ---
 
 # A3 MuJoCo autoresearch
@@ -33,6 +33,8 @@ These are options, not a mandatory ladder. Prefer the strongest executable basel
 | Experiments or tool work are inefficient or hard to reproduce | Research search, attribution, memory and decisions | [Experiment workflow](references/experiment-workflow.md) |
 
 Read only the branch and support material needed. [Sources](references/sources.md) distinguishes papers, implementation versions and local observations. Use web search to resolve a specific mechanism, reproduce an official implementation, or investigate a failure; do not collect citations indefinitely instead of testing a hypothesis.
+
+For a concrete grasp, transfer, placement or stagnation question, prefer existing episode video and synchronized traces. [Training diagnostics](references/training-diagnostics.md#visual-process-evidence) describes optional native capture and bounded visual inspection. The main coordinates and judges; a Policy worker prepares and inspects process evidence. Neither routine recording nor a new rollout is required. Sparse frames and final counts do not establish an unseen action never occurred; a replay is new evidence, not the original episode video.
 
 ## Conduct the experiment
 

@@ -8,6 +8,7 @@ import threading
 import time
 from collections.abc import Callable
 from contextlib import asynccontextmanager, nullcontext
+from copy import deepcopy
 from pathlib import Path
 from typing import Annotated, Literal
 
@@ -31,6 +32,7 @@ from runtime.local.run_state import RunStateStore
 from runtime.local.token_count import count_tokens, estimate_request_tokens
 from runtime.local.trajectory_analysis import TrajectoryAnalyzer
 from runtime.local.trajectory_telemetry import TrajectoryTelemetry
+from runtime.local.vision_media import prepare_vision_request
 from runtime.local.web_gateway import FetchRequest, SearchRequest, WebConfig, WebError, WebGateway
 
 
@@ -1036,7 +1038,13 @@ def create_app(
             return {**registered, "owner": proposal["owner"], "delivery": "next_model_request"}
 
     def forward_response(
-        body: dict, authorization, *, purpose: str = "decision", summary_refs=None
+        body: dict,
+        authorization,
+        *,
+        purpose: str = "decision",
+        summary_refs=None,
+        vision_image_reserve: int = 0,
+        vision_frames=None,
     ):
         accepting_resources()
         experiment = owner(authorization)
@@ -1058,7 +1066,7 @@ def create_app(
         with session_lock:
             trial = evolution.trials.get(experiment, {}) if evolution else {}
             receives_phase = bool(
-                purpose != "summary"
+                purpose == "decision"
                 and (phase_instructions or input_versions)
                 and evolution
                 and (
@@ -1070,6 +1078,8 @@ def create_app(
         role = (
             "summary"
             if purpose == "summary"
+            else "worker"
+            if purpose == "vision"
             else "candidate"
             if trial.get("status") == "testing"
             or children.get(experiment, {}).get("purpose") == "candidate_validation"
@@ -1097,15 +1107,26 @@ def create_app(
         if isinstance(arguments.get("input"), str):
             arguments["input"] = [{"role": "user", "content": arguments["input"]}]
         feedback_ids = []
-        if human_feedback is not None and purpose != "summary":
+        if human_feedback is not None and purpose == "decision":
             try:
                 arguments, feedback_ids = human_feedback.apply(experiment, arguments)
             except ValueError as error:
                 raise HTTPException(422, str(error)) from None
         estimated_tokens = None
         if token_budget:
-            estimated_tokens = estimate_request_tokens(
-                arguments, token_budget.provider_reserve_tokens
+            estimate_arguments = arguments
+            if purpose == "vision":
+                # Binary transport length is not an image token count. Use a bounded,
+                # deliberately conservative per-image admission reserve instead.
+                estimate_arguments = deepcopy(arguments)
+                for message in estimate_arguments.get("input", []):
+                    if isinstance(message.get("content"), list):
+                        message["content"] = [
+                            part for part in message["content"] if part.get("type") != "input_image"
+                        ]
+            estimated_tokens = (
+                estimate_request_tokens(estimate_arguments, token_budget.provider_reserve_tokens)
+                + vision_image_reserve
             )
             window = (
                 token_budget.summary_context_tokens
@@ -1170,6 +1191,13 @@ def create_app(
         entry["response_service_tier"] = data.get("service_tier")
         if purpose == "summary":
             entry["summary_feedback_refs"] = summary_refs or []
+        if purpose == "vision":
+            entry.update(
+                model_purpose="vision",
+                vision_frame_count=len(vision_frames or []),
+                vision_frames=vision_frames or [],
+                image_admission_reserve_tokens=vision_image_reserve,
+            )
         if feedback_ids:
             entry["human_feedback_ids"] = feedback_ids
         if receives_phase:
@@ -1288,6 +1316,83 @@ def create_app(
             # Input revision headers are not needed for a summary data response.
             result = json.loads(result.body)
         return {**result, "a3_summary": {"source": body.source, "feedback_refs": references}}
+
+    vision_slots = threading.BoundedSemaphore(2)
+
+    @app.get("/vision/status")
+    def vision_status(authorization: Annotated[str | None, Header()] = None):
+        owner(authorization)
+        return {
+            "available": True,
+            "operation": "/vision/inspect",
+            "max_frames": 6,
+            "max_image_bytes": 512 * 1024,
+            "max_total_bytes": 3 * 1024 * 1024,
+            "max_side_pixels": 1024,
+            "model_role": "worker",
+            "source": "authorized own-job PNG/JPEG artifacts; not arbitrary URLs",
+            "note": "Transport available; actual provider vision requires a successful image response",
+        }
+
+    @app.post("/vision/inspect")
+    def inspect_vision(body: dict, authorization: Annotated[str | None, Header()] = None):
+        accepting_resources()
+        actor = owner(authorization)
+        if not vision_slots.acquire(blocking=False):
+            raise HTTPException(429, "Visual inspection busy; no model request was dispatched")
+        try:
+
+            def read_frame(frame_owner, job_id, path):
+                return remote(
+                    "artifact",
+                    {
+                        "experiment_id": frame_owner,
+                        "job_id": job_id,
+                        "path": path,
+                        "max_bytes": 512 * 1024,
+                    },
+                )
+
+            try:
+                arguments, metadata, reserve = prepare_vision_request(body, actor, read_frame)
+            except (ValueError, TypeError):
+                raise HTTPException(
+                    422, "Invalid frame input, image, size or chronological labels"
+                ) from None
+            result = forward_response(
+                arguments,
+                authorization,
+                purpose="vision",
+                vision_image_reserve=reserve,
+                vision_frames=metadata,
+            )
+            if not isinstance(result, dict):
+                result = json.loads(result.body)
+            text = "".join(
+                part.get("text", "")
+                for message in result.get("output", [])
+                if message.get("type") == "message"
+                for part in message.get("content", [])
+                if part.get("type") == "output_text"
+            )
+            if result.get("status") != "completed" or not text.strip() or len(text) > 16000:
+                raise HTTPException(
+                    502,
+                    "Visual response incomplete, missing or oversized; no observation confirmed",
+                )
+            reasoning = result.get("reasoning") or {}
+            return {
+                "status": "completed",
+                "analysis": text,
+                "frames": metadata,
+                "model": result.get("model"),
+                "reasoning_effort": reasoning.get("effort")
+                if isinstance(reasoning, dict)
+                else None,
+                "scope": "Visual-helper observations, hypotheses and unknowns; not scientific acceptance",
+            }
+        finally:
+            vision_slots.release()
 
     @app.post("/jobs")
     def submit(body: JobRequest, authorization: Annotated[str | None, Header()] = None):

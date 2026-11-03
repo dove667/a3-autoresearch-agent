@@ -18,9 +18,9 @@ from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
 
 if __package__:
-    from .readonly_exports import ReadonlyExports
+    from .readonly_exports import ReadonlyExports, open_source
 else:
-    from readonly_exports import ReadonlyExports
+    from readonly_exports import ReadonlyExports, open_source
 
 ACTIVE_STATES = {"created", "running", "restarting", "paused"}
 MAX_FILE_BYTES = 32 * 1024 * 1024
@@ -420,11 +420,17 @@ def reclaim_terminal(store: JobStore, job: dict) -> dict:
 
 def read_artifact(store: JobStore, request: dict) -> dict:
     job = store.load(request.get("job_id"), request.get("experiment_id"))
+    limit = request.get("max_bytes", MAX_FILE_BYTES)
+    if type(limit) is not int or not 0 < limit <= MAX_FILE_BYTES:
+        raise ValueError("Invalid artifact byte ceiling")
     target = safe_path(store.workspace(job), request.get("path"))
-    if not target.is_file() or target.stat().st_size > MAX_FILE_BYTES:
-        raise ValueError("artifact must be a regular file of at most 32 MiB")
-    data = target.read_bytes()
-    if len(data) > MAX_FILE_BYTES:
+    # Fixed directory descriptors prevent a symlink swap after lexical checks.
+    # The optional ceiling only narrows the existing owner-scoped read boundary.
+    with open_source(target) as stream:
+        if os.fstat(stream.fileno()).st_size > limit:
+            raise ValueError("artifact exceeds size limit")
+        data = stream.read(limit + 1)
+    if len(data) > limit:
         raise ValueError("artifact exceeds size limit")
     return {"path": request["path"], "encoding": "base64", "data": base64.b64encode(data).decode()}
 

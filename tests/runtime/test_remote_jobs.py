@@ -424,3 +424,44 @@ def test_gpu_jobs_select_readonly_nvidia_egl_vendor(tmp_path, monkeypatch, gpu):
         assert arguments[arguments.index("--gpus") + 1] == "device=GPU-selected"
     assert arguments[arguments.index("--network") + 1] == "none"
     assert "ALL" in arguments and "no-new-privileges" in arguments
+
+
+def test_artifact_optional_smaller_byte_ceiling_rejects_before_transfer(tmp_path):
+    runtime = load_runtime()
+    store = runtime.JobStore(tmp_path)
+    job = store.create("owner", ["true"], False, {})
+    store.workspace(job).mkdir(parents=True, exist_ok=True)
+    (store.workspace(job) / "frame.png").write_bytes(b"x" * 1025)
+    with pytest.raises(ValueError):
+        runtime.read_artifact(
+            store,
+            {
+                "experiment_id": "owner",
+                "job_id": job["job_id"],
+                "path": "frame.png",
+                "max_bytes": 1024,
+            },
+        )
+
+
+def test_artifact_read_refuses_directory_swap_after_path_validation(tmp_path, monkeypatch):
+    runtime = load_runtime()
+    store = runtime.JobStore(tmp_path / "store")
+    job = store.create("owner", ["true"], False, {"frames/a.png": "public"})
+    outside = tmp_path / "private"
+    outside.mkdir()
+    (outside / "a.png").write_text("private")
+    original = runtime.safe_path
+
+    def swap(workspace, name):
+        target = original(workspace, name)
+        folder = workspace / "frames"
+        folder.rename(workspace / "original-frames")
+        folder.symlink_to(outside, target_is_directory=True)
+        return target
+
+    monkeypatch.setattr(runtime, "safe_path", swap)
+    with pytest.raises((OSError, ValueError)):
+        runtime.read_artifact(
+            store, {"experiment_id": "owner", "job_id": job["job_id"], "path": "frames/a.png"}
+        )
