@@ -49,7 +49,12 @@ injected into every decision. Existing Agent-improved skill entries and old refe
 versions are preserved; publication is not evidence of performance improvement.
 
 Workers must explicitly receive the relevant frozen goal/protocol/conditions, authorized data
-and stop conditions. A remote job ID alone is not a returned asset: the worker seals a ready
+and stop conditions. The task records `coordinator_session_id` from the dispatching Host identity, not from
+model-supplied arguments. Workers use it as the explicit `session_id` in the existing
+export grant API; `to_main` is not an alias. The ID grants no new authority. If succession
+has changed the recipient, report that boundary instead of guessing.
+
+A remote job ID alone is not a returned asset: the worker seals a ready
 export and grants it to current main before returning it. Main can then pass an accessible
 export via read_only_exports. No source_owner is forged and no token is shared.
 

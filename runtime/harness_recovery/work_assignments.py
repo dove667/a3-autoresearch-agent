@@ -35,7 +35,10 @@ WORKER_INSTRUCTIONS = (
     "entries with path and sha256, and exports listing ready IDs granted to current main. "
     "Use only these report fields, summary at most 4000 characters; put detailed logs in evidence files. Include every "
     "declared deliverable. A report is a claim for the coordinator to assess, not proof "
-    "of adoption. Save recoverable job/asset references before exiting. Do not start "
+    "of adoption. Use worker-task.coordinator_session_id as the explicit session_id in "
+    "export grants; to_main is not an API alias. This ID is not a credential. If the "
+    "recipient changed, report that boundary instead of guessing or bypassing scope. "
+    "Save recoverable job/asset references before exiting. Do not start "
     "unassigned work, manufacture results or try to become main."
 )
 
@@ -107,7 +110,7 @@ def text_file(name):
     return raw.decode("utf-8")
 
 
-def worker_package(arguments):
+def worker_package(arguments, *, coordinator_session_id=None):
     identifier = arguments["id"]
     if not isinstance(identifier, str):
         raise TypeError("Assignment id must be text")
@@ -146,6 +149,7 @@ def worker_package(arguments):
     task = {
         "version": 1,
         "assignment_nonce": uuid.uuid4().hex,
+        "coordinator_session_id": coordinator_session_id,
         "id": identifier,
         "role": role,
         "objective": arguments["objective"],
@@ -363,7 +367,10 @@ def dispatch(req, arguments):
             )
             state["assignments"].pop(archived)
             state["archived_count"] = state.get("archived_count", 0) + 1
-        task, files = worker_package(arguments)
+        coordinator = checked(req, "GET", "/sessions/self").get("session_id")
+        if not isinstance(coordinator, str) or not coordinator:
+            raise ValueError("Cannot identify the coordinator for explicit export delivery")
+        task, files = worker_package(arguments, coordinator_session_id=coordinator)
         item = {
             "id": identifier,
             "role": task["role"],

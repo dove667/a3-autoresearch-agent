@@ -85,7 +85,8 @@ def test_worker_snapshot_has_fresh_context_and_explicit_source_hashes(tmp_path, 
     m = load(tmp_path, monkeypatch)
     seed_sources(m, tmp_path)
     gateway = Gateway()
-    result = m.dispatch(gateway, assignment())
+    request = {**assignment(), "coordinator_session_id": "untrusted-model-recipient"}
+    result = m.dispatch(gateway, request)
     assert result["session_id"] == "worker-1"
     submitted = next(body for method, path, body in gateway.calls if method == "POST")
     assert submitted["purpose"] == "worker" and submitted["read_only_exports"] == [
@@ -95,6 +96,7 @@ def test_worker_snapshot_has_fresh_context_and_explicit_source_hashes(tmp_path, 
     assert "OLD PRIVATE CONVERSATION" not in submitted["files"]["checkpoint.json"]
     task = json.loads(submitted["files"]["worker-task.json"])
     assert task["role"] == "policy" and task["id"] == "policy-check"
+    assert task["coordinator_session_id"] == "main"
     assert task["source_hashes"]["agent.py"]
     assert submitted["files"]["research/plan.json"] == (tmp_path / "research/plan.json").read_text()
     with pytest.raises(ValueError, match="already"):

@@ -146,6 +146,7 @@ def pipeline(tmp_path, monkeypatch):
     sandbox = ProcessSandbox(tmp_path / "processes", versions)
     provider_calls, remote_calls, bridge_errors = [], [], []
     rendezvous = threading.Barrier(2)
+    export_records = {}
 
     def provider(**request):
         assert request["model"] == WORKER_MODEL
@@ -158,13 +159,15 @@ def pipeline(tmp_path, monkeypatch):
         provider_calls.append({"role": role, "request": request})
         rendezvous.wait(timeout=10)
         evidence = json.dumps({"role": role, "fixture": "synthetic, no model/GPU experiment"})
+        job_id = ("a" if role == "policy" else "b") * 32
+        export_id = "export-" + job_id
         report = {
             "id": task["id"],
             "role": role,
             "status": "complete",
             "summary": "Synthetic worker-loop evidence; no scientific improvement claim",
             "evidence": [{"path": "research/result.json", "sha256": sha(evidence)}],
-            "exports": [],
+            "exports": [export_id],
         }
         operations = [
             ("gateway", {"method": "GET", "path": "/evolution"}),
@@ -174,7 +177,27 @@ def pipeline(tmp_path, monkeypatch):
                 {
                     "method": "POST",
                     "path": "/jobs",
-                    "body": {"command": ["synthetic-fixture"], "gpu": False},
+                    "body": {
+                        "command": ["synthetic-fixture"],
+                        "gpu": False,
+                        "files": {"role.txt": role},
+                    },
+                },
+            ),
+            (
+                "gateway",
+                {
+                    "method": "POST",
+                    "path": "/jobs/" + job_id + "/exports",
+                    "body": {"location": "outputs", "path": "fixture"},
+                },
+            ),
+            (
+                "gateway",
+                {
+                    "method": "POST",
+                    "path": "/jobs/exports/" + export_id + "/grants",
+                    "body": {"session_id": task["coordinator_session_id"]},
                 },
             ),
             ("write", {"path": "research/result.json", "content": evidence}),
@@ -195,11 +218,30 @@ def pipeline(tmp_path, monkeypatch):
 
     def remote(operation, request):
         # All remote work is a bounded fake; even a mistaken call cannot reach SSH.
-        assert operation == "submit", (operation, request)
-        assert request["experiment_id"] in sandbox.records
-        assert request["command"] == ["synthetic-fixture"] and not request["gpu"]
-        remote_calls.append(request)
-        return {"job_id": ("a" if len(remote_calls) == 1 else "b") * 32, "status": "completed"}
+        actor = request["experiment_id"]
+        if operation == "submit":
+            assert actor in sandbox.records
+            assert request["command"] == ["synthetic-fixture"] and not request["gpu"]
+            remote_calls.append(request)
+            job_id = ("a" if request["files"]["role.txt"] == "policy" else "b") * 32
+            return {"job_id": job_id, "status": "completed"}
+        if operation == "export-create":
+            identifier = "export-" + request["job_id"]
+            export_records[identifier] = {"owner": actor, "readers": {actor}}
+            return {"export_id": identifier, "status": "ready"}
+        identifier = request["export_id"]
+        record = export_records[identifier]
+        assert actor in record["readers"], "Main cannot read an ungranted worker export"
+        if operation == "export-grant":
+            assert actor == record["owner"] and request["recipient"] == "main"
+            record["readers"].add(request["recipient"])
+            return {
+                "export_id": identifier,
+                "recipient": request["recipient"],
+                "access": "read_only",
+            }
+        assert operation == "export-status", (operation, request)
+        return {"export_id": identifier, "status": "ready"}
 
     restored = {
         "sessions": {"main-token": "main"},
@@ -336,7 +378,10 @@ def test_real_policy_and_harness_worker_loops_route_collect_and_decide(pipeline,
         assert outputs[role + "0"]["http_error"] == 403
         assert outputs[role + "1"] == "denied"
         assert outputs[role + "2"]["status"] == "completed"
-        assert outputs[role + "3"] == outputs[role + "4"] == "written"
+        assert outputs[role + "3"]["status"] == "ready"
+        assert outputs[role + "4"]["recipient"] == "main"
+        assert outputs[role + "4"]["access"] == "read_only"
+        assert outputs[role + "5"] == outputs[role + "6"] == "written"
         assert (
             "--worker-task"
             in json.loads((record["directory"] / "resume.json").read_text())["command"]
