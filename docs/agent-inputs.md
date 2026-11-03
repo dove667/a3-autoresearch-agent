@@ -1,6 +1,6 @@
 # Agent 输入的版本与加载
 
-Version: 0.6.0
+Version: 0.6.1
 
 本文件面向维护输入的部署方；运行监督与审批见 [操作者文档](operator-supervision.md)。目标、验收、Prompt 和执行说明由部署方维护。使用内置 profile 时，新启动、`--resume-from` 和 `--run-harness` 采用启动时仓库里的当前文件，包括未提交的工作区内容。显式自定义输入目录则使用下述独立冻结快照，不回退到仓库模板。恢复保留原 run、身份、生成的 Harness 和模型对话历史；部署方 system Prompt 与所选阶段协议更新为当前版本。
 
@@ -35,9 +35,9 @@ SOUL、goal、acceptance、存在的 phase-instructions 以及 protocol 正文�
 
 新任务继承包中的 harness、代码、skills、长期记忆，但重新初始化 checkpoint、task.txt、trajectory.jsonl、progress.md 和 run-outcome.json（continue），不会因来源 F 已 complete 而立即结束。旧任务文件和旧初始反馈保存在副本的唯一 `inherited-task-state/<来源摘要>/` 下，并记录原摘要及来源；旧反馈不再次成为活动指令。继承的验收只记为历史未重新认证。保留包需要支持现有 `checkpoint.json` 消息列表格式，不猜测未知 Harness 的上下文布局。
 
-启动前验证并读取整套输入；实际采用的字节、来源、版本和哈希写入 run 的 `input-revisions` 与 manifest，后续不依赖原目录是否还存在。自定义 run 的 `--resume-from <新run目录> --feedback-file <获批说明>` 保留这轮完整现场，继续使用已记录的冻结输入快照。不会因为仓库模板或原输入目录改了而换任务；当前自定义输入不提供源目录热加载，修改目标/验收应明确创建另一个新 run。动态 human feedback 的既有接口及审批要求不变。
+启动前验证并读取整套输入；实际采用的字节、来源、版本和哈希写入 run 的 `input-revisions` 与 manifest，后续不依赖原目录是否还存在。自定义 run 的 `--resume-from <新run目录> --feedback-file <获批说明>` 保留这轮完整现场，继续使用已记录的冻结输入快照。不会因为仓库模板或原输入目录改了而换任务；若操作者已获准替换自定义输入，可通过现有热加载命令显式选择完整的新目录，预览并确认其摘要；仅接受同一阶段、同一 profile 和相同文件名集合，版本规则保持有效。发布生成新快照，旧快照不改；恢复继续使用最后正式发布的冻结版本。跨阶段或新任务仍另建 run。动态 human feedback 的既有接口及审批要求不变。
 
-`--agent-inputs-dir` 只用于新 `--run-harness`，不能与 resume、部署检查、E/F 专项 profile 或 `--initial-feedback-file` 混用。自定义初始反馈统一放进输入目录。旧内置 profile 保持兼容，用于已有流程/历史恢复；通用新任务无需选择这些专项 profile。
+launch 的 `--agent-inputs-dir` 只用于新 `--run-harness`，不能与 resume、部署检查、E/F 专项 profile 或 `--initial-feedback-file` 混用。自定义初始反馈统一放进输入目录。旧内置 profile 保持兼容，用于已有流程/历史恢复；通用新任务无需选择这些专项 profile。
 
 ## G：使用通用入口装配上下文管理任务
 

@@ -111,6 +111,7 @@ class SessionStopRequest(BaseModel):
 class InputUpdateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     confirm: str = Field(pattern=r"^[0-9a-f]{64}$")
+    source_dir: str | None = Field(default=None, min_length=1, max_length=4096)
 
 
 class FeedbackPreviewRequest(BaseModel):
@@ -817,18 +818,25 @@ def create_app(
         if not operator_token or not secrets.compare_digest(supplied, operator_token):
             raise HTTPException(403, "Host operator authorization required")
 
-    def prepare_inputs():
+    def prepare_inputs(source_dir: str | None = None):
         if input_versions is None:
             raise HTTPException(503, "Versioned Agent inputs are not configured")
         try:
-            return input_versions.prepare()
+            return (
+                input_versions.prepare_directory(Path(source_dir))
+                if source_dir is not None
+                else input_versions.prepare()
+            )
         except (OSError, ValueError) as error:
             raise HTTPException(422, str(error)) from None
 
     @app.get("/control/inputs")
-    def preview_inputs(authorization: Annotated[str | None, Header()] = None):
+    def preview_inputs(
+        authorization: Annotated[str | None, Header()] = None,
+        source_dir: str | None = Query(default=None, min_length=1, max_length=4096),
+    ):
         require_operator(authorization)
-        proposal = prepare_inputs()
+        proposal = prepare_inputs(source_dir)
         return {
             "current": input_versions.manifest,
             "proposed": {key: proposal[key] for key in ("digest", "files")},
@@ -844,7 +852,7 @@ def create_app(
             raise HTTPException(503, "Versioned Agent inputs are not configured")
         with input_versions.lock:
             accepting_resources()
-            proposal = prepare_inputs()
+            proposal = prepare_inputs(body.source_dir)
             if not secrets.compare_digest(body.confirm, proposal["digest"]):
                 raise HTTPException(409, "Preview changed; inspect and confirm the current digest")
             try:

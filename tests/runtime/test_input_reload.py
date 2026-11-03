@@ -2,6 +2,7 @@ import json
 import sys
 import threading
 
+import pytest
 from fastapi.testclient import TestClient
 
 from runtime.local.host_gateway import create_app
@@ -174,3 +175,184 @@ def test_host_finishing_rejects_late_hot_reload(tmp_path):
     response = client.post("/control/inputs", headers=operator, json={"confirm": digest})
     assert response.status_code == 503
     assert versions.manifest["revision"] == before
+
+
+def custom_setup(tmp_path):
+    import shutil
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    directory = tmp_path / "custom-original"
+    for name, source in input_sources("phase-one").items():
+        p = directory / name
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes((root / source).read_bytes())
+    versions = InputVersions(root, tmp_path / "custom-run", custom_dir=directory)
+    versions.activate(versions.prepare(), "start")
+    replacement = tmp_path / "replacement"
+    shutil.copytree(directory, replacement)
+    (replacement / "SOUL.md").write_text("Version: 0.2.2\nnew authorized collaboration principle\n")
+    calls = []
+    client = TestClient(
+        create_app(
+            model_name="test/model",
+            sessions={"agent-token": "main"},
+            main_owner="main",
+            forward_model=lambda **kwargs: calls.append(kwargs) or {"output": []},
+            remote_call=lambda *args: {},
+            usage_log=versions.run / "usage.jsonl",
+            input_versions=versions,
+            operator_token="operator-secret",
+        )
+    )
+    return client, versions, replacement, calls
+
+
+def test_custom_source_selection_is_explicit_operator_owned_and_keeps_history(tmp_path):
+    import shutil
+
+    client, versions, replacement, calls = custom_setup(tmp_path)
+    operator = {"Authorization": "Bearer operator-secret"}
+    agent = {"Authorization": "Bearer agent-token"}
+    original = versions.manifest.copy()
+    archive = versions.run / "input-revisions" / original["revision"]
+    old = (archive / "SOUL.md").read_bytes()
+    assert (
+        client.get(
+            "/control/inputs", headers=agent, params={"source_dir": str(replacement)}
+        ).status_code
+        == 403
+    )
+    preview = client.get(
+        "/control/inputs", headers=operator, params={"source_dir": str(replacement)}
+    )
+    assert preview.status_code == 200
+    digest = preview.json()["proposed"]["digest"]
+    assert (
+        client.post(
+            "/control/inputs",
+            headers=agent,
+            json={"source_dir": str(replacement), "confirm": digest},
+        ).status_code
+        == 403
+    )
+    assert versions.manifest == original
+    applied = client.post(
+        "/control/inputs",
+        headers=operator,
+        json={"source_dir": str(replacement), "confirm": digest},
+    )
+    assert applied.status_code == 200
+    assert (archive / "SOUL.md").read_bytes() == old
+    client.post(
+        "/v1/responses",
+        headers=agent,
+        json={"input": [{"role": "user", "content": "unchanged history"}]},
+    )
+    assert "new authorized collaboration principle" in calls[-1]["instructions"]
+    assert calls[-1]["input"] == [{"role": "user", "content": "unchanged history"}]
+    shutil.rmtree(replacement)
+    restored = InputVersions(versions.source_root, versions.run)
+    assert restored.prepare()["contents"]["SOUL.md"].startswith("Version: 0.2.2")
+
+
+def test_custom_source_changed_after_preview_is_not_activated(tmp_path):
+    client, versions, replacement, _ = custom_setup(tmp_path)
+    operator = {"Authorization": "Bearer operator-secret"}
+    before = versions.manifest.copy()
+    preview = client.get(
+        "/control/inputs", headers=operator, params={"source_dir": str(replacement)}
+    ).json()
+    (replacement / "SOUL.md").write_text("Version: 0.2.3\nchanged after preview\n")
+    assert (
+        client.post(
+            "/control/inputs",
+            headers=operator,
+            json={"source_dir": str(replacement), "confirm": preview["proposed"]["digest"]},
+        ).status_code
+        == 409
+    )
+    assert versions.manifest == before
+
+
+@pytest.mark.parametrize("damage", ["same-version", "extra-file", "symlink"])
+def test_custom_source_selection_rejects_invalid_replacement(tmp_path, damage):
+    client, versions, replacement, _ = custom_setup(tmp_path)
+    operator = {"Authorization": "Bearer operator-secret"}
+    before = versions.manifest.copy()
+    if damage == "same-version":
+        (replacement / "SOUL.md").write_text("Version: 0.2.1\nchanged without version\n")
+    elif damage == "extra-file":
+        (replacement / "unexpected.txt").write_text("outside current file set")
+    else:
+        (replacement / "SOUL.md").unlink()
+        (replacement / "SOUL.md").symlink_to(versions.run / "inputs/SOUL.md")
+    assert (
+        client.get(
+            "/control/inputs", headers=operator, params={"source_dir": str(replacement)}
+        ).status_code
+        == 422
+    )
+    assert versions.manifest == before
+
+
+def test_preset_cannot_change_input_mode_via_directory_selector(tmp_path):
+    client, _versions, _ = setup(tmp_path)
+    assert (
+        client.get(
+            "/control/inputs",
+            headers={"Authorization": "Bearer operator-secret"},
+            params={"source_dir": str(tmp_path)},
+        ).status_code
+        == 422
+    )
+
+
+def test_custom_source_digest_binds_directory_even_for_identical_contents(tmp_path):
+    import shutil
+
+    client, versions, replacement, _ = custom_setup(tmp_path)
+    operator = {"Authorization": "Bearer operator-secret"}
+    preview = client.get(
+        "/control/inputs", headers=operator, params={"source_dir": str(replacement)}
+    ).json()
+    other = tmp_path / "other-source"
+    shutil.copytree(replacement, other)
+    assert (
+        client.post(
+            "/control/inputs",
+            headers=operator,
+            json={"source_dir": str(other), "confirm": preview["proposed"]["digest"]},
+        ).status_code
+        == 409
+    )
+    assert versions.manifest["files"]["SOUL.md"]["version"] == "0.2.1"
+
+
+def test_reload_cli_selects_custom_directory_without_replacing_history(
+    tmp_path, monkeypatch, capsys
+):
+    from runtime.local import reload_inputs
+    from runtime.local.run_state import RunStateStore
+
+    client, versions, replacement, _ = custom_setup(tmp_path)
+    RunStateStore(versions.run).save(
+        {"endpoint": "http://host.docker.internal:1234", "operator_token": "operator-secret"}
+    )
+
+    def connect(**kwargs):
+        client.headers.update(kwargs["headers"])
+        return client
+
+    monkeypatch.setattr(reload_inputs.httpx, "Client", connect)
+    original = versions.manifest["revision"]
+    args = ["reload_inputs", str(versions.run), "--agent-inputs-dir", str(replacement)]
+    monkeypatch.setattr(sys, "argv", args)
+    reload_inputs.main()
+    assert versions.manifest["revision"] == original
+    assert "operator-secret" not in capsys.readouterr().out
+    digest = versions.prepare_directory(replacement)["digest"]
+    monkeypatch.setattr(sys, "argv", args + ["--confirm", digest])
+    reload_inputs.main()
+    assert versions.manifest["files"]["SOUL.md"]["version"] == "0.2.2"
+    assert (versions.run / "input-revisions" / original / "SOUL.md").is_file()

@@ -204,6 +204,25 @@ class InputVersions:
                 raise ValueError(f"Reserved or unsafe Agent input path: {name}")
         return {name: name for name in names}
 
+    def prepare_directory(self, directory: Path) -> dict:
+        """Operator-selected replacement; keep the custom contract and historical snapshots."""
+        with self.lock:
+            if self.input_mode != "custom" or self.run is None:
+                raise ValueError("Directory selection requires an existing custom-input run")
+            candidate = InputVersions(
+                self.source_root,
+                None,
+                phase=self.phase,
+                task_profile=self.task_profile,
+                custom_dir=directory,
+            )
+            if set(candidate.sources) != set(self.sources):
+                raise ValueError("Replacement must retain exactly the current custom file names")
+            # Reuse version-history validation without treating this new source as
+            # a mutable replacement of an already frozen revision.
+            candidate.run = self.run
+            return candidate.prepare()
+
     def prepare(self) -> dict:
         """Read a proposed update without changing the active run."""
         with self.lock:
@@ -299,9 +318,14 @@ class InputVersions:
             legacy = revisions / "legacy"
             if not legacy.exists() and (self.run / "inputs").exists():
                 legacy.mkdir()
-                for name in dict.fromkeys((
-                    *self.sources, "phase-instructions.md", "common-instructions.md", "input-manifest.json"
-                )):
+                for name in dict.fromkeys(
+                    (
+                        *self.sources,
+                        "phase-instructions.md",
+                        "common-instructions.md",
+                        "input-manifest.json",
+                    )
+                ):
                     original = self.run / "inputs" / name
                     if original.is_file():
                         write_atomic(legacy / name, original.read_bytes())
@@ -421,7 +445,8 @@ class InputVersions:
                 + "\n\n"
                 + (
                     self.contents["phase-instructions.md"] + "\n\n"
-                    if "phase-instructions.md" in self.contents else ""
+                    if "phase-instructions.md" in self.contents
+                    else ""
                 )
                 + self.contents["goal.md"]
                 + "\n\n"

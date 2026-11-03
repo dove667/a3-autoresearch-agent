@@ -1,6 +1,6 @@
 # 外界监督与运行干预
 
-Version: 0.2.1
+Version: 0.2.2
 
 本文件面向用户、父助手与 Host 操作者，不是研究 Agent 的输入，不加入 input manifest。Agent 的反馈处理规则在阶段 Prompt，接口与状态技术事实在 execution；文档职责与装载链见 [Agent 输入管理](agent-inputs.md)。
 
@@ -33,6 +33,8 @@ uv run python -m runtime.local.reload_inputs "artifacts/rsi/<run-id>"
 ```bash
 uv run python -m runtime.local.reload_inputs "artifacts/rsi/<run-id>" --confirm <预览摘要>
 ```
+
+自定义 run 默认仍读取其冻结版本。要在获准后换为另一套完整目录，预览和确认两次命令都增加 `--agent-inputs-dir <完整目录>`；Host 仅允许保持当前阶段、profile 与文件名集合的替换，检查 UTF-8、符号链接、版本及内容摘要。目录参数只在操作者控制入口生效，Agent 无权选择来源。旧 revision 保留，新版本发布后恢复不依赖外部源目录。这个入口不更新 Agent 工作区中的技能副本或索引；如需更新它们，须在已批准范围内显式完成并核对实际版本。
 
 确认绑定具体文件内容，预览后源文件变化会使旧摘要失效。操作者认证保存在 Host 私有状态，Agent 令牌不能更新输入。已发出的模型请求按旧版本返回，下次请求使用新版本；原对话与 Agent 代码不重写。热加载不会重建已有 Python 对象、切换模型或镜像；bootstrap 运行参数和固定基础设施代码变更通过停止/恢复应用，相关中断也须事先获批。
 
