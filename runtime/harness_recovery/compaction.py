@@ -119,7 +119,7 @@ class ForkCompactor:
         if not cm.paired(messages):
             raise cm.ContextError("Unsafe tool call/result boundary")
         budget = self._budget(extra_messages, extra_bytes)
-        candidate, record = self._apply_if_ready(messages)
+        candidate, record = self._apply_if_ready(messages, budget)
         if record and record.get("kind") == "applied":
             if cm.message_cost(candidate) > budget:
                 raise cm.ContextError(
@@ -131,12 +131,35 @@ class ForkCompactor:
                 return messages, record
             raise cm.ContextError("Persisted compaction blocked; original source retained")
         if cm.message_cost(messages) > budget:
+            pending = self._read_result() if self._busy() else None
+            keep = pending.get("prefix_length", 0) if pending else 0
+            if pending and digest(messages[:keep]) != pending.get("prefix_sha256"):
+                keep = 0
+            try:
+                bounded = cm.fit_tool_outputs(messages, budget, start_index=keep)
+            except cm.ContextError:
+                bounded = None
+            if bounded is not None:
+                return bounded, {
+                    "kind": "tool_outputs_archived",
+                    "before_bytes": cm.size(messages),
+                    "after_bytes": cm.size(bounded),
+                    "summary_calls": 0,
+                }
             if not self._busy():
                 self.start(messages, extra_messages=extra_messages, budget=budget)
             self.wait(self.hard_wait_seconds)
-            candidate, completed = self._apply_if_ready(messages)
-            if cm.paired(candidate) and cm.message_cost(candidate) <= budget:
-                return candidate, completed
+            candidate, completed = self._apply_if_ready(messages, budget)
+            if cm.paired(candidate):
+                try:
+                    # A timed-out fork still owns its immutable source prefix.
+                    current = self._read_result() if self._busy() else None
+                    keep = current.get("prefix_length", 0) if current else 0
+                    candidate = cm.fit_tool_outputs(candidate, budget, start_index=keep)
+                except cm.ContextError:
+                    pass
+                else:
+                    return candidate, completed
             raise cm.ContextError(
                 "Compaction pending or insufficient; hard decision budget preserved"
             )
@@ -152,7 +175,7 @@ class ForkCompactor:
         """Shutdown/recovery publication only: never start a fork or a model call."""
         if not cm.paired(messages):
             raise cm.ContextError("Unsafe tool call/result boundary")
-        candidate, record = self._apply_if_ready(messages)
+        candidate, record = self._apply_if_ready(messages, self._budget(extra_messages))
         if (
             record
             and record.get("kind") == "applied"
@@ -256,8 +279,13 @@ class ForkCompactor:
         while rounds:
             tail = [message for group in rounds for message in group]
             candidate = first + [notice] + (tail[1:] if first and tail[:1] == first else tail)
-            if cm.paired(candidate) and cm.message_cost(candidate) <= budget:
-                return candidate
+            if cm.paired(candidate):
+                try:
+                    candidate = cm.fit_tool_outputs(candidate, budget)
+                except cm.ContextError:
+                    pass
+                else:
+                    return candidate
             if len(rounds) == 1:
                 break  # Never silently discard the newest unseen tool batch.
             rounds.pop(0)
@@ -309,7 +337,7 @@ class ForkCompactor:
             result["after_bytes"] = cm.size(result["replacement"])
         cm.atomic(self.result_path, json.dumps(result, ensure_ascii=False))
 
-    def _apply_if_ready(self, messages):
+    def _apply_if_ready(self, messages, budget=None):
         result = self._read_result()
         if not result:
             return messages, None
@@ -317,34 +345,36 @@ class ForkCompactor:
             self._last_after_bytes = result.get("after_bytes", 0)
             return messages, None
         valid = result.get("version") == 2 and result.get("epoch") == self._epoch()
-        replacement = result.get("replacement")
+        active = result.get("publication", result)
+        if not isinstance(active, dict):
+            raise cm.ContextError("Invalid bounded publication state")
+        replacement = active.get("replacement")
         if (
             valid
             and isinstance(replacement, list)
-            and digest(replacement) == result.get("replacement_sha256")
+            and digest(replacement) == active.get("replacement_sha256")
             and len(messages) >= len(replacement)
-            and digest(messages[: len(replacement)]) == result["replacement_sha256"]
+            and digest(messages[: len(replacement)]) == active["replacement_sha256"]
         ):
-            self._last_after_bytes = result.get("after_bytes", 0)
-            # Publication is acknowledged only once the actual checkpoint on disk agrees.
+            self._last_after_bytes = active.get("after_bytes", 0)
             checkpoint = pathlib.Path("checkpoint.json")
             if checkpoint.exists():
                 saved = json.loads(checkpoint.read_text())
                 if (
                     len(saved) >= len(replacement)
-                    and digest(saved[: len(replacement)]) == result["replacement_sha256"]
+                    and digest(saved[: len(replacement)]) == active["replacement_sha256"]
                 ):
                     cm.atomic(
                         self.result_path,
                         json.dumps({**result, "applied": True}, ensure_ascii=False),
                     )
             return messages, None
-        count = result.get("prefix_length")
+        count = active.get("prefix_length")
         matches = (
             valid
             and type(count) is int
             and 0 <= count <= len(messages)
-            and digest(messages[:count]) == result.get("prefix_sha256")
+            and digest(messages[:count]) == active.get("prefix_sha256")
         )
         if not matches:
             cm.archive(result, "rejected-compaction-result")
@@ -354,19 +384,16 @@ class ForkCompactor:
             )
             return messages, {"kind": "apply_skipped", "reason": "source_identity_mismatch"}
         try:
-            archived = json.loads(pathlib.Path(result["source"]).read_text())
+            archived = json.loads(pathlib.Path(active["source"]).read_text())
         except (KeyError, OSError, ValueError) as error:
             raise cm.ContextError("Compaction source archive missing or invalid") from error
-        if digest(archived) != result["prefix_sha256"]:
+        if digest(archived) != active["prefix_sha256"]:
             raise cm.ContextError("Compaction source archive changed")
-        if result.get("status") == "running":
+        budget = self._budget() if budget is None else budget
+        if active.get("status") == "running":
             if self._busy():
                 return messages, None
-            # A previous process may have dispatched a model call. Never replay it blindly.
-            snapshot = json.loads(pathlib.Path(result["source"]).read_text())
-            if digest(snapshot) != result["prefix_sha256"]:
-                raise cm.ContextError("Compaction source archive changed")
-            replacement = self._fallback(snapshot, result["source"], self._budget())
+            replacement = self._fallback(archived, active["source"], budget)
             result.update(
                 status="fallback",
                 strategy="interrupted",
@@ -375,24 +402,45 @@ class ForkCompactor:
                 after_bytes=cm.size(replacement),
             )
             cm.atomic(self.result_path, json.dumps(result, ensure_ascii=False))
-        if result.get("status") == "blocked":
+            active = result
+        if active.get("status") == "blocked":
             return messages, {"kind": "blocked", "reason": "persisted_compaction_failure"}
-        replacement = result.get("replacement")
+        replacement = active.get("replacement")
         if (
             not isinstance(replacement, list)
-            or digest(replacement) != result.get("replacement_sha256")
+            or digest(replacement) != active.get("replacement_sha256")
             or not cm.paired(replacement)
         ):
             raise cm.ContextError("Invalid paired compaction replacement")
         candidate = replacement + messages[count:]
         if not cm.paired(candidate):
             raise cm.ContextError("Compaction would orphan tool results")
-        self._last_after_bytes = result["after_bytes"]
+        budget = self._budget() if budget is None else budget
+        if cm.message_cost(candidate) > budget:
+            fitted = cm.fit_tool_outputs(candidate, budget)
+            # The proposal covers the exact current prefix, including its new tail.
+            # Persist before checkpoint publication so either side of a crash replays
+            # this representation once, without another summary or duplicated calls.
+            publication = {
+                "prefix_length": len(messages),
+                "prefix_sha256": digest(messages),
+                "source": cm.archive(messages, "snapshot"),
+                "status": "ready",
+                "replacement": fitted,
+                "replacement_sha256": digest(fitted),
+                "after_bytes": cm.size(fitted),
+                "strategy": "bounded_merge",
+            }
+            result["publication"] = publication
+            result["after_bytes"] = publication["after_bytes"]
+            cm.atomic(self.result_path, json.dumps(result, ensure_ascii=False))
+            candidate, active = fitted, publication
+        self._last_after_bytes = cm.size(candidate)
         return candidate, {
             "kind": "applied",
             "fork_id": result["fork_id"],
-            "status": result["status"],
-            "strategy": result["strategy"],
+            "status": active["status"],
+            "strategy": active["strategy"],
             "before_bytes": cm.size(messages),
             "after_bytes": cm.size(candidate),
         }

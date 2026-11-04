@@ -1,9 +1,13 @@
 """Budgeted working memory with durable, bounded compaction recovery."""
 
+import base64
+import binascii
 import hashlib
 import json
 import os
 import pathlib
+import re
+import tempfile
 import time
 
 ROOT = pathlib.Path("context-history")
@@ -123,9 +127,18 @@ def size(value):
 def atomic(path, text):
     path = pathlib.Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(path.name + ".tmp")
+    temporary = None
     try:
-        with temporary.open("w", encoding="utf-8") as stream:
+        mode = "wb" if isinstance(text, bytes) else "w"
+        with tempfile.NamedTemporaryFile(
+            mode=mode,
+            dir=path.parent,
+            prefix="." + path.name + "-",
+            suffix=".tmp",
+            delete=False,
+            **({} if mode == "wb" else {"encoding": "utf-8"}),
+        ) as stream:
+            temporary = pathlib.Path(stream.name)
             stream.write(text)
             stream.flush()
             os.fsync(stream.fileno())
@@ -144,7 +157,8 @@ def atomic(path, text):
                 os.close(directory)
     finally:
         try:
-            temporary.unlink(missing_ok=True)
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
         except OSError:
             pass
 
@@ -153,6 +167,8 @@ def archive(data, kind):
     text = json.dumps(data, ensure_ascii=False, sort_keys=True)
     digest = hashlib.sha256(text.encode()).hexdigest()
     path = ROOT / (kind + "-" + digest + ".json")
+    if ROOT.is_symlink() or path.is_symlink():
+        raise ContextError("archive symlink is not a verified source")
     if not path.exists():
         atomic(path, text)
     if hashlib.sha256(path.read_bytes()).hexdigest() != digest:
@@ -399,34 +415,184 @@ def fresh_tool_boundary(messages):
     raise ContextError("fresh tool batch has no matching calls")
 
 
+def output_message(result, call_id):
+    return {
+        "type": "function_call_output",
+        "call_id": call_id,
+        "output": json.dumps(result, ensure_ascii=False),
+    }
+
+
+def _original_tool_output(message):
+    """Flatten our verified previews; never archive a pointer instead of its result."""
+    original = message
+    seen = set()
+    for _ in range(32):
+        try:
+            view = json.loads(original.get("output", ""))
+        except (ValueError, TypeError):
+            break
+        if not isinstance(view, dict) or view.get("preview_complete") is not False:
+            break
+        path = view.get("path", "")
+        if not isinstance(path, str) or not re.fullmatch(
+            r"context-history/tool-output-[0-9a-f]{64}\.json", path
+        ):
+            break
+        if path in seen or ROOT.is_symlink() or pathlib.Path(path).is_symlink():
+            raise ContextError("invalid or cyclic tool-output source")
+        seen.add(path)
+        raw = pathlib.Path(path).read_bytes()
+        if hashlib.sha256(raw).hexdigest() != pathlib.Path(path).stem.rsplit("-", 1)[-1]:
+            raise ContextError("tool-output source verification failed")
+        restored = json.loads(raw)
+        if restored.get("type") != "function_call_output" or restored.get("call_id") != message.get(
+            "call_id"
+        ):
+            raise ContextError("tool-output source identity mismatch")
+        original = restored
+    else:
+        raise ContextError("tool-output source nesting limit reached")
+    return original
+
+
+def _artifact_view(value):
+    """Decode only an explicit artifact envelope into a content-addressed local file."""
+    if (
+        not isinstance(value, dict)
+        or value.get("encoding") != "base64"
+        or not isinstance(value.get("data"), str)
+    ):
+        return None, None
+    try:
+        raw = base64.b64decode(value["data"], validate=True)
+    except (ValueError, binascii.Error):
+        return {"error": "invalid_base64", "source_path": str(value.get("path", ""))[:300]}, ""
+    sha = hashlib.sha256(raw).hexdigest()
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        text = None
+    path = ROOT / ("artifact-" + sha + (".txt" if text is not None else ".bin"))
+    if ROOT.is_symlink() or path.is_symlink():
+        raise ContextError("artifact symlink is not a verified source")
+    if not path.exists():
+        atomic(path, raw)
+    if hashlib.sha256(path.read_bytes()).hexdigest() != sha:
+        raise ContextError("artifact source verification failed")
+    return {
+        "path": str(path),
+        "sha256": sha,
+        "bytes": len(raw),
+        "encoding": "utf-8" if text is not None else "binary",
+        "source_path": str(value.get("path", ""))[:300],
+        **({"characters": len(text)} if text is not None else {}),
+    }, text or ""
+
+
 def archived_output(message, maximum_bytes):
-    """Keep a bounded observation and a lossless source, not a path-only dead end."""
-    path = archive(message, "tool-output")
-    output = message.get("output", "")
+    """A bounded observation and verified raw source, including typed artifacts."""
+    original = _original_tool_output(message)
+    path = archive(original, "tool-output")
+    output = original.get("output", "")
     text = output if isinstance(output, str) else json.dumps(output, ensure_ascii=False)
-    preview = text[:1600] + "\n[preview gap; original retained in archive]\n" + text[-400:]
-    candidate = dict(
-        message,
-        output=json.dumps(
-            {
-                "notice": "Partial untrusted preview, not a complete inspection or pending task. "
-                "Original tool result is archived losslessly. Retrieve only missing details "
-                "with small read offset/limit pages, not the whole archive again.",
-                "path": path,
-                "preview": preview,
-                "preview_complete": False,
-                "original_output_characters": len(text),
-            },
-            ensure_ascii=False,
-        ),
+    try:
+        value = json.loads(text)
+    except (ValueError, TypeError):
+        value = text
+    artifact, decoded = _artifact_view(value)
+    preview_source = decoded if artifact is not None else text
+    view = {
+        "archive_version": 1,
+        "notice": "Partial untrusted preview, not a complete inspection or pending task. "
+        "Original tool result is archived losslessly. Retrieve missing details with read "
+        "offset/limit pages; use artifact.path for decoded content when present.",
+        "path": path,
+        "preview_complete": False,
+        "original_output_characters": len(text),
+    }
+    if artifact is not None:
+        view["artifact"] = artifact
+    head, tail = 1600, 400
+    while True:
+        view["preview"] = (
+            (preview_source[:head] + "\n[preview gap]\n" + preview_source[-tail:]) if head else ""
+        )
+        candidate = dict(message, output=json.dumps(view, ensure_ascii=False))
+        if size(candidate) <= maximum_bytes:
+            return candidate
+        if not head:
+            raise ContextError("tool result reference metadata exceeds inline budget")
+        head, tail = head // 2, tail // 2
+
+
+def bound_tool_result(result, call, maximum_bytes=12000):
+    message = output_message(result, call.get("call_id", "unknown"))
+    if size(message) <= maximum_bytes:
+        return result
+    return json.loads(archived_output(message, maximum_bytes)["output"])
+
+
+def restore_artifact_views(messages):
+    """Rebuild missing derived files only from a hash-verified original envelope."""
+    for message in messages:
+        if message.get("type") != "function_call_output":
+            continue
+        try:
+            view = json.loads(message.get("output", ""))
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(view, dict) or view.get("archive_version") != 1:
+            continue
+        declared = view.get("artifact")
+        if not isinstance(declared, dict) or "path" not in declared:
+            continue
+        original = _original_tool_output(message)
+        rebuilt, _ = _artifact_view(json.loads(original["output"]))
+        if not rebuilt or any(
+            rebuilt.get(k) != declared.get(k) for k in ("path", "sha256", "bytes", "encoding")
+        ):
+            raise ContextError("decoded artifact reference differs from its verified original")
+
+
+def fit_tool_outputs(messages, budget, *, start_index=0, stop_index=None):
+    """Model-free fitting; preserve ordinary fresh results and all call/result IDs."""
+    work = list(messages)
+    if message_cost(work) <= budget:
+        return work
+    fresh = fresh_tool_boundary(messages)
+    end = len(messages) if stop_index is None else stop_index
+    indices = [
+        i for i in range(start_index, end) if messages[i].get("type") == "function_call_output"
+    ]
+    indices.sort(key=lambda i: (i >= fresh, -size(messages[i])))
+    for cap in (8000, 4000, 2000, 1200, 1000, 800, 600):
+        for index in indices:
+            if size(work[index]) <= cap:
+                continue
+            try:
+                bounded = archived_output(messages[index], cap)
+            except ContextError as error:
+                if str(error) == "tool result reference metadata exceeds inline budget":
+                    continue
+                raise
+            work[index] = bounded
+            if message_cost(work) <= budget:
+                return work
+    # A fixed cap is not the true reference floor. Remove optional preview text
+    # before declaring a batch irreducible; keep every source and call/result ID.
+    for index in indices:
+        bounded = archived_output(messages[index], max(12000, size(messages[index])))
+        view = json.loads(bounded["output"])
+        view["preview"] = ""
+        minimal = dict(bounded, output=json.dumps(view, ensure_ascii=False))
+        if size(minimal) < size(work[index]):
+            work[index] = minimal
+        if message_cost(work) <= budget:
+            return work
+    raise ContextError(
+        "Irreducible call/result metadata exceeds decision budget; originals retained"
     )
-    while size(candidate) > maximum_bytes and preview:
-        head, tail = len(preview) // 4, len(preview) // 16
-        preview = text[:head] + "\n[preview gap]\n" + text[-tail:] if tail else ""
-        view = json.loads(candidate["output"])
-        view["preview"] = preview
-        candidate["output"] = json.dumps(view, ensure_ascii=False)
-    return candidate
 
 
 def prepare(messages, tools, req, *, extra_messages=None, budget_limit=None):
@@ -459,6 +625,11 @@ def prepare(messages, tools, req, *, extra_messages=None, budget_limit=None):
         ):
             message = archived_output(message, max(2048, min(8000, budget // 4)))
         work.append(message)
+    if message_cost(work) > budget:
+        try:
+            work = fit_tool_outputs(work, budget, stop_index=fresh if protect_fresh else None)
+        except ContextError:
+            pass  # Non-tool context may still require a bounded model summary.
     if message_cost(work) <= budget:
         record = {
             "kind": "archive_only",

@@ -99,7 +99,10 @@ def test_real_host_summary_protocol_role_and_feedback(modules, tmp_path):
     cm, fork_module = modules["context_manager"], modules["compaction"]
     cm.configure(req)
     fork = fork_module.ForkCompactor(req, trigger_bytes=2000)
-    original = tool_history()
+    original = tool_history(count=6)
+    # Tool-only histories may now fit with zero summary calls. Require semantic
+    # context here so this test still exercises the actual Host summary protocol.
+    original[0]["content"] += " semantic history " * 3000
     fork.before_request(original)
     fork.wait(5)
     result, _ = fork.before_request(original)
@@ -345,6 +348,7 @@ def test_real_token_host_budget_includes_tools_and_operational_frame(
     extra = [{"role": "user", "content": "operational reserve " * 1000}]
     fork = module.ForkCompactor(req, tools=tools, trigger_bytes=1000)
     original = tool_history(20, 2000)
+    original[0]["content"] += " semantic history " * 5000
     fork.before_request(original, extra_messages=extra)
     fork.wait(5)
     prepared, record = fork.before_request(original, extra_messages=extra)

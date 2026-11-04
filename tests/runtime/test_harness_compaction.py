@@ -10,6 +10,7 @@ import os
 import pathlib
 import sys
 import tempfile
+import threading
 import time
 
 import pytest
@@ -30,6 +31,113 @@ import spill
 
 SECTIONS = compaction.SECTION_TITLES
 GOOD_SUMMARY = "\n".join(f"## {title}\n- point" for title in SECTIONS)
+
+
+@pytest.mark.parametrize("shutdown", [False, True])
+def test_ready_fork_bounds_new_tail_and_replays_publication_without_model(shutdown):
+    with workspace():
+        messages = history(rounds=6, filler=1800)
+        gateway = Gateway()
+        fork = compaction.ForkCompactor(gateway)
+        fork.start(messages)
+        fork.wait(5)
+        calls = len(gateway.calls)
+        messages += tool_pair("new-artifact", json.dumps({"data": "x" * 200000}))
+        original = json.loads(json.dumps(messages))
+        cm.atomic("checkpoint.json", json.dumps(messages))
+        method = fork.apply_ready if shutdown else fork.before_request
+        candidate, record = method(messages)
+        assert record["kind"] == "applied" and cm.paired(candidate)
+        assert cm.message_cost(candidate) <= cm.decision_budget([])
+        assert messages == original
+        # Crash before checkpoint publication: replay precisely the saved proposal.
+        restarted = compaction.ForkCompactor(gateway)
+        again, _ = restarted.before_request(messages)
+        assert again == candidate
+        cm.atomic("checkpoint.json", json.dumps(candidate))
+        # Crash after checkpoint publication, before acknowledgment: never reapply tail.
+        final = compaction.ForkCompactor(gateway)
+        acknowledged, _ = final.apply_ready(candidate)
+        assert acknowledged == candidate
+        assert len(gateway.calls) == calls
+        assert json.loads(pathlib.Path("compaction-result.json").read_text())["applied"] is True
+
+
+def test_fallback_bounds_an_oversized_fresh_batch_without_erasing_it():
+    with workspace():
+        messages = history(rounds=4, filler=500)
+        messages += tool_pair("fresh", json.dumps(["x" * 100000]))
+        source = cm.archive(messages, "snapshot")
+        gateway = Gateway(fail=True)
+        fork = compaction.ForkCompactor(gateway)
+        candidate = fork._fallback(messages, source, 20000)
+        assert cm.paired(candidate) and cm.message_cost(candidate) <= 20000
+        assert any(x.get("call_id") == "fresh" for x in candidate)
+        assert any(
+            x.get("call_id") == "fresh" and x.get("type") == "function_call_output"
+            for x in candidate
+        )
+        assert not gateway.calls
+
+
+def test_hard_wait_timeout_keeps_running_prefix_identity(monkeypatch):
+    with workspace():
+        monkeypatch.setattr(cm, "WINDOW", 40000)
+        monkeypatch.setattr(cm, "RESERVE", 10000)
+        started, release = threading.Event(), threading.Event()
+        calls = []
+
+        def provider(*args, **kwargs):
+            calls.append(args)
+            started.set()
+            assert release.wait(5)
+            return completed(GOOD_SUMMARY)
+
+        original = history(rounds=4, filler=5000)
+        fork = compaction.ForkCompactor(Gateway(), hard_wait_seconds=0)
+        # Hold the real fork thread at publication; summary quality is a separate gate.
+        monkeypatch.setattr(fork, "_run", provider)
+        fork.start(original)
+        assert started.wait(2)
+        prefix_hash = compaction.digest(original)
+        monkeypatch.setattr(cm, "WINDOW", 20000)
+        try:
+            with pytest.raises(cm.ContextError, match="pending|insufficient"):
+                fork.before_request(original)
+            assert compaction.digest(original) == prefix_hash
+            assert len(calls) == 1
+        finally:
+            release.set()
+            fork.wait(5)
+
+
+def test_interrupted_fork_fallback_uses_current_operational_reserve(monkeypatch):
+    with workspace():
+        monkeypatch.setattr(cm, "WINDOW", 15000)
+        monkeypatch.setattr(cm, "RESERVE", 5000)
+        original = [{"role": "user", "content": "goal"}]
+        for i in range(6):
+            original += [{"role": "user", "content": "u" * 900}] + tool_pair(str(i), "r" * 100)
+        fork = compaction.ForkCompactor(Gateway())
+        cm.atomic(
+            "compaction-result.json",
+            json.dumps(
+                {
+                    "version": 2,
+                    "epoch": fork._epoch(),
+                    "fork_id": "interrupted",
+                    "status": "running",
+                    "applied": False,
+                    "prefix_length": len(original),
+                    "prefix_sha256": compaction.digest(original),
+                    "source": cm.archive(original, "snapshot"),
+                }
+            ),
+        )
+        extra = [{"role": "user", "content": "o" * 7000}]
+        candidate, record = fork.before_request(original, extra_messages=extra)
+        assert record["kind"] == "applied" and cm.paired(candidate)
+        assert cm.message_cost(candidate) <= fork._budget(extra)
 
 
 @contextlib.contextmanager

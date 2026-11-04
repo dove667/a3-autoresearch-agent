@@ -14,7 +14,6 @@ import compaction
 import context_manager
 import memory_state
 import recall as recall_tools
-import spill as spill_tools
 
 # The derived harness ships without the generated extension modules. Their
 # absence must not stop the loop: lookups below tolerate empty ROUTES/TOOLS.
@@ -146,6 +145,12 @@ def tool(name, a):
         if name == "list":
             return [str(x) for x in p.iterdir()][:300]
         if a.get("fields") is not None:
+            if p.stat().st_size > 1024 * 1024:
+                return {
+                    "error": "field_selection_source_too_large",
+                    "path": str(p),
+                    "notice": "Use bounded offset/limit text pages; no JSON fields were read.",
+                }
             return select_json_fields(p.read_bytes(), a["fields"], str(p))
         return memory_state.read_page(p, a.get("offset", 0), a.get("limit", 4000))
     if name == "wait":
@@ -158,21 +163,49 @@ def dispatch_tool_call(call):
     arguments = {}
     try:
         arguments = json.loads(call["arguments"])
-        result = tool(call["name"], arguments)
-        if call["name"] == "read":
-            memory_state.record_page(call["call_id"], result)
-        # First-level compression: an oversized tool result never enters history
-        # whole; the model receives a bounded head plus the stored path. The
-        # receipt above still records the original page, not the spill reference.
-        if isinstance(result, str):
-            return spill_tools.maybe_spill(result, label=call.get("name") or "result")
-        return result
+        return tool(call["name"], arguments)
     except FileNotFoundError:
         return {"error": "file_not_found", "path": arguments.get("path")}
     except PermissionError:
         return {"error": "permission_denied", "path": arguments.get("path")}
     except Exception as error:  # noqa: BLE001 - keep private errors out of tool results
         return {"error": "tool_execution_failed", "error_type": type(error).__name__}
+
+
+class ToolResultPersistenceError(RuntimeError):
+    def __init__(self, phase):
+        super().__init__(
+            "Executed tool result could not be published; inspect journal, never replay blindly"
+        )
+        self.phase = phase
+
+
+def save_tool_result(call, result, journal, messages):
+    """Persist the executed outcome before optional receipts or presentation work."""
+    phase = "raw_result_journal"
+    try:
+        journal["results"][call["call_id"]] = result
+        context_manager.atomic("pending-calls.json", json.dumps(journal, ensure_ascii=False))
+        phase = "result_receipt"
+        if call["name"] == "read":
+            memory_state.record_page(call["call_id"], result)
+        phase = "result_archival"
+        bounded = context_manager.bound_tool_result(result, call)
+        journal["results"][call["call_id"]] = bounded
+        context_manager.atomic("pending-calls.json", json.dumps(journal, ensure_ascii=False))
+        log(
+            {
+                "tool": call["name"],
+                "call_id": call["call_id"],
+                "arguments": call.get("arguments", "{}"),
+                "result": bounded,
+            }
+        )
+        value = context_manager.output_message(bounded, call["call_id"])
+        messages.append(value)
+        recall_tools.append_history(value)
+    except Exception as error:
+        raise ToolResultPersistenceError(phase) from error
 
 
 def spec(name, props, required):
@@ -365,11 +398,15 @@ def recover_journal(messages):
                 "instruction": "Do not replay blindly; inspect existing operation status.",
             },
         )
+        if c.get("name") == "read":
+            memory_state.record_page(c["call_id"], value)
         restored.append(
             {
                 "type": "function_call_output",
                 "call_id": c["call_id"],
-                "output": json.dumps(value, ensure_ascii=False),
+                "output": json.dumps(
+                    context_manager.bound_tool_result(value, c), ensure_ascii=False
+                ),
             }
         )
     checkpoint(restored)
@@ -389,6 +426,7 @@ else:
 try:
     if pathlib.Path("checkpoint.json").exists():
         messages = recover_journal(messages)
+    context_manager.restore_artifact_views(messages)
     recall_tools.ensure_history(messages)
     work_assignments.install_input_skills()
 except Exception as e:  # noqa: BLE001 - preserve recoverable state on unexpected failures
@@ -396,8 +434,10 @@ except Exception as e:  # noqa: BLE001 - preserve recoverable state on unexpecte
     sys.exit(1)
 analyzer = analyzer_client.start(req, memory_state.signals)
 empty = 0
+loop_phase = "decision_prepare"
 while True:
     try:
+        loop_phase = "decision_prepare"
         if work_assignments.should_retire(req, WORKER_TASK):
             checkpoint(messages)
             log({"role_transition": "former_main_saved_and_exiting"})
@@ -421,7 +461,9 @@ while True:
         operational_data["independent_analysis"] = analyzer.view()
         operational_data["assignments"] = work_assignments.view()
         if WORKER_TASK is not None:
-            operational_data["worker_delivery"] = work_assignments.worker_delivery_status(WORKER_TASK)
+            operational_data["worker_delivery"] = work_assignments.worker_delivery_status(
+                WORKER_TASK
+            )
         operational = {
             "role": "user",
             "content": json.dumps(operational_data, ensure_ascii=False),
@@ -450,6 +492,7 @@ while True:
         except Exception:  # noqa: BLE001 — optional telemetry never blocks research
             log({"optional_telemetry": "unavailable"})
         log({"operational_view": state_reference})
+        loop_phase = "model_request"
         resp = req("POST", "/v1/responses", request)
         if resp.get("status") == "completed":
             memory_state.mark_delivered(messages)
@@ -472,24 +515,11 @@ while True:
         messages.extend(out)
         recall_tools.append_history_many(out)
         for c in calls:
+            loop_phase = "tool_execution"
             result = dispatch_tool_call(c)
-            journal["results"][c["call_id"]] = result
-            context_manager.atomic("pending-calls.json", json.dumps(journal, ensure_ascii=False))
-            log(
-                {
-                    "tool": c["name"],
-                    "call_id": c["call_id"],
-                    "arguments": c["arguments"],
-                    "result": result,
-                }
-            )
-            output = {
-                "type": "function_call_output",
-                "call_id": c["call_id"],
-                "output": json.dumps(result, ensure_ascii=False),
-            }
-            messages.append(output)
-            recall_tools.append_history(output)
+            loop_phase = "result_persistence"
+            save_tool_result(c, result, journal, messages)
+        loop_phase = "checkpoint_publication"
         checkpoint(messages)
         context_manager.atomic("pending-calls.json", "null")
         save_manifest()
@@ -516,7 +546,19 @@ while True:
                 }
             )
     except Exception as e:  # noqa: BLE001 - preserve recoverable state on unexpected failures
-        log({"loop_error": type(e).__name__, "state": "checkpoint and journal retained"})
+        failure = {
+            "loop_error": type(e).__name__,
+            "phase": getattr(e, "phase", loop_phase),
+            "state": "checkpoint and journal retained",
+            "time": time.time(),
+        }
+        if isinstance(e, context_manager.ContextError):
+            failure["context_error"] = str(e)[:500]
+        log(failure)
+        try:
+            context_manager.atomic("loop-failure.json", json.dumps(failure))
+        except OSError:
+            log({"failure_record_persistence": "unavailable"})
         break
 
 # Let a running fork finish so the next process can apply its result, and apply

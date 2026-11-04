@@ -179,10 +179,22 @@ def _verify_control_sources(messages):
                     r"context-history/tool-output-[0-9a-f]{64}\.json", reference
                 ):
                     references[reference] = False
+                artifact = preview.get("artifact")
+                if isinstance(artifact, dict) and "path" in artifact:
+                    path, sha = artifact.get("path"), artifact.get("sha256")
+                    if (
+                        not isinstance(path, str)
+                        or not re.fullmatch(
+                            r"context-history/artifact-[0-9a-f]{64}\.(?:txt|bin)", path
+                        )
+                        or pathlib.Path(path).stem.rsplit("-", 1)[-1] != sha
+                    ):
+                        raise ValueError("Invalid decoded artifact reference")
+                    references[path] = False
             if isinstance(preview, dict) and preview.get("spilled") is True:
                 reference = preview.get("path")
                 if not isinstance(reference, str) or not re.fullmatch(
-                    r"\.autorun-spill/[^/]+-[0-9a-f]{16}\.txt", reference
+                    r"\.autorun-spill/[^/]+-(?:[0-9a-f]{16}|[0-9a-f]{64})\.txt", reference
                 ):
                     raise ValueError("Invalid original spill reference; explicit recovery required")
                 references[reference] = False

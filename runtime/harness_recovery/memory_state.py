@@ -1,7 +1,9 @@
 """Durable operational receipts, distinct from semantic or scientific acceptance."""
 
+import codecs
 import hashlib
 import json
+import os
 import pathlib
 import time
 
@@ -45,24 +47,62 @@ def merge_ranges(ranges):
 def read_page(path, offset=0, limit=4000):
     if type(offset) is not int or offset < 0 or type(limit) is not int or not 1 <= limit <= 8000:
         raise ValueError("Page offset must be nonnegative; limit must be 1..8000 characters")
-    raw = pathlib.Path(path).read_bytes()
-    text = raw.decode("utf-8")
-    end = min(len(text), offset + limit)
-    start = min(offset, len(text))
+    digest = hashlib.sha256()
+    decoder = codecs.getincrementaldecoder("utf-8")()
+    total, byte_count, pieces, binary = 0, 0, [], False
+    with pathlib.Path(path).open("rb") as stream:
+        before = os.fstat(stream.fileno())
+        while True:
+            chunk = stream.read(65536)
+            digest.update(chunk)
+            byte_count += len(chunk)
+            if not binary:
+                try:
+                    text = decoder.decode(chunk, final=not chunk)
+                except UnicodeDecodeError:
+                    binary, pieces = True, []
+                else:
+                    left, right = max(0, offset - total), min(len(text), offset + limit - total)
+                    if right > left:
+                        pieces.append(text[left:right])
+                    total += len(text)
+            if not chunk:
+                break
+        after = os.fstat(stream.fileno())
+    identity = lambda st: (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns)
+    if identity(before) != identity(after):
+        raise ValueError("Source changed during paged read; retry with its current hash")
+    if binary:
+        return {
+            "path": str(path),
+            "sha256": digest.hexdigest(),
+            "bytes": byte_count,
+            "encoding": "binary",
+            "notice": "Binary artifact; not UTF-8 text. Use an appropriate media or bounded processing tool.",
+        }
+    end = min(total, offset + limit)
+    start = min(offset, total)
     page = {
         "path": str(path),
-        "sha256": hashlib.sha256(raw).hexdigest(),
+        "sha256": digest.hexdigest(),
         "unit": "characters",
         "offset": start,
         "end": end,
-        "total": len(text),
-        "eof": end == len(text),
-        "content": text[start:end],
+        "total": total,
+        "eof": end == total,
+        "content": "".join(pieces),
     }
-    while context_manager.size(page) > 10000 and page["content"]:
+
+    # Include both JSON encodings and room for the receipt added after this read.
+    def delivered_size():
+        return context_manager.size(
+            context_manager.output_message({**page, "receipt_id": "r" * 128}, "c" * 128)
+        )
+
+    while delivered_size() > 10000 and page["content"]:
         page["content"] = page["content"][: len(page["content"]) // 2]
         page["end"] = start + len(page["content"])
-        page["eof"] = page["end"] == len(text)
+        page["eof"] = page["end"] == total
     return page
 
 
@@ -87,6 +127,14 @@ def record_page(call_id, page):
             "coverage_incomplete": False,
         },
     )
+    payload_sha = hashlib.sha256(
+        json.dumps(page, sort_keys=True, ensure_ascii=False).encode()
+    ).hexdigest()
+    prior = entry["receipts"].get(call_id)
+    if prior is not None:
+        if prior["payload_sha256"] != payload_sha:
+            raise ValueError("Read receipt call identity changed; preserve and inspect it")
+        return  # A recovered read is not a second execution or a reopened delivery.
     counters = state["counters"]
     counters["read_calls"] = counters.get("read_calls", 0) + 1
     if any(a <= page["offset"] and b >= page["end"] for a, b in entry["retrieved"]):
@@ -99,9 +147,7 @@ def record_page(call_id, page):
     entry["coverage_incomplete"] = entry.get("coverage_incomplete", False) or len(merged) > 64
     entry["retrieved"] = merged[-64:]
     entry["receipts"][call_id] = {
-        "payload_sha256": hashlib.sha256(
-            json.dumps(page, sort_keys=True, ensure_ascii=False).encode()
-        ).hexdigest(),
+        "payload_sha256": payload_sha,
         "range": [page["offset"], page["end"]],
         "delivered": False,
     }

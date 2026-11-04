@@ -251,8 +251,8 @@ def test_manifest_flush_failure_does_not_publish_new_checkpoint(tmp_path, monkey
     fsync = os.fsync
 
     def fail_manifest_flush(descriptor):
-        temporary = tmp_path / "resume.json.tmp"
-        if temporary.exists() and temporary.stat().st_ino == os.fstat(descriptor).st_ino:
+        temporaries = list(tmp_path.glob(".resume.json-*.tmp"))
+        if any(p.stat().st_ino == os.fstat(descriptor).st_ino for p in temporaries):
             raise OSError("controlled manifest flush failure")
         return fsync(descriptor)
 

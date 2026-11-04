@@ -26,6 +26,22 @@ trigger or target combinations fail configuration rather than silently increasin
 limits. UTF-8 byte counts remain separately recorded for files and working memory.
 
 Large tool outputs are content-addressed and replaced by retrievable references.
+The ingress bound covers all JSON result types and measures the complete serialized
+call-output envelope, including JSON escaping and receipt metadata. The default
+per-result bound is 12,000 UTF-8 bytes; the whole request must still satisfy its
+token budget. Fresh results remain verbatim when they fit. Oversized results retain
+their call ID, a verified original envelope and an explicitly partial observation.
+Parallel batches are fitted as a whole, including their minimal reference metadata.
+An irreducible batch fails explicitly without dropping calls or increasing limits.
+
+Explicit Base64 artifact envelopes also produce a verified content-addressed local
+file. UTF-8 content can be read using character pages; binary content returns type,
+byte length and hash metadata rather than a generic text-decoding error. Untrusted
+upstream filenames never select the local destination. Invalid Base64 is reported,
+not interpreted. Original encoded envelopes remain available. Missing derived files
+can be rebuilt from verified original bytes on recovery; corruption is retained and
+reported instead of silently overwritten.
+
 The overlay **rechecks size after archival**. If that representation already fits,
 it saves an `archive_only` checkpoint without calling a summary model. When actual
 summarization is needed, recent tool calls/results stay paired; old details remain
@@ -157,11 +173,26 @@ reachability. Neither a process exit code nor a mock response proves those facts
 The optional overlay now returns normal text reads as bounded character-page objects:
 `path`, whole-file `sha256`, `offset`, `end`, `total`, `eof`, and `content`.
 Offsets refer to decoded characters, not UTF-8 bytes. Pages are bounded by actual
-serialized size. Optional top-level JSON field selection retains its existing
-contract. `operational-state.json` records retrieved ranges separately from exact
+serialized call-output size. Hashing and character extraction stream the source
+without loading the full file into memory; hashing still reads the full source.
+Optional top-level JSON field selection rejects sources above 1 MiB with a paging
+notice, before parsing the object. `operational-state.json` records retrieved ranges separately from exact
 page payloads included in a successful completed model request. Neither proves
 understanding. Sparse coverage is bounded with an explicit incompleteness marker;
 gaps are never merged into unread coverage. Views and receipts have finite caps.
+
+The executed raw result is journaled before optional receipt/preview work. An
+archival failure is a persistence failure, not a claim that the operation failed.
+Recovery republishes saved results without executing the tool again, reconciling
+read receipts idempotently. If the outcome was never durably recorded, the journal
+keeps an explicit unknown outcome requiring inspection. `loop-failure.json` records
+the failure stage and safe context-budget diagnostics; an exit code alone is not
+completion evidence. Atomic writers use unique temporary files and verify reused
+content-addressed sources.
+
+These checks cover directly referenced control sources and decoded dependencies.
+They do not continuously traverse every historical citation or establish semantic
+truth, scientific acceptance, fault-free upstream services or unlimited disk space.
 
 The `progress` tool records explicit Agent-authored open/waiting/closed items and
 workspace-relative evidence references; it does not write acceptance or decisions.

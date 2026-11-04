@@ -14,6 +14,7 @@ import hashlib
 import json
 import os
 import pathlib
+import re
 
 DEFAULT_SPILL_BYTES = 50_000
 HEAD_CHARS = 2000
@@ -48,14 +49,21 @@ def maybe_spill(text, *, max_bytes=None, directory=SPILL_DIR, label="result"):
     if not isinstance(text, str):
         return text
     limit = inline_limit(max_bytes)
-    if limit <= 0 or byte_length(text) <= limit:
+    if limit <= 0 or byte_length(json.dumps(text, ensure_ascii=False)) <= limit:
         return text
     root = pathlib.Path(directory)
     root.mkdir(parents=True, exist_ok=True)
     digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
-    path = root / f"{label}-{digest[:16]}.txt"
+    label = re.sub(r"[^A-Za-z0-9_.-]", "_", str(label))[:64] or "result"
+    path = root / f"{label}-{digest}.txt"
+    from context_manager import ContextError, atomic
+
+    if root.is_symlink() or path.is_symlink():
+        raise ContextError("spill source verification rejects symlinks")
     if not path.exists():
-        path.write_text(text, encoding="utf-8")
+        atomic(path, text)
+    if hashlib.sha256(path.read_bytes()).hexdigest() != digest:
+        raise ContextError("spill source corrupt; verification failed")
     payload = {
         "spilled": True,
         "path": str(path),
@@ -65,4 +73,9 @@ def maybe_spill(text, *, max_bytes=None, directory=SPILL_DIR, label="result"):
         "head_complete": False,
         "notice": NOTICE,
     }
+    while (
+        byte_length(json.dumps(json.dumps(payload, ensure_ascii=False), ensure_ascii=False)) > limit
+        and payload["head"]
+    ):
+        payload["head"] = payload["head"][: len(payload["head"]) // 2]
     return json.dumps(payload, ensure_ascii=False)
