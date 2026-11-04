@@ -142,3 +142,19 @@ Tests cover local processes and real Host routing against a scripted provider, n
 isolation, real-model quality or long-term scientific improvement. Publishing source does not
 load it into an active Harness; deployment requires separate operator authorization and a
 recorded safe update.
+
+## Fixed local skill evidence
+
+Generation and prepared consumption share the same fixed-skill evidence validation.
+The existing `synthetic-report-checker` may include explicitly listed `skills-evidence/`
+data, with matching `evidence_sha256` and `evidence_source_sha256` bound to the packaged
+`skill_tools.py:check_report` backend. Duplicate, missing, changed, unsafe or undeclared
+assets are rejected; a directory prefix does not authorize arbitrary evidence. Existing
+file/count/UTF-8/total-size limits apply. This metadata does not add an executable skill
+or prove that its evidence is scientifically valid.
+
+Known pre-creation validation failures return fixed safe codes such as
+`prepared_undeclared_file`, `prepared_skill_evidence`, `prepared_task_mismatch`,
+`prepared_context_receipt` or `prepared_control_files`. These checks run before the
+assignment reservation or session POST. Unrecognized failures still use a generic error;
+do not infer that creation failed from an arbitrary error or blindly retry an uncertain POST.

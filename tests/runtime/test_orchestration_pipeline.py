@@ -379,6 +379,22 @@ def test_real_policy_and_harness_worker_loops_route_collect_and_decide(pipeline,
         }
         if request.node.callspec.params["pipeline"] == "prepared" and role == "harness":
             task, files = assignments.worker_package(arguments, coordinator_session_id="main")
+            evidence_name = "skills-evidence/prepared-fixture.json"
+            files[evidence_name] = '{"synthetic":true}'
+            files["skills/index.json"] = json.dumps(
+                {
+                    "skills": [
+                        {
+                            "id": "synthetic-report-checker",
+                            "status": "local-function",
+                            "local_source": "skill_tools.py:check_report",
+                            "evidence": [evidence_name],
+                            "evidence_source_sha256": sha(files["skill_tools.py"]),
+                            "evidence_sha256": {evidence_name: sha(files[evidence_name])},
+                        }
+                    ]
+                }
+            )
             directory = Path("orchestration/results/preparer/research")
             directory.mkdir(parents=True)
             source = directory / "candidate.py"
@@ -428,6 +444,10 @@ def test_real_policy_and_harness_worker_loops_route_collect_and_decide(pipeline,
             )
         assert code == 0, (record["directory"] / "process-output.log").read_text()
         files = sandbox.launches[session]
+        if request.node.callspec.params["pipeline"] == "prepared" and role == "harness":
+            assert (
+                record["directory"] / "skills-evidence/prepared-fixture.json"
+            ).read_text() == '{"synthetic":true}'
         initial = json.loads(files["checkpoint.json"])
         assert len(initial) == 1 and OLD_MAIN not in initial[0]["content"]
         assert "checkpoint.json" not in json.loads(files["worker-task.json"])["source_hashes"]

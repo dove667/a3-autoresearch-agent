@@ -324,6 +324,48 @@ def assignment_contract(arguments):
     }
 
 
+def fixed_skill_evidence(files):
+    """Only the existing fixed backend's declared, hash-verified data assets."""
+    raw = files.get("skills/index.json")
+    if raw is None:
+        return set()
+    catalog = strict_package_json(raw)
+    entries = catalog.get("skills", []) if isinstance(catalog, dict) else None
+    if not isinstance(entries, list):
+        raise ValueError("Invalid fixed-skill evidence contract")  # noqa: TRY004 — stable safe validation code
+    selected = [
+        e for e in entries if isinstance(e, dict) and e.get("id") == "synthetic-report-checker"
+    ]
+    if len(selected) > 1:
+        raise ValueError("Invalid fixed-skill evidence contract")
+    if not selected:
+        return set()
+    entry = selected[0]
+    names, hashes = entry.get("evidence"), entry.get("evidence_sha256")
+    if (
+        entry.get("status") != "local-function"
+        or entry.get("local_source") != "skill_tools.py:check_report"
+        or entry.get("evidence_source_sha256") != digest(files["skill_tools.py"].encode())
+        or not isinstance(names, list)
+        or not 1 <= len(names) <= 16
+        or any(not isinstance(n, str) for n in names)
+        or len(set(names)) != len(names)
+        or not isinstance(hashes, dict)
+        or set(hashes) != set(names)
+    ):
+        raise ValueError("Invalid fixed-skill evidence contract")
+    for name in names:
+        if (
+            relative_path(name) != name
+            or "\\" in name
+            or not name.startswith(("skills/", "skills-evidence/"))
+            or not isinstance(files.get(name), str)
+            or hashes[name] != digest(files[name].encode())
+        ):
+            raise ValueError("Invalid fixed-skill evidence contract")
+    return set(names)
+
+
 def worker_package(arguments, *, coordinator_session_id=None):
     contract = assignment_contract(arguments)
     identifier, role = contract["id"], contract["role"]
@@ -407,6 +449,7 @@ def worker_package(arguments, *, coordinator_session_id=None):
                 raise ValueError("Reference source hash changed; reconcile before dispatch")
             entries.append(entry)
     files["skills/index.json"] = json.dumps({"version": 1, "skills": entries})
+    fixed_skill_evidence(files)
     if len(files) > 128 or sum(len(s.encode()) for s in files.values()) > 20 * 1024 * 1024:
         raise ValueError("Worker package exceeds existing Host upload bound")
     return task, files
@@ -600,15 +643,17 @@ def prepared_worker_package(state, arguments, coordinator):
     hashes = task["source_hashes"]
     if not isinstance(hashes, dict) or set(hashes) != sources:
         raise ValueError("Prepared source manifest differs from selected files")
+    skill_evidence = fixed_skill_evidence(files)
     size = 0
     for name, text in files.items():
         if not isinstance(text, str):
             raise TypeError("Prepared files must be UTF8 text")
         if name not in CORE_FILES and (relative_path(name) != name or "\\" in name):
             raise ValueError("Prepared files must have canonical relative names")
-        if name not in sources | {"worker-task.json", "checkpoint.json"} and not name.startswith(
-            "skills/"
-        ):
+        if name not in sources | skill_evidence | {
+            "worker-task.json",
+            "checkpoint.json",
+        } and not name.startswith("skills/"):
             raise ValueError("Undeclared prepared file")
         encoded = text.encode()
         size += len(encoded)

@@ -185,6 +185,26 @@ SAFE_VALIDATION_ERRORS = {
         ),
     },
     "delegate": {
+        "Undeclared prepared file": (
+            "prepared_undeclared_file",
+            "No session was created. Prepared files must be core/control/selected context or supported skill assets; inspect the frozen package and explicit skill evidence contract, not arbitrary extra files.",
+        ),
+        "Invalid fixed-skill evidence contract": (
+            "prepared_skill_evidence",
+            "No session was created. The fixed synthetic-report-checker needs its exact backend source and declared evidence hashes; undeclared, changed or duplicate assets are rejected.",
+        ),
+        "Prepared task differs from the main's explicit assignment": (
+            "prepared_task_mismatch",
+            "No session was created. Compare all explicit task fields with the frozen package; do not silently change the original task.",
+        ),
+        "Prepared context lacks matching collected content": (
+            "prepared_context_receipt",
+            "No session was created. Select the exact original context bytes through an existing verified collection receipt.",
+        ),
+        "Prepared control files must contain only the fresh bounded task": (
+            "prepared_control_files",
+            "No session was created. The packaged checkpoint/task must contain only the original fresh worker assignment, not historical conversation.",
+        ),
         "Assignment needs a bounded id and policy|harness role": (
             "assignment_identity",
             "Use an id matching [A-Za-z0-9][A-Za-z0-9_-]{0,63} and role policy|harness.",

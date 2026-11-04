@@ -353,3 +353,67 @@ def test_archive_lookup_ignores_other_assignments_sharing_prefix(tmp_path, monke
         (archive / (item["id"] + "-" + m.digest(raw.encode()) + ".json")).write_text(raw)
     m.save(state)
     assert m.dispatch(Gateway(), request)["status"] == "assigned"
+
+
+def test_generated_fixed_skill_evidence_roundtrips_prepared_dispatch(tmp_path, monkeypatch):
+    m, request, envelope = prepared_fixture(tmp_path, monkeypatch)
+    raw = '{"synthetic":true}'
+    name = "skills-evidence/check.json"
+    (tmp_path / "skills-evidence").mkdir()
+    (tmp_path / name).write_text(raw)
+    (tmp_path / "skills").mkdir()
+    entry = {
+        "id": "synthetic-report-checker",
+        "status": "local-function",
+        "local_source": "skill_tools.py:check_report",
+        "evidence": [name],
+        "evidence_source_sha256": m.digest((tmp_path / "skill_tools.py").read_bytes()),
+        "evidence_sha256": {name: m.digest(raw.encode())},
+    }
+    (tmp_path / "skills/index.json").write_text(json.dumps({"skills": [entry]}))
+    task, files = m.worker_package(request, coordinator_session_id="main")
+    assert files[name] == raw
+    envelope.update(task=task, files=files)
+    refresh(m, tmp_path, request, envelope)
+    gateway = Gateway()
+    m.dispatch(gateway, request)
+    assert gateway.files[name] == raw
+
+
+@pytest.mark.parametrize(
+    "mutation", ["undeclared", "hash", "backend", "duplicate", "catalog_source", "empty"]
+)
+def test_prepared_skill_evidence_is_not_an_arbitrary_file_allowlist(
+    tmp_path, monkeypatch, mutation
+):
+    m, request, envelope = prepared_fixture(tmp_path, monkeypatch)
+    name = "skills-evidence/check.json"
+    entry = {
+        "id": "synthetic-report-checker",
+        "status": "local-function",
+        "local_source": "skill_tools.py:check_report",
+        "evidence": [name],
+        "evidence_source_sha256": m.digest(envelope["files"]["skill_tools.py"].encode()),
+        "evidence_sha256": {name: m.digest(b"{}")},
+    }
+    envelope["files"].update({name: "{}", "skills/index.json": json.dumps({"skills": [entry]})})
+    if mutation == "undeclared":
+        envelope["files"]["skills-evidence/extra.txt"] = "not declared"
+    elif mutation == "hash":
+        envelope["files"][name] = "changed"
+    elif mutation == "backend":
+        entry["evidence_source_sha256"] = "0" * 64
+    elif mutation == "duplicate":
+        entry["evidence"].append(name)
+    elif mutation == "empty":
+        entry["evidence"] = []
+        entry["evidence_sha256"] = {}
+        envelope["files"].pop(name)
+    else:
+        entry["local_source"] = "arbitrary.py:execute"
+    envelope["files"]["skills/index.json"] = json.dumps({"skills": [entry]})
+    refresh(m, tmp_path, request, envelope)
+    g = Gateway()
+    with pytest.raises(ValueError):
+        m.dispatch(g, request)
+    assert not any(method == "POST" for method, _, _ in g.calls)
