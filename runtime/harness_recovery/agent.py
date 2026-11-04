@@ -154,8 +154,7 @@ def tool(name, a):
             return select_json_fields(p.read_bytes(), a["fields"], str(p))
         return memory_state.read_page(p, a.get("offset", 0), a.get("limit", 4000))
     if name == "wait":
-        time.sleep(min(a.get("seconds", 5), 30))
-        return "waited"
+        return work_assignments.wait_for_change(req, a.get("seconds", 5))
     return "unknown tool"
 
 
@@ -219,7 +218,7 @@ def spec(name, props, required):
             "list": "List accessible directory.",
             "delegate": "Coordinate bounded policy/harness worker assignments: assign, collect verified reports, decide, or list. Workers use fresh contexts and existing identities; no new permission or automatic scientific adoption.",
             "progress": "List or explicitly update bounded operational items with evidence references. These are your claims, not validated scientific acceptance; closed items remain recorded across summaries.",
-            "wait": "Wait for asynchronous jobs.",
+            "wait": "Wait up to 600 seconds for existing worker/job state changes, input changes or deadline; observation errors return immediately. No work is submitted or collected.",
             "recall": (
                 "Search original history by keyword over an n..m round window "
                 "(n=1 is the most recent round). Use after compaction or whenever "

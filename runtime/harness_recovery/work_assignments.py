@@ -5,6 +5,7 @@ import hashlib
 import json
 import pathlib
 import re
+import time
 import uuid
 from urllib.parse import urlencode, urlsplit
 
@@ -88,6 +89,102 @@ def load():
 
 def save(value):
     context_manager.atomic(STATE, json.dumps(value, ensure_ascii=False))
+
+
+def wait_for_change(
+    req,
+    seconds=5,
+    *,
+    clock=time.monotonic,
+    sleep=time.sleep,
+    manifest_path=pathlib.Path("/run/input/input-manifest.json"),
+):
+    """Observe existing scoped work inside one tool call; never collect or submit."""
+    if type(seconds) is not int or not 0 <= seconds <= 600:
+        raise ValueError("Wait seconds must be an integer in 0..600")
+    start = clock()
+    deadline = start + seconds
+    assignments = load()["assignments"]
+    if any(x.get("status") == "awaiting_decision" for x in assignments.values()):
+        return {"reason": "decision_pending", "elapsed_seconds": 0}
+    paths = []
+    for item in assignments.values():
+        session = item.get("session_id")
+        if (
+            item.get("status") == "assigned"
+            and isinstance(session, str)
+            and re.fullmatch(r"[A-Za-z0-9_-]{1,100}", session)
+        ):
+            paths.append("/sessions/" + session)
+    operational = pathlib.Path("operational-state.json")
+    if operational.exists():
+        for job, item in json.loads(operational.read_text()).get("jobs", {}).items():
+            if item.get("status") not in {"completed", "cancelled", "failed"} and re.fullmatch(
+                r"[A-Za-z0-9_-]{1,100}", job
+            ):
+                paths.append("/jobs/" + job)
+
+    def inputs():
+        if not manifest_path.exists():
+            return None
+        manifest = json.loads(manifest_path.read_text())
+        return {key: manifest.get(key) for key in ("status", "revision", "generation", "digest")}
+
+    if len(paths) > 64:
+        return {"reason": "observation_error", "error": "too_many_wait_targets"}
+    initial_inputs = inputs()
+    if initial_inputs is not None and initial_inputs.get("status") != "active":
+        return {"reason": "inputs_changed", "elapsed_seconds": clock() - start}
+    previous = None
+    while True:
+        if inputs() != initial_inputs:
+            return {"reason": "inputs_changed", "elapsed_seconds": clock() - start}
+        current = {}
+        for path in sorted(set(paths)):
+            remaining = deadline - clock()
+            if remaining <= 0:
+                return {
+                    "reason": "deadline",
+                    "elapsed_seconds": clock() - start,
+                    "observed": {**(previous or {}), **current},
+                }
+            try:
+                value = req("GET", path, timeout=min(10, remaining))
+            except (OSError, TimeoutError):
+                return {
+                    "reason": "observation_error",
+                    "path": path,
+                    "elapsed_seconds": clock() - start,
+                }
+            if (
+                not isinstance(value, dict)
+                or value.get("http_error")
+                or not isinstance(value.get("status"), str)
+                or not value["status"]
+            ):
+                return {
+                    "reason": "observation_error",
+                    "path": path,
+                    "http_error": value.get("http_error") if isinstance(value, dict) else None,
+                    "elapsed_seconds": clock() - start,
+                }
+            current[path] = {key: value.get(key) for key in ("status", "exit_code", "closed")}
+        terminal = any(
+            x.get("status") not in {"running", "created", "queued", "pending", "starting"}
+            or x.get("closed")
+            for x in current.values()
+        )
+        if terminal or previous is not None and current != previous:
+            return {
+                "reason": "state_changed",
+                "changes": current,
+                "elapsed_seconds": clock() - start,
+            }
+        previous = current
+        remaining = deadline - clock()
+        if remaining <= 0:
+            return {"reason": "deadline", "elapsed_seconds": clock() - start, "observed": current}
+        sleep(min(10, remaining))
 
 
 def relative_path(name):

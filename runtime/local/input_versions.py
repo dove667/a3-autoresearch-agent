@@ -46,6 +46,36 @@ def input_sources(phase: str, task_profile: str = "standard") -> dict[str, str]:
     return sources
 
 
+def execution_index(text: str) -> dict:
+    """Bounded H2 index in read-tool character units; the reference stays lossless."""
+    headings = list(re.finditer(r"^## ([^\r\n]+)", text, re.MULTILINE))
+    sections = []
+    for index, match in enumerate(headings):
+        section = {
+            "title": match.group(1)[:80],
+            "offset": match.start(),
+            "end": headings[index + 1].start() if index + 1 < len(headings) else len(text),
+        }
+        if (
+            len(sections) >= 64
+            or len(json.dumps(sections + [section], ensure_ascii=False).encode()) > 6000
+        ):
+            break
+        sections.append(section)
+    return {
+        "path": "/run/input/execution.md",
+        "unit": "characters",
+        "sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+        "total": len(text),
+        "preamble_end": headings[0].start() if headings else len(text),
+        "sections": sections,
+        "truncated": len(sections) < len(headings),
+        "next_offset": headings[len(sections)].start()
+        if len(sections) < len(headings)
+        else len(text),
+    }
+
+
 def resolve_phase(run: Path | None, requested: str | None = None) -> str:
     """Keep a run in its recorded stage; older runs belong to phase one."""
     recorded = []
@@ -348,6 +378,7 @@ class InputVersions:
                 "time": datetime.now().astimezone().isoformat(),
                 "status": "active",
                 "generation": index,
+                "execution_index": execution_index(proposal["contents"]["execution.md"]),
                 "acceptance_checks": re.findall(
                     r"^## ([A-Za-z][A-Za-z0-9_-]*)\.(?:\s|$)",
                     proposal["contents"]["acceptance.md"],
@@ -434,10 +465,11 @@ class InputVersions:
         with self.lock:
             manifest = deepcopy(self.manifest)
             instructions = (
-                f"当前 Agent 输入：{manifest['revision']}，内容标识 {manifest['digest']}。\n"
+                f"当前 Agent 输入：{manifest['revision']}，generation={manifest['generation']}，status={manifest['status']}，内容标识 {manifest['digest']}。\n"
                 f"当前阶段：{self.phase}；任务配置：{self.task_profile}。目标、验收和阶段协议以以下当前版本为准；"
                 "历史上下文中的旧版内容保留供追溯。\n"
-                "执行接口与其他说明见 /run/input/input-manifest.json 所列当前文件；"
+                "详细接口按需读取：manifest 的 execution_index 给出 execution.md 章节字符 offset/end 和完整 SHA256，配合 read 的 fields 及分页；不要通读全部接口作为每轮前置步骤。"
+                "本请求已给出当前输入标识；同一已验证 revision 的已读内容无需重复读取或每轮再查 manifest。"
                 "连续读取多个输入文件时，前后必须都是status=active且revision与generation相同；"
                 "status=updating时等待，标识变化后重新读取。\n\n"
                 + "SOUL 是跨阶段长期角色原则；SOUL 不得覆盖当前阶段的 goal、acceptance、protocol 或权限边界。\n"
