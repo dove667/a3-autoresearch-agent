@@ -192,6 +192,16 @@ def test_preparer_runs_as_separate_process_without_main_environment(tmp_path, mo
     from test_work_assignments import ROOT
 
     m, request, envelope = prepared_fixture(tmp_path, monkeypatch)
+    from a3_research_agent.packaging.harness_payload import build_harness_payload
+
+    # This test actually executes preparation: use the delivered implementation,
+    # rather than the inert source sentinels used by data-validation-only tests.
+    for name, content in build_harness_payload(
+        {"web_tools.py": "TOOLS=[]\nROUTES={}\n", "skill_tools.py": "TOOLS=[]\nROUTES={}\n"}
+    ).items():
+        target = tmp_path / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content)
     source = tmp_path / request["module_path"]
     source.write_text(
         "import importlib.util, os\n"

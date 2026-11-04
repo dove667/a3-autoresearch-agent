@@ -6,8 +6,9 @@ import json
 import pathlib
 
 import pytest
+from harness_sources import HarnessSources
 
-ROOT = pathlib.Path(__file__).resolve().parents[2] / "runtime/harness_recovery"
+ROOT = HarnessSources(pathlib.Path(__file__).resolve().parents[2] / "runtime/harness_recovery")
 
 
 def load(tmp_path, monkeypatch):
@@ -62,6 +63,7 @@ class Gateway:
 
 def seed_sources(module, root):
     for name in module.CORE_FILES:
+        (root / name).parent.mkdir(parents=True, exist_ok=True)
         (root / name).write_text("# source " + name)
     (root / "checkpoint.json").write_text('[{"role":"user","content":"OLD PRIVATE CONVERSATION"}]')
     (root / "research").mkdir()
@@ -310,11 +312,13 @@ def test_successful_worker_identity_survives_post_creation_ledger_failure(tmp_pa
             raise OSError("controlled disk failure")
         save(state)
 
-    monkeypatch.setattr(m, "save", fail_after_creation)
+    from a3_research_agent.harness.orchestration import dispatch as dispatch_module
+
+    monkeypatch.setattr(dispatch_module, "save", fail_after_creation)
     result = m.dispatch(gateway, assignment())
     assert result["session_id"] == "worker-1"
     assert result["ledger_persisted"] is False
-    monkeypatch.setattr(m, "save", save)
+    monkeypatch.setattr(dispatch_module, "save", save)
     recovered = m.dispatch(gateway, {"action": "reconcile", "id": "policy-check"})
     assert recovered["session_id"] == "worker-1"
     assert sum(path == "/sessions" for _, path, _ in gateway.calls) == 1

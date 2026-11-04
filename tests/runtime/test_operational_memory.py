@@ -6,8 +6,9 @@ import pathlib
 import uuid
 
 import pytest
+from harness_sources import HarnessSources
 
-ROOT = pathlib.Path(__file__).resolve().parents[2] / "runtime/harness_recovery"
+ROOT = HarnessSources(pathlib.Path(__file__).resolve().parents[2] / "runtime/harness_recovery")
 
 
 def load(tmp_path, monkeypatch):

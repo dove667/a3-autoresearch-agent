@@ -1,0 +1,1 @@
+"""Research Harness memory components."""

@@ -1,5 +1,6 @@
 """Exercise real Host validation with fake providers, never live inference."""
 
+import importlib
 import importlib.util
 import json
 import pathlib
@@ -8,11 +9,12 @@ import threading
 
 import pytest
 from fastapi.testclient import TestClient
+from harness_sources import HarnessSources
 
 from runtime.local.host_gateway import create_app
 from runtime.local.human_feedback import HumanFeedback
 
-SOURCE = pathlib.Path(__file__).resolve().parents[2] / "runtime/harness_recovery"
+SOURCE = HarnessSources(pathlib.Path(__file__).resolve().parents[2] / "runtime/harness_recovery")
 
 
 @pytest.fixture
@@ -20,10 +22,20 @@ def modules(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.syspath_prepend(str(SOURCE))
     loaded = {}
-    for name in ("context_manager", "recall", "spill", "compaction"):
-        spec = importlib.util.spec_from_file_location(name, SOURCE / (name + ".py"))
+    canonical = {
+        "context_manager": "a3_research_agent.harness.context.manager",
+        "recall": "a3_research_agent.harness.memory.recall",
+        "spill": "a3_research_agent.harness.context.spill",
+        "compaction": "a3_research_agent.harness.context.compaction",
+    }
+    for name, target in canonical.items():
+        parent_name, attribute = target.rsplit(".", 1)
+        parent = importlib.import_module(parent_name)
+        spec = importlib.util.spec_from_file_location(target, SOURCE / (name + ".py"))
         module = importlib.util.module_from_spec(spec)
+        monkeypatch.setitem(sys.modules, target, module)
         monkeypatch.setitem(sys.modules, name, module)
+        monkeypatch.setattr(parent, attribute, module, raising=False)
         spec.loader.exec_module(module)
         loaded[name] = module
     return loaded

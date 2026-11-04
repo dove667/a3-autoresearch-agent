@@ -18,13 +18,14 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from harness_sources import HarnessSources
 
 from runtime.local.candidate_runtime import CandidateRuntime
 from runtime.local.candidate_versions import CandidateVersions
 from runtime.local.host_gateway import create_app
 
 ROOT = Path(__file__).resolve().parents[2]
-CORE = ROOT / "runtime/harness_recovery"
+CORE = HarnessSources(ROOT / "runtime/harness_recovery")
 OLD_MAIN = "OLD-MAIN-CONVERSATION-MUST-NOT-ENTER-WORKER"
 WORKER_MODEL = "chatgpt/gpt-6.1-sol"
 
@@ -139,15 +140,14 @@ def pipeline(tmp_path, monkeypatch, request):
     )
     assignments = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(assignments)
-    for name in assignments.CORE_FILES:
+    from a3_research_agent.packaging.harness_payload import build_harness_payload
+
+    for name, content in build_harness_payload(
+        {"web_tools.py": "TOOLS = []\nROUTES = {}\n", "skill_tools.py": "TOOLS = []\nROUTES = {}\n"}
+    ).items():
         target = main / name
-        if name in {"web_tools.py", "skill_tools.py"}:
-            target.write_text("TOOLS = []\nROUTES = {}\n")
-        else:
-            source = (
-                ROOT / "runtime/local/token_count.py" if name == "token_count.py" else CORE / name
-            )
-            target.write_bytes(source.read_bytes())
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content)
     (main / "checkpoint.json").write_text(json.dumps([{"role": "user", "content": OLD_MAIN}]))
     (main / "research").mkdir()
     (main / "research/context.json").write_text('{"fixture":"synthetic evidence only"}')

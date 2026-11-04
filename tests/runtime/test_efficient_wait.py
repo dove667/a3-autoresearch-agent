@@ -385,7 +385,9 @@ def test_two_waits_in_one_model_batch_keep_prebatch_cursor(tmp_path, monkeypatch
     from types import SimpleNamespace
 
     m, clock = setup_wait(tmp_path, monkeypatch)
-    source = (__import__("pathlib").Path(m.__file__).with_name("agent.py")).read_text()
+    from test_work_assignments import ROOT
+
+    source = (ROOT / "agent.py").read_text()
     function = next(
         x for x in ast.parse(source).body if isinstance(x, ast.FunctionDef) and x.name == "tool"
     )

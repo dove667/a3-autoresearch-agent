@@ -11,7 +11,7 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from fastapi.testclient import TestClient
-from test_orchestration_pipeline import CORE, ROOT, ProcessSandbox
+from test_orchestration_pipeline import ProcessSandbox
 
 from runtime.local.candidate_versions import CandidateVersions
 from runtime.local.host_gateway import create_app
@@ -147,22 +147,9 @@ def test_agent_tools_assemble_and_execute_without_a_files_payload(tmp_path):
         thread.start()
         sandbox.endpoint = "http://127.0.0.1:" + str(server.server_port)
         try:
-            files = {
-                n: (
-                    ROOT / "runtime/local/token_count.py" if n == "token_count.py" else CORE / n
-                ).read_text()
-                for n in [
-                    "agent.py",
-                    "work_assignments.py",
-                    "context_manager.py",
-                    "compaction.py",
-                    "spill.py",
-                    "recall.py",
-                    "memory_state.py",
-                    "token_count.py",
-                    "analyzer_client.py",
-                ]
-            }
+            from a3_research_agent.packaging.harness_payload import build_harness_payload
+
+            files = build_harness_payload()
             files.update(
                 {
                     "web_tools.py": "TOOLS=[]\nROUTES={}\n",

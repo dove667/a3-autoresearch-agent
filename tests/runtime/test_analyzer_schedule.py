@@ -8,10 +8,11 @@ import sys
 import threading
 
 import pytest
+from harness_sources import HarnessSources
 
 
 def load_client(monkeypatch):
-    root = pathlib.Path(__file__).resolve().parents[2] / "runtime/harness_recovery"
+    root = HarnessSources(pathlib.Path(__file__).resolve().parents[2] / "runtime/harness_recovery")
     spec = importlib.util.spec_from_file_location("context_manager", root / "context_manager.py")
     context = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(context)

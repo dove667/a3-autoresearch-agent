@@ -12,8 +12,9 @@ import threading
 import types
 
 import pytest
+from harness_sources import HarnessSources
 
-SOURCE = pathlib.Path(__file__).resolve().parents[2] / "runtime/harness_recovery"
+SOURCE = HarnessSources(pathlib.Path(__file__).resolve().parents[2] / "runtime/harness_recovery")
 
 
 def load(name):

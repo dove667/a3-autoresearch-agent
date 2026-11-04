@@ -6,7 +6,7 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from fastapi.testclient import TestClient
-from test_orchestration_pipeline import CORE, ROOT, ProcessSandbox
+from test_orchestration_pipeline import ProcessSandbox
 
 from runtime.local.candidate_versions import CandidateVersions
 from runtime.local.host_gateway import create_app
@@ -189,22 +189,9 @@ def test_actual_agent_supplements_delivery_from_own_worker_child(tmp_path):
             assert sibling.status_code == 200
             sibling_id = sibling.json()["session_id"]
             assert sandbox.records[sibling_id]["process"].wait(timeout=10) == 0
-            files = {
-                n: (
-                    ROOT / "runtime/local/token_count.py" if n == "token_count.py" else CORE / n
-                ).read_text()
-                for n in [
-                    "agent.py",
-                    "work_assignments.py",
-                    "context_manager.py",
-                    "compaction.py",
-                    "spill.py",
-                    "recall.py",
-                    "memory_state.py",
-                    "token_count.py",
-                    "analyzer_client.py",
-                ]
-            }
+            from a3_research_agent.packaging.harness_payload import build_harness_payload
+
+            files = build_harness_payload()
             files.update(
                 {
                     "web_tools.py": "TOOLS=[]\nROUTES={}\n",

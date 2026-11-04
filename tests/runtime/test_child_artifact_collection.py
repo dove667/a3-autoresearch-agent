@@ -155,7 +155,9 @@ def test_refuses_invalid_collection_without_receipt(tmp_path, monkeypatch, failu
 
 def test_worker_cannot_collect(tmp_path, monkeypatch):
     m, g, request, _ = fixture(tmp_path, monkeypatch)
-    monkeypatch.setattr(m, "is_main", lambda req: False)
+    from a3_research_agent.harness.orchestration import dispatch as dispatch_module
+
+    monkeypatch.setattr(dispatch_module, "is_main", lambda req: False)
     with pytest.raises(PermissionError):
         m.dispatch(g, request)
     assert not g.calls
@@ -181,7 +183,9 @@ def test_partial_write_failure_has_no_receipt_and_retries_exact_bytes(
     tmp_path, monkeypatch, failure
 ):
     m, g, request, original = fixture(tmp_path, monkeypatch)
-    atomic = m.context_manager.atomic
+    from a3_research_agent.harness.context import manager
+
+    atomic = manager.atomic
     writes = []
 
     def failing_atomic(path, content):
@@ -193,7 +197,7 @@ def test_partial_write_failure_has_no_receipt_and_retries_exact_bytes(
         return atomic(path, content)
 
     with monkeypatch.context() as scoped:
-        scoped.setattr(m.context_manager, "atomic", failing_atomic)
+        scoped.setattr(manager, "atomic", failing_atomic)
         with pytest.raises(OSError):
             m.dispatch(g, request)
     assert m.load()["assignments"]["prep"] == original

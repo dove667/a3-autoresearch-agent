@@ -14,11 +14,14 @@ import threading
 import time
 
 import pytest
+from harness_sources import HarnessSources
 
-SOURCE = pathlib.Path(
-    os.environ.get(
-        "HARNESS_SOURCE",
-        str(pathlib.Path(__file__).resolve().parents[2] / "runtime/harness_recovery"),
+SOURCE = HarnessSources(
+    pathlib.Path(
+        os.environ.get(
+            "HARNESS_SOURCE",
+            str(pathlib.Path(__file__).resolve().parents[2] / "runtime/harness_recovery"),
+        )
     )
 )
 if str(SOURCE) not in sys.path:
