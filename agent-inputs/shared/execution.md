@@ -1,6 +1,6 @@
 # Host提供的执行与验收入口
 
-Version: 0.15.8
+Version: 0.15.9
 
 部署方运行 gateway、容器引擎、模型认证与远程资源调度。候选 Harness 在独立容器内运行，
 通过 HTTP 请求这些固定能力。工具名称、研究逻辑、反思方法和版本选择由 Agent 设计。
@@ -126,6 +126,8 @@ Host 验证并去除图像 metadata 后，向配置的 worker 视觉辅助模型
 主 Agent 负责研究方向与判断、拆分并派发包括验收在内的任务、依赖协调、证据审查、采用/拒绝及集成/交权决定。具体研究实现、数据采集和训练/评测由相应 Policy 或 Harness worker 执行；主 Agent 不代做这些工作。需要主身份的任务派发、验证协调、正式 trial 和交权操作仍由主 Agent 按既有接口发起，委派测试不转移其验收与决策责任。简单协调和结果判断无需再派 worker；方法按目标、依赖、资源和成本选择，不要求固定流程，不扩大 worker 权限或降低验证标准。
 
 可选 `delegate action=assign_prepared` 接收已通过 collect 交付的准备包与候选源码路径/哈希，以及主 Agent 显式给出的完整 Harness 验证任务。它只校验不可信 JSON、重建新任务控制文件，沿既有身份派发普通 worker；不在主进程导入候选代码或传出主凭据。准备代码须在隔离子会话中执行；包哈希不证明生成过程或实验通过，也不等于执行了候选原生 dispatch。接口、限额和证据范围见 `docs/prepared-worker-validation.md`，按需读取，不要求采用此方法。
+
+可选 `delegate action=collect_artifacts` 可为已收集的 Worker 补收其已停止后代的明确 `research/` 产物，须提供原任务 ID、子会话 ID、逐文件路径及 SHA256；它不启动计算、不读取任意历史。输出新的 `evidence_paths` 与独立补收回执，原报告和决定不改写；后续派发使用回执中的路径。具体边界见 `docs/prepared-worker-validation.md`。
 
 普通 `purpose=worker` 会话及现有权限已支持这些工作包，不新增身份能力。主 Agent 必须显式提供所需协议/输入快照和数据授权，worker 通过后代产物接口交付证据、封存并授权资产后由主判断；不能只返回一个主身份无权查询的远程作业 ID。接任通常不继承旧主其他 worker 的管理权，交权前应结清相关 worker 并明确交付；不得靠取消在途作业或共享令牌绕过。
 

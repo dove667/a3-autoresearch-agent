@@ -474,9 +474,18 @@ def collected_bytes(state, name, expected):
         for item in records:
             if item.get("status") not in {"awaiting_decision", "decided"}:
                 continue
-            for original, delivered in item.get("evidence_paths", {}).items():
-                if delivered == name and item.get("evidence_hashes", {}).get(original) == expected:
-                    owners.append(item.get("evidence_source_session") or item.get("session_id"))
+            records = [(item, item.get("evidence_source_session") or item.get("session_id"))]
+            records.extend(
+                (receipt, receipt.get("source_session"))
+                for receipt in item.get("artifact_collections", [])
+            )
+            for record, source in records:
+                for original, delivered in record.get("evidence_paths", {}).items():
+                    if (
+                        delivered == name
+                        and record.get("evidence_hashes", {}).get(original) == expected
+                    ):
+                        owners.append(source)
         return owners
 
     owners = matching_owners(state["assignments"].values())
@@ -500,6 +509,7 @@ def collected_bytes(state, name, expected):
                 raise ValueError("Archived preparation receipt identity mismatch")
             records.append(record)
         owners = matching_owners(records)
+    owners = list(set(owners))
     if len(owners) != 1 or not isinstance(owners[0], str):
         raise ValueError("Prepared source lacks a unique verified collection receipt")
     raw = bounded_preparation_bytes(name)
@@ -644,12 +654,112 @@ def prepared_worker_package(state, arguments, coordinator):
     return task, files, receipt
 
 
-def artifact(req, session, name):
-    result = checked(req, "GET", "/sessions/" + session + "/artifacts?" + urlencode({"path": name}))
+def artifact(req, session, name, *, bounded=False):
+    query = {"path": name}
+    if bounded:
+        query["limit"] = 1024 * 1024 + 1  # Detect overflow without fetching an unbounded file.
+    result = checked(req, "GET", "/sessions/" + session + "/artifacts?" + urlencode(query))
     raw = base64.b64decode(result["data"], validate=True)
     if len(raw) > 1024 * 1024:
         raise ValueError("Worker report too large; use bounded reports and sealed exports")
     return raw
+
+
+def collect_child_artifacts(req, state, arguments):
+    """Recover research outputs from a collected worker's own stopped descendants.
+
+    Reauthorize every read with Host; local archive names never grant access. A
+    separate receipt supplements delivery, without rewriting the producer's report
+    or turning its prior blocked/follow-up decision into acceptance.
+    """
+    identifier = arguments.get("id")
+    if not isinstance(identifier, str) or not re.fullmatch(
+        r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", identifier
+    ):
+        raise ValueError("Expected an existing bounded assignment id")
+    item = state["assignments"].get(identifier)
+    if not item or item.get("status") not in {"awaiting_decision", "decided"}:
+        raise ValueError("Collect the original worker report before supplemental artifacts")
+    producer = item.get("session_id")
+    source = arguments.get("source_session_id")
+    if not isinstance(source, str) or not re.fullmatch(r"candidate-[a-f0-9]{32}", source):
+        raise ValueError("Expected an explicit candidate source session")
+    references = arguments.get("artifacts")
+    if not isinstance(references, list) or not 1 <= len(references) <= 16:
+        raise ValueError("Supplemental collection needs 1..16 research artifacts")
+    selected = {}
+    for reference in references:
+        if not isinstance(reference, dict) or set(reference) != {"path", "sha256"}:
+            raise ValueError("Artifact needs only its exact research path and SHA256")
+        name, expected = reference["path"], reference["sha256"]
+        if (
+            relative_path(name) != name
+            or not name.startswith("research/")
+            or "\\" in name
+            or not isinstance(expected, str)
+            or not re.fullmatch(r"[a-f0-9]{64}", expected)
+            or name in selected
+        ):
+            raise ValueError("Select unique canonical research paths with full SHA256 pins")
+        selected[name] = expected
+    # GET /sessions is already filtered by the caller's Host ancestry ACL. Also
+    # require the narrower original producer subtree, not just any main descendant.
+    sessions = checked(req, "GET", "/sessions").get("sessions", [])
+    parents = {x["session_id"]: x.get("parent") for x in sessions}
+    chain, cursor = [], source
+    while cursor != producer:
+        if cursor not in parents or cursor in chain or len(chain) >= 128:
+            raise ValueError("Artifact source must descend from the recorded producer worker")
+        chain.append(cursor)
+        cursor = parents[cursor]
+    if not chain or producer not in parents:
+        raise ValueError("Artifact source must be a producer descendant, not the producer itself")
+    if checked(req, "GET", "/sessions/" + source).get("status") not in {"exited", "closed"}:
+        raise ValueError("Wait for the artifact-producing session to stop before collection")
+    batches = item.get("artifact_collections", [])
+    key = digest(json.dumps([source, selected], sort_keys=True).encode())
+    existing = next((x for x in batches if x.get("collection_sha256") == key), None)
+    if existing is None and len(batches) >= 16:
+        raise ValueError("Supplemental collection receipt limit reached")
+    pending, paths, total = {}, {}, 0
+    for name, expected in selected.items():
+        raw = artifact(req, source, name, bounded=True)
+        raw.decode("utf-8")  # Existing prepared/worker interfaces are text-only.
+        total += len(raw)
+        if digest(raw) != expected or total > 8 * 1024 * 1024:
+            raise ValueError("Supplemental artifact SHA256 or total size mismatch")
+        target = (
+            pathlib.Path("orchestration/results") / identifier / "child-artifacts" / source / name
+        )
+        if any(p.is_symlink() for p in (target, *target.parents)):
+            raise ValueError("Supplemental artifact destination must not contain symlinks")
+        if target.exists() and (not target.is_file() or target.read_bytes() != raw):
+            raise ValueError("Supplemental artifact conflicts with preserved local evidence")
+        paths[name] = target.as_posix()
+        pending[target] = raw
+    # Validate all reads before writing. Publish the ledger receipt last: a write
+    # failure can leave exact unreferenced files, never a false successful receipt.
+    for target, raw in pending.items():
+        if not target.exists():
+            context_manager.atomic(target, raw)
+    receipt = {
+        "collection_sha256": key,
+        "source_session": source,
+        "producer_session": producer,
+        "ancestry": chain + [producer],
+        "evidence_paths": paths,
+        "evidence_hashes": selected,
+        "bytes": total,
+        "generation_proven": False,
+        "scope": "Verified supplemental bytes; not execution attestation or scientific acceptance",
+    }
+    if existing is not None:
+        if existing != receipt:
+            raise ValueError("Supplemental collection conflicts with its preserved receipt")
+        return receipt
+    item["artifact_collections"] = [*batches, receipt]
+    save(state)
+    return receipt
 
 
 def collect_report_references(req, session, identifier, report_texts, declared):
@@ -931,6 +1041,8 @@ def dispatch(req, arguments):
             item.update(status="assigned", session_id=matches[0])
             save(state)
         return {**item, "creation_confirmed": bool(matches), "resubmitted": False}
+    if action == "collect_artifacts":
+        return collect_child_artifacts(req, state, arguments)
     if action == "collect":
         return collect(req, state, identifier)
     if action == "decide":

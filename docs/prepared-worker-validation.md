@@ -43,6 +43,54 @@ Agent submits version ID plus its own research-file paths and full SHA256 values
 model-transcribed complete source dictionary. Host assembly, an admitted child process and
 successful preparation remain separate facts; assembly alone does not prove execution.
 
+## Supplemental child artifact collection
+
+Prefer declaring each actual child artifact in the producing worker's report: fetch it
+through the authorized session artifact endpoint, then include its exact local decoded
+artifact path and SHA256 in `evidence`. Normal `delegate collect` copies those declared
+bytes into `orchestration/results/<assignment>/` and returns `evidence_paths`.
+
+If a collected worker omitted outputs that remain in its stopped descendant, the current
+main can recover them without rerunning the producer or transcribing file contents:
+
+```json
+{
+  "action": "collect_artifacts",
+  "id": "original-preparation-assignment",
+  "source_session_id": "candidate-<32 lowercase hex characters>",
+  "artifacts": [
+    {"path": "research/prepared.json", "sha256": "<full SHA256>"},
+    {"path": "research/candidate.py", "sha256": "<full SHA256>"}
+  ]
+}
+```
+
+This is an action of the existing `delegate` tool. The assignment must still be in the
+current ledger, with its original report collected (`awaiting_decision` or `decided`).
+The source must be a strict descendant of that recorded worker, not a sibling or another
+main-owned task. Host reauthorizes ancestry, status and every artifact read using the
+caller's existing identity. No additional token, scope, mount or worker permission is granted.
+
+Only explicit canonical `research/` UTF-8 files are accepted: 1–16 files, at most 1 MiB each
+and 8 MiB total. Reads request bounded pages. Symlinks, conflicting local evidence, unsafe
+paths, changed hashes and active sources fail closed. There are at most 16 distinct batches
+per assignment; exact retries are idempotent, and overlapping batches from the same source
+remain usable. All source reads validate before any local write; the ledger receipt is
+published last. A storage failure may leave unreferenced exact copies, not a successful
+receipt; retry the same operation after resolving storage, rather than editing the ledger.
+
+Use returned `evidence_paths`, under
+`orchestration/results/<assignment>/child-artifacts/<session>/research/`, for later context
+or `assign_prepared`. Supplemental receipts preserve source session, producer ancestry,
+paths, hashes and byte count separately from the original report and decision. They remain
+verifiable if the assignment is subsequently archived. A receipt proves delivered bytes,
+not code execution, scientific correctness, adoption or a formal handoff. It does not
+change a prior `blocked`/`follow_up` result. Arbitrary `context-history/` files remain
+ineligible as assignment context; do not rename private history to bypass that boundary.
+
+Existing runs need an explicitly authorized deployment before their generated Harness
+exposes this action; updating repository files alone does not modify a running Agent.
+
 ## Data-only dispatch
 
 `delegate` with `action: "assign_prepared"` requires the usual explicit assignment fields
