@@ -964,6 +964,77 @@ def view(state=None):
     }
 
 
+def lookup_assignment(state, identifier):
+    """Describe ledger absence, never infer whether an external POST succeeded."""
+    if not isinstance(identifier, str) or not re.fullmatch(
+        r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", identifier
+    ):
+        raise ValueError("Invalid assignment lookup identity")
+    raw = STATE.read_bytes() if STATE.exists() else None
+    source = {"path": str(STATE), "sha256": digest(raw) if raw is not None else None}
+    state = json.loads(raw) if raw is not None else {"version": 1, "assignments": {}}
+    if state.get("version") != 1 or not isinstance(state.get("assignments"), dict):
+        raise ValueError("Invalid assignment ledger; preserve and inspect it")
+    if identifier in state["assignments"]:
+        return {
+            "source": source,
+            "found": True,
+            "location": "current",
+            "assignment": state["assignments"][identifier],
+        }
+    archived = []
+    archive = pathlib.Path("orchestration/archive")
+    if any(p.is_symlink() for p in (archive, *archive.parents)):
+        raise ValueError("Assignment archive lookup is ambiguous or invalid")
+    for path in archive.glob(identifier + "-*.json"):
+        match = re.fullmatch(re.escape(identifier) + r"-([a-f0-9]{64})\.json", path.name)
+        if not match:
+            other = re.fullmatch(
+                r"([A-Za-z0-9][A-Za-z0-9_-]{0,63})-([a-f0-9]{64})\.json", path.name
+            )
+            if other and other[1] != identifier:
+                continue  # A different valid assignment may share the requested prefix.
+            raise ValueError("Assignment archive lookup is ambiguous or invalid")
+        if len(archived) >= 16:
+            raise ValueError("Assignment archive lookup is ambiguous or invalid")
+        try:
+            data = bounded_preparation_bytes(path.as_posix())
+            item = strict_package_json(data)
+        except (ValueError, OSError) as error:
+            raise ValueError("Assignment archive lookup is ambiguous or invalid") from error
+        if digest(data) != match[1]:
+            raise ValueError("Assignment archive lookup is ambiguous or invalid")
+        if (
+            not isinstance(item, dict)
+            or item.get("id") != identifier
+            or item.get("status") != "decided"
+        ):
+            raise ValueError("Assignment archive lookup is ambiguous or invalid")
+        archived.append((path, item, match[1]))
+    if len(archived) > 1:
+        raise ValueError("Assignment archive lookup is ambiguous or invalid")
+    if archived:
+        path, item, sha = archived[0]
+        return {
+            "source": source,
+            "found": True,
+            "location": "archive",
+            "assignment": item,
+            "archive_source": {"path": path.as_posix(), "sha256": sha},
+            "resubmitted": False,
+        }
+    return {
+        "source": source,
+        "found": False,
+        "id": identifier,
+        "scope": "current_and_verified_archived_assignment_ledger",
+        "creation_status": "not_recorded_in_checked_ledger",
+        "retry_safe": False,
+        "resubmitted": False,
+        "notice": "No record in this checked ledger. This is not a transport failure or proof that no Host session exists. Do not repeat the same lookup with unchanged source hash; use existing session receipts and pre-creation error evidence to decide next steps. Never blindly recreate an uncertain POST.",
+    }
+
+
 def dispatch(req, arguments):
     if not is_main(req):
         raise PermissionError("Only the current coordinator assigns and decides worker work")
@@ -978,9 +1049,7 @@ def dispatch(req, arguments):
         source = {"path": str(STATE), "sha256": digest(raw) if raw is not None else None}
         identifier = arguments.get("id")
         if identifier is not None:
-            if identifier not in state["assignments"]:
-                raise ValueError("Unknown assignment")
-            return {"source": source, "assignment": state["assignments"][identifier]}
+            return lookup_assignment(state, identifier)
         items = list(state["assignments"].values())
         pending = [x for x in items if x["status"] != "decided"]
         closed = [x for x in items if x["status"] == "decided"]
@@ -1063,6 +1132,8 @@ def dispatch(req, arguments):
             # the durable pre-POST reservation and task hash allow reconciliation.
             item["ledger_persisted"] = False
         return item
+    if action == "reconcile" and identifier not in state["assignments"]:
+        return lookup_assignment(state, identifier)
     if identifier not in state["assignments"]:
         raise ValueError("Unknown assignment")
     if action == "reconcile":

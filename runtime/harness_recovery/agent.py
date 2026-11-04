@@ -185,6 +185,18 @@ SAFE_VALIDATION_ERRORS = {
         ),
     },
     "delegate": {
+        "Invalid assignment ledger; preserve and inspect it": (
+            "assignment_ledger_invalid",
+            "The assignment ledger is invalid; preserve it. Absence, creation outcome and retry safety are not established.",
+        ),
+        "Invalid assignment lookup identity": (
+            "assignment_lookup_identity",
+            "Use an existing bounded assignment ID; do not use paths.",
+        ),
+        "Assignment archive lookup is ambiguous or invalid": (
+            "assignment_lookup_archive",
+            "Archive integrity or identity is ambiguous; preserve it and inspect the exact receipts. Absence and retry safety are not established.",
+        ),
         "Undeclared prepared file": (
             "prepared_undeclared_file",
             "No session was created. Prepared files must be core/control/selected context or supported skill assets; inspect the frozen package and explicit skill evidence contract, not arbitrary extra files.",

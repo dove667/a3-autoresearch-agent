@@ -38,6 +38,10 @@ def test_actual_agent_supplements_delivery_from_own_worker_child(tmp_path):
         return {
             "status": "completed",
             "output": [
+                tool("delegate", "lookup-missing", {"action": "list", "id": "never-created"}),
+                tool(
+                    "delegate", "reconcile-missing", {"action": "reconcile", "id": "never-created"}
+                ),
                 tool("delegate", "collect-original", {"action": "collect", "id": "prep"}),
                 tool(
                     "delegate",
@@ -241,6 +245,9 @@ def test_actual_agent_supplements_delivery_from_own_worker_child(tmp_path):
                 for x in checkpoint
                 if x.get("type") == "function_call_output"
             }
+            assert results["lookup-missing"]["found"] is False
+            assert results["reconcile-missing"]["found"] is False
+            assert results["reconcile-missing"]["retry_safe"] is False
             assert results["collect-original"]["result"] == report
             assert results["reject-sibling"]["error"] == "tool_execution_failed"
             assert results["decide-original"]["decision"] == "follow_up"

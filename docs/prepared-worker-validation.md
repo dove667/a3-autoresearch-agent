@@ -158,3 +158,16 @@ Known pre-creation validation failures return fixed safe codes such as
 `prepared_context_receipt` or `prepared_control_files`. These checks run before the
 assignment reservation or session POST. Unrecognized failures still use a generic error;
 do not infer that creation failed from an arbitrary error or blindly retry an uncertain POST.
+
+## Exact assignment lookup
+
+`delegate list` with an ID returns `found:true` and the current record or one
+hash-verified closed archive. Missing IDs return `found:false`, the checked ledger
+SHA256, `creation_status:not_recorded_in_checked_ledger` and `retry_safe:false`.
+This is a read-only ledger fact, not a claim that a Host session never existed.
+`reconcile` without a current record uses the same bounded lookup and never POSTs;
+with an existing uncertain reservation it retains the original task-hash reconciliation.
+Corrupt, unsafe or ambiguous archives fail rather than report absence. Repeating a
+lookup against unchanged ledger/source receipts adds no creation evidence. Use the
+original request/error boundary and existing authorized session receipts before deciding
+on any next creation; never blindly retry an uncertain POST.
