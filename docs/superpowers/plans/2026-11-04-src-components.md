@@ -24,36 +24,46 @@ Follow every constraint in the spec. No production mutation, push, deployment, m
 
 ## Task 1: Isolated baseline and package foundation
 
-- [ ] Pin independent checkout to f2b83b9; read recent repair diff.
-- [ ] Run baseline offline suite with temporary localhost fake providers only; record failures.
-- [ ] Add failing package/install and legacy entry tests; configure src package discovery.
-- [ ] Establish canonical imports, explicit project paths and legacy module compatibility helper.
-- [ ] Verify focused tests and commit locally.
+- [x] Pin independent checkout to f2b83b9; read recent repair diff.
+- [x] Run baseline offline suite with temporary localhost fake providers only; record failures.
+- [x] Add failing package/install and legacy entry tests; configure src package discovery.
+- [x] Establish canonical imports, explicit project paths and legacy module compatibility helper.
+- [x] Verify focused tests and commit locally.
 
 ## Task 2: Host component migration
 
-- [ ] Move local modules into host sessions/runs/inputs/models/web/telemetry and workspace leaves.
-- [ ] Preserve old runtime.local imports as adapters; retain script CLI behavior.
-- [ ] Split Gateway schemas/state/route registration and launch CLI/transport/workspace/task preparation.
-- [ ] Run Host, ownership, evolution, resume, input and lifecycle regression tests; commit locally.
+- [x] Move local modules into host sessions/runs/inputs/models/web/telemetry and workspace leaves.
+- [x] Preserve old runtime.local imports as adapters; retain script CLI behavior.
+- [x] Split Gateway schemas/state/route registration and launch CLI/transport/workspace/task preparation.
+- [x] Run Host, ownership, evolution, resume, input and lifecycle regression tests; commit locally.
 
 ## Task 3: Controller migration
 
-- [ ] Move execution source into canonical package; split job store, scheduling and lifecycle/CLI responsibilities.
-- [ ] Preserve standalone legacy script and its watcher/sealer modes, standard-library dependencies and locks.
-- [ ] Add subprocess/legacy equivalence tests; run remote regression tests; commit locally.
+- [x] Move execution source into canonical package; split job store, scheduling and lifecycle/CLI responsibilities.
+- [x] Preserve standalone legacy script and its watcher/sealer modes, standard-library dependencies and locks.
+- [x] Add subprocess/legacy equivalence tests; run remote regression tests; commit locally.
 
 ## Task 4: Harness migration and payload completeness
 
-- [ ] Move overlay into context/memory/orchestration components with import-safe agent entry.
-- [ ] Preserve flat commands and source-delivery contracts via explicit payload assembly.
-- [ ] Cover latest workspace assembly, child collection and retry-safety fixes without weakening checks.
-- [ ] Run full Harness/orchestration fixtures including actual child processes; commit locally.
+- [x] Move overlay into context/memory/orchestration components with import-safe agent entry.
+- [x] Preserve flat commands and source-delivery contracts via explicit payload assembly.
+- [x] Cover latest workspace assembly, child collection and retry-safety fixes without weakening checks.
+- [x] Run full Harness/orchestration fixtures including actual child processes; commit locally.
 
 ## Task 5: Integration and documentation
 
-- [ ] Verify sdist/wheel in a clean noneditable install and arbitrary cwd; inspect distribution contents.
-- [ ] Run complete offline suite, Ruff, format and diff checks; retain failure details.
-- [ ] Synchronize README, project structure, setup, architecture and payload/Controller documentation.
-- [ ] Obtain whole-branch independent review; fix important findings with regression tests.
-- [ ] Leave committed branch available, no production merge/push/deployment.
+- [x] Verify sdist/wheel in a clean noneditable install and arbitrary cwd; inspect distribution contents.
+- [x] Run complete offline suite, Ruff, format and diff checks; retain failure details.
+- [x] Synchronize README, project structure, setup, architecture and payload/Controller documentation.
+- [x] Obtain whole-branch independent review; fix important findings with regression tests.
+- [x] Leave committed branch available, no production merge/push/deployment.
+
+## Verification and delivery
+
+- Full isolated regression: 1,125 passed.
+- Ruff, repository-wide formatter and diff checks passed; changed-document local links resolved.
+- Controller stage: 98 focused tests. Host stage: 159 focused tests. Harness stage: 324 focused tests, including five actual child-process/localhost fake-provider scenarios.
+- Artifact tests build wheel/sdist, install the wheel into a temporary target, exercise the Controller under `-I -S`, validate Host CLI outside a checkout, export complete Harness sources, and rebuild identical package bytes from the sdist.
+- Independent whole-branch review found no substantive issues; reviewer independently ran 12 scoped tests.
+- Existing runtime dependency versions are unchanged. The declared setuptools build backend is also a locked dev dependency so artifact tests run in the development environment.
+- Branch is preserved for later integration. No production merge, push, deployment, live Agent changes, real provider calls, SSH, GPU or real Docker validation was performed. Offline regression is not experimental acceptance.
