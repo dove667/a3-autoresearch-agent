@@ -468,7 +468,7 @@ class InputVersions:
                 f"当前 Agent 输入：{manifest['revision']}，generation={manifest['generation']}，status={manifest['status']}，内容标识 {manifest['digest']}。\n"
                 f"当前阶段：{self.phase}；任务配置：{self.task_profile}。目标、验收和阶段协议以以下当前版本为准；"
                 "历史上下文中的旧版内容保留供追溯。\n"
-                "详细接口按需读取：manifest 的 execution_index 给出 execution.md 章节字符 offset/end 和完整 SHA256，配合 read 的 fields 及分页；不要通读全部接口作为每轮前置步骤。"
+                "详细接口按需读取：/run/input/input-manifest.json 的 execution_index 给出 execution.md 章节字符 offset/end 和完整 SHA256，配合 read 的 fields 及分页；不要通读全部接口作为每轮前置步骤。"
                 "本请求已给出当前输入标识；同一已验证 revision 的已读内容无需重复读取或每轮再查 manifest。"
                 "连续读取多个输入文件时，前后必须都是status=active且revision与generation相同；"
                 "status=updating时等待，标识变化后重新读取。\n\n"

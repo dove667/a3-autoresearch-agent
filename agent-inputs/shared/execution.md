@@ -1,6 +1,6 @@
 # Host提供的执行与验收入口
 
-Version: 0.15.3
+Version: 0.15.4
 
 部署方运行 gateway、容器引擎、模型认证与远程资源调度。候选 Harness 在独立容器内运行，
 通过 HTTP 请求这些固定能力。工具名称、研究逻辑、反思方法和版本选择由 Agent 设计。
@@ -505,3 +505,6 @@ Host使用精简摘要指令，附人工反馈ID/哈希引用；完整反馈仍�
 支持该能力的 Harness 自动低频请求独立分析：30 分钟周期，重复读取、长期无已记录进展与交接前事件可提前触发；共享冷却、去重、单次调用预算和故障回退。冷却或在途期间合并保留触发，周期以成功完成（含有效同快照缓存）计时，失败按有界退避重试；交接不等待分析器完成。`POST /analysis` 的 `enqueue_only: true` 只登记待处理信号，`GET /analysis` 的 `deferred_triggers` 供当前主 Agent 接续处理。信号用于提醒分析，不自动断言卡死或取消作业。`POST /analysis` 启动异步、无工具的独立 analyzer；`GET /analysis` 读取其建议。主 Agent 应核对证据，并用 `POST /analysis/response {analysis_id,decision,reason}` 明确采纳、拒绝或推迟及理由。该建议不是 human feedback、验收结论或权限，不自动执行。
 
 部署方提供的可选修复 Harness 包含带 source hash/长度/EOF 的有界分页读取和操作进度记录。工具结果取回、成功提交给模型、语义理解和科研决定是不同状态；保存或压缩不能自动宣布实验通过。操作进度仅记录 Agent 的声明和证据引用，摘要不能替它重新打开或关闭项目。接口和触发参数见仓库 `docs/trajectory-analysis.md`；实际能力仍以本轮已加载 Harness 和 Host 为准。
+
+
+预期的本地参数校验错误可返回 `validation_failed`、固定 `code/hint`，只解释现有边界，不扩大权限；未知异常和权限错误继续返回受限诊断，不暴露任意异常正文。工具 schema 的长度/数量上限用于减少无效调用，不能替代实际执行校验；按 action 填写必需字段。

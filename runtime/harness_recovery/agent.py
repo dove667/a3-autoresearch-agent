@@ -163,6 +163,66 @@ def tool(name, a):
     return "unknown tool"
 
 
+# Only exact, locally defined validation messages may become public advice.
+# Unexpected exceptions retain the generic boundary; never echo their text.
+SAFE_VALIDATION_ERRORS = {
+    "progress": {
+        "Invalid bounded operational item": (
+            "progress_bounds",
+            "Use id 1..80 characters, status open|waiting|closed and note at most 400 characters.",
+        ),
+        "Evidence must be bounded workspace-relative references": (
+            "progress_evidence",
+            "Use at most 8 workspace-relative evidence paths, each at most 300 characters; no URLs, absolute paths or traversal.",
+        ),
+        "Closed operational items require evidence references, not a pass label": (
+            "progress_evidence_required",
+            "Closing an item requires actual evidence references; do not substitute a success label.",
+        ),
+        "Operational item capacity reached; preserve and consolidate explicitly": (
+            "progress_capacity",
+            "Operational item capacity reached. Inspect existing items; preserve history and consolidate explicitly rather than dropping records.",
+        ),
+    },
+    "delegate": {
+        "Assignment needs a bounded id and policy|harness role": (
+            "assignment_identity",
+            "Use an id matching [A-Za-z0-9][A-Za-z0-9_-]{0,63} and role policy|harness.",
+        ),
+        "Assignment needs a bounded objective and stop condition": (
+            "assignment_objective",
+            "assign requires objective 1..8000 characters and stop_condition 1..4000 characters.",
+        ),
+        "Assignment needs 1..16 relative deliverables": (
+            "assignment_deliverables",
+            "assign requires 1..16 workspace-relative deliverable paths.",
+        ),
+        "Assignment context or export count exceeds bound": (
+            "assignment_context_count",
+            "Use at most 32 context_files and 64 read_only_exports.",
+        ),
+        "Select research context only; never copy checkpoint or private logs": (
+            "assignment_context_scope",
+            "Context files must be inside research/ or orchestration/results/. Use permitted sourced research notes; never copy private history or bypass scope.",
+        ),
+        "Private/control files cannot be assignment context": (
+            "assignment_private_context",
+            "Private/control names cannot be context. Do not rename secrets to bypass this restriction.",
+        ),
+        "Worker package exceeds existing Host upload bound": (
+            "assignment_package_size",
+            "The complete worker package exceeds the existing upload bound. Reduce the selected inputs or use existing permitted sealed exports; do not omit required evidence or broaden access.",
+        ),
+    },
+    "wait": {
+        "Wait seconds must be an integer in 0..600": (
+            "wait_bounds",
+            "Use an integer seconds value in 0..600.",
+        )
+    },
+}
+
+
 def dispatch_tool_call(call):
     arguments = {}
     try:
@@ -172,6 +232,11 @@ def dispatch_tool_call(call):
         return {"error": "file_not_found", "path": arguments.get("path")}
     except PermissionError:
         return {"error": "permission_denied", "path": arguments.get("path")}
+    except ValueError as error:
+        advice = SAFE_VALIDATION_ERRORS.get(call.get("name"), {}).get(str(error))
+        if advice:
+            return {"error": "validation_failed", "code": advice[0], "hint": advice[1]}
+        return {"error": "tool_execution_failed", "error_type": type(error).__name__}
     except Exception as error:  # noqa: BLE001 - keep private errors out of tool results
         return {"error": "tool_execution_failed", "error_type": type(error).__name__}
 
@@ -272,10 +337,14 @@ tools = (
             "progress",
             {
                 "action": {"type": "string", "enum": ["list", "update"]},
-                "id": S,
+                "id": {"type": "string", "minLength": 1, "maxLength": 80},
                 "status": {"type": "string", "enum": ["open", "waiting", "closed"]},
-                "note": S,
-                "evidence": {"type": "array", "items": S},
+                "note": {"type": "string", "maxLength": 400},
+                "evidence": {
+                    "type": "array",
+                    "maxItems": 8,
+                    "items": {"type": "string", "minLength": 1, "maxLength": 300},
+                },
             },
             ["action"],
         ),
@@ -288,19 +357,23 @@ tools = (
                 },
                 "id": S,
                 "role": {"type": "string", "enum": ["policy", "harness"]},
-                "objective": S,
-                "stop_condition": S,
-                "deliverables": {"type": "array", "items": S},
-                "context_files": {"type": "array", "items": S},
-                "read_only_exports": {"type": "array", "items": S},
+                "objective": {"type": "string", "minLength": 1, "maxLength": 8000},
+                "stop_condition": {"type": "string", "minLength": 1, "maxLength": 4000},
+                "deliverables": {"type": "array", "minItems": 1, "maxItems": 16, "items": S},
+                "context_files": {"type": "array", "maxItems": 32, "items": S},
+                "read_only_exports": {
+                    "type": "array",
+                    "maxItems": 64,
+                    "items": {"type": "string", "pattern": "^export-[a-f0-9]{32}$"},
+                },
                 "decision": {"type": "string", "enum": ["adopt", "reject", "follow_up"]},
-                "reason": S,
+                "reason": {"type": "string", "minLength": 1, "maxLength": 4000},
             },
             ["action"],
         ),
         spec("write", {"path": S, "content": S}, ["path", "content"]),
         spec("list", {"path": S}, ["path"]),
-        spec("wait", {"seconds": {"type": "integer"}}, []),
+        spec("wait", {"seconds": {"type": "integer", "minimum": 0, "maximum": 600}}, []),
         spec(
             "recall",
             {
