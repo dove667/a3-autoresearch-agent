@@ -1,3 +1,5 @@
+from remote_test_support import patch_controller
+
 """Fake Docker tests: never require a Docker daemon or a GPU."""
 
 import hashlib
@@ -49,9 +51,12 @@ def case(tmp_path, monkeypatch):
             info["State"]["ExitCode"] = 143
         return subprocess.CompletedProcess(args, 0, "tail", "")
 
-    monkeypatch.setattr(runtime, "docker", docker)
-    monkeypatch.setattr(
-        runtime, "capture_container_logs", lambda cid: (b"full log\xff\n", b"error log\n")
+    patch_controller(monkeypatch, runtime, "docker", docker)
+    patch_controller(
+        monkeypatch,
+        runtime,
+        "capture_container_logs",
+        lambda cid: (b"full log\xff\n", b"error log\n"),
     )
     return store, job, info, calls, removed
 
@@ -101,7 +106,7 @@ def test_archive_failure_retains_container(case, monkeypatch):
     def fail(*args):
         raise OSError("disk full")
 
-    monkeypatch.setattr(runtime, "durable_json", fail)
+    patch_controller(monkeypatch, runtime, "durable_json", fail)
     assert "disk full" in reclaim(case)["reason"]
     assert not case[4]
 
@@ -114,10 +119,10 @@ def test_rm_failure_retry(case, monkeypatch):
             raise RuntimeError("busy")
         return original(args, **kwargs)
 
-    monkeypatch.setattr(runtime, "docker", fail)
+    patch_controller(monkeypatch, runtime, "docker", fail)
     assert reclaim(case)["status"] == "retained"
     assert not case[4]
-    monkeypatch.setattr(runtime, "docker", original)
+    patch_controller(monkeypatch, runtime, "docker", original)
     assert reclaim(case)["status"] == "removed"
 
 
@@ -128,7 +133,7 @@ def test_state_changes_during_archive_not_removed(case, monkeypatch):
         original(path, value)
         case[2]["State"]["Status"] = "running"
 
-    monkeypatch.setattr(runtime, "durable_json", changed)
+    patch_controller(monkeypatch, runtime, "durable_json", changed)
     assert reclaim(case)["status"] == "retained"
     assert not case[4]
 
@@ -160,7 +165,7 @@ def test_log_capture_failure_retains(case, monkeypatch):
     def fail(cid):
         raise RuntimeError("Docker logs could not be archived")
 
-    monkeypatch.setattr(runtime, "capture_container_logs", fail)
+    patch_controller(monkeypatch, runtime, "capture_container_logs", fail)
     assert reclaim(case)["status"] == "retained"
     assert not case[4]
 
@@ -178,7 +183,7 @@ def test_capture_stream_enforces_bound(monkeypatch, size, limit, success):
             **k,
         ),
     )
-    monkeypatch.setattr(runtime, "MAX_ARCHIVE_LOG_BYTES", limit)
+    patch_controller(monkeypatch, runtime, "MAX_ARCHIVE_LOG_BYTES", limit)
     if success:
         assert runtime.capture_container_logs("not-a-container") == (b"x" * size, b"error")
     else:
@@ -229,7 +234,7 @@ def test_failed_termination_reports_active_and_retries_after_exit(case, monkeypa
             raise RuntimeError("daemon unavailable")
         return original(args, **kwargs)
 
-    monkeypatch.setattr(runtime, "docker", failed_stop)
+    patch_controller(monkeypatch, runtime, "docker", failed_stop)
 
     def wait_error(*args, **kwargs):
         raise OSError("wait client failed")
@@ -255,7 +260,7 @@ def test_cancel_restart_race_retains(case, monkeypatch):
             return subprocess.CompletedProcess(args, 0, "", "")
         return original(args, **kwargs)
 
-    monkeypatch.setattr(runtime, "docker", ineffective_stop)
+    patch_controller(monkeypatch, runtime, "docker", ineffective_stop)
     with pytest.raises(RuntimeError, match="did not stop"):
         runtime.cancel(store, {"job_id": job["job_id"], "experiment_id": "owner"})
     assert not removed
@@ -275,7 +280,7 @@ def test_cancel_created_archives_without_start_or_stop(case, monkeypatch):
             pytest.fail("never-started cancellation must not start/stop/kill")
         return original(args, **kwargs)
 
-    monkeypatch.setattr(runtime, "docker", created_stop)
+    patch_controller(monkeypatch, runtime, "docker", created_stop)
     result = runtime.cancel(store, {"job_id": job["job_id"], "experiment_id": "owner"})
     assert removed and result["status"] == "cancelled"
     runtime.watch(Namespace(root=store.root, job_id=job["job_id"], timeout=0, lock_fd=None))
@@ -299,7 +304,7 @@ def test_status_during_watcher_then_completion(case, monkeypatch):
             info["State"]["Status"] = "running"
         return original(args, **kwargs)
 
-    monkeypatch.setattr(runtime, "docker", start)
+    patch_controller(monkeypatch, runtime, "docker", start)
 
     def wait(*args, **kwargs):
         waiting.set()
@@ -339,7 +344,7 @@ def test_watcher_timeout_releases_lease_only_after_terminal(case, monkeypatch):
             info["State"].update(Status="exited", ExitCode=137)
         return original(args, **kwargs)
 
-    monkeypatch.setattr(runtime, "docker", kill)
+    patch_controller(monkeypatch, runtime, "docker", kill)
 
     def timeout(*args, **kwargs):
         raise subprocess.TimeoutExpired("docker wait", 1)
@@ -371,7 +376,7 @@ def test_failed_termination_retains_gpu_lease_record(case, monkeypatch):
             raise RuntimeError("stop unavailable")
         return original(args, **kwargs)
 
-    monkeypatch.setattr(runtime, "docker", failed_stop)
+    patch_controller(monkeypatch, runtime, "docker", failed_stop)
 
     def wait_error(*args, **kwargs):
         raise OSError("wait client failed")
@@ -394,12 +399,12 @@ def test_created_cancel_archive_failure_watcher_preserves_retry(case, monkeypatc
     def disk_full(*args, **kwargs):
         raise OSError("disk full")
 
-    monkeypatch.setattr(runtime, "durable_json", disk_full)
+    patch_controller(monkeypatch, runtime, "durable_json", disk_full)
     result = runtime.cancel(store, {"job_id": job["job_id"], "experiment_id": "owner"})
     assert result["status"] == "cancelled" and not removed
     runtime.watch(Namespace(root=store.root, job_id=job["job_id"], timeout=0, lock_fd=None))
     assert store.load(job["job_id"], "owner")["status"] == "cancelled"
-    monkeypatch.setattr(runtime, "durable_json", original)
+    patch_controller(monkeypatch, runtime, "durable_json", original)
     result = runtime.status(store, {"job_id": job["job_id"], "experiment_id": "owner"})
     assert result["status"] == "cancelled" and removed
 
@@ -410,7 +415,7 @@ def test_uncertain_docker_state_returns_cleanup_reason_not_delete(case, monkeypa
     def unavailable(*args, **kwargs):
         raise RuntimeError("daemon unavailable")
 
-    monkeypatch.setattr(runtime, "docker", unavailable)
+    patch_controller(monkeypatch, runtime, "docker", unavailable)
     result = runtime.status(store, {"job_id": job["job_id"], "experiment_id": "owner"})
     assert result["cleanup"]["status"] == "retained"
     assert "daemon unavailable" in result["cleanup"]["reason"]

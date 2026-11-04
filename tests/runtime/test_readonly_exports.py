@@ -1,3 +1,5 @@
+from remote_test_support import patch_controller
+
 """Sealed binary exports grant bounded read access across worker identities."""
 
 import json
@@ -210,7 +212,7 @@ def test_revoke_and_delete_refuse_live_consumers(tmp_path, monkeypatch):
     exports.seal(identifier)
     exports.grant("main", identifier, "worker")
     active = [{"experiment_id": "worker", "input_exports": [identifier]}]
-    monkeypatch.setattr(remote_jobs, "active_jobs", lambda store, **kwargs: active)
+    patch_controller(monkeypatch, remote_jobs, "active_jobs", lambda store, **kwargs: active)
     request = {"experiment_id": "main", "export_id": identifier, "recipient": "worker"}
     for operation in ("export-revoke", "export-delete"):
         with pytest.raises(ValueError, match="active jobs"):

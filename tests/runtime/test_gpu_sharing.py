@@ -1,3 +1,5 @@
+from remote_test_support import patch_controller
+
 """Memory sharing admits small jobs without exceeding the device pool."""
 
 import json
@@ -34,50 +36,55 @@ def job(index, reservation=512):
 
 def test_busy_project_device_can_receive_another_job(tmp_path, monkeypatch):
     store = runtime.JobStore(tmp_path)
-    monkeypatch.setattr(runtime, "gpu_devices", lambda: [device(0, used=2000)])
-    monkeypatch.setattr(runtime, "gpu_process_memory", dict)
-    monkeypatch.setattr(runtime, "container_gpu_memory", lambda *a: 0)
+    patch_controller(monkeypatch, runtime, "gpu_devices", lambda: [device(0, used=2000)])
+    patch_controller(monkeypatch, runtime, "gpu_process_memory", dict)
+    patch_controller(monkeypatch, runtime, "container_gpu_memory", lambda *a: 0)
     assert runtime.select_shared_gpu(store, settings(), [job(0)], 512) == "GPU-0"
 
 
 def test_pending_reservations_prevent_startup_overbooking(tmp_path, monkeypatch):
     store = runtime.JobStore(tmp_path)
-    monkeypatch.setattr(runtime, "gpu_devices", lambda: [device(0, used=0, total=4096)])
-    monkeypatch.setattr(runtime, "gpu_process_memory", dict)
-    monkeypatch.setattr(runtime, "container_gpu_memory", lambda *a: 0)
+    patch_controller(monkeypatch, runtime, "gpu_devices", lambda: [device(0, used=0, total=4096)])
+    patch_controller(monkeypatch, runtime, "gpu_process_memory", dict)
+    patch_controller(monkeypatch, runtime, "container_gpu_memory", lambda *a: 0)
     assert runtime.select_shared_gpu(store, settings(), [job(0, 3072)], 512) is None
 
 
 def test_loaded_memory_is_not_counted_twice(tmp_path, monkeypatch):
     store = runtime.JobStore(tmp_path)
-    monkeypatch.setattr(runtime, "gpu_devices", lambda: [device(0, used=17000)])
-    monkeypatch.setattr(runtime, "gpu_process_memory", dict)
-    monkeypatch.setattr(runtime, "container_gpu_memory", lambda *a: 16000)
+    patch_controller(monkeypatch, runtime, "gpu_devices", lambda: [device(0, used=17000)])
+    patch_controller(monkeypatch, runtime, "gpu_process_memory", dict)
+    patch_controller(monkeypatch, runtime, "container_gpu_memory", lambda *a: 16000)
     assert runtime.select_shared_gpu(store, settings(), [job(0, 16000)], 5000) == "GPU-0"
 
 
 def test_fifth_device_is_not_added_when_four_are_active(tmp_path, monkeypatch):
     store = runtime.JobStore(tmp_path)
-    monkeypatch.setattr(
-        runtime, "gpu_devices", lambda: [device(i, used=23500 if i < 4 else 0) for i in range(5)]
+    patch_controller(
+        monkeypatch,
+        runtime,
+        "gpu_devices",
+        lambda: [device(i, used=23500 if i < 4 else 0) for i in range(5)],
     )
-    monkeypatch.setattr(runtime, "gpu_process_memory", dict)
-    monkeypatch.setattr(runtime, "container_gpu_memory", lambda *a: 0)
+    patch_controller(monkeypatch, runtime, "gpu_process_memory", dict)
+    patch_controller(monkeypatch, runtime, "container_gpu_memory", lambda *a: 0)
     assert runtime.select_shared_gpu(store, settings(), [job(i) for i in range(4)], 512) is None
 
 
 def test_device_with_most_available_memory_is_selected(tmp_path, monkeypatch):
     store = runtime.JobStore(tmp_path)
-    monkeypatch.setattr(runtime, "gpu_devices", lambda: [device(0, used=2000), device(1)])
-    monkeypatch.setattr(runtime, "gpu_process_memory", dict)
+    patch_controller(monkeypatch, runtime, "gpu_devices", lambda: [device(0, used=2000), device(1)])
+    patch_controller(monkeypatch, runtime, "gpu_process_memory", dict)
     assert runtime.select_shared_gpu(store, settings(), [], 512) == "GPU-1"
 
 
 def test_twenty_gib_reservation_cap_and_four_gib_buffer(tmp_path, monkeypatch):
     store = runtime.JobStore(tmp_path)
-    monkeypatch.setattr(runtime, "gpu_devices", lambda: [device(0, used=1000, total=24576)])
-    monkeypatch.setattr(runtime, "gpu_process_memory", dict)
-    monkeypatch.setattr(runtime, "container_gpu_memory", lambda *a: 1000)
+    patch_controller(
+        monkeypatch, runtime, "gpu_devices", lambda: [device(0, used=1000, total=24576)]
+    )
+    patch_controller(monkeypatch, runtime, "gpu_process_memory", dict)
+    patch_controller(monkeypatch, runtime, "container_gpu_memory", lambda *a: 1000)
     limits = settings()
     limits.gpu_capacity_mb = 20480
     limits.gpu_headroom_mb = 4096
@@ -87,8 +94,10 @@ def test_twenty_gib_reservation_cap_and_four_gib_buffer(tmp_path, monkeypatch):
 
 def test_two_gib_buffer_and_project_reservation_cap_are_independent(tmp_path, monkeypatch):
     store = runtime.JobStore(tmp_path)
-    monkeypatch.setattr(runtime, "gpu_devices", lambda: [device(0, used=4096, total=24576)])
-    monkeypatch.setattr(runtime, "gpu_process_memory", dict)
+    patch_controller(
+        monkeypatch, runtime, "gpu_devices", lambda: [device(0, used=4096, total=24576)]
+    )
+    patch_controller(monkeypatch, runtime, "gpu_process_memory", dict)
     limits = settings()
     limits.gpu_capacity_mb = 20480
     limits.gpu_headroom_mb = 2048
@@ -100,9 +109,9 @@ def test_two_gib_buffer_and_project_reservation_cap_are_independent(tmp_path, mo
 
 def test_more_than_four_jobs_can_share_one_device(tmp_path, monkeypatch):
     store = runtime.JobStore(tmp_path)
-    monkeypatch.setattr(runtime, "gpu_devices", lambda: [device(0, used=2000)])
-    monkeypatch.setattr(runtime, "gpu_process_memory", dict)
-    monkeypatch.setattr(runtime, "container_gpu_memory", lambda *a: 100)
+    patch_controller(monkeypatch, runtime, "gpu_devices", lambda: [device(0, used=2000)])
+    patch_controller(monkeypatch, runtime, "gpu_process_memory", dict)
+    patch_controller(monkeypatch, runtime, "container_gpu_memory", lambda *a: 100)
     existing = [
         {**job(0), "job_id": f"job-{i}", "container_id": f"container-{i}"} for i in range(6)
     ]
@@ -111,9 +120,9 @@ def test_more_than_four_jobs_can_share_one_device(tmp_path, monkeypatch):
 
 def test_observed_memory_accounts_for_external_load(tmp_path, monkeypatch):
     store = runtime.JobStore(tmp_path)
-    monkeypatch.setattr(runtime, "gpu_devices", lambda: [device(0, used=22000)])
-    monkeypatch.setattr(runtime, "gpu_process_memory", dict)
-    monkeypatch.setattr(runtime, "container_gpu_memory", lambda *a: 512)
+    patch_controller(monkeypatch, runtime, "gpu_devices", lambda: [device(0, used=22000)])
+    patch_controller(monkeypatch, runtime, "gpu_process_memory", dict)
+    patch_controller(monkeypatch, runtime, "container_gpu_memory", lambda *a: 512)
     assert runtime.select_shared_gpu(store, settings(), [job(0)], 2048) is None
 
 
@@ -123,8 +132,8 @@ def test_unlimited_job_count_does_not_reject_small_jobs(tmp_path, monkeypatch):
     def reject_count(*args):
         raise AssertionError("job-count cap reached")
 
-    monkeypatch.setattr(runtime, "count_active_jobs", reject_count)
-    monkeypatch.setattr(runtime, "create_container", lambda *a: "new-container")
+    patch_controller(monkeypatch, runtime, "count_active_jobs", reject_count)
+    patch_controller(monkeypatch, runtime, "create_container", lambda *a: "new-container")
     monkeypatch.setattr(runtime.subprocess, "Popen", lambda *a, **kw: None)
     args = settings(max_jobs=0, timeout=0, share_gpus=True, run_storage_bytes=0)
     result = runtime.submit(
@@ -135,8 +144,8 @@ def test_unlimited_job_count_does_not_reject_small_jobs(tmp_path, monkeypatch):
 
 def test_idle_device_report_explains_admitted_capacity(tmp_path, monkeypatch):
     store = runtime.JobStore(tmp_path)
-    monkeypatch.setattr(runtime, "gpu_devices", lambda: [device(1, used=1, total=24564)])
-    monkeypatch.setattr(runtime, "gpu_process_memory", dict)
+    patch_controller(monkeypatch, runtime, "gpu_devices", lambda: [device(1, used=1, total=24564)])
+    patch_controller(monkeypatch, runtime, "gpu_process_memory", dict)
     limits = settings()
     limits.gpu_headroom_mb = 4096
     limits.gpu_capacity_mb = 20480
@@ -154,8 +163,8 @@ def test_idle_device_report_explains_admitted_capacity(tmp_path, monkeypatch):
 def test_external_load_is_admitted_when_memory_fits_even_if_computing(tmp_path, monkeypatch):
     store = runtime.JobStore(tmp_path)
     occupied = {**device(6, used=4817), "utilization": 95}
-    monkeypatch.setattr(runtime, "gpu_devices", lambda: [occupied])
-    monkeypatch.setattr(runtime, "gpu_process_memory", dict)
+    patch_controller(monkeypatch, runtime, "gpu_devices", lambda: [occupied])
+    patch_controller(monkeypatch, runtime, "gpu_process_memory", dict)
     report = {}
 
     assert runtime.select_shared_gpu(store, settings(), [], 8192, diagnostics=report) == "GPU-6"
@@ -166,9 +175,9 @@ def test_external_load_is_admitted_when_memory_fits_even_if_computing(tmp_path, 
 
 def test_memory_shortage_report_includes_pending_reservations(tmp_path, monkeypatch):
     store = runtime.JobStore(tmp_path)
-    monkeypatch.setattr(runtime, "gpu_devices", lambda: [device(0, total=4096)])
-    monkeypatch.setattr(runtime, "gpu_process_memory", dict)
-    monkeypatch.setattr(runtime, "container_gpu_memory", lambda *args: 0)
+    patch_controller(monkeypatch, runtime, "gpu_devices", lambda: [device(0, total=4096)])
+    patch_controller(monkeypatch, runtime, "gpu_process_memory", dict)
+    patch_controller(monkeypatch, runtime, "container_gpu_memory", lambda *args: 0)
     report = {}
 
     selected = runtime.select_shared_gpu(store, settings(), [job(0, 3072)], 512, diagnostics=report)
@@ -181,8 +190,8 @@ def test_memory_shortage_report_includes_pending_reservations(tmp_path, monkeypa
 
 def test_busy_submission_returns_and_preserves_gpu_report(tmp_path, monkeypatch):
     store = runtime.JobStore(tmp_path)
-    monkeypatch.setattr(runtime, "gpu_devices", lambda: [device(0, used=22500)])
-    monkeypatch.setattr(runtime, "gpu_process_memory", dict)
+    patch_controller(monkeypatch, runtime, "gpu_devices", lambda: [device(0, used=22500)])
+    patch_controller(monkeypatch, runtime, "gpu_process_memory", dict)
     limits = settings(max_jobs=0, timeout=0, share_gpus=True, run_storage_bytes=0)
 
     result = runtime.submit(
@@ -204,9 +213,9 @@ def test_busy_submission_returns_and_preserves_gpu_report(tmp_path, monkeypatch)
 
 def test_selected_gpu_report_is_saved_without_uploaded_content(tmp_path, monkeypatch):
     store = runtime.JobStore(tmp_path)
-    monkeypatch.setattr(runtime, "gpu_devices", lambda: [device(1, used=1)])
-    monkeypatch.setattr(runtime, "gpu_process_memory", dict)
-    monkeypatch.setattr(runtime, "create_container", lambda *args: "test-container")
+    patch_controller(monkeypatch, runtime, "gpu_devices", lambda: [device(1, used=1)])
+    patch_controller(monkeypatch, runtime, "gpu_process_memory", dict)
+    patch_controller(monkeypatch, runtime, "create_container", lambda *args: "test-container")
     monkeypatch.setattr(runtime.subprocess, "Popen", lambda *args, **kwargs: None)
     limits = settings(max_jobs=0, timeout=0, share_gpus=True, run_storage_bytes=0)
     request = {
@@ -230,9 +239,10 @@ def test_selected_gpu_report_is_saved_without_uploaded_content(tmp_path, monkeyp
 @pytest.mark.parametrize("shared", [False, True])
 def test_diagnostic_write_failure_prevents_launch_and_releases_lease(tmp_path, monkeypatch, shared):
     store = runtime.JobStore(tmp_path)
-    monkeypatch.setattr(runtime, "gpu_devices", lambda: [device(1)])
-    monkeypatch.setattr(runtime, "gpu_process_memory", dict)
-    monkeypatch.setattr(
+    patch_controller(monkeypatch, runtime, "gpu_devices", lambda: [device(1)])
+    patch_controller(monkeypatch, runtime, "gpu_process_memory", dict)
+    patch_controller(
+        monkeypatch,
         runtime,
         "acquire_gpu",
         lambda current, allowed: (
@@ -247,8 +257,8 @@ def test_diagnostic_write_failure_prevents_launch_and_releases_lease(tmp_path, m
     def forbidden_launch(*args, **kwargs):
         pytest.fail("diagnostic failure must prevent container and watcher creation")
 
-    monkeypatch.setattr(runtime, "record_scheduler_event", fail_log)
-    monkeypatch.setattr(runtime, "create_container", forbidden_launch)
+    patch_controller(monkeypatch, runtime, "record_scheduler_event", fail_log)
+    patch_controller(monkeypatch, runtime, "create_container", forbidden_launch)
     monkeypatch.setattr(runtime.subprocess, "Popen", forbidden_launch)
     limits = settings(max_jobs=0, timeout=0, share_gpus=shared, run_storage_bytes=0)
 

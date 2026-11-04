@@ -4,6 +4,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from remote_test_support import patch_controller
 
 MODULE_PATH = Path(__file__).resolve().parents[2] / "runtime/remote/remote_jobs.py"
 
@@ -155,7 +156,7 @@ def test_storage_limit_blocks_new_job_before_gpu_or_container_allocation(tmp_pat
     runtime = load_runtime()
     store = runtime.JobStore(tmp_path)
     store.create("old-owner", ["true"], False, {"data": "1234567"}, run_id="run-one")
-    monkeypatch.setattr(runtime, "docker", lambda *a, **k: pytest.fail("Docker reached"))
+    patch_controller(monkeypatch, runtime, "docker", lambda *a, **k: pytest.fail("Docker reached"))
     result = runtime.submit(
         store,
         {
@@ -188,8 +189,8 @@ def test_storage_watcher_stops_only_its_job_and_keeps_evidence(tmp_path, monkeyp
             state.update(Status="exited", ExitCode=143)
         return subprocess.CompletedProcess(arguments, 0, "", "")
 
-    monkeypatch.setattr(runtime, "docker", docker)
-    monkeypatch.setattr(runtime, "container_state", lambda container: dict(state))
+    patch_controller(monkeypatch, runtime, "docker", docker)
+    patch_controller(monkeypatch, runtime, "container_state", lambda container: dict(state))
     runtime.watch(Namespace(root=tmp_path, job_id=job["job_id"], timeout=0, lock_fd=None))
     saved = store.load(job["job_id"], "owner")
     assert saved["status"] == "failed"
@@ -210,7 +211,8 @@ def test_shared_assets_are_read_only_and_outputs_stay_with_owner(tmp_path, monke
     datasets.mkdir()
     cache.mkdir()
     calls = []
-    monkeypatch.setattr(
+    patch_controller(
+        monkeypatch,
         runtime,
         "docker",
         lambda arguments: (
@@ -263,7 +265,8 @@ def test_remote_job_has_a_user_name_and_writable_training_cache(tmp_path, monkey
     store = runtime.JobStore(tmp_path / "runtime")
     job = store.create("owner", ["true"], False, {}, run_id="run-one")
     calls = []
-    monkeypatch.setattr(
+    patch_controller(
+        monkeypatch,
         runtime,
         "docker",
         lambda arguments: (
@@ -294,7 +297,8 @@ def test_job_temporary_files_use_isolated_data_directory_and_count_toward_budget
     temporary_root = tmp_path / "data-temporary"
     monkeypatch.setenv("TMPDIR", str(temporary_root))
     calls = []
-    monkeypatch.setattr(
+    patch_controller(
+        monkeypatch,
         runtime,
         "docker",
         lambda arguments: (
@@ -377,10 +381,12 @@ def test_watcher_removes_only_exited_jobs_temporary_files(tmp_path, monkeypatch)
     (store.outputs(job) / "checkpoint").write_text("persistent")
     job.update(container_id="own-container", temporary_directory=str(temporary))
     store.save(job)
-    monkeypatch.setattr(
-        runtime, "docker", lambda a, **kw: subprocess.CompletedProcess(a, 0, "", "")
+    patch_controller(
+        monkeypatch, runtime, "docker", lambda a, **kw: subprocess.CompletedProcess(a, 0, "", "")
     )
-    monkeypatch.setattr(runtime, "container_state", lambda c: {"Status": "exited", "ExitCode": 0})
+    patch_controller(
+        monkeypatch, runtime, "container_state", lambda c: {"Status": "exited", "ExitCode": 0}
+    )
     monkeypatch.setattr(
         runtime.subprocess, "run", lambda *a, **kw: subprocess.CompletedProcess(a, 0, "0", "")
     )
@@ -400,7 +406,8 @@ def test_gpu_jobs_select_readonly_nvidia_egl_vendor(tmp_path, monkeypatch, gpu):
     job = store.create("owner", ["true"], gpu, {})
     job["gpu_uuid"] = "GPU-selected" if gpu else None
     calls = []
-    monkeypatch.setattr(
+    patch_controller(
+        monkeypatch,
         runtime,
         "docker",
         lambda arguments: (
@@ -411,7 +418,10 @@ def test_gpu_jobs_select_readonly_nvidia_egl_vendor(tmp_path, monkeypatch, gpu):
         store, job, Namespace(cpus=16, memory="64g", pids_limit=1024, image="test")
     )
     arguments = calls[0]
-    vendor = MODULE_PATH.with_name("nvidia_egl_vendor.json")
+    vendor = (
+        Path(__file__).resolve().parents[2]
+        / "src/a3_research_agent/execution/controller/nvidia_egl_vendor.json"
+    )
     mount = f"type=bind,source={vendor},target=/run/a3-egl/nvidia.json,readonly"
     setting = "__EGL_VENDOR_LIBRARY_FILENAMES=/run/a3-egl/nvidia.json"
     assert (mount in arguments) is gpu
@@ -460,7 +470,7 @@ def test_artifact_read_refuses_directory_swap_after_path_validation(tmp_path, mo
         folder.symlink_to(outside, target_is_directory=True)
         return target
 
-    monkeypatch.setattr(runtime, "safe_path", swap)
+    patch_controller(monkeypatch, runtime, "safe_path", swap)
     with pytest.raises((OSError, ValueError)):
         runtime.read_artifact(
             store, {"experiment_id": "owner", "job_id": job["job_id"], "path": "frames/a.png"}
