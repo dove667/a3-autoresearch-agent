@@ -221,7 +221,7 @@ def spec(name, props, required):
             "read": "Read a bounded character page with content, whole-file SHA256, offset/end/total and EOF. limit is 1..8000, default 4000. Same-path changed hashes are different sources. Optional fields selects top-level JSON keys instead.",
             "write": "Write text in workspace.",
             "list": "List accessible directory.",
-            "delegate": "Coordinate bounded policy/harness worker assignments: assign, collect verified reports, decide, or list. Workers use fresh contexts and existing identities; no new permission or automatic scientific adoption.",
+            "delegate": "Coordinate bounded policy/harness worker assignments: assign, collect verified reports, decide, or list (bounded summary; list with id returns the complete record). Workers use fresh contexts and existing identities; no new permission or automatic scientific adoption.",
             "progress": "List or explicitly update bounded operational items with evidence references. These are your claims, not validated scientific acceptance; closed items remain recorded across summaries.",
             "wait": "Wait up to 600 seconds for existing worker/job state changes, input changes or deadline; observation errors return immediately. No work is submitted or collected.",
             "recall": (

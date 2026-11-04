@@ -542,8 +542,8 @@ def collect(req, state, identifier):
     return item
 
 
-def view():
-    state = load()
+def view(state=None):
+    state = load() if state is None else state
     items = list(state["assignments"].values())
     pending = [item for item in items if item["status"] != "decided"]
     return {
@@ -565,14 +565,32 @@ def dispatch(req, arguments):
     state = load()
     action = arguments.get("action")
     if action == "list":
+        raw = STATE.read_bytes() if STATE.exists() else None
+        if raw is not None:
+            state = json.loads(raw)
+            if state.get("version") != 1 or not isinstance(state.get("assignments"), dict):
+                raise ValueError("Invalid assignment ledger; preserve and inspect it")
+        source = {"path": str(STATE), "sha256": digest(raw) if raw is not None else None}
+        identifier = arguments.get("id")
+        if identifier is not None:
+            if identifier not in state["assignments"]:
+                raise ValueError("Unknown assignment")
+            return {"source": source, "assignment": state["assignments"][identifier]}
+        items = list(state["assignments"].values())
+        pending = [x for x in items if x["status"] != "decided"]
+        closed = [x for x in items if x["status"] == "decided"]
+        selected = pending[:12] + closed[-6:]
         return {
-            **view(),
+            **view(state),
+            "source": source,
+            "detail": "Use delegate action=list with id for the complete unchanged record, or read the source ledger by pages. Reasons and evidence are omitted here, not deleted or reinterpreted.",
+            "omitted_assignments": len(items) - len(selected),
             "assignments": [
                 {
                     k: item.get(k)
-                    for k in ("id", "role", "status", "session_id", "decision", "reason")
+                    for k in ("id", "role", "status", "session_id", "decision", "delivery_failed")
                 }
-                for item in state["assignments"].values()
+                for item in selected
             ],
         }
     identifier = arguments.get("id")
