@@ -11,10 +11,14 @@ full SHA256 and the collected bytes verify. Missing own tool-output previews,
 corrupt files, symlinks and ambiguous citations still require explicit recovery;
 no other session or filesystem is searched or granted by this compatibility rule.
 
-The main Agent chooses direction, assigns Policy and Harness work, coordinates dependencies,
-inspects evidence and makes decisions. Concrete research implementation, collection, training
-and evaluation belong to workers. This division does not require another worker for a simple
-coordination action. The [orchestrator skill](../skills/research-orchestrator/SKILL.md) is an
+The main Agent owns research direction and judgment, assigns Policy and Harness work including
+acceptance tests, coordinates dependencies, reviews results and decides adoption, rejection and
+succession. Concrete implementation, data collection, test execution, training and evaluation
+belong to workers. Main-identity dispatch, validation coordination and trial/handoff operations
+remain main responsibilities through existing authorized interfaces. Delegating a test does not
+transfer acceptance responsibility or prohibit its required main-identity dispatch. It grants no
+new worker authority and does not lower validation requirements. Simple coordination needs no
+additional worker. The [orchestrator skill](../skills/research-orchestrator/SKILL.md) is an
 optional toolbox: choose, adjust, skip or combine methods; it is not a fixed workflow.
 
 ## Existing authority and optional Harness support
@@ -84,8 +88,8 @@ uninspected remote jobs.
 ## Integration, handoff and remaining boundary
 
 When a Harness worker returns tested work, main promptly decides at a safe Policy boundary,
-then performs required version-specific validation before integration or handoff. It must
-not orphan active workers: a successor normally cannot manage the predecessor's other
+then arranges required version-specific validation by workers and judges the evidence before
+integration or handoff. It must not orphan active workers: a successor normally cannot manage the predecessor's other
 children. The adapter checks the authorized descendant status snapshot before retaining a
 candidate and refuses while other workers are active or unknown; it never cancels them to
 force handoff. Settle work and explicitly transfer accessible evidence and sealed exports.

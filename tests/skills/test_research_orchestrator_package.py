@@ -19,12 +19,26 @@ def test_orchestrator_catalog_maps_to_versioned_readable_reference():
     body = (ROOT / entry["local_source"]).read_text()
     frontmatter = yaml.safe_load(body.split("---", 2)[1])
     assert entry["id"] == frontmatter["name"] == package.name
-    assert entry["version"] == frontmatter["metadata"]["version"] == "0.1.1"
+    assert entry["version"] == frontmatter["metadata"]["version"] == "0.1.2"
     assert entry["status"] == "reference"
     assert entry["comparison_status"] == "compare-not-proven"
     assert len(body.splitlines()) <= 100
     for target in re.findall(r"\]\(([^)]+)\)", body):
         assert (package / target).is_file(), target
+
+
+def test_main_validation_coordination_stays_distinct_from_worker_execution():
+    execution = (ROOT / "agent-inputs/shared/execution.md").read_text()
+    skill = (ROOT / "skills/research-orchestrator/SKILL.md").read_text()
+    assert "需要主身份的任务派发、验证协调、正式 trial 和交权操作" in execution
+    assert "委派测试不转移其验收与决策责任" in execution
+    assert "当前主 Agent 可穿插派发 Policy 实验" in execution
+    assert "Policy 实验可由当前主 Agent 穿插执行" not in execution
+    assert "主 Agent 先验证局部假设" not in execution
+    assert "Assign concrete implementation, test execution and analysis to workers" in skill
+    assert "the main issues required main-identity dispatches" in skill
+    assert "not a checklist, fixed sequence" in skill
+    assert "does not authorize workers to impersonate it or bypass guards" in skill
 
 
 def test_optional_orchestrator_and_dependencies_remain_frozen_input_files(tmp_path):

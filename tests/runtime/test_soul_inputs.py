@@ -116,11 +116,15 @@ def test_repository_phase_two_layers_remain_selected_and_versioned(tmp_path):
     inputs = InputVersions(root, tmp_path / "run", phase="phase-two")
     manifest = inputs.activate(inputs.prepare(), "start")
     _, instructions = inputs.model_instructions()
-    assert manifest["files"]["SOUL.md"]["version"] == "0.2.4"
+    assert manifest["files"]["SOUL.md"]["version"] == "0.2.5"
     assert "phase-instructions.md" not in manifest["files"]
     for name in ("SOUL.md", "goal.md", "acceptance.md", "protocol.md"):
         assert inputs.contents[name] in instructions
     assert inputs.contents["execution.md"] not in instructions
+    assert "包括验收在内的任务" in instructions
+    assert "需要主身份的派发、验收协调和交权操作" in instructions
+    assert "委派具体测试不等于委派验收责任" in instructions
+    assert "不为简单协调机械再开 worker" in instructions
     assert not (root / "agent-inputs/phase-two/instructions.md").exists()
     # Optional method references and maintainer review notes are not injected inputs.
     assert not any(item["source"].startswith(("skills/", "docs/")) for item in manifest["files"].values())

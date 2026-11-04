@@ -2,12 +2,12 @@
 name: research-orchestrator
 description: Select and adapt coordination methods for Policy and Harness workers within an authorized research task, including assignments, evidence review, asset sharing and safe succession.
 metadata:
-  version: 0.1.1
+  version: 0.1.2
 ---
 
 # Research orchestration
 
-The main Agent selects research directions, dispatches work, tracks dependencies, reviews evidence and decides. Policy workers implement data, policy, training, deployment and evaluation work. Harness workers implement, test and integrate Harness changes. The main does not take over concrete research implementation or training/evaluation when delegation is inconvenient. Status reads, assignment updates, evidence review and decision records are ordinary coordination; do these directly without creating another worker.
+The main Agent owns research direction and judgment, dispatches work including acceptance tests, coordinates dependencies, reviews evidence and decides adoption, rejection and succession. Policy workers implement data, policy, training, deployment and evaluation work. Harness workers implement, test and integrate Harness changes. The main does not take over concrete research implementation or training/evaluation when delegation is inconvenient. Main-identity dispatch, validation coordination, trial initiation and succession decisions are main responsibilities under existing interfaces, not worker test implementation. Delegating concrete tests does not delegate acceptance responsibility or prevent the main from issuing the coordination operations they require. Status reads, assignment updates, evidence review and decision records do not need another worker.
 
 Use this skill as an optional method package, not a checklist, fixed sequence or requirement to apply every section. Select, adapt, skip or combine coordination methods according to the current goal, dependencies, resources and total cost. The division of responsibilities, scientific protocol, permission boundaries and safe succession constraints remain binding whichever method is chosen. Skipping a method does not authorize main-executed research jobs or abandonment of active workers.
 
@@ -41,7 +41,7 @@ Keep code, processors, statistics, datasets and model checkpoint references toge
 
 For returned work, collect the finding and original evidence needed to judge the assigned question. Executed experiments need actual code/data/config versions, job/export references, comparison conditions, failures and unknowns. Distinguish functional tests, loaded execution and scientific improvement. Preserve raw evidence; do not replace it with a worker's pass label or analyzer advice.
 
-The main can inspect descendant `/sessions/{id}/artifacts` with bounded pages and obtain submitted code through `/sessions/{id}/versions`. It cannot directly query another identity's remote job as its own. Have the worker copy small results into its report and explicitly grant sealed assets. Review against the original question and active protocol; record adopt, reject or bounded further testing and its reason. Further implementation and tests remain worker assignments, while the main owns the decision.
+The main can inspect descendant `/sessions/{id}/artifacts` with bounded pages and obtain submitted code through `/sessions/{id}/versions`. It cannot directly query another identity's remote job as its own. Have the worker copy small results into its report and explicitly grant sealed assets. Review against the original question and active protocol; record adopt, reject or bounded further testing and its reason. Assign concrete implementation, test execution and analysis to workers; the main issues required main-identity dispatches, reviews the resulting evidence and owns the acceptance decision. Do not stop an otherwise authorized validation merely because its coordinating dispatch requires the main identity; this does not authorize workers to impersonate it or bypass guards.
 
 Timeouts, late reports and transport errors do not prove a job failed. Check existing identities, assignments and evidence before retrying. Preserve an uncertain side effect and its recovery reference; do not duplicate training to obtain a cleaner status. Independent analyzer findings remain advisory and receive an explicit reasoned response through the available analysis interface, not automatic acceptance.
 

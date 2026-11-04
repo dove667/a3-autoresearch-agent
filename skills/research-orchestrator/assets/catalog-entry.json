@@ -1,6 +1,6 @@
 {
   "id": "research-orchestrator",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "status": "reference",
   "comparison_status": "compare-not-proven",
   "description": "Research coordination: bounded Policy/Harness workers, evidence decisions, explicit data grants and safe main-Harness succession.",
@@ -17,6 +17,7 @@
   "evidence_status": "source-inspected; reference-only; no-live-coordinator-validation",
   "version_history": [
     {"version": "0.1.0", "change": "Separate coordinator responsibilities from concrete Policy/Harness worker execution using existing identities, data grants and candidate adoption boundaries."},
-    {"version": "0.1.1", "change": "Make coordination methods independently selectable and adaptable, including optional helper or gateway use, while preserving responsibility, protocol and safe-succession constraints."}
+    {"version": "0.1.1", "change": "Make coordination methods independently selectable and adaptable, including optional helper or gateway use, while preserving responsibility, protocol and safe-succession constraints."},
+    {"version": "0.1.2", "change": "Clarify main-owned research and acceptance decisions and main-identity validation dispatch, while workers implement, execute and analyze tests; preserve optional coordination methods and existing permissions."}
   ]
 }
