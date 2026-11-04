@@ -423,7 +423,13 @@ def read_artifact(store: JobStore, request: dict) -> dict:
     limit = request.get("max_bytes", MAX_FILE_BYTES)
     if type(limit) is not int or not 0 < limit <= MAX_FILE_BYTES:
         raise ValueError("Invalid artifact byte ceiling")
-    target = safe_path(store.workspace(job), request.get("path"))
+    area = request.get("area", "workspace")
+    if area not in {"workspace", "outputs"}:
+        raise ValueError("Unknown artifact area")
+    if area == "outputs" and not job.get("run_id"):
+        raise ValueError("outputs area is unavailable for legacy jobs")
+    root = store.outputs(job) if area == "outputs" else store.workspace(job)
+    target = safe_path(root, request.get("path"))
     # Fixed directory descriptors prevent a symlink swap after lexical checks.
     # The optional ceiling only narrows the existing owner-scoped read boundary.
     with open_source(target) as stream:
@@ -432,7 +438,14 @@ def read_artifact(store: JobStore, request: dict) -> dict:
         data = stream.read(limit + 1)
     if len(data) > limit:
         raise ValueError("artifact exceeds size limit")
-    return {"path": request["path"], "encoding": "base64", "data": base64.b64encode(data).decode()}
+    result = {
+        "path": request["path"],
+        "encoding": "base64",
+        "data": base64.b64encode(data).decode(),
+    }
+    if area == "outputs":
+        result["area"] = area
+    return result
 
 
 def acquire_gpu(store: JobStore, allowed: set[str] | None):

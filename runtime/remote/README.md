@@ -69,7 +69,7 @@ printf '{}' | python3 "$CONTROLLER" \
 | `submit` | `experiment_id`、`command`、`gpu`，可选 Host 注入的 `run_id`、`files` 与 `input_exports` | 作业标识、状态、分配的 GPU UUID |
 | `status` | `experiment_id`、`job_id` | 状态、退出码、近期合并输出 |
 | `cancel` | `experiment_id`、`job_id` | 终止或取消状态 |
-| `artifact` | `experiment_id`、`job_id`、`path` | 路径、Base64 编码及内容 |
+| `artifact` | `experiment_id`、`job_id`、`path`，可选 `area` | 路径、Base64 编码及内容 |
 | `usage` | Host 提供的 `run_id`、`host_storage_bytes` | 更新本地占用并返回合计，不对 Agent 开放 |
 
 受信任的 Gateway 注入 `experiment_id` 和整轮共享的 `run_id`；模型请求不能自行指定这两项。容器客户端提供容器内命令，例如 `["a3-sim", "smoke", "--steps", "20"]`，以及是否需要 GPU 的布尔值。挂载和 Docker 参数由 Host配置决定。`files` 将相对工作区路径映射到 UTF-8 内容；请求最多 20 MiB、128 个文件。
@@ -77,6 +77,8 @@ printf '{}' | python3 "$CONTROLLER" \
 提交先返回 `created`，随后由独立 watcher 启动容器。状态包括 `created`、`running`、`completed`、`failed`、`cancelled`。资源不足时返回 `resource_busy`、空作业标识和重试间隔，该请求不启动容器。`reason=job_count_limit` 表示作业数量达到上限，`reason=no_eligible_gpu` 表示没有通过准入的 GPU；共享模式还返回 `gpu_allocation` 逐卡判断，避免将所有等待归因为显存不足。
 
 未知作业、缺少归属和归属不匹配统一返回 `PermissionError` JSON。业务错误包含 `status: error`、错误类型和说明，输出后 CLI 退出码为 0；命令行参数错误沿用非零退出码。
+
+`artifact` 的 `area` 默认是 `workspace`，路径相对该 job 的工作区；显式 `outputs` 则路径相对作业元数据记录的 run/owner 输出目录。后者在同身份作业间共享，不能单靠 job ID 声称文件生产者。无 run_id 的旧作业不支持 outputs；不自动回退目录，不接受调用方重定向 run/owner。outputs 成功响应带 `area:"outputs"`，Host 会拒绝缺少确认标记的混合版本响应；部署时同步 Host、controller 和输入说明。
 
 通过 artifact 接口读取的产物必须是最多 32 MiB 的普通文件。接口拒绝绝对路径、路径越界和符号链接。状态输出截取最后 64 KiB，容器日志循环保存。
 

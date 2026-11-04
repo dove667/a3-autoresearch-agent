@@ -1,6 +1,6 @@
 # Host提供的执行与验收入口
 
-Version: 0.15.4
+Version: 0.15.5
 
 部署方运行 gateway、容器引擎、模型认证与远程资源调度。候选 Harness 在独立容器内运行，
 通过 HTTP 请求这些固定能力。工具名称、研究逻辑、反思方法和版本选择由 Agent 设计。
@@ -220,7 +220,7 @@ CPU 仍可用于轻量元数据检查、预处理、日志分析、命令帮助�
 等效示例入口为 `["python", "/opt/a3/examples/benchmark_cookie_batch.py", "--help"]`。不要假设存在 `python -m a3` 或包根目录的 `__main__`；参考文档与这些示例随同一 A3 源码准备进镜像。生成后的 Harness 自行组织文档访问和接口知识交接。
 作业根文件系统只读、无网络，只挂载自己的工作区，无 SSH、Docker socket 或 gateway 令牌。
 任务结束后通过 `GET /jobs/{job_id}` 查询状态，通过
-`GET /jobs/{job_id}/artifacts?path=relative_path` 取回产物；取消为 `DELETE /jobs/{job_id}`。
+`GET /jobs/{job_id}/artifacts?path=relative_path` 默认只读取该作业 `/workspace` 下的产物。若程序写入 `/outputs`，显式加 `area=outputs`，path 仍为相对于该目录的路径，不带 `/outputs/` 前缀。outputs 成功响应必须带 `area:"outputs"`；缺少标记不能当作读取了 outputs，新 Host 对未确认的旧 controller 响应拒绝返回成功。Host/controller/输入应同步部署。outputs 在同一 run 内按 owner 共享，不保证文件只由所选 job 写入；结合原始日志、哈希和作业记录验证来源。接口仍先核验 job 属于当前身份，不允许跨 worker 读取或隐式切换目录；旧无 run 记录的作业不支持 outputs。找不到文件时返回所选 area 的固定诊断，不表示作业未执行，不自动重跑。取消为 `DELETE /jobs/{job_id}`。
 资源忙时稍后重试。长任务先提交再查询，避免单条本地命令超时。
 
 实际限制以 deployment.json 的 remote_limits 为准。作业可共享同一张 GPU；Host 按实际显存与预留量准入，物理 GPU 数和作业数量分别配置。max_jobs=0 不设作业数量上限，timeout_seconds=0 不设时限。

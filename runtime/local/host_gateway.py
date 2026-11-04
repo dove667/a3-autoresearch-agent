@@ -1512,14 +1512,30 @@ def create_app(
         return remote("cancel", {"experiment_id": owner(authorization), "job_id": job_id})
 
     @app.get("/jobs/{job_id}/artifacts")
-    def artifact(job_id: str, path: str, authorization: Annotated[str | None, Header()] = None):
-        return remote(
-            "artifact",
-            {
-                "experiment_id": owner(authorization),
-                "job_id": job_id,
-                "path": path,
-            },
-        )
+    def artifact(
+        job_id: str,
+        path: str,
+        authorization: Annotated[str | None, Header()] = None,
+        area: Literal["workspace", "outputs"] = "workspace",
+    ):
+        payload = {"experiment_id": owner(authorization), "job_id": job_id, "path": path}
+        if area != "workspace":
+            payload["area"] = area
+        try:
+            result = remote("artifact", payload)
+            if area == "outputs" and result.get("area") != "outputs":
+                raise HTTPException(502, "Controller did not confirm outputs area; verify matching deployment versions")
+            return result
+        except HTTPException as error:
+            if error.status_code == 400 and error.detail == "FileNotFoundError":
+                raise HTTPException(
+                    400,
+                    {
+                        "code": "artifact_not_found",
+                        "area": area,
+                        "hint": "Not found in the selected area. workspace is this job's /workspace; outputs is this owner's shared /outputs within the recorded run. Use a relative path and select area explicitly. No fallback or cross-owner access occurs; a missing file is not a reason to rerun the job.",
+                    },
+                ) from None
+            raise
 
     return app
