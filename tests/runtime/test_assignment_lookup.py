@@ -13,7 +13,9 @@ def test_missing_is_explicit_read_only_and_not_permission_to_retry(tmp_path, mon
         result = m.dispatch(g, {"action": action, "id": "missing"})
         assert result["found"] is False
         assert result["creation_status"] == "not_recorded_in_checked_ledger"
-        assert result["retry_safe"] is False
+        assert result["retry_safe"] is None
+        assert result["first_dispatch_rule"] == "not_a_retry_if_no_previous_creation_attempt"
+        assert result["creation_attempt_status"] == "not_assessed_by_lookup"
         assert result["source"]["sha256"] == m.digest(original)
         assert m.STATE.read_bytes() == original
         assert not any(method == "POST" for method, _, _ in g.calls)
@@ -111,3 +113,25 @@ def test_other_assignment_sharing_prefix_is_not_confused(tmp_path, monkeypatch):
     p.parent.mkdir()
     p.write_bytes(raw)
     assert m.dispatch(Gateway(), {"action": "list", "id": "x"})["found"] is False
+
+
+def test_first_dispatch_is_allowed_but_uncertain_creation_never_replays(tmp_path, monkeypatch):
+    from test_work_assignments import assignment, seed_sources
+
+    m = load(tmp_path, monkeypatch)
+    seed_sources(m, tmp_path)
+    g = Gateway()
+    args = assignment()
+    missing = m.dispatch(g, {"action": "list", "id": args["id"]})
+    assert missing["found"] is False and missing["retry_safe"] is None
+    g.fail_create = True
+    with pytest.raises(TimeoutError):
+        m.dispatch(g, args)
+    found = m.dispatch(g, {"action": "list", "id": args["id"]})
+    assert found["found"] is True
+    assert found["assignment"]["status"] == "creation_uncertain"
+    with pytest.raises(ValueError, match="already recorded"):
+        m.dispatch(g, args)
+    reconciled = m.dispatch(g, {"action": "reconcile", "id": args["id"]})
+    assert reconciled["creation_confirmed"] is True and reconciled["resubmitted"] is False
+    assert len([x for x in g.calls if x[0] == "POST"]) == 1

@@ -247,7 +247,7 @@ def test_actual_agent_supplements_delivery_from_own_worker_child(tmp_path):
             }
             assert results["lookup-missing"]["found"] is False
             assert results["reconcile-missing"]["found"] is False
-            assert results["reconcile-missing"]["retry_safe"] is False
+            assert results["reconcile-missing"]["retry_safe"] is None
             assert results["collect-original"]["result"] == report
             assert results["reject-sibling"]["error"] == "tool_execution_failed"
             assert results["decide-original"]["decision"] == "follow_up"

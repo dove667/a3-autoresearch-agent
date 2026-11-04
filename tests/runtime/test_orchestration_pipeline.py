@@ -425,6 +425,8 @@ def test_real_policy_and_harness_worker_loops_route_collect_and_decide(pipeline,
                 module_path=str(source),
                 module_sha256=sha(source.read_text()),
             )
+        before_first = assignments.dispatch(req, {"action": "list", "id": arguments["id"]})
+        assert before_first["found"] is False and before_first["retry_safe"] is None
         assigned[role] = assignments.dispatch(req, arguments)
         if role == "policy":
             # The first process cannot finish until the other reaches the provider.

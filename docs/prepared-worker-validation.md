@@ -163,7 +163,16 @@ do not infer that creation failed from an arbitrary error or blindly retry an un
 
 `delegate list` with an ID returns `found:true` and the current record or one
 hash-verified closed archive. Missing IDs return `found:false`, the checked ledger
-SHA256, `creation_status:not_recorded_in_checked_ledger` and `retry_safe:false`.
+SHA256, `creation_status:not_recorded_in_checked_ledger` and `retry_safe:null`.
+The nullable field means retry safety was not assessed by this lookup, not that an
+actual first dispatch is unsafe or prohibited. `creation_attempt_status` is
+`not_assessed_by_lookup`; `first_dispatch_rule` is
+`not_a_retry_if_no_previous_creation_attempt`. Establish whether an earlier creation
+was actually attempted from actual history and receipts, not from ledger absence alone.
+A genuine first dispatch can pass normal validation and reserve its ID before its only POST.
+A prior uncertain POST still requires the existing task-hash reconciliation and must not replay.
+This replaces the earlier conservative Boolean false, which conflated unknown safety with
+an unsafe retry and could strand never-submitted work. No automatic creation or replay is added.
 This is a read-only ledger fact, not a claim that a Host session never existed.
 `reconcile` without a current record uses the same bounded lookup and never POSTs;
 with an existing uncertain reservation it retains the original task-hash reconciliation.

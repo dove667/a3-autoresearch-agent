@@ -1029,9 +1029,11 @@ def lookup_assignment(state, identifier):
         "id": identifier,
         "scope": "current_and_verified_archived_assignment_ledger",
         "creation_status": "not_recorded_in_checked_ledger",
-        "retry_safe": False,
+        "retry_safe": None,
+        "creation_attempt_status": "not_assessed_by_lookup",
+        "first_dispatch_rule": "not_a_retry_if_no_previous_creation_attempt",
         "resubmitted": False,
-        "notice": "No record in this checked ledger. This is not a transport failure or proof that no Host session exists. Do not repeat the same lookup with unchanged source hash; use existing session receipts and pre-creation error evidence to decide next steps. Never blindly recreate an uncertain POST.",
+        "notice": "No record in this checked ledger. Creation history and retry safety were not assessed (null means unknown, not unsafe or authorized). An actual first dispatch is not a retry: if no earlier creation attempt exists in actual history, validate and assign normally; do not demand proof that no session could ever exist. A previously submitted uncertain POST still requires receipt/task-hash reconciliation, never blind recreation. Do not repeat this lookup with unchanged source hash.",
     }
 
 
