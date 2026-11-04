@@ -14,12 +14,14 @@ def test_context_task_bundle_loads_g_and_initial_notice(tmp_path):
     inputs = tmp_path / "inputs"
     inputs.mkdir()
     sources = input_sources("phase-one")
-    sources.update({
-        "goal.md": "agent-inputs/phase-one-context/goal.md",
-        "acceptance.md": "agent-inputs/phase-one-context/acceptance.md",
-        "phase-instructions.md": "agent-inputs/phase-one-context/instructions.md",
-        "initial-feedback.md": "agent-inputs/phase-one-context/initial-feedback.md",
-    })
+    sources.update(
+        {
+            "goal.md": "agent-inputs/phase-one-context/goal.md",
+            "acceptance.md": "agent-inputs/phase-one-context/acceptance.md",
+            "phase-instructions.md": "agent-inputs/phase-one-context/instructions.md",
+            "initial-feedback.md": "agent-inputs/phase-one-context/initial-feedback.md",
+        }
+    )
     for name, source in sources.items():
         (inputs / name).write_bytes((ROOT / source).read_bytes())
     versions = InputVersions(ROOT, tmp_path / "run", custom_dir=inputs)
@@ -51,7 +53,10 @@ def test_context_task_bundle_loads_g_and_initial_notice(tmp_path):
     )
     before = dict(source.files)
     fresh, context = prepare_task_start(
-        source, "phase-one", "standard", proposal["contents"]["goal.md"],
+        source,
+        "phase-one",
+        "standard",
+        proposal["contents"]["goal.md"],
         custom_inputs=True,
         initial_feedback=proposal["contents"]["initial-feedback.md"],
     )

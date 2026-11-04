@@ -1,10 +1,24 @@
 # Context recovery and model roles
 
-The optional overlay in `runtime/harness_recovery/` adapts a compatible retained
-Harness without changing its historical ready version. Copy `agent.py`, `context_manager.py`, `memory_state.py` and `analyzer_client.py`, plus the shared `runtime/local/token_count.py` as a flat
-`token_count.py`, into an explicitly derived package. Preserve its compatible
-`web_tools.py`, `skill_tools.py`, memory and evidence. Record source/version hashes
-and the intervention; an old acceptance record does not certify new code.
+The optional overlay is maintained in `src/a3_research_agent/harness/`, with
+context, memory, analysis and orchestration components. `runtime/harness_recovery/`
+contains checkout adapters; copying those adapters alone does not deliver the implementation.
+
+Build a new explicitly derived package using
+`a3_research_agent.packaging.harness_payload.build_harness_payload(extension_sources)`.
+The optional mapping accepts only explicitly selected UTF-8 `skill_tools.py` and
+`web_tools.py` source. Copy **every** returned path/content pair into the package,
+preserve its compatible memory and evidence, and record source/version hashes and
+the intervention. The output includes canonical package modules, the token estimator
+and flat compatibility entries; `python agent.py --resume` remains supported.
+Editing a flat `work_assignments.py` adapter changes the adapter, while orchestration
+implementation lives under `a3_research_agent/harness/orchestration/`.
+
+Export never executes candidate code or selects a live workspace. It does not create
+a retained manifest or authorize dispatch: callers must explicitly include the returned
+files in their existing package/continuation contract. Historical ready packages and
+checkpoints are never automatically upgraded. An old acceptance record does not certify
+new code.
 
 ## Token budgets and archive-only recovery
 

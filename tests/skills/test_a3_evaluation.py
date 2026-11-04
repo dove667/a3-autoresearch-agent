@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-PATH = (Path(__file__).parents[2] / "skills/a3-mujoco-autoresearch/scripts/compare_evaluations.py")
+PATH = Path(__file__).parents[2] / "skills/a3-mujoco-autoresearch/scripts/compare_evaluations.py"
 spec = importlib.util.spec_from_file_location("a3_compare", PATH)
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
@@ -14,14 +14,26 @@ def report(full=False, increment=0):
     cells = sorted(module.CELLS) if full else [("2x5", "basic")]
     seeds = range(20) if full else range(3)
     return {
-        "schema": "a3-paired-evaluation-v1", "protocol_version": "0.3.0",
-        "protocol_sha256": "a" * 64, "conditions_sha256": "b" * 64,
-        "policy_snapshot_sha256": "c" * 64, "split": "development",
+        "schema": "a3-paired-evaluation-v1",
+        "protocol_version": "0.3.0",
+        "protocol_sha256": "a" * 64,
+        "conditions_sha256": "b" * 64,
+        "policy_snapshot_sha256": "c" * 64,
+        "split": "development",
         "episodes": [
-            {"task": task, "difficulty": level, "seed": seed, "inference_seed": seed,
-             "status": "completed", "cookies_in_target": 1 + increment,
-             "success": False, "control_hz": 20, "max_steps": module.STEPS[task]}
-            for task, level in cells for seed in seeds
+            {
+                "task": task,
+                "difficulty": level,
+                "seed": seed,
+                "inference_seed": seed,
+                "status": "completed",
+                "cookies_in_target": 1 + increment,
+                "success": False,
+                "control_hz": 20,
+                "max_steps": module.STEPS[task],
+            }
+            for task, level in cells
+            for seed in seeds
         ],
     }
 
@@ -37,10 +49,10 @@ def test_partial_does_not_produce_formal_g():
 def test_full_grid_normalization_and_paired_bootstrap():
     result = module.compare(report(True), report(True, 1), repeats=100)
     assert result["complete_grid"]
-    assert result["G"]["baseline"] == pytest.approx(.075)
-    assert result["G"]["candidate"] == pytest.approx(.15)
-    assert result["G"]["paired_difference"] == pytest.approx(.075)
-    assert result["G"]["paired_difference_ci95"] == pytest.approx([.075, .075])
+    assert result["G"]["baseline"] == pytest.approx(0.075)
+    assert result["G"]["candidate"] == pytest.approx(0.15)
+    assert result["G"]["paired_difference"] == pytest.approx(0.075)
+    assert result["G"]["paired_difference_ci95"] == pytest.approx([0.075, 0.075])
 
 
 def test_cross_cell_correlations_preserved():
@@ -58,11 +70,21 @@ def test_zero_delta_evidence_insufficient():
     assert "insufficient" in result["G"]["interpretation"]
 
 
-@pytest.mark.parametrize("field,value", [
-    ("cookies_in_target", True), ("cookies_in_target", -1), ("cookies_in_target", 11),
-    ("status", "crashed"), ("success", 1), ("seed", 1.0), ("inference_seed", 99),
-    ("max_steps", 3200), ("control_hz", float("nan")), ("task", "other"),
-])
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("cookies_in_target", True),
+        ("cookies_in_target", -1),
+        ("cookies_in_target", 11),
+        ("status", "crashed"),
+        ("success", 1),
+        ("seed", 1.0),
+        ("inference_seed", 99),
+        ("max_steps", 3200),
+        ("control_hz", float("nan")),
+        ("task", "other"),
+    ],
+)
 def test_invalid_episode_rejected(field, value):
     bad = report()
     bad["episodes"][0][field] = value
@@ -81,10 +103,15 @@ def test_duplicates_and_missing_pairs_rejected():
         module.compare(report(), bad, repeats=100)
 
 
-@pytest.mark.parametrize("field,value", [
-    ("conditions_sha256", "d" * 64), ("protocol_sha256", "e" * 64),
-    ("split", "final-test"), ("protocol_version", "0.1.1"),
-])
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("conditions_sha256", "d" * 64),
+        ("protocol_sha256", "e" * 64),
+        ("split", "final-test"),
+        ("protocol_version", "0.1.1"),
+    ],
+)
 def test_changed_conditions_or_protocol_rejected(field, value):
     bad = report()
     bad[field] = value
@@ -125,7 +152,9 @@ def test_cli_readonly_json_output(tmp_path):
     original = (a.read_bytes(), b.read_bytes())
     result = subprocess.run(
         [sys.executable, str(PATH), str(a), str(b), "--bootstrap-repeats", "100"],
-        capture_output=True, text=True, check=True,
+        capture_output=True,
+        text=True,
+        check=True,
     )
     output = json.loads(result.stdout)
     assert output["paired_episodes"] == 3
@@ -144,7 +173,10 @@ def test_cli_invalid_report_does_not_emit_score(tmp_path):
     value["episodes"][0]["status"] = "crashed"
     bad.write_text(json.dumps(value))
     result = subprocess.run(
-        [sys.executable, str(PATH), str(bad), str(bad)], check=False, capture_output=True, text=True,
+        [sys.executable, str(PATH), str(bad), str(bad)],
+        check=False,
+        capture_output=True,
+        text=True,
     )
     assert result.returncode == 2
     assert result.stdout == ""

@@ -107,3 +107,25 @@ A3_WEB_FETCH_TTL_SECONDS='604800'
 配置与代码在下一次经批准启动的新 run 使用；不会自动改动当前运行。沿用明确选定的第一阶段保留 H1，可先用 `--phase phase-one --task-profile web-extension --run-harness <第一阶段run目录>` 只补 E，再将新保留结果用于第二阶段。H1 自己实现、注册和测试检索工具，外层 Host 不代写工具，不重跑或重新认证 A–D。也可按第二阶段自身目标按需接入。项目根目录私有 `.env`／`A3_RSI_ENV_FILE` 加载方式不变，已有 key 不需重填或发送给助手。
 
 `GET /web/status` 检查只读能力与尝试计数（不含账户剩余额度），不消耗付费搜索；不要为单纯配置检查发起真实搜索。E 验收另要求实际模型成功 search 与 fetch 正文，配置自报、status 和离线测试均不能替代。配置／key／网络／额度阻断时如实保存 blocked 并停止，不无限等待。接口见 [Host 执行说明](../agent-inputs/shared/execution.md#研究网页网关)，启动与运行干预的授权范围见 [操作者文档](operator-supervision.md)。
+
+
+## 源码包、命令与开发验证
+
+`uv sync` 安装 `src/a3_research_agent/`，原 `bash scripts/start-rsi.sh` 仍可使用。wheel 提供 `a3-research` 与 `a3-research-controller` 两个命令。Host 在源码 checkout 外运行时，需要明确指定完整基础设施项目目录：
+
+```bash
+a3-research --project-root /path/to/infrastructure-checkout --check
+```
+
+`--project-root` 选择 `.env`、部署输入、skills、源码快照与本地 artifacts 所属目录；`A3_PROJECT_ROOT` 仍是独立 A3 仿真项目。wheel 不内置部署凭据、Agent 输入或历史 run，不能单凭安装包启动完整实验。新镜像与输入的生产切换仍需独立安排，不会随包安装热加载到活动 run。
+
+开发测试使用 dev 依赖，其中包括构建 wheel/sdist 所需的 setuptools。为避免依赖库自动读取个人 `.env`，在未加载部署配置的终端运行隔离测试：
+
+```bash
+PYTHON_DOTENV_DISABLED=1 MSWEA_GLOBAL_CONFIG_DIR=/tmp/a3-test-mini-config \
+  LITELLM_LOCAL_MODEL_COST_MAP=True uv run python -m pytest tests
+uv run python -m ruff check src runtime tests scripts
+uv run python -m ruff format --check src runtime tests
+```
+
+进程链路测试仅创建临时 localhost 假服务；受限环境需要允许该本地监听。安装产物测试构建 wheel/sdist，通过 `uv pip --no-deps --target` 安装到临时目录，验证标准库 Controller、Host 参数校验与完整 Harness 载荷，不调用真实模型、SSH、GPU 或生产 Docker。

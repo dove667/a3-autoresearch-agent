@@ -52,7 +52,11 @@ class PromptResponsibilitiesTests(unittest.TestCase):
 
     def test_feedback_is_agent_action_not_operator_approval(self):
         for phase in ("phase-one", "phase-two"):
-            text = read(f"agent-inputs/{phase}/instructions.md") if phase == "phase-one" else read("agent-inputs/shared/execution.md")
+            text = (
+                read(f"agent-inputs/{phase}/instructions.md")
+                if phase == "phase-one"
+                else read("agent-inputs/shared/execution.md")
+            )
             if phase == "phase-one":
                 for required in ("收到反馈", "采纳或不采纳", "不能", "旧条件", "来源"):
                     self.assertIn(required, text)
@@ -61,7 +65,9 @@ class PromptResponsibilitiesTests(unittest.TestCase):
                 # arrangements preserve protocol 3 rather than duplicate them.
                 for required in ("human feedback", "SOUL", "固定核心提示词"):
                     self.assertIn(required, text)
-                self.assertIn("反馈本身不是实验结果或通过标签", read("agent-inputs/phase-two/acceptance.md"))
+                self.assertIn(
+                    "反馈本身不是实验结果或通过标签", read("agent-inputs/phase-two/acceptance.md")
+                )
                 self.assertIn("不事后改写旧选择条件", read("agent-inputs/shared/protocol.md"))
             self.assertNotIn("用户明确批准", text)
         operator = read("docs/operator-supervision.md")
@@ -84,7 +90,12 @@ class PromptResponsibilitiesTests(unittest.TestCase):
         self.assertIn("记忆保存经历和证据", soul)
         self.assertIn("不授予新权限", soul)
         skill = read("skills/a3-mujoco-autoresearch/SKILL.md")
-        for required in ("counterexamples", "evidence", "retire stale advice", "retained or handed off"):
+        for required in (
+            "counterexamples",
+            "evidence",
+            "retire stale advice",
+            "retained or handed off",
+        ):
             self.assertIn(required, skill)
         self.assertNotIn("## 可复用研究 skills", prompt)
         with tempfile.TemporaryDirectory() as directory:
@@ -100,19 +111,28 @@ class PromptResponsibilitiesTests(unittest.TestCase):
 
     def test_gpu_model_compute_boundary_is_published_in_shared_execution(self):
         execution = read("agent-inputs/shared/execution.md")
-        boundary = execution.split("### 模型计算必须使用 GPU", 1)[1].split("### 作业环境与接口", 1)[0]
+        boundary = execution.split("### 模型计算必须使用 GPU", 1)[1].split("### 作业环境与接口", 1)[
+            0
+        ]
         # Keep the positive requirement, unavailable-device behavior, and CPU/API
         # exceptions together in the authoritative execution layer, not only docs.
         for required in (
-            "训练、微调", "学习型 Policy 推理和大模型推理", "gpu: true",
-            "启动计算前确认获配 GPU", "模型与张量确实位于 GPU",
+            "训练、微调",
+            "学习型 Policy 推理和大模型推理",
+            "gpu: true",
+            "启动计算前确认获配 GPU",
+            "模型与张量确实位于 GPU",
             "不得因租约暂不可用、CUDA 不可见或初始化失败，静默回退到 CPU",
-            "等待／拒绝原因与作业状态", "区分正常排队和分配／可见性故障",
-            "普通资源等待应退避查询", "报告具体阻塞及缺失条件",
+            "等待／拒绝原因与作业状态",
+            "区分正常排队和分配／可见性故障",
+            "普通资源等待应退避查询",
+            "报告具体阻塞及缺失条件",
             "不得绕过 controller、抢卡、取消他人作业或移除他人租约",
             "轻量元数据检查、预处理、日志分析、命令帮助与合成单元测试 fixture",
-            "不能当作真实模型能力证据", "/v1/responses",
-            "不要求调用方申请本地 GPU", "提供商执行不属于本地 CPU 回退",
+            "不能当作真实模型能力证据",
+            "/v1/responses",
+            "不要求调用方申请本地 GPU",
+            "提供商执行不属于本地 CPU 回退",
         ):
             self.assertIn(required, boundary)
         for phase in ("phase-one", "phase-two"):
@@ -120,7 +140,10 @@ class PromptResponsibilitiesTests(unittest.TestCase):
                 versions = InputVersions(ROOT, Path(directory) / "run", phase=phase)
                 versions.activate(versions.prepare(), "start")
                 self.assertEqual(versions.contents["execution.md"], execution)
-                self.assertIn(boundary, (Path(directory) / "run/inputs/execution.md").read_text(encoding="utf-8"))
+                self.assertIn(
+                    boundary,
+                    (Path(directory) / "run/inputs/execution.md").read_text(encoding="utf-8"),
+                )
 
     def test_scientific_rules_remain_in_protocol(self):
         text = read("agent-inputs/shared/protocol.md")

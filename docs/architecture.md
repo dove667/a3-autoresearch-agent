@@ -34,6 +34,8 @@ flowchart LR
     Stage2 --> Feedback --> Stage2
 ```
 
+源码按 `host/`、`execution/`、`harness/` 分组件，维护于 `src/a3_research_agent/`。Host 的 Gateway 路由分组绑定同一运行实例，身份注册表、锁及 checkpoint 共享。Controller 保持标准库依赖，Harness 通过 HTTP 边界访问 Host；完整源码载荷由显式清单交付。旧 `runtime/` 路径保留适配入口，详见[目录职责](project-structure.md)。
+
 ## 四个执行单元怎样配合
 
 当前默认方案把 Agent 执行放在本地，把 A3 仿真与计算放在远程执行端。代码由同一个项目维护，部署在不同机器上承担不同职责。

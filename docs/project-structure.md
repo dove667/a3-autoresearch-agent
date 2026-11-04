@@ -4,9 +4,14 @@
 
 ```text
 .
-├── runtime/
-│   ├── local/             本地启动器、Gateway、候选版本、协议检查与恢复
-│   └── remote/            远程作业 Controller、镜像构建与验证入口
+├── src/a3_research_agent/  可安装的固定实现与显式派生 Harness overlay
+│   ├── host/              Gateway、会话、run、输入、模型、网络与轨迹
+│   ├── execution/         Controller、调度、导出与镜像准备
+│   ├── harness/           上下文、记忆、分析与 worker 编排
+│   ├── packaging/         完整 Harness 源码载荷导出
+│   ├── workspace/         工作区路径校验
+│   └── cli/               启动及操作者命令
+├── runtime/               旧 Python 导入/脚本兼容入口及部署资源
 ├── agent-inputs/           部署方提供给 Agent 的全部版本化输入
 │   ├── SOUL.md             跨阶段长期角色原则
 │   ├── shared/             bootstrap、execution、workspace、readiness-task
@@ -25,14 +30,19 @@
 
 | 目录 | 负责什么 | Git 管理 |
 | --- | --- | --- |
-| `runtime/local/` | Host 固定的模型转发、身份与权限、候选生命周期、Git 版本、协议检查、诊断、冷启动和恢复 | 是 |
-| `runtime/remote/` | 按归属运行远程 Docker 作业、分配资源、构建执行镜像 | 是 |
+| `src/a3_research_agent/host/` | 固定 Host 服务；Gateway 各领域共享同一状态实例与锁 | 是 |
+| `src/a3_research_agent/execution/` | 标准库 Controller、作业与 GPU 调度、只读导出、镜像准备 | 是 |
+| `src/a3_research_agent/harness/` | 显式派生包使用的 overlay；不自动替换历史生成代码 | 是 |
+| `src/a3_research_agent/packaging/` | 按显式清单交付完整源码与兼容入口 | 是 |
+| `runtime/` | 旧 checkout 导入/脚本适配器与部署资源；新逻辑进入 src | 是 |
 | `agent-inputs/` | 全部部署方 Agent 输入（README 仅作维护者导航）；每次运行另存版本化副本 | 是 |
 | `tests/runtime/` | 验证固定部署逻辑，不承担 A3 自身的开发测试 | 是 |
 | `reports/` | 可选的本地报告工程，保存展示用正文、数据与图像 | 否 |
 | `third_party/` | 第三方原始源码与独立 Git 历史 | submodule |
 
-人类提前准备固定基础设施和评估条件。专项 auto research Harness、Policy 候选、记忆、反思与选择由 SWE Agent 产生，保存在对应运行中；改进候选形成新版本，原始运行材料持续保留。项目从源码 checkout 运行，`pyproject.toml` 管理依赖与工具配置，固定执行实现集中在 `runtime/`。
+人类提前准备固定基础设施和评估条件。专项 auto research Harness、Policy 候选、记忆、反思与选择由 SWE Agent 产生，保存在对应运行中；改进候选形成新版本，原始运行材料持续保留。项目的主实现位于 `src/a3_research_agent/`，`pyproject.toml` 管理包发现、依赖与命令入口。源码 checkout 保留原启动方式；安装 wheel 后通过显式 `--project-root` 选择完整基础设施项目目录。该目录与 `A3_PROJECT_ROOT` 指向的独立仿真项目不同。版本化输入、skills 和运行数据继续由部署目录提供，不随 wheel 携带个人配置或实验数据。
+
+`runtime.local.*`、`runtime.remote.*` 的旧 checkout 导入转到同一 canonical 模块，旧脚本参数保持兼容。内部实现拆分后，测试与开发应定位 canonical 模块；修改兼容门面不会修改其引用的函数实现。Controller 只依赖标准库，不导入 Host；Harness 通过受控 HTTP 接口访问 Host。镜像准备使用包内 `execution/images/Dockerfile`，bootstrap 镜像资源仍位于 `runtime/local/Dockerfile`。
 
 ## 本地生成内容
 

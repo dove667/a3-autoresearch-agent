@@ -18,7 +18,7 @@ dependencies = [
 ]
 
 [dependency-groups]
-dev = ["mini-swe-agent[dev]==2.4.6"]
+dev = ["mini-swe-agent[dev]==2.4.6", "setuptools>=75"]
 
 [tool.uv.sources]
 mini-swe-agent = {path = "third_party/mini-swe-agent", editable = true}
@@ -26,6 +26,14 @@ mini-swe-agent = {path = "third_party/mini-swe-agent", editable = true}
 [tool.setuptools.packages.find]
 where = ["src"]
 include = ["a3_research_agent*"]
+
+[tool.setuptools.package-data]
+"a3_research_agent.execution.controller" = ["nvidia_egl_vendor.json"]
+"a3_research_agent.execution.images" = ["Dockerfile"]
+
+[project.scripts]
+a3-research = "a3_research_agent.cli.launch:main"
+a3-research-controller = "a3_research_agent.execution.controller.cli:run"
 
 [tool.ruff]
 target-version = "py311"

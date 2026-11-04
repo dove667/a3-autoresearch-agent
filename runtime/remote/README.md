@@ -6,7 +6,7 @@ Host控制器负责独立作业的执行和资源分配。模型服务、凭据�
 
 执行端需要 Linux、Python 3.10+、Docker Engine；GPU 作业还需要 NVIDIA Container Toolkit。已有 A3 项目应在 `.venv` 中提供可用的 Python 环境，并在 `.runtime/ffmpeg` 中提供兼容的 FFmpeg。
 
-在服务器 checkout 本仓库，与本地使用相同的部署提交。controller 直接从 `runtime/remote/` 运行。
+在服务器 checkout 本仓库，与本地使用相同的部署提交。`runtime/remote/` 保留旧脚本入口，实现位于 `src/a3_research_agent/execution/`。同步完整 checkout，不能只复制入口脚本；watcher 和导出 sealer 也需要同一版本的包模块。
 服务器仅运行 controller 时使用系统 Python 标准库，无需安装本地模型服务依赖或执行 `uv sync`。
 需要运行 mini 的一端再初始化 submodule 并安装相应依赖。
 

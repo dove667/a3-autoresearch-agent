@@ -65,7 +65,11 @@ def expected_sources(bundle, historical=False):
     if bundle == "phase-two" and not historical:
         sources.pop("phase-instructions.md")
     if bundle == "phase-two":
-        sources["protocol.md"] = ("agent-inputs/phase-two/protocol.md" if historical else "agent-inputs/shared/protocol.md")
+        sources["protocol.md"] = (
+            "agent-inputs/phase-two/protocol.md"
+            if historical
+            else "agent-inputs/shared/protocol.md"
+        )
     return sources
 
 

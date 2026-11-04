@@ -21,7 +21,9 @@ def test_published_generation_contract(tmp_path, phase):
     versions = InputVersions(ROOT, tmp_path / "run", phase=phase)
     versions.activate(versions.prepare(), "start")
     instructions = versions.model_instructions()[1]
-    prompt = (ROOT / f"agent-inputs/{phase}/" / ("instructions.md" if phase == "phase-one" else "goal.md")).read_text()
+    prompt = (
+        ROOT / f"agent-inputs/{phase}/" / ("instructions.md" if phase == "phase-one" else "goal.md")
+    ).read_text()
     assert prompt in instructions
     if phase == "phase-two":
         # Canonical requirements are injected acceptance/protocol, not duplicated

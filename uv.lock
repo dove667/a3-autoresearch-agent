@@ -28,6 +28,7 @@ dependencies = [
 [package.dev-dependencies]
 dev = [
     { name = "mini-swe-agent", extra = ["dev"] },
+    { name = "setuptools" },
 ]
 
 [package.metadata]
@@ -41,7 +42,10 @@ requires-dist = [
 ]
 
 [package.metadata.requires-dev]
-dev = [{ name = "mini-swe-agent", extras = ["dev"], editable = "third_party/mini-swe-agent" }]
+dev = [
+    { name = "mini-swe-agent", extras = ["dev"], editable = "third_party/mini-swe-agent" },
+    { name = "setuptools", specifier = ">=75" },
+]
 
 [[package]]
 name = "aiohappyeyeballs"
@@ -3670,6 +3674,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/fa/cc/a96a6d775526c957ef8b3716c4505c250648906fe663077bc2ddb6427d73/selectolax-1.0.2-cp315-cp315t-win32.whl", hash = "sha256:fcd3a49df7f8761b6a3a82076fe2e4f0d53a5dac63ba2da895aab2b586c78243", size = 1270501, upload-time = "2026-10-22T15:44:56.871Z" },
     { url = "https://files.pythonhosted.org/packages/f1/78/ee70e73103ef7a827982b43bcc009f73718684f919d13bb532b87a4a7312/selectolax-1.0.2-cp315-cp315t-win_amd64.whl", hash = "sha256:ad6b29a2f20c7d46b8306a995268f50c2a63eae40c3c7a05b6a3492d3968117d", size = 1335466, upload-time = "2026-10-22T15:44:58.949Z" },
     { url = "https://files.pythonhosted.org/packages/4c/10/edf323b28d3d3337ba9a43b29e460246109e1ee14cb06ab9e713c9e0c388/selectolax-1.0.2-cp315-cp315t-win_arm64.whl", hash = "sha256:63dbbb0760a2a2b4f581afd186863ef47acecb410df7c937239c51ae853c3cb1", size = 1316364, upload-time = "2026-10-22T15:45:00.415Z" },
+]
+
+[[package]]
+name = "setuptools"
+version = "84.2.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/70/b3/c19426f783614d625699a4b247faf628ea9ab1db228674491767b417f9e1/setuptools-84.2.1.tar.gz", hash = "sha256:3ff8b3b5492a0aa66960f4419365a86b84e013070d4313e4d4a6894f5d64d6bc", size = 1230289, upload-time = "2026-10-20T19:01:37.742Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ef/55/6dc6d6bb953bdfc52519a0059592c52b6e3b8ad51cf8256dffceb55b0610/setuptools-84.2.1-py3-none-any.whl", hash = "sha256:ca140b45d5325a9478f880e351484f62fef15f336462e449ca0c03c873d589c2", size = 876263, upload-time = "2026-10-20T19:01:35.678Z" },
 ]
 
 [[package]]

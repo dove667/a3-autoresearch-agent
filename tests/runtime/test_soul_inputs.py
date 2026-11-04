@@ -66,7 +66,9 @@ def test_soul_is_published_hashed_and_forwarded_with_selected_stage(tmp_path, ph
     instructions = calls[-1]["instructions"]
     assert soul.decode() in instructions
     assert "SOUL 不得覆盖当前阶段的 goal、acceptance、protocol 或权限边界" in instructions
-    for name in ("goal.md", "acceptance.md") + (("phase-instructions.md",) if phase == "phase-one" else ()):
+    for name in ("goal.md", "acceptance.md") + (
+        ("phase-instructions.md",) if phase == "phase-one" else ()
+    ):
         assert inputs.contents[name] in instructions
     if phase == "phase-two":
         assert inputs.contents["protocol.md"] in instructions
@@ -127,4 +129,6 @@ def test_repository_phase_two_layers_remain_selected_and_versioned(tmp_path):
     assert "不为简单协调机械再开 worker" in instructions
     assert not (root / "agent-inputs/phase-two/instructions.md").exists()
     # Optional method references and maintainer review notes are not injected inputs.
-    assert not any(item["source"].startswith(("skills/", "docs/")) for item in manifest["files"].values())
+    assert not any(
+        item["source"].startswith(("skills/", "docs/")) for item in manifest["files"].values()
+    )
