@@ -19,7 +19,7 @@ def test_orchestrator_catalog_maps_to_versioned_readable_reference():
     body = (ROOT / entry["local_source"]).read_text()
     frontmatter = yaml.safe_load(body.split("---", 2)[1])
     assert entry["id"] == frontmatter["name"] == package.name
-    assert entry["version"] == frontmatter["metadata"]["version"] == "0.1.2"
+    assert entry["version"] == frontmatter["metadata"]["version"] == "0.1.3"
     assert entry["status"] == "reference"
     assert entry["comparison_status"] == "compare-not-proven"
     assert len(body.splitlines()) <= 100

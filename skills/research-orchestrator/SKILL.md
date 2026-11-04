@@ -2,7 +2,7 @@
 name: research-orchestrator
 description: Select and adapt coordination methods for Policy and Harness workers within an authorized research task, including assignments, evidence review, asset sharing and safe succession.
 metadata:
-  version: 0.1.2
+  version: 0.1.3
 ---
 
 # Research orchestration
@@ -21,7 +21,7 @@ Delegate concrete execution to a bounded worker assignment. Use parallel workers
 
 ## Give a runnable, bounded assignment
 
-When assigning execution, supply enough context to act and judge the result: the question, change boundary, applicable protocol, input/code versions, relevant prior evidence, dependencies, resources, deliverables and completion/stop conditions. Keep the record proportional to the task; preserve worker/version/job identities and uncertain outcomes for recovery. Shared edits need one owner. Reuse matching completed evidence rather than launching another worker to repeat it.
+When assigning execution, supply enough context to act and judge the result: the question, change boundary, applicable protocol, input/code versions, relevant prior evidence, dependencies, resources, deliverables and completion/stop conditions. Keep the record proportional to the task; preserve worker/version/job identities and uncertain outcomes for recovery. Shared edits need one owner. Reuse matching completed evidence rather than launching another worker to repeat it. For blocked delivery or validation, select only the relevant [bounded validation methods](references/bounded-validation.md); diagnostic checks do not automatically become new acceptance gates.
 
 If an actually loaded Harness provides `delegate`, use its `assign`, `collect`, `decide` or `list` operations as needed; existing gateway routes remain an alternative. These operations are not a mandatory call sequence. Follow the contracts of the chosen route, including result schemas and retry reservations, without treating one helper's availability as proof that the current run uses it.
 

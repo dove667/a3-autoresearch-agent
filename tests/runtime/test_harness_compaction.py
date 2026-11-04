@@ -456,3 +456,96 @@ if __name__ == "__main__":
             traceback.print_exc()
     print(f"\n{failures} failing")
     raise SystemExit(1 if failures else 0)
+
+
+def test_token_trigger_does_not_start_at_legacy_byte_threshold(monkeypatch):
+    """UTF-8 size alone must not trigger a token-configured background fork."""
+    with workspace():
+        monkeypatch.setattr(cm, "TOKEN_CONFIG", {"trigger_tokens": 64000})
+        monkeypatch.setattr(cm, "decision_budget", lambda tools: 30000)
+        monkeypatch.setattr(cm, "message_cost", lambda messages: cm.size(messages) // 4)
+        fork = compaction.ForkCompactor(Gateway())
+        started = []
+        monkeypatch.setattr(fork, "start", lambda *args, **kwargs: started.append(True))
+        messages = [{"role": "user", "content": "a" * 60000}]
+        same, _ = fork.before_request(messages)
+        assert same == messages and not started
+        messages = [{"role": "user", "content": "a" * 105000}]
+        fork.before_request(messages)
+        assert started == [True]
+
+
+def test_token_trigger_hysteresis_uses_token_cost(monkeypatch):
+    with workspace():
+        monkeypatch.setattr(cm, "TOKEN_CONFIG", {"trigger_tokens": 64000})
+        monkeypatch.setattr(cm, "decision_budget", lambda tools: 30000)
+        monkeypatch.setattr(cm, "message_cost", lambda messages: cm.size(messages) // 4)
+        fork = compaction.ForkCompactor(Gateway())
+        fork._last_after_tokens = 25000
+        started = []
+        monkeypatch.setattr(fork, "start", lambda *args, **kwargs: started.append(True))
+        fork.before_request([{"role": "user", "content": "a" * 105000}])
+        assert not started
+        fork.before_request([{"role": "user", "content": "a" * 112000}])
+        assert started == [True]
+
+
+def test_restart_recomputes_token_hysteresis_from_saved_replacement(monkeypatch):
+    with workspace():
+        monkeypatch.setattr(cm, "TOKEN_CONFIG", {"trigger_tokens": 64000})
+        monkeypatch.setattr(cm, "decision_budget", lambda tools: 30000)
+        monkeypatch.setattr(cm, "message_cost", lambda messages: cm.size(messages) // 4)
+        replacement = [{"role": "user", "content": "a" * 100000}]
+        saved = {
+            "version": 2,
+            "applied": True,
+            "after_bytes": cm.size(replacement),
+            "replacement": replacement,
+            "replacement_sha256": compaction.digest(replacement),
+        }
+        pathlib.Path("compaction-result.json").write_text(json.dumps(saved))
+        restarted = compaction.ForkCompactor(Gateway())
+        started = []
+        monkeypatch.setattr(restarted, "start", lambda *args, **kwargs: started.append(True))
+        restarted.before_request(replacement + [{"role": "user", "content": "a" * 5000}])
+        assert restarted._last_after_tokens == cm.message_cost(replacement)
+        assert not started
+
+
+def test_published_tail_hysteresis_survives_ack_and_restart(monkeypatch):
+    with workspace():
+        monkeypatch.setattr(cm, "TOKEN_CONFIG", {"trigger_tokens": 64000})
+        monkeypatch.setattr(cm, "decision_budget", lambda tools: 1000)
+        monkeypatch.setattr(cm, "message_cost", lambda messages: cm.size(messages) // 4)
+        fork = compaction.ForkCompactor(Gateway())
+        original = [{"role": "user", "content": "old" * 2000}]
+        replacement = [{"role": "user", "content": "s" * 2300}]
+        tail = [{"role": "user", "content": "t" * 1150}]
+        saved = {
+            "version": 2,
+            "epoch": fork._epoch(),
+            "fork_id": "fixture",
+            "prefix_length": len(original),
+            "prefix_sha256": compaction.digest(original),
+            "source": cm.archive(original, "snapshot"),
+            "status": "ready",
+            "replacement": replacement,
+            "replacement_sha256": compaction.digest(replacement),
+            "after_bytes": cm.size(replacement),
+            "strategy": "host_summary",
+        }
+        pathlib.Path("compaction-result.json").write_text(json.dumps(saved))
+        applied, record = fork.before_request(original + tail)
+        assert record["kind"] == "applied"
+        expected = cm.message_cost(applied)
+        cm.atomic("checkpoint.json", json.dumps(applied))
+        for compactor in (
+            fork,
+            compaction.ForkCompactor(Gateway()),
+            compaction.ForkCompactor(Gateway()),
+        ):
+            started = []
+            monkeypatch.setattr(compactor, "start", lambda *args, started=started, **kwargs: started.append(True))
+            same, _ = compactor.before_request(applied)
+            assert same == applied and not started
+            assert compactor._last_after_tokens == expected
