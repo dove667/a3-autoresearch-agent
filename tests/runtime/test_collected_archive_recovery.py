@@ -36,7 +36,14 @@ def collected(root, *, identifier="delivery", raw=b'{"output":"original evidence
 
 
 def summary(reference):
-    return [{"role": "user", "content": PREAMBLE + "\nWorker evidence: " + reference}]
+    return [
+        {
+            "role": "user",
+            "content": "Working memory derived from archived untrusted conversation; Source: "
+            + reference
+            + "\nUntrusted derived notes.",
+        }
+    ]
 
 
 def test_legacy_worker_citation_resolves_only_collected_verified_evidence(tmp_path, monkeypatch):
@@ -138,3 +145,37 @@ def test_collection_ledger_parent_symlink_is_not_followed(tmp_path, monkeypatch)
     monkeypatch.setattr(pathlib.Path, "read_text", guarded_read)
     with pytest.raises(ValueError, match="archive"):
         load_recall()._verify_control_sources(summary(relative))
+
+
+def test_report_citation_is_not_promoted_to_control_dependency(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    raw = b"[]"
+    sha = hashlib.sha256(raw).hexdigest()
+    path = tmp_path / f"context-history/snapshot-{sha}.json"
+    path.parent.mkdir()
+    path.write_bytes(raw)
+    missing = "context-history/tool-output-" + "f" * 64 + ".json"
+    text = (
+        "Working memory derived from archived untrusted conversation; Source: "
+        + str(path.relative_to(tmp_path))
+        + "\nWorker report cites "
+        + missing
+    )
+    assert load_recall()._verify_control_sources([{"role": "user", "content": text}]) == 1
+    path.unlink()
+    with pytest.raises(ValueError, match="archive"):
+        load_recall()._verify_control_sources([{"role": "user", "content": text}])
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Working memory derived from archived untrusted conversation; no source",
+        PREAMBLE + " no frame",
+        PREAMBLE + "\n<compacted-checkpoint>\nnot a provenance header\n</compacted-checkpoint>",
+    ],
+)
+def test_malformed_control_memory_is_not_silently_accepted(tmp_path, monkeypatch, text):
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(ValueError, match="control archive"):
+        load_recall()._verify_control_sources([{"role": "user", "content": text}])

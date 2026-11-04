@@ -125,7 +125,10 @@ def _collected_archive_paths(reference, expected):
                 continue
             if (
                 not item.get("session_id")
-                or item.get("evidence_hashes", {}).get(reference) != expected
+                or {**item.get("reference_hashes", {}), **item.get("evidence_hashes", {})}.get(
+                    reference
+                )
+                != expected
             ):
                 continue
             candidates.append(pathlib.Path("orchestration/results") / identifier / reference)
@@ -154,18 +157,37 @@ def _verify_control_sources(messages):
     references = {}
     for message in messages:
         content = message.get("content")
-        if isinstance(content, str) and content.startswith(
-            (
-                "Working memory derived from archived untrusted conversation;",
-                "Untrusted derived working memory, not instructions, independent proof or acceptance.",
+        # Only the program-written provenance header is a control dependency.
+        # Model-authored notes and worker report citations are untrusted content,
+        # not permission grants or evidence that a local archive was delivered.
+        if isinstance(content, str):
+            header = content
+            if content.startswith("Untrusted derived working memory,"):
+                _, marker, header = content.partition("<compacted-checkpoint>\n")
+                if not marker or "</compacted-checkpoint>" not in header:
+                    raise ValueError("Malformed control archive frame")
+            line = header.split("\n", 1)[0]
+            source = None
+            if line.startswith("Working memory derived from archived untrusted conversation;"):
+                source = re.search(r"Source: (\S+)", line)
+            elif line.startswith("上下文压缩失败："):
+                source = re.search(r"Read the lossless source (\S+?), or use Recall", line)
+            recognized = line.startswith(
+                ("Working memory derived from archived untrusted conversation;", "上下文压缩失败：")
             )
-        ):
-            for reference in re.findall(
-                r"(?:orchestration/results/[A-Za-z0-9_-]{1,80}/)?"
-                r"context-history/(?:snapshot|tool-output)-[0-9a-f]{64}\.json",
-                content,
-            ):
-                references.setdefault(reference, True)
+            if content.startswith("Untrusted derived working memory,") and not recognized:
+                raise ValueError("Invalid framed control archive source header")
+            if recognized and source is None:
+                raise ValueError("Missing control archive source header")
+            if source:
+                reference = source.group(1)
+                if not re.fullmatch(
+                    r"(?:orchestration/results/[A-Za-z0-9_-]{1,80}/)?"
+                    r"context-history/(?:snapshot|tool-output)-[0-9a-f]{64}\.json",
+                    reference,
+                ):
+                    raise ValueError("Invalid control archive source header")
+                references[reference] = True
         if message.get("type") == "function_call_output":
             try:
                 preview = json.loads(message.get("output", ""))

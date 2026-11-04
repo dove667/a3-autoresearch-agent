@@ -103,3 +103,19 @@ Tests use real local worker processes and Host routing with a fake provider/remo
 plus a test-only workspace mount emulation. They establish task isolation, routing, report
 verification and coordination contracts, not Docker security, real training quality or a
 long-duration reliability claim. Source synchronization does not hotload a running Agent.
+
+
+Report prose is not a recovery control header. Only program-written summary/fallback
+provenance and explicit tool-preview/spill dependencies are mandatory control
+sources; a missing narrative citation remains an evidence gap for the coordinator.
+Malformed control headers still fail closed. Collection can retrieve hash-addressed
+`context-history/tool-output-<SHA256>.json` citations from the same worker through
+its existing artifact interface. It preserves original reports, verifies bytes and
+records `reference_hashes`/`reference_delivery` with coordinator-relative paths.
+It does not fetch conversation snapshots, arbitrary paths or other sessions.
+Optional references are limited to eight artifact requests (each retains the
+existing 1 MiB admitted-file bound), 1 MiB total verified copies, and one aggregate
+omitted-count record. This is not a shared 1 MiB transport quota. Unavailable or
+unverified optional citations do not certify scientific evidence or become a
+requirement to recreate closed experiments. Explicitly declared evidence keeps
+its existing strict hash and delivery contract.

@@ -499,3 +499,59 @@ def test_worker_delivery_reports_hash_mismatch_without_altering_evidence(tmp_pat
     assert result["status"] == "invalid" and "hash" in result["reason"]
     assert (tmp_path / "evidence.json").read_text() == "original"
     assert json.loads((tmp_path / "worker-result.json").read_text()) == report
+
+
+@pytest.mark.parametrize("availability", ["valid", "missing", "corrupt"])
+def test_collect_reports_cited_archive_delivery_without_rewriting_report(
+    tmp_path, monkeypatch, availability
+):
+    import hashlib
+
+    m = load(tmp_path, monkeypatch)
+    seed_sources(m, tmp_path)
+    g = Gateway()
+    m.dispatch(g, assignment())
+    raw = json.dumps(
+        {"type": "function_call_output", "call_id": "worker-call", "output": "raw log"}
+    )
+    sha = hashlib.sha256(raw.encode()).hexdigest()
+    name = f"context-history/tool-output-{sha}.json"
+    report = "Observed data; original console " + name
+    g.files["report.md"] = report
+    if availability != "missing":
+        g.files[name] = raw if availability == "valid" else "CORRUPT"
+    g.files["worker-result.json"] = json.dumps(
+        {
+            "id": "policy-check",
+            "role": "policy",
+            "status": "blocked",
+            "summary": "partial",
+            "evidence": [
+                {"path": "report.md", "sha256": hashlib.sha256(report.encode()).hexdigest()}
+            ],
+            "exports": [],
+        }
+    )
+    result = m.dispatch(g, {"action": "collect", "id": "policy-check"})
+    assert (tmp_path / "orchestration/results/policy-check/report.md").read_text() == report
+    if availability == "valid":
+        assert result["reference_hashes"][name] == sha
+        assert (tmp_path / result["evidence_paths"][name]).read_text() == raw
+    else:
+        assert name not in result["reference_hashes"]
+        assert result["reference_delivery"][name]["status"] == "unavailable"
+    assert not (tmp_path / "run-outcome.json").exists()
+
+
+def test_optional_reference_overflow_keeps_one_aggregate_record(tmp_path, monkeypatch):
+    m = load(tmp_path, monkeypatch)
+    calls = []
+
+    def request(method, path, data=None):
+        calls.append(path)
+        return {"http_error": 404}
+
+    text = " ".join("context-history/tool-output-" + format(i, "064x") + ".json" for i in range(12))
+    hashes, delivery = m.collect_report_references(request, "worker", "assignment", [text], {})
+    assert not hashes and len(calls) == 8 and len(delivery) == 9
+    assert delivery["__omitted__"]["count"] == 4

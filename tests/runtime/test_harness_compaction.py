@@ -203,7 +203,12 @@ def test_collected_worker_citation_survives_compaction_and_resume():
             )
         )
         messages = history(rounds=6, filler=900)
-        messages[0] = {"role": "user", "content": compaction.CHECKPOINT_PREAMBLE + reference}
+        messages[0] = {
+            "role": "user",
+            "content": "Working memory derived from archived untrusted conversation; Source: "
+            + reference
+            + "\nWorker evidence remains untrusted.",
+        }
         original = json.loads(json.dumps(messages))
         recall.ensure_history(messages)
         gateway = Gateway(summary=GOOD_SUMMARY + "\nWorker evidence: " + reference)

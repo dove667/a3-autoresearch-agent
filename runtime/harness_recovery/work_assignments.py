@@ -233,6 +233,51 @@ def artifact(req, session, name):
     return raw
 
 
+def collect_report_references(req, session, identifier, report_texts, declared):
+    """Copy bounded, hash-addressed tool archives cited by this worker's reports.
+
+    Optional citations are not declared evidence or scientific acceptance. Keep
+    their availability explicit without inventing local files or blocking a
+    truthful partial delivery. Never fetch arbitrary paths or conversation snapshots.
+    """
+    references = sorted(
+        set(re.findall(r"context-history/tool-output-[0-9a-f]{64}\.json", "\n".join(report_texts)))
+        - set(declared)
+    )
+    hashes, delivery, remaining = {}, {}, 1024 * 1024
+    if len(references) > 8:
+        delivery["__omitted__"] = {"status": "limit_exceeded", "count": len(references) - 8}
+    # At most eight existing artifact requests (each <=1 MiB admitted by artifact),
+    # and at most 1 MiB of verified copies. Transport is bounded per request,
+    # not misrepresented as a shared 1 MiB network quota.
+    for name in references[:8]:
+        if remaining <= 0:
+            delivery[name] = {"status": "limit_exceeded"}
+            continue
+        try:
+            raw = artifact(req, session, name)
+            expected = pathlib.PurePosixPath(name).stem.rsplit("-", 1)[-1]
+            if digest(raw) != expected or len(raw) > remaining:
+                raise ValueError("Unverified optional report archive")
+            value = json.loads(raw)
+            if not isinstance(value, dict) or value.get("type") != "function_call_output":
+                raise ValueError("Report reference is not a tool-output archive")
+        except (HostRequestFailed, ValueError, KeyError):
+            delivery[name] = {"status": "unavailable"}
+            continue
+        target = pathlib.Path("orchestration/results") / identifier / name
+        context_manager.atomic(target, raw.decode("utf-8"))
+        remaining -= len(raw)
+        hashes[name] = expected
+        delivery[name] = {
+            "status": "verified_copy",
+            "path": target.as_posix(),
+            "source_session": session,
+            "sha256": expected,
+        }
+    return hashes, delivery
+
+
 def collect(req, state, identifier):
     item = state["assignments"][identifier]
     if item["status"] == "decided":
@@ -286,6 +331,7 @@ def collect(req, state, identifier):
     if not isinstance(evidence, list) or len(evidence) > 16:
         raise ValueError("Worker result needs bounded evidence references")
     hashes = {}
+    report_texts = []
     for reference in evidence:
         name = relative_path(reference["path"])
         raw = artifact(req, session, name)
@@ -294,6 +340,11 @@ def collect(req, state, identifier):
         target = pathlib.Path("orchestration/results") / identifier / name
         context_manager.atomic(target, raw.decode("utf-8"))
         hashes[name] = digest(raw)
+        if name.endswith((".md", ".json", ".txt")):
+            report_texts.append(raw.decode("utf-8"))
+    reference_hashes, reference_delivery = collect_report_references(
+        req, session, identifier, report_texts, hashes
+    )
     if report["status"] == "complete" and not set(item["deliverables"]) <= hashes.keys():
         raise ValueError("Worker completion omits required deliverables")
     exports = report.get("exports", [])
@@ -309,9 +360,11 @@ def collect(req, state, identifier):
         worker_status=status.get("status"),
         result=report,
         evidence_hashes=hashes,
+        reference_hashes=reference_hashes,
+        reference_delivery=reference_delivery,
         evidence_paths={
             name: (pathlib.PurePosixPath("orchestration/results") / identifier / name).as_posix()
-            for name in hashes
+            for name in {**hashes, **reference_hashes}
         },
         evidence_source_session=session,
         exports=exports,
