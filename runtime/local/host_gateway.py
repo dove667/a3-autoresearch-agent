@@ -33,6 +33,7 @@ from runtime.local.token_count import count_tokens, estimate_request_tokens
 from runtime.local.trajectory_analysis import TrajectoryAnalyzer
 from runtime.local.trajectory_telemetry import TrajectoryTelemetry
 from runtime.local.vision_media import prepare_vision_request
+from runtime.local.wait_signals import snapshot as wait_snapshot
 from runtime.local.web_gateway import FetchRequest, SearchRequest, WebConfig, WebError, WebGateway
 
 
@@ -474,6 +475,28 @@ def create_app(
         if current_main is None or actor != current_main:
             raise HTTPException(403, "Only the current main Agent can request analysis")
         return actor
+
+    @app.get("/wait/signals")
+    def wait_signals(authorization: Annotated[str | None, Header()] = None):
+        accepting_resources()
+        # Snapshot each source under its own lock; never nest source locks or
+        # wait for a model. Updates racing this read remain visible next poll.
+        with session_lock:
+            actor = owner(authorization)
+            current_main = evolution.main_owner if evolution else main_owner
+        with input_versions.lock if input_versions else nullcontext():
+            manifest = dict(input_versions.manifest) if input_versions else {}
+        with human_feedback.lock if human_feedback else nullcontext():
+            feedback = [dict(x) for x in human_feedback.records] if human_feedback else []
+        with analyzer.lock:
+            analysis = [dict(x) for x in analyzer.state["records"]]
+        return wait_snapshot(
+            actor,
+            is_main=actor == current_main,
+            manifest=manifest,
+            feedback=feedback,
+            analysis=analysis,
+        )
 
     @app.get("/analysis")
     def read_analysis(authorization: Annotated[str | None, Header()] = None):

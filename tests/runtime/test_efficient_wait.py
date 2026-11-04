@@ -188,3 +188,235 @@ def test_deadline_result_retains_last_observed_worker_state(tmp_path, monkeypatc
         lambda *a, **k: {"status": "running"}, 20, clock=clock.time, sleep=clock.sleep
     )
     assert result["observed"]["/sessions/worker-1"]["status"] == "running"
+
+
+def signal(cursor="a" * 64, pending=False):
+    return {"schema": 1, "cursor": cursor, "pending": pending, "feedback": {"count": 1}}
+
+
+def test_new_feedback_wakes_within_signal_poll_not_wait_deadline(tmp_path, monkeypatch):
+    m, clock = setup_wait(tmp_path, monkeypatch)
+    result = m.wait_for_change(
+        lambda *a, **k: {"status": "running"},
+        600,
+        clock=clock.time,
+        sleep=clock.sleep,
+        signals=lambda timeout: signal("b" * 64 if clock.now >= 2 else "a" * 64),
+    )
+    assert clock.now == 2
+    assert result["reason"] == "notification"
+    assert result["wake_cursor"] == "b" * 64
+
+
+def test_unchanged_notifications_do_not_return_to_model(tmp_path, monkeypatch):
+    m, clock = setup_wait(tmp_path, monkeypatch)
+    checks = []
+
+    def observe(timeout):
+        checks.append(clock.now)
+        return signal()
+
+    result = m.wait_for_change(
+        lambda *a, **k: {"status": "running"},
+        20,
+        clock=clock.time,
+        sleep=clock.sleep,
+        signals=observe,
+        cursor="a" * 64,
+    )
+    assert result["reason"] == "deadline"
+    assert clock.now == 20
+    assert len(checks) <= 11
+
+
+def test_pending_analyzer_without_previous_cursor_wakes_immediately(tmp_path, monkeypatch):
+    m, clock = setup_wait(tmp_path, monkeypatch)
+    result = m.wait_for_change(
+        lambda *a, **k: {"status": "running"},
+        600,
+        clock=clock.time,
+        sleep=clock.sleep,
+        signals=lambda timeout: signal(pending=True),
+    )
+    assert result["reason"] == "notification"
+    assert clock.now == 0
+
+
+def test_notification_reads_do_not_acknowledge_crash_before_checkpoint(tmp_path, monkeypatch):
+    m, clock = setup_wait(tmp_path, monkeypatch)
+    args = {"clock": clock.time, "sleep": clock.sleep, "signals": lambda timeout: signal("b" * 64)}
+    for _ in range(2):
+        result = m.wait_for_change(
+            lambda *a, **k: {"status": "running"}, 600, cursor="a" * 64, **args
+        )
+        assert result["reason"] == "notification"
+        assert clock.now == 0
+    messages = [
+        {"type": "function_call", "name": "wait", "call_id": "c"},
+        {"type": "function_call_output", "call_id": "c", "output": json.dumps(result)},
+    ]
+    assert m.wait_cursor(messages) == "b" * 64
+    assert m.wait_cursor(messages[:1]) is None
+    after = m.wait_for_change(
+        lambda *a, **k: {"status": "running"}, 4, cursor=m.wait_cursor(messages), **args
+    )
+    assert after["reason"] == "deadline"
+    assert clock.now == 4
+
+
+def test_signal_error_is_visible_and_not_slept_through(tmp_path, monkeypatch):
+    m, clock = setup_wait(tmp_path, monkeypatch)
+    result = m.wait_for_change(
+        lambda *a, **k: {"status": "running"},
+        600,
+        clock=clock.time,
+        sleep=clock.sleep,
+        signals=lambda timeout: {"http_error": 503},
+    )
+    assert result["reason"] == "observation_error"
+    assert result["path"] == "/wait/signals"
+    assert clock.now == 0
+
+
+def test_slow_status_request_does_not_starve_notification_check(tmp_path, monkeypatch):
+    m, clock = setup_wait(tmp_path, monkeypatch)
+    m.save(
+        {
+            "version": 1,
+            "assignments": {
+                str(i): {"status": "assigned", "session_id": "worker-" + str(i)} for i in range(3)
+            },
+        }
+    )
+
+    def status(*a, **k):
+        clock.now += k["timeout"]
+        return {"status": "running"}
+
+    result = m.wait_for_change(
+        status,
+        600,
+        clock=clock.time,
+        sleep=clock.sleep,
+        signals=lambda timeout: signal("b" * 64 if clock.now >= 2 else "a" * 64),
+    )
+    assert result["reason"] == "notification"
+    assert clock.now == 2
+
+
+def test_event_on_deadline_remains_visible_on_next_wait(tmp_path, monkeypatch):
+    m, clock = setup_wait(tmp_path, monkeypatch)
+    observe = lambda timeout: signal("b" * 64 if clock.now >= 2 else "a" * 64)
+    result = m.wait_for_change(
+        lambda *a, **k: {"status": "running"},
+        2,
+        clock=clock.time,
+        sleep=clock.sleep,
+        signals=observe,
+    )
+    assert result["reason"] == "deadline"
+    assert result["wake_cursor"] == "a" * 64
+    following = m.wait_for_change(
+        lambda *a, **k: {"status": "running"},
+        2,
+        clock=clock.time,
+        sleep=clock.sleep,
+        signals=observe,
+        cursor=result["wake_cursor"],
+    )
+    assert following["reason"] == "notification"
+    assert clock.now == 2
+
+
+def test_raw_result_journal_restores_notification_cursor_before_next_wait(tmp_path, monkeypatch):
+    from test_harness_context_recovery import agent_functions, initial_state, load_context
+
+    m, _clock = setup_wait(tmp_path, monkeypatch)
+    context = load_context()
+    functions = agent_functions(context)
+    old = initial_state(tmp_path)
+    notice = {"wait_schema": 1, "reason": "notification", "wake_cursor": "b" * 64}
+    call = {"type": "function_call", "name": "wait", "call_id": "call-wait", "arguments": "{}"}
+    (tmp_path / "pending-calls.json").write_text(
+        json.dumps(
+            {
+                "base_hash": functions["checkpoint_hash"](),
+                "output": [call],
+                "results": {"call-wait": notice},
+            }
+        )
+    )
+    restored = functions["recover_journal"](old)
+    assert m.wait_cursor(restored) == "b" * 64
+    assert json.loads((tmp_path / "pending-calls.json").read_text()) is None
+    assert context.paired(restored)
+
+
+def test_unrelated_or_uncommitted_messages_cannot_acknowledge_wait_signal(tmp_path, monkeypatch):
+    m, _clock = setup_wait(tmp_path, monkeypatch)
+    output = {
+        "type": "function_call_output",
+        "call_id": "read",
+        "output": json.dumps({"wait_schema": 1, "wake_cursor": "b" * 64}),
+    }
+    assert (
+        m.wait_cursor([{"type": "function_call", "name": "read", "call_id": "read"}, output])
+        is None
+    )
+    assert m.wait_cursor([output]) is None
+
+
+def test_overrun_request_returns_deadline_without_negative_sleep(tmp_path, monkeypatch):
+    m, clock = setup_wait(tmp_path, monkeypatch)
+
+    def status(*a, **k):
+        clock.now += k["timeout"] + 0.1
+        return {"status": "running"}
+
+    def sleep(seconds):
+        assert seconds >= 0
+        clock.sleep(seconds)
+
+    assert m.wait_for_change(status, 5, clock=clock.time, sleep=sleep)["reason"] == "deadline"
+
+
+def test_two_waits_in_one_model_batch_keep_prebatch_cursor(tmp_path, monkeypatch):
+    import ast
+    from types import SimpleNamespace
+
+    m, clock = setup_wait(tmp_path, monkeypatch)
+    source = (__import__("pathlib").Path(m.__file__).with_name("agent.py")).read_text()
+    function = next(
+        x for x in ast.parse(source).body if isinstance(x, ast.FunctionDef) and x.name == "tool"
+    )
+    namespace = {
+        "web_tools": None,
+        "skill_tools": None,
+        "WAIT_CURSOR": "a" * 64,
+        "messages": [
+            {"type": "function_call", "name": "wait", "call_id": "one"},
+            {"type": "function_call", "name": "wait", "call_id": "two"},
+        ],
+        "req": lambda *a, **k: signal("b" * 64),
+        "work_assignments": SimpleNamespace(
+            wait_cursor=m.wait_cursor,
+            wait_for_change=lambda req, seconds, **kw: m.wait_for_change(
+                lambda *a, **k: {"status": "running"},
+                seconds,
+                clock=clock.time,
+                sleep=clock.sleep,
+                **kw,
+            ),
+        ),
+    }
+    exec(  # noqa: S102 - trusted repository function only, not the Agent entry loop
+        compile(ast.Module(body=[function], type_ignores=[]), "wait-dispatch", "exec"), namespace
+    )
+    first = namespace["tool"]("wait", {"seconds": 600})
+    assert first["reason"] == "notification"
+    namespace["messages"].append(
+        {"type": "function_call_output", "call_id": "one", "output": json.dumps(first)}
+    )
+    second = namespace["tool"]("wait", {"seconds": 600})
+    assert second["reason"] == "notification"
+    assert clock.now == 0

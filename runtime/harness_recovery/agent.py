@@ -154,7 +154,12 @@ def tool(name, a):
             return select_json_fields(p.read_bytes(), a["fields"], str(p))
         return memory_state.read_page(p, a.get("offset", 0), a.get("limit", 4000))
     if name == "wait":
-        return work_assignments.wait_for_change(req, a.get("seconds", 5))
+        return work_assignments.wait_for_change(
+            req,
+            a.get("seconds", 5),
+            cursor=WAIT_CURSOR,
+            signals=lambda timeout: req("GET", "/wait/signals", timeout=timeout),
+        )
     return "unknown tool"
 
 
@@ -431,6 +436,7 @@ try:
 except Exception as e:  # noqa: BLE001 - preserve recoverable state on unexpected failures
     log({"recovery_error": str(e)})
     sys.exit(1)
+WAIT_CURSOR = work_assignments.wait_cursor(messages)
 analyzer = analyzer_client.start(req, memory_state.signals)
 empty = 0
 loop_phase = "decision_prepare"
@@ -511,6 +517,9 @@ while True:
         journal = {"base_hash": checkpoint_hash(), "output": out, "results": {}}
         context_manager.atomic("pending-calls.json", json.dumps(journal, ensure_ascii=False))
         save_manifest()
+        # All waits in this response use the pre-decision cursor: a tool result
+        # is not yet a normal model decision observing the notification.
+        WAIT_CURSOR = work_assignments.wait_cursor(messages)
         messages.extend(out)
         recall_tools.append_history_many(out)
         for c in calls:

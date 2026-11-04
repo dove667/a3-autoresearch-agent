@@ -10,3 +10,11 @@ Scope: isolated development only. No live run mutation, provider probes, install
 - [x] Verify feedback: each registration stores only its own text. Preserve existing behavior per clarified requirement; no merge, deletion or semantic projection.
 - [x] Add failing tests for a byte-identical execution reference and character-page index; clarify that current revision is already provided with each model request, and unchanged inputs need not be reread. Preserve all core inputs.
 - [x] Run focused and full offline suites, Ruff and diff check. Obtain independent review. Measure deterministic fixture savings; keep quality and steady-state benefits unproven until authorized deployment.
+
+
+## Follow-up: notifications while waiting
+
+- [x] Add owner-scoped, read-only `/wait/signals` metadata and stable cursor without model calls or event consumption.
+- [x] Poll notifications every 2 seconds and work states every 10 seconds; return on change, error or deadline. Bound each request and check notifications between slow work observations.
+- [x] Recover cursor from paired wait results via the existing journal/checkpoint, freeze it across a single model response batch, and retain notifications racing expiry or crashes.
+- [x] Run full offline regression and independent security/race review; document latency, request/log cost, at-least-once redelivery and no deployment.
