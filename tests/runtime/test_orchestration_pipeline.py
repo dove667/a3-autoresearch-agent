@@ -121,7 +121,7 @@ class ProcessSandbox:
 
 @pytest.fixture
 def pipeline(tmp_path, monkeypatch, request):
-    invalid_delivery = getattr(request, "param", False)
+    invalid_delivery = getattr(request, "param", False) is True
     main = tmp_path / "main"
     main.mkdir()
     monkeypatch.chdir(main)
@@ -355,23 +355,53 @@ def pipeline(tmp_path, monkeypatch, request):
             thread.join(timeout=3)
 
 
-@pytest.mark.parametrize("pipeline", [False, True], indirect=True)
-def test_real_policy_and_harness_worker_loops_route_collect_and_decide(pipeline, tmp_path):
+@pytest.mark.parametrize("pipeline", [False, True, "prepared"], indirect=True)
+def test_real_policy_and_harness_worker_loops_route_collect_and_decide(pipeline, tmp_path, request):
     assignments, req, sandbox, provider_calls, remote_calls, bridge_errors, client = pipeline
     assigned = {}
     for role in ("policy", "harness"):
-        assigned[role] = assignments.dispatch(
-            req,
-            {
-                "action": "assign",
-                "id": role + "-fixture",
-                "role": role,
-                "objective": "Return synthetic evidence without real experiments",
-                "stop_condition": "Write the fixture report and stop",
-                "deliverables": ["research/result.json"],
-                "context_files": ["research/context.json"],
-            },
-        )
+        arguments = {
+            "action": "assign",
+            "id": role + "-fixture",
+            "role": role,
+            "objective": "Return synthetic evidence without real experiments",
+            "stop_condition": "Write the fixture report and stop",
+            "deliverables": ["research/result.json"],
+            "context_files": ["research/context.json"],
+        }
+        if request.node.callspec.params["pipeline"] == "prepared" and role == "harness":
+            task, files = assignments.worker_package(arguments, coordinator_session_id="main")
+            directory = Path("orchestration/results/preparer/research")
+            directory.mkdir(parents=True)
+            source = directory / "candidate.py"
+            source.write_text("raise RuntimeError('Do not import submitted code in main')")
+            package = directory / "package.json"
+            package.write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "module_sha256": sha(source.read_text()),
+                        "task": task,
+                        "files": files,
+                    }
+                )
+            )
+            state = assignments.load()
+            state["assignments"]["preparer"] = {
+                "status": "decided",
+                "session_id": "preparer-fixture",
+                "evidence_paths": {p.name: str(p) for p in [source, package]},
+                "evidence_hashes": {p.name: sha(p.read_text()) for p in [source, package]},
+            }
+            assignments.save(state)
+            arguments.update(
+                action="assign_prepared",
+                package_path=str(package),
+                package_sha256=sha(package.read_text()),
+                module_path=str(source),
+                module_sha256=sha(source.read_text()),
+            )
+        assigned[role] = assignments.dispatch(req, arguments)
         if role == "policy":
             # The first process cannot finish until the other reaches the provider.
             # The real Host reports it active; promotion must not orphan it.

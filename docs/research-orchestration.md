@@ -41,6 +41,12 @@ usable inside the same responsibilities and permissions:
 - `reconcile`: inspect accessible sessions for a matching assignment and source hashes after
   an uncertain creation response. It never automatically resubmits an uncertain request.
 
+For a fixed candidate's pure package-builder comparison, optional `assign_prepared` accepts
+hash-pinned, already collected preparation data and source provenance. It uses the same
+reservation, ordinary worker identity, collection and reconciliation path without importing
+submitted code in the coordinator. See [prepared validation](prepared-worker-validation.md)
+for the explicit contract and evidence limits.
+
 These are independent operations, not a required sequence for every coordination action.
 A worker runs `python agent.py --resume --worker-task worker-task.json`. Its own completion
 contract is worker-result.json, not the entire run's acceptance. Resume/continuation preserves

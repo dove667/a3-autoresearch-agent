@@ -3,8 +3,10 @@
 import base64
 import hashlib
 import json
+import os
 import pathlib
 import re
+import stat
 import time
 import uuid
 from urllib.parse import urlencode, urlsplit
@@ -284,7 +286,7 @@ def text_file(name):
     return raw.decode("utf-8")
 
 
-def worker_package(arguments, *, coordinator_session_id=None):
+def assignment_contract(arguments):
     identifier = arguments["id"]
     if not isinstance(identifier, str):
         raise TypeError("Assignment id must be text")
@@ -311,6 +313,22 @@ def worker_package(arguments, *, coordinator_session_id=None):
         raise ValueError("Assignment context or export count exceeds bound")
     if any(not isinstance(x, str) or not re.fullmatch(r"export-[a-f0-9]{32}", x) for x in exports):
         raise ValueError("Expected explicit ready export IDs, never private asset paths")
+    return {
+        "id": identifier,
+        "role": role,
+        "objective": arguments["objective"],
+        "stop_condition": arguments["stop_condition"],
+        "deliverables": [relative_path(x) for x in deliverables],
+        "context_files": context,
+        "read_only_exports": exports,
+    }
+
+
+def worker_package(arguments, *, coordinator_session_id=None):
+    contract = assignment_contract(arguments)
+    identifier, role = contract["id"], contract["role"]
+    context, exports = contract["context_files"], contract["read_only_exports"]
+    deliverables = contract["deliverables"]
     files = {name: text_file(name) for name in CORE_FILES}
     for name in context:
         name = relative_path(name)
@@ -392,6 +410,238 @@ def worker_package(arguments, *, coordinator_session_id=None):
     if len(files) > 128 or sum(len(s.encode()) for s in files.values()) > 20 * 1024 * 1024:
         raise ValueError("Worker package exceeds existing Host upload bound")
     return task, files
+
+
+def strict_package_json(raw):
+    def unique_pairs(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("Duplicate prepared package JSON key")
+            result[key] = value
+        return result
+
+    def reject_constant(value):
+        raise ValueError("Non-JSON prepared package constant")
+
+    try:
+        return json.loads(raw, object_pairs_hook=unique_pairs, parse_constant=reject_constant)
+    except (UnicodeError, RecursionError) as error:
+        raise ValueError("Invalid prepared package JSON") from error
+
+
+def bounded_preparation_bytes(name):
+    """Descriptor-relative bounded read of an already selected canonical path."""
+    directory = os.open(".", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    leaf = None
+    try:
+        parts = pathlib.PurePosixPath(name).parts
+        for part in parts[:-1]:
+            child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=directory)
+            os.close(directory)
+            directory = child
+        leaf = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+        info = os.fstat(leaf)
+        if not stat.S_ISREG(info.st_mode) or info.st_size > 1024 * 1024:
+            raise ValueError("Prepared source must be a regular file of at most 1 MiB")
+        with os.fdopen(leaf, "rb") as stream:
+            leaf = None
+            raw = stream.read(1024 * 1024 + 1)
+        if len(raw) > 1024 * 1024:
+            raise ValueError("Prepared source size or SHA256 mismatch")
+        return raw
+    except OSError as error:
+        raise ValueError("Prepared source is unavailable or unsafe") from error
+    finally:
+        if leaf is not None:
+            os.close(leaf)
+        os.close(directory)
+
+
+def collected_bytes(state, name, expected):
+    """Bind bytes to an existing current or hash-verified archived collection receipt."""
+    if (
+        relative_path(name) != name
+        or "\\" in name
+        or not name.startswith("orchestration/results/")
+        or not isinstance(expected, str)
+        or not re.fullmatch(r"[a-f0-9]{64}", expected)
+    ):
+        raise ValueError("Prepared source needs a canonical collected path and SHA256")
+
+    def matching_owners(records):
+        owners = []
+        for item in records:
+            if item.get("status") not in {"awaiting_decision", "decided"}:
+                continue
+            for original, delivered in item.get("evidence_paths", {}).items():
+                if delivered == name and item.get("evidence_hashes", {}).get(original) == expected:
+                    owners.append(item.get("evidence_source_session") or item.get("session_id"))
+        return owners
+
+    owners = matching_owners(state["assignments"].values())
+    if not owners:
+        identifier = pathlib.PurePosixPath(name).parts[2]
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", identifier):
+            raise ValueError("Invalid archived preparation assignment")
+        records = []
+        for path in pathlib.Path("orchestration/archive").glob(identifier + "-*.json"):
+            match = re.fullmatch(re.escape(identifier) + r"-([a-f0-9]{64})\.json", path.name)
+            if match is None:
+                continue  # Another valid assignment may share this identifier prefix.
+            if len(records) >= 16:
+                raise ValueError("Too many matching preparation archives; select current receipt")
+            expected_digest = match[1]
+            archived = bounded_preparation_bytes(path.as_posix())
+            if digest(archived) != expected_digest:
+                raise ValueError("Archived preparation receipt SHA256 mismatch")
+            record = strict_package_json(archived)
+            if not isinstance(record, dict) or record.get("id") != identifier:
+                raise ValueError("Archived preparation receipt identity mismatch")
+            records.append(record)
+        owners = matching_owners(records)
+    if len(owners) != 1 or not isinstance(owners[0], str):
+        raise ValueError("Prepared source lacks a unique verified collection receipt")
+    raw = bounded_preparation_bytes(name)
+    if digest(raw) != expected:
+        raise ValueError("Prepared source SHA256 mismatch")
+    return raw, owners[0]
+
+
+def prepared_worker_package(state, arguments, coordinator):
+    """Validate untrusted data; never import the producer or inherit its checkpoint."""
+    contract = assignment_contract(arguments)
+    if not all(
+        isinstance(arguments.get(k), str)
+        for k in ("package_path", "package_sha256", "module_path", "module_sha256")
+    ):
+        raise ValueError(
+            "Prepared validation needs collected package and module paths with SHA256 pins"
+        )
+    if contract["role"] != "harness":
+        raise ValueError("Prepared packages are bounded Harness validation only")
+    raw, producer = collected_bytes(state, arguments["package_path"], arguments["package_sha256"])
+    _, module_owner = collected_bytes(state, arguments["module_path"], arguments["module_sha256"])
+    package = strict_package_json(raw)
+    if (
+        not isinstance(package, dict)
+        or set(package) != {"version", "module_sha256", "task", "files"}
+        or type(package["version"]) is not int
+        or package["version"] != 1
+        or package["module_sha256"] != arguments["module_sha256"]
+    ):
+        raise ValueError("Invalid prepared package envelope or module identity")
+    task, files = package["task"], package["files"]
+    if not isinstance(task, dict) or not isinstance(files, dict) or len(files) > 128:
+        raise ValueError("Invalid prepared task or file count")
+    expected_fields = set(contract) | {
+        "version",
+        "assignment_nonce",
+        "coordinator_session_id",
+        "source_hashes",
+        "frozen_inputs",
+        "result_path",
+    }
+    if (
+        set(task) != expected_fields
+        or type(task["version"]) is not int
+        or task["version"] != 1
+        or any(task.get(k) != v for k, v in contract.items())
+        or task["coordinator_session_id"] != coordinator
+        or task["frozen_inputs"] != "/run/input/input-manifest.json"
+        or task["result_path"] != "worker-result.json"
+        or not isinstance(task["assignment_nonce"], str)
+        or not re.fullmatch(r"[a-f0-9]{32}", task["assignment_nonce"])
+    ):
+        raise ValueError("Prepared task differs from the main's explicit assignment")
+    contexts = []
+    for spec in contract["context_files"]:
+        if isinstance(spec, str) and spec.startswith("sha256:"):
+            fields = spec.split(":", 2)
+            if len(fields) != 3 or not re.fullmatch(r"[a-f0-9]{64}", fields[1]):
+                raise ValueError("Invalid prepared context hash selector")
+            name = fields[2]
+            if not name.startswith("operator-recovered-artifacts/"):
+                raise ValueError("Prepared hash context must select recovered research artifacts")
+            text = files.get(name)
+            if not isinstance(text, str) or digest(text.encode()) != fields[1]:
+                raise ValueError("Prepared context SHA256 mismatch")
+            strict_package_json(text)
+        else:
+            name = spec
+            if not isinstance(name, str) or not name.startswith(
+                ("research/", "orchestration/results/")
+            ):
+                raise ValueError("Prepared context must select explicit research files")
+        if relative_path(name) != name or "\\" in name or name in contexts:
+            raise ValueError("Prepared context must be canonical and unique")
+        if not spec.startswith("sha256:"):
+            if name.startswith("orchestration/results/"):
+                try:
+                    selected, _ = collected_bytes(state, name, digest(files.get(name, "").encode()))
+                except ValueError as error:
+                    raise ValueError("Prepared context lacks matching collected content") from error
+            else:
+                selected = bounded_preparation_bytes(name)
+            if not isinstance(files.get(name), str) or selected != files[name].encode():
+                raise ValueError("Prepared context differs from the main's selected input")
+        contexts.append(name)
+    sources = set(CORE_FILES) | set(contexts)
+    hashes = task["source_hashes"]
+    if not isinstance(hashes, dict) or set(hashes) != sources:
+        raise ValueError("Prepared source manifest differs from selected files")
+    size = 0
+    for name, text in files.items():
+        if not isinstance(text, str):
+            raise TypeError("Prepared files must be UTF8 text")
+        if name not in CORE_FILES and (relative_path(name) != name or "\\" in name):
+            raise ValueError("Prepared files must have canonical relative names")
+        if name not in sources | {"worker-task.json", "checkpoint.json"} and not name.startswith(
+            "skills/"
+        ):
+            raise ValueError("Undeclared prepared file")
+        encoded = text.encode()
+        size += len(encoded)
+        if len(encoded) > 1024 * 1024:
+            raise ValueError("Prepared file exceeds 1 MiB")
+        if name in sources and digest(encoded) != hashes[name]:
+            raise ValueError("Prepared source hash mismatch")
+    if size > 20 * 1024 * 1024 or not sources.issubset(files):
+        raise ValueError("Prepared files exceed bounds or omit core/context files")
+    original_task = files.get("worker-task.json", "")
+    if strict_package_json(original_task) != task or strict_package_json(
+        files.get("checkpoint.json", "")
+    ) != [
+        {
+            "role": "user",
+            "content": WORKER_INSTRUCTIONS.format(role=task["role"]) + "\n" + original_task,
+        }
+    ]:
+        raise ValueError("Prepared control files must contain only the fresh bounded task")
+    task = {**task, "assignment_nonce": uuid.uuid4().hex}
+    files = dict(files)
+    files["worker-task.json"] = json.dumps(task, ensure_ascii=False)
+    files["checkpoint.json"] = json.dumps(
+        [
+            {
+                "role": "user",
+                "content": WORKER_INSTRUCTIONS.format(role=task["role"])
+                + "\n"
+                + files["worker-task.json"],
+            }
+        ],
+        ensure_ascii=False,
+    )
+    receipt = {
+        k: arguments[k] for k in ("package_path", "package_sha256", "module_path", "module_sha256")
+    }
+    receipt.update(
+        source_session=producer,
+        module_source_session=module_owner,
+        generation_proven=False,
+        scope="Prepared packaging data and ordinary Host dispatch; not candidate dispatch execution",
+    )
+    return task, files, receipt
 
 
 def artifact(req, session, name):
@@ -594,7 +844,7 @@ def dispatch(req, arguments):
             ],
         }
     identifier = arguments.get("id")
-    if action == "assign":
+    if action in {"assign", "assign_prepared"}:
         if identifier in state["assignments"]:
             raise ValueError("Assignment already recorded; inspect it, do not duplicate submission")
         while len(state["assignments"]) >= 64:
@@ -620,7 +870,11 @@ def dispatch(req, arguments):
         coordinator = checked(req, "GET", "/sessions/self").get("session_id")
         if not isinstance(coordinator, str) or not coordinator:
             raise ValueError("Cannot identify the coordinator for explicit export delivery")
-        task, files = worker_package(arguments, coordinator_session_id=coordinator)
+        preparation = None
+        if action == "assign_prepared":
+            task, files, preparation = prepared_worker_package(state, arguments, coordinator)
+        else:
+            task, files = worker_package(arguments, coordinator_session_id=coordinator)
         item = {
             "id": identifier,
             "role": task["role"],
@@ -629,6 +883,8 @@ def dispatch(req, arguments):
             "source_hashes": task["source_hashes"],
             "task_sha256": digest(json.dumps(task, sort_keys=True, ensure_ascii=False).encode()),
         }
+        if preparation is not None:
+            item["prepared_validation"] = preparation
         state["assignments"][identifier] = item
         save(state)  # Reserve before network I/O; uncertainty must not replay creation.
         result = checked(
