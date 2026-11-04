@@ -1,6 +1,6 @@
 # Host提供的执行与验收入口
 
-Version: 0.15.7
+Version: 0.15.8
 
 部署方运行 gateway、容器引擎、模型认证与远程资源调度。候选 Harness 在独立容器内运行，
 通过 HTTP 请求这些固定能力。工具名称、研究逻辑、反思方法和版本选择由 Agent 设计。
@@ -284,6 +284,7 @@ Host 保存候选的 Git commit 和独立 worktree，Docker 只挂载 worktree �
 - `POST /versions {"files": {"entry.py": "..."}, "parent_version": "可选版本标识"}` 保存明确提交的完整源码快照，返回 `version_id`、`commit` 与父版本。文件清单是完整替换，不是增量补丁；未列出的旧文件不会保留。
 - `GET /versions` 只列出本身份获授权的版本。
 - `POST /sessions {"command": [...], "version_id": "..."}` 在新 worktree 中运行该版本。不能同时上传文件。
+- 可选 `workspace_files: [{"path":"research/runner.py","sha256":"完整哈希"}]` 可与 `version_id` 显式装配：Host 只读取认证调用者自己的研究文件，与有权访问的固定快照组合为新版本；无需在模型请求中复制全部源码。原快照不变，普通 `files` 和 `parent_version` 不与此方式混用。最多16个附件、每个1 MiB、合计8 MiB，合并后仍受128文件/20 MiB限制；路径、哈希或依赖不符则失败，不假装已运行。完整示例与边界见 `docs/workspace-snapshot-assembly.md`。正式 trial 不接受此字段，须先取得并审查已固定版本。
 - 原有 `/sessions` 上传文件方式自动保存初始 commit；可增加 `parent_version` 指向有权访问的父版本。后继未指定时，沿用调用身份的执行起点作为父版本。
 - `GET /sessions/{session_id}/versions` 由有管理权限的祖先取回并获得后代已保存版本的访问权，用于比较和复跑；同级身份不能调用。
 

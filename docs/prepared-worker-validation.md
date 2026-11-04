@@ -37,6 +37,12 @@ The main reviews the preparation evidence before deciding whether to dispatch it
 collection receipt means only delivered bytes match the report, not that a producer's claim
 of executing a particular module is true.
 
+If the chosen immutable version already has the modules but lacks the newly written runner
+or preregistration, use [workspace snapshot assembly](workspace-snapshot-assembly.md). The
+Agent submits version ID plus its own research-file paths and full SHA256 values, not a
+model-transcribed complete source dictionary. Host assembly, an admitted child process and
+successful preparation remain separate facts; assembly alone does not prove execution.
+
 ## Data-only dispatch
 
 `delegate` with `action: "assign_prepared"` requires the usual explicit assignment fields

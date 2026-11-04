@@ -17,7 +17,9 @@ from runtime.local.candidate_runtime import (
 
 class CandidateVersions:
     @staticmethod
-    def read_snapshot(root: Path, version_id: str) -> dict[str, str]:
+    def read_snapshot(
+        root: Path, version_id: str, *, max_files: int | None = None, max_bytes: int | None = None
+    ) -> dict[str, str]:
         """Read a saved snapshot without writing to the previous run's repository."""
         metadata = root / "versions.json"
         records = json.loads(metadata.read_text()) if metadata.is_file() else {}
@@ -31,12 +33,18 @@ class CandidateVersions:
             )
 
         files = {}
-        tree = read("ls-tree", "-rz", record["commit"], "--", "source/")
+        total_bytes = 0
+        tree = read("ls-tree", "-rlz", record["commit"], "--", "source/")
         for entry in filter(None, tree.split(b"\0")):
             metadata, name = entry.split(b"\t", 1)
-            mode, kind, object_id = metadata.decode().split()
+            mode, kind, object_id, size = metadata.decode().split()
             if mode != "100644" or kind != "blob":
                 raise ValueError("Invalid retained file type")
+            total_bytes += int(size)
+            if (max_files is not None and len(files) >= max_files) or (
+                max_bytes is not None and total_bytes > max_bytes
+            ):
+                raise ValueError("Base snapshot exceeds Agent upload bounds")
             files[name.decode().removeprefix("source/")] = read(
                 "cat-file", "blob", object_id
             ).decode("utf-8")
@@ -153,6 +161,29 @@ class CandidateVersions:
                 for part in Path(name).parts
             ):
                 raise ValueError("Git control files and environment files cannot be versioned")
+
+    def assembled_files(self, owner: str, base: str, attachments: dict[str, str]) -> dict[str, str]:
+        """Compose authorized immutable bytes without saving a version or modifying the base."""
+        with self.lock:
+            self.owned(owner, base)
+            files = self.read_snapshot(
+                self.root, base, max_files=MAX_INPUT_FILES, max_bytes=MAX_INPUT_BYTES
+            )
+            self.validate_files(attachments)
+            files.update(attachments)  # Same-path replacements are explicit and audited.
+            if (
+                len(files) > MAX_INPUT_FILES
+                or sum(len(x.encode()) for x in files.values()) > MAX_INPUT_BYTES
+            ):
+                raise ValueError("Assembled snapshot exceeds 128 files or 20 MiB")
+            for name in files:
+                if any(
+                    str(parent) in files
+                    for parent in PurePosixPath(name).parents
+                    if str(parent) != "."
+                ):
+                    raise ValueError("Assembled files have file/directory prefix conflicts")
+            return files
 
     def create(self, owner: str, files: dict[str, str], parent: str | None = None) -> dict:
         """Accept a bounded Agent upload through the Gateway."""

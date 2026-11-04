@@ -99,6 +99,12 @@ class JobRequest(BaseModel):
     input_exports: list[str] = Field(default_factory=list, max_length=64)
 
 
+class WorkspaceFileReference(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    path: str = Field(min_length=1, max_length=4096)
+    sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+
 class SessionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     command: list[str] = Field(min_length=1, max_length=256)
@@ -107,6 +113,7 @@ class SessionRequest(BaseModel):
     parent_version: str | None = None
     read_only_exports: list[str] = Field(default_factory=list, max_length=64)
     purpose: Literal["worker", "candidate_validation"] = "worker"
+    workspace_files: list[WorkspaceFileReference] = Field(default_factory=list, max_length=16)
 
 
 class ExportRequest(BaseModel):
@@ -338,6 +345,8 @@ def create_app(
             "time": time.time(),
             "version_id": record.get("version_id"),
         }
+        if record.get("assembly") is not None:
+            entry["assembly"] = record["assembly"]
         with log_lock, usage_log.with_name("session-events.jsonl").open("a") as stream:
             stream.write(json.dumps(entry) + "\n")
         save_checkpoint()
@@ -635,6 +644,35 @@ def create_app(
             sessions[token] = scope
             granted = []
             try:
+                selected_files, selected_parent, version_id = (
+                    body.files,
+                    body.parent_version,
+                    body.version_id,
+                )
+                assembly = None
+                if body.workspace_files:
+                    if not body.version_id or body.files or body.parent_version:
+                        raise HTTPException(
+                            422, "workspace_files requires version_id without files/parent_version"
+                        )
+                    own_session(authorization)
+                    if versions is None:
+                        raise HTTPException(503, "Candidate versions are not configured")
+                    base = deployment_call(versions.owned, parent, body.version_id)
+                    attached, receipt = deployment_call(
+                        sandbox.read_workspace_files,
+                        parent,
+                        [x.model_dump() for x in body.workspace_files],
+                    )
+                    selected_files = deployment_call(
+                        versions.assembled_files, parent, body.version_id, attached
+                    )
+                    selected_parent, version_id = body.version_id, None
+                    assembly = {
+                        "base_version_id": body.version_id,
+                        "base_source_sha256": base["source_sha256"],
+                        "workspace_files": receipt,
+                    }
                 if body.read_only_exports:
                     if evolution is None:
                         raise HTTPException(403, "Only the current main Agent can share exports")
@@ -649,17 +687,20 @@ def create_app(
                             {"experiment_id": parent, "export_id": identifier, "recipient": scope},
                         )
                         granted.append(identifier)
-                if body.version_id and (body.files or body.parent_version):
+                if (
+                    not body.workspace_files
+                    and body.version_id
+                    and (body.files or body.parent_version)
+                ):
                     raise HTTPException(422, "Choose version_id or files with parent_version")
-                version_id = body.version_id
                 if versions is not None:
                     if hasattr(sandbox, "check_capacity"):
                         deployment_call(sandbox.check_capacity)
                     if version_id is None:
-                        previous = body.parent_version or children.get(parent, {}).get("version_id")
-                        version_id = deployment_call(versions.create, parent, body.files, previous)[
-                            "version_id"
-                        ]
+                        previous = selected_parent or children.get(parent, {}).get("version_id")
+                        version_id = deployment_call(
+                            versions.create, parent, selected_files, previous
+                        )["version_id"]
                     deployment_call(versions.grant, parent, scope, version_id)
                     if initial_inputs is not None and parent in root_owners and not children:
                         result = deployment_call(
@@ -689,6 +730,12 @@ def create_app(
                     except HTTPException:
                         logging.getLogger(__name__).error("Export grant rollback requires retry")
                 raise
+            if assembly is not None:
+                assembly["derived_version_id"] = version_id
+                assembly["derived_source_sha256"] = deployment_call(
+                    versions.owned, parent, version_id
+                )["source_sha256"]
+                result = {**result, "assembly": assembly}
             children[result["session_id"]] = {
                 "parent": parent,
                 "owner": scope,
@@ -697,6 +744,8 @@ def create_app(
                 "version_id": result.get("version_id"),
                 "purpose": body.purpose,
             }
+            if assembly is not None:
+                children[result["session_id"]]["assembly"] = assembly
             scope_parents[scope] = parent
             if evolution and start_main_session and len(children) == 1:
                 evolution.main_owner = scope
@@ -749,6 +798,10 @@ def create_app(
             state = evolution_state()
             actor = owner(authorization)
             deployment_call(state.require_main, actor)
+            if body.workspace_files:
+                raise HTTPException(
+                    422, "Freeze an assembled version before starting a formal trial"
+                )
             if state.pending():
                 raise HTTPException(409, "Decide the current candidate before starting another")
             deployment_call(versions.owned, actor, body.baseline_version)
@@ -1524,7 +1577,10 @@ def create_app(
         try:
             result = remote("artifact", payload)
             if area == "outputs" and result.get("area") != "outputs":
-                raise HTTPException(502, "Controller did not confirm outputs area; verify matching deployment versions")
+                raise HTTPException(
+                    502,
+                    "Controller did not confirm outputs area; verify matching deployment versions",
+                )
             return result
         except HTTPException as error:
             if error.status_code == 400 and error.detail == "FileNotFoundError":

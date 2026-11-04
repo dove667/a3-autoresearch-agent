@@ -19,6 +19,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from runtime.local.candidate_runtime import CandidateRuntime
 from runtime.local.candidate_versions import CandidateVersions
 from runtime.local.host_gateway import create_app
 
@@ -35,6 +36,7 @@ def sha(text):
 class ProcessSandbox:
     def __init__(self, root, versions):
         self.root, self.versions = root, versions
+        self.lock = threading.RLock()
         self.records, self.tokens, self.launches = {}, {}, {}
         self.endpoint = None
         self.support = root / "process-support"
@@ -51,10 +53,9 @@ class ProcessSandbox:
         )
 
     def create_version(self, owner, command, token, version_id):
-        assert command == ["python", "agent.py", "--resume", "--worker-task", "worker-task.json"]
         files = self.versions.read_snapshot(self.versions.root, version_id)
-        directory = self.root / owner
-        directory.mkdir()
+        directory = self.root / owner / "workspace"
+        directory.mkdir(parents=True)
         for name, text in files.items():
             target = directory / name
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -84,6 +85,13 @@ class ProcessSandbox:
             output.close()
         self.records[owner] = {"owner": owner, "directory": directory, "process": process}
         return {"session_id": owner, "version_id": version_id, "status": "created"}
+
+    def owned(self, owner, session):
+        if owner != session or session not in self.records:
+            raise PermissionError("Test process is not caller-owned")
+        return self.records[session]
+
+    read_workspace_files = CandidateRuntime.read_workspace_files
 
     def status(self, owner, session):
         assert owner == session

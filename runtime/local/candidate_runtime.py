@@ -1,8 +1,10 @@
 """Create sibling containers with host-fixed mounts, identities and resources."""
 
 import base64
+import hashlib
 import json
 import os
+import stat
 import subprocess
 import threading
 import time
@@ -188,6 +190,69 @@ class CandidateRuntime:
                 except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
                     record["cleanup_error"] = type(error).__name__
                     self.save_record(record)
+
+    def read_workspace_files(self, owner: str, references: list[dict]) -> tuple[dict, list]:
+        """Read explicit research attachments only from the authenticated caller's workspace."""
+        with self.lock:
+            record = self.owned(owner, owner)
+            if record.get("closed"):
+                raise PermissionError("Closed candidate cannot supply workspace attachments")
+            root = candidate_workspace(self.root, owner)
+            selected, manifest, total = {}, [], 0
+            if not 1 <= len(references) <= 16:
+                raise ValueError("Select 1..16 workspace research files")
+            for reference in references:
+                name, expected = reference["path"], reference["sha256"]
+                path = PurePosixPath(name)
+                if (
+                    name != path.as_posix()
+                    or "\\" in name
+                    or path.is_absolute()
+                    or len(path.parts) < 2
+                    or path.parts[0] != "research"
+                    or any(part in {"..", "."} or part.startswith(".") for part in path.parts)
+                    or name in selected
+                ):
+                    raise ValueError("Workspace attachments need unique canonical research paths")
+                directory = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+                leaf = None
+                try:
+                    for part in path.parts[:-1]:
+                        child = os.open(
+                            part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=directory
+                        )
+                        os.close(directory)
+                        directory = child
+                    leaf = os.open(
+                        path.parts[-1],
+                        os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+                        dir_fd=directory,
+                    )
+                    info = os.fstat(leaf)
+                    if not stat.S_ISREG(info.st_mode) or info.st_size > 1024 * 1024:
+                        raise ValueError(
+                            "Workspace attachment must be a regular file of at most 1 MiB"
+                        )
+                    with os.fdopen(leaf, "rb") as stream:
+                        leaf = None
+                        raw = stream.read(1024 * 1024 + 1)
+                    actual = hashlib.sha256(raw).hexdigest()
+                    if len(raw) > 1024 * 1024 or actual != expected:
+                        raise ValueError("Workspace attachment size or SHA256 changed")
+                    total += len(raw)
+                    if total > 8 * 1024 * 1024:
+                        raise ValueError("Workspace attachments exceed 8 MiB")
+                    selected[name] = raw.decode("utf-8")
+                    manifest.append({"path": name, "sha256": actual, "bytes": len(raw)})
+                except (OSError, UnicodeError) as error:
+                    raise ValueError(
+                        "Workspace attachment unavailable, unsafe or not UTF8"
+                    ) from error
+                finally:
+                    if leaf is not None:
+                        os.close(leaf)
+                    os.close(directory)
+            return selected, manifest
 
     def create_initial(
         self, owner: str, command: list[str], token: str, version_id: str, inputs: Path
