@@ -3,7 +3,7 @@ from datetime import datetime
 
 import pytest
 
-from runtime.local import launch
+from a3_research_agent.host.runs import directories as launch
 from runtime.remote.remote_jobs import validate_submit
 
 
