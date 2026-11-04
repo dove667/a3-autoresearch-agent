@@ -24,3 +24,5 @@ compaction-result.json
 operational-state.json
 /context-history/
 /.autorun-spill/
+
+/.superpowers/
