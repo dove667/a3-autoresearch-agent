@@ -74,4 +74,4 @@ python -m a3_dual_arm_sim.workflows.benchmark_cookie_batch_cli \
 
 问题为 1–2000 字符的非空文本；同一 episode 的帧连续成组，组内 step 与模拟时间不倒退，不同相机可取同一时刻。Host 只读调用身份已授权的 job 图像；单图最多 512 KiB、宽高各不超过 1024 像素，总输入图像最多 3 MiB。时间与 camera 标签由调用者提供，不能把语法校验当作时间真实性认证。Host 校验实际图像、去除 metadata 并规范化后，强制走配置的 worker 视觉 helper；不自动附带主 Agent Prompt 或原始 human feedback，图像内文字也是不可信证据，不能成为指令。
 
-返回 `analysis`、`frames` 哈希／时间信息与实际响应 `model`，供原结果追溯和判断；原始 base64 不进入主对话或摘要。视觉答复是建议，不是验证通过、Policy 推理结果或自动采用决定。通用 gateway 在 Host 路由可用且自身路径 allowlist 支持时可调用；是否在自身 Harness 接入该路径或注册专门工具由 Agent 判断，本文不宣称已自动改写或当前 run 已加载。它不提供视频下载、Policy 重跑或自动 grant。
+返回 `analysis`、`frames` 哈希／时间信息与实际响应 `model`，供原结果追溯和判断；原始 base64 不进入主对话或摘要。视觉答复是建议，不是验证通过、Policy 推理结果或自动采用决定。当前源码的通用 gateway 已允许 `/vision` 路径，可直接调用上述两个接口，无需另注册专门工具。历史工作区仍须显式更新并重新加载 Harness，才能采用该白名单。它不提供视频下载、Policy 重跑或自动 grant。

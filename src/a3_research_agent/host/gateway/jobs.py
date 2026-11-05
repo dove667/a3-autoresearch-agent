@@ -1,5 +1,7 @@
 """Jobs Gateway behavior on the shared runtime instance."""
 
+import json
+from pathlib import PurePosixPath
 from typing import Annotated, Literal
 
 from fastapi import Header, HTTPException
@@ -16,13 +18,64 @@ class JobRoutes:
         with self.session_lock:
             self.accepting_resources()
             experiment = self.owner(authorization)
-            request = body.model_dump(exclude_none=True)
+            request = body.model_dump(exclude_none=True, exclude={"workspace_files"})
+            source_files = []
+            if body.workspace_files:
+                self.own_session(authorization)
+                if self.sandbox is None:
+                    raise HTTPException(503, "Candidate execution is not configured")
+                attached, source_files = self.deployment_call(
+                    self.sandbox.read_workspace_files,
+                    experiment,
+                    [x.model_dump() for x in body.workspace_files],
+                    True,
+                )
+                files = dict(body.files)
+                for reference, receipt in zip(body.workspace_files, source_files, strict=True):
+                    destination = reference.destination or reference.path
+                    path = PurePosixPath(destination)
+                    if (
+                        destination != path.as_posix()
+                        or "\\" in destination
+                        or path.is_absolute()
+                        or not path.parts
+                        or any(part in {"..", "."} or part.startswith(".") for part in path.parts)
+                        or destination in files
+                    ):
+                        raise HTTPException(422, "Select unique canonical job file destinations")
+                    files[destination] = attached[reference.path]
+                    receipt["destination"] = destination
+                names = set(files)
+                if any(
+                    parent.as_posix() in names
+                    for name in names
+                    for parent in PurePosixPath(name).parents
+                ):
+                    raise HTTPException(422, "Job file paths conflict with a directory")
+                if (
+                    len(files) > 128
+                    or sum(len(x.encode("utf-8")) for x in files.values()) > 20 * 1024 * 1024
+                ):
+                    raise HTTPException(422, "Job input exceeds 128 files or 20 MiB")
+                request["files"] = files
             if not body.input_exports:
                 request.pop("input_exports")
             result = self.remote("submit", request | {"experiment_id": experiment})
             if result.get("job_id"):
                 self.jobs.setdefault(experiment, set()).add(result["job_id"])
                 self.save_checkpoint()
+                if source_files:
+                    receipt = {
+                        "job_id": result["job_id"],
+                        "experiment_id": experiment,
+                        "source_files": source_files,
+                    }
+                    with (
+                        self.log_lock,
+                        self.usage_log.with_name("job-inputs.jsonl").open("a") as stream,
+                    ):
+                        stream.write(json.dumps(receipt) + "\n")
+                    result = result | {"source_files": source_files}
             return result
 
     def list_exports(self, authorization: Annotated[str | None, Header()] = None):

@@ -95,6 +95,7 @@ def test_in_place_resume_keeps_run_and_can_supervise_after_builder_submission(
             assert not initial_builder
             return {"status": "incomplete", "builder_error": "example"}
 
+    monkeypatch.setenv("A3_WEB_ENABLED", "0")
     monkeypatch.setenv("MODEL_NAME", "test/model")
     monkeypatch.setenv("MODEL_CLASS", "test_adapter")
     monkeypatch.setattr(launch, "CandidateRuntime", Runtime)

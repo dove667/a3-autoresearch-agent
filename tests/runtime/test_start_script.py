@@ -20,6 +20,7 @@ def test_start_script_preserves_arguments_stdin_and_exit_status_with_sleep_guard
     python.symlink_to(sys.executable)
     launcher = root / "src/a3_research_agent/cli/launch.py"
     launcher.parent.mkdir(parents=True)
+    (root / "src/a3_research_agent/__init__.py").touch()
     launcher.write_text(
         "import json, sys\n"
         "print(json.dumps({'args': sys.argv[1:], 'stdin': sys.stdin.read()}))\n"

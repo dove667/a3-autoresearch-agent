@@ -246,3 +246,97 @@ def test_combined_byte_limit_is_checked_without_saving_version(assembly, monkeyp
     before = set(versions.records)
     assert post(client, body).status_code == 422
     assert not docker and set(versions.records) == before
+
+
+def test_job_materializes_owned_sources_without_child_or_export_redelegation(assembly):
+    client, _, _sandbox, workspace, _, body, docker = assembly
+    runtime = client.app.state.save_checkpoint.__self__
+    calls = []
+    runtime.remote_call = lambda op, payload: calls.append((op, payload)) or {"job_id": "job-1"}
+    collected = "orchestration/results/task/research/adapter.py"
+    (workspace / collected).parent.mkdir(parents=True)
+    (workspace / collected).write_bytes(b"VALUE = 9\r\n")
+    refs = body["workspace_files"][:1] + [
+        {"path": collected, "sha256": sha(b"VALUE = 9\r\n"), "destination": "adapter.py"}
+    ]
+    response = client.post(
+        "/jobs",
+        headers={"Authorization": "Bearer caller-token"},
+        json={
+            "command": ["python", "research/runner.py"],
+            "workspace_files": refs,
+            "input_exports": ["export-existing"],
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert calls == [
+        (
+            "submit",
+            {
+                "command": ["python", "research/runner.py"],
+                "gpu": False,
+                "files": {
+                    "research/runner.py": (workspace / "research/runner.py").read_text(),
+                    "adapter.py": "VALUE = 9\r\n",
+                },
+                "input_exports": ["export-existing"],
+                "experiment_id": "caller",
+            },
+        )
+    ]
+    assert response.json()["source_files"][1] == {
+        "path": collected,
+        "destination": "adapter.py",
+        "sha256": sha(b"VALUE = 9\r\n"),
+        "bytes": 11,
+    }
+    assert runtime.jobs["caller"] == {"job-1"}
+    assert not docker
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "hash",
+        "sibling",
+        "secret",
+        "symlink",
+        "destination",
+        "collision",
+        "prefix",
+        "count",
+        "root_identity",
+    ],
+)
+def test_job_reference_validation_precedes_remote_submission(assembly, case):
+    client, _, _, workspace, _, body, _ = assembly
+    runtime = client.app.state.save_checkpoint.__self__
+    calls = []
+    runtime.remote_call = lambda *args: calls.append(args) or {"job_id": "unexpected"}
+    ref = dict(body["workspace_files"][0])
+    payload = {"command": ["true"], "workspace_files": [ref]}
+    token = "caller-token"
+    if case == "hash":
+        ref["sha256"] = "0" * 64
+    elif case == "sibling":
+        token = "other-token"
+    elif case == "secret":
+        ref["path"] = ".env"
+    elif case == "symlink":
+        p = workspace / ref["path"]
+        p.unlink()
+        p.symlink_to(workspace / "research/prereg.json")
+    elif case == "destination":
+        ref["destination"] = "../escaped.py"
+    elif case == "collision":
+        payload["files"] = {ref["path"]: "overwrite"}
+    elif case == "prefix":
+        payload["files"] = {"research": "blocks directory"}
+    elif case == "count":
+        payload["workspace_files"] *= 17
+    elif case == "root_identity":
+        runtime.sessions["root-token"] = "root"
+        token = "root-token"
+    response = client.post("/jobs", headers={"Authorization": "Bearer " + token}, json=payload)
+    assert response.status_code in {403, 422}, response.text
+    assert not calls

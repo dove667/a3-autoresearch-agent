@@ -1,6 +1,6 @@
 # Host提供的执行与验收入口
 
-Version: 0.15.12
+Version: 0.15.13
 
 部署方运行 gateway、容器引擎、模型认证与远程资源调度。候选 Harness 在独立容器内运行，
 通过 HTTP 请求这些固定能力。工具名称、研究逻辑、反思方法和版本选择由 Agent 设计。
@@ -206,6 +206,22 @@ Host 先记录停止意图，再停止进程；若中断留下未确认的停止
 
 `POST /jobs` 接受 `{"command": [...], "gpu": false, "files": {"probe.py": "..."}}`。
 身份由 gateway 注入。需要 GPU 时设置 `gpu: true`，由同一服务器 controller 分配。
+
+作业可用 `workspace_files` 直接传递本身份工作区中已存在的源码，无需把文件全文复制进模型请求：
+
+```json
+{"command":["python","runner.py"],"gpu":false,"workspace_files":[{"path":"orchestration/results/task/research/runner.py","sha256":"<64位小写SHA256>","destination":"runner.py"}]}
+```
+
+来源仅接受调用者自己的 `research/` 或已收集的 `orchestration/results/` 普通 UTF8 文件；
+省略 `destination` 时保留来源路径。Host 校验完整哈希、拒绝符号链接与隐藏路径，
+再按原 `files` 协议传给远端。最多16个引用、每个1 MiB、合计8 MiB；与可选 `files`
+合并后最多128文件／20 MiB，重复目标和文件／目录冲突直接拒绝。响应 `source_files`
+与 Host 的 `job-inputs.jsonl` 记录实际来源、目标、哈希和字节数。
+`input_exports` 继续使用提交者已有的授权，无需新建子进程或继续转授权。
+`version_id` 不属于作业接口；固定版本装配仍使用 `/sessions`。详见
+[文件传递](../../docs/workspace-snapshot-assembly.md#send-selected-workspace-files-to-a-remote-job)。
+
 
 ### 模型计算必须使用 GPU
 

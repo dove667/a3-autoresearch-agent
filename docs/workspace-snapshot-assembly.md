@@ -87,3 +87,44 @@ references; no fixture fills a complete source dictionary for that call. Provide
 are scripted, so this proves tool reachability and data flow, not autonomous real-model
 planning. A separate real-Docker check covers the same route without paid model or remote
 job calls. Source publication alone never deploys this to an active run.
+
+## Send selected workspace files to a remote job
+
+`POST /jobs` also accepts `workspace_files`, without a version or extra local session:
+
+```json
+{
+  "command": ["python", "runner.py"],
+  "gpu": false,
+  "workspace_files": [
+    {
+      "path": "orchestration/results/task/research/runner.py",
+      "sha256": "<64 lowercase hex characters>",
+      "destination": "runner.py"
+    }
+  ],
+  "input_exports": ["<already authorized export ID>"]
+}
+```
+
+For jobs, sources may be under the authenticated caller's `research/` or
+`orchestration/results/`. Collection must already have delivered the files into that
+caller's workspace; a reference cannot read a sibling's workspace. `destination` is an
+optional canonical relative job path, defaulting to the source path. Jobs use the same
+bounded, no-follow, hash-checked reads as session attachments. Ordinary `files` may supply
+additional content strings, but duplicate destinations, file/directory conflicts and
+combined inputs exceeding 128 files or 20 MiB are rejected before remote submission.
+The 16-reference, 1 MiB-per-file and 8 MiB-total reference limits still apply.
+
+The Host sends materialized strings using the unchanged controller protocol. The response's
+`source_files` and Host `job-inputs.jsonl` associate each path, destination, actual digest
+and byte count with the returned job ID. Remote status and artifacts confirm execution;
+the receipt alone confirms materialization. If submission has an uncertain outcome,
+reconcile recorded requests and jobs before retrying.
+
+A worker submits under its own identity and uses only its own existing `input_exports`
+grants. It need not create a child with asset access merely to read and serialize its
+source. This does not broaden export sharing, enable arbitrary Host paths, or add
+`version_id` to `/jobs`. The session interface above retains its research-only source
+paths and immutable-version requirements. Deploy the updated Host before using this form;
+publishing source changes does not alter a running Host process.

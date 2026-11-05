@@ -1,4 +1,5 @@
 import hashlib
+import http.client
 import json
 import os
 import pathlib
@@ -46,6 +47,35 @@ def req(method, path, data=None, *, timeout=300):
             return json.loads(x.read())
     except urllib.error.HTTPError as e:
         return {"http_error": e.code, "body": e.read().decode()[:10000]}
+
+
+def request_model(request):
+    """Retry transient model transport failures before publishing tool calls."""
+    retryable_statuses = {408, 429, 500, 502, 503, 504}
+    for attempt in range(1, 5):
+        try:
+            # Allow the Host's upstream request to finish before the client times out.
+            response = req("POST", "/v1/responses", request, timeout=960)
+        except (
+            TimeoutError,
+            ConnectionError,
+            urllib.error.URLError,
+            http.client.HTTPException,
+        ) as error:
+            if attempt == 4:
+                raise
+            failure = {"error_type": type(error).__name__}
+        else:
+            if response.get("http_error") not in retryable_statuses:
+                return response
+            if attempt == 4:
+                raise RuntimeError(
+                    f"Model request retries exhausted: HTTP {response['http_error']}"
+                )
+            failure = {"http_status": response["http_error"]}
+        delay = 5 * 2 ** (attempt - 1)
+        log({"model_retry": attempt, "delay_seconds": delay, **failure})
+        time.sleep(delay)
 
 
 def log(x):
@@ -105,6 +135,7 @@ def tool(name, a):
                 "/evolution",
                 "/telemetry",
                 "/analysis",
+                "/vision",
             ]
         ):
             return "path not allowed"
@@ -638,7 +669,7 @@ def main() -> None:
                 log({"optional_telemetry": "unavailable"})
             log({"operational_view": state_reference})
             loop_phase = "model_request"
-            resp = req("POST", "/v1/responses", request)
+            resp = request_model(request)
             if resp.get("status") == "completed":
                 memory_state.mark_delivered(messages)
                 memory_state.decision_completed()

@@ -35,6 +35,16 @@ class SummaryRequest(BaseModel):
     source: str = Field(pattern="^context-history/snapshot-[0-9a-f]{64}\\.json$")
 
 
+class WorkspaceFileReference(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    path: str = Field(min_length=1, max_length=4096)
+    sha256: str = Field(pattern="^[a-f0-9]{64}$")
+
+
+class JobWorkspaceFileReference(WorkspaceFileReference):
+    destination: str | None = Field(default=None, min_length=1, max_length=4096)
+
+
 class JobRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     command: list[str] = Field(min_length=1, max_length=256)
@@ -42,12 +52,7 @@ class JobRequest(BaseModel):
     gpu_memory_mb: int | None = Field(default=None, ge=1, strict=True)
     files: dict[str, str] = Field(default_factory=dict)
     input_exports: list[str] = Field(default_factory=list, max_length=64)
-
-
-class WorkspaceFileReference(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    path: str = Field(min_length=1, max_length=4096)
-    sha256: str = Field(pattern="^[a-f0-9]{64}$")
+    workspace_files: list[JobWorkspaceFileReference] = Field(default_factory=list, max_length=16)
 
 
 class SessionRequest(BaseModel):

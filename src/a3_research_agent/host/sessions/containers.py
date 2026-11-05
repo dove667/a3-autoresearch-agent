@@ -176,8 +176,10 @@ class CandidateRuntime:
                     record["cleanup_error"] = type(error).__name__
                     self.save_record(record)
 
-    def read_workspace_files(self, owner: str, references: list[dict]) -> tuple[dict, list]:
-        """Read explicit research attachments only from the authenticated caller's workspace."""
+    def read_workspace_files(
+        self, owner: str, references: list[dict], allow_collected_results: bool = False
+    ) -> tuple[dict, list]:
+        """Read selected research files from the caller; jobs may also use collected results."""
         with self.lock:
             record = self.owned(owner, owner)
             if record.get("closed"):
@@ -194,7 +196,13 @@ class CandidateRuntime:
                     or "\\" in name
                     or path.is_absolute()
                     or len(path.parts) < 2
-                    or path.parts[0] != "research"
+                    or not (
+                        path.parts[0] == "research"
+                        or (
+                            allow_collected_results
+                            and path.parts[:2] == ("orchestration", "results")
+                        )
+                    )
                     or any(part in {"..", "."} or part.startswith(".") for part in path.parts)
                     or name in selected
                 ):

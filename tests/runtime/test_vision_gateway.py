@@ -119,6 +119,40 @@ def test_vision_uses_real_image_items_worker_route_and_private_phase_isolation(t
     assert log["response_model"] == "actual-visual-worker"
 
 
+def test_harness_gateway_reaches_owned_vision_without_opening_operator_routes(
+    tmp_path, monkeypatch
+):
+    from a3_research_agent.harness import agent
+
+    client, reads, models = client_for(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    forwarded = []
+
+    def request(method, path, data=None):
+        forwarded.append(path)
+        if path == "/sessions/self":
+            return {"session_id": "owner-a", "is_main": True, "has_been_main": True}
+        response = client.request(
+            method, path, headers={"Authorization": "Bearer token-a"}, json=data
+        )
+        response.raise_for_status()
+        return response.json()
+
+    monkeypatch.setattr(agent, "req", request)
+    status = agent.tool("gateway", {"method": "GET", "path": "/vision/status"})
+    assert status["available"] is True
+    result = agent.tool(
+        "gateway", {"method": "POST", "path": "/vision/inspect", "body": request_body()}
+    )
+    assert result["analysis"].startswith("Two red frames")
+    assert len(reads) == 2 and len(models) == 1
+    assert agent.tool("gateway", {"method": "GET", "path": "/control/inputs"}) == "path not allowed"
+    assert (
+        agent.tool("gateway", {"method": "GET", "path": "/visionary/status"}) == "path not allowed"
+    )
+    assert "/control/inputs" not in forwarded and "/visionary/status" not in forwarded
+
+
 def test_vision_requires_auth_and_keeps_artifact_scope(tmp_path):
     client, reads, models = client_for(tmp_path, forbidden=True)
     assert client.post("/vision/inspect", json=request_body()).status_code == 401
