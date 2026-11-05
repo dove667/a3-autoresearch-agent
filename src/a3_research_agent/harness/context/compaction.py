@@ -15,8 +15,8 @@ import threading
 import uuid
 
 from a3_research_agent.harness.context import manager as cm
-from a3_research_agent.harness.context import spill as spill_tools
 from a3_research_agent.harness.memory import recall as recall_tools
+from a3_research_agent.harness.context import spill as spill_tools
 
 MODEL = "openai/sandbox-model"
 RESULT_PATH = "compaction-result.json"
@@ -91,6 +91,7 @@ class ForkCompactor:
         self.hard_wait_seconds = max(0, min(float(hard_wait_seconds), 300))
         self._thread, self._lock = None, threading.Lock()
         self.last_error, self._last_after_bytes = None, 0
+        self._last_after_tokens = 0
 
     def _epoch(self):
         path = pathlib.Path(EPOCH_PATH)
@@ -165,8 +166,16 @@ class ForkCompactor:
             )
         if self._busy():
             return messages, record
-        size = cm.size(messages) + (cm.size(extra_messages) if extra_messages else int(extra_bytes))
-        floor = max(self.trigger_bytes, int(self._last_after_bytes * 1.1))
+        if cm.TOKEN_CONFIG:
+            # The hard budget already reserves Host input, tools and the operational
+            # frame. Leave 15% of that usable token budget for asynchronous work.
+            size = cm.message_cost(messages)
+            floor = max(int(budget * 0.85), int(self._last_after_tokens * 1.1))
+        else:
+            size = cm.size(messages) + (
+                cm.size(extra_messages) if extra_messages else int(extra_bytes)
+            )
+            floor = max(self.trigger_bytes, int(self._last_after_bytes * 1.1))
         if size > floor:
             return messages, self.start(messages, extra_messages=extra_messages, budget=budget)
         return messages, record
@@ -337,12 +346,36 @@ class ForkCompactor:
             result["after_bytes"] = cm.size(result["replacement"])
         cm.atomic(self.result_path, json.dumps(result, ensure_ascii=False))
 
+    def _restore_trigger_baseline(self, result, messages):
+        # Bind the baseline to the whole published candidate, including any tail
+        # produced while the summary ran. Recompute in the current counting unit.
+        baseline = result.get("trigger_baseline", {})
+        count = baseline.get("length") if isinstance(baseline, dict) else None
+        if (
+            type(count) is int
+            and 0 < count <= len(messages)
+            and digest(messages[:count]) == baseline.get("sha256")
+        ):
+            published = messages[:count]
+        else:
+            # Compatibility with results written before a tail baseline existed.
+            active = result.get("publication", result)
+            published = active.get("replacement") if isinstance(active, dict) else None
+            if (
+                not isinstance(published, list)
+                or digest(published) != active.get("replacement_sha256")
+                or messages[: len(published)] != published
+            ):
+                return
+        self._last_after_bytes = cm.size(published)
+        self._last_after_tokens = cm.message_cost(published)
+
     def _apply_if_ready(self, messages, budget=None):
         result = self._read_result()
         if not result:
             return messages, None
         if result.get("applied"):
-            self._last_after_bytes = result.get("after_bytes", 0)
+            self._restore_trigger_baseline(result, messages)
             return messages, None
         valid = result.get("version") == 2 and result.get("epoch") == self._epoch()
         active = result.get("publication", result)
@@ -356,7 +389,7 @@ class ForkCompactor:
             and len(messages) >= len(replacement)
             and digest(messages[: len(replacement)]) == active["replacement_sha256"]
         ):
-            self._last_after_bytes = active.get("after_bytes", 0)
+            self._restore_trigger_baseline(result, messages)
             checkpoint = pathlib.Path("checkpoint.json")
             if checkpoint.exists():
                 saved = json.loads(checkpoint.read_text())
@@ -435,7 +468,11 @@ class ForkCompactor:
             result["after_bytes"] = publication["after_bytes"]
             cm.atomic(self.result_path, json.dumps(result, ensure_ascii=False))
             candidate, active = fitted, publication
-        self._last_after_bytes = cm.size(candidate)
+        baseline = {"length": len(candidate), "sha256": digest(candidate)}
+        if result.get("trigger_baseline") != baseline:
+            result["trigger_baseline"] = baseline
+            cm.atomic(self.result_path, json.dumps(result, ensure_ascii=False))
+        self._restore_trigger_baseline(result, candidate)
         return candidate, {
             "kind": "applied",
             "fork_id": result["fork_id"],
