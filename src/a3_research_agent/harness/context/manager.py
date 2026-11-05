@@ -419,6 +419,10 @@ def load_progress(source, tools, chunks, *, decision_limit=None):
             and previous.get("identity", {}).get("implementation") == identity["implementation"]
         ):
             accounting = previous
+            if accounting["calls"] > identity["call_limit"]:
+                raise ContextError(
+                    "spent compaction attempts exceed the reduced call budget; original progress retained"
+                )
         archive(previous, "prior-compaction-progress")
     state = {
         "fingerprint": fingerprint,

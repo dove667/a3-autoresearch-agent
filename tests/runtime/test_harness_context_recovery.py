@@ -858,3 +858,30 @@ def test_400k_history_can_compact_toward_32k_with_bounded_fragment_accounting(
     assert again == result
     assert len(calls) == before_restart
     assert replay["cumulative_summary_calls"] == before_restart
+
+
+def test_lower_summary_cap_preserves_spent_accounting_without_invalid_rewrite(
+    tmp_path, monkeypatch
+):
+    monkeypatch.chdir(tmp_path)
+    context = load_context()
+    large = {
+        "trigger_tokens": 400000,
+        "summary_input_tokens": 48000,
+        "summary_reserve_tokens": 5000,
+    }
+    context.TOKEN_CONFIG = large
+    source = "context-history/snapshot-" + "b" * 64 + ".json"
+    state = context.load_progress(source, [], ["pending"], decision_limit=260000)
+    assert state["identity"]["call_limit"] == 16
+    state["calls"] = 9
+    context.save_progress(state)
+    progress = context.ROOT / "compaction-progress.json"
+    original = progress.read_bytes()
+    context.TOKEN_CONFIG = {**large, "trigger_tokens": 64000}
+    with pytest.raises(context.ContextError, match="reduced"):
+        context.load_progress(source, [], ["pending"], decision_limit=32000)
+    assert progress.read_bytes() == original
+    context.TOKEN_CONFIG = large
+    restored = context.load_progress(source, [], ["pending"], decision_limit=260000)
+    assert restored["calls"] == 9 and restored["identity"]["call_limit"] == 16
