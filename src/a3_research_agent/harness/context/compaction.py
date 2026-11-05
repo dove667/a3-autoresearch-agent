@@ -15,8 +15,8 @@ import threading
 import uuid
 
 from a3_research_agent.harness.context import manager as cm
-from a3_research_agent.harness.memory import recall as recall_tools
 from a3_research_agent.harness.context import spill as spill_tools
+from a3_research_agent.harness.memory import recall as recall_tools
 
 MODEL = "openai/sandbox-model"
 RESULT_PATH = "compaction-result.json"
@@ -167,16 +167,23 @@ class ForkCompactor:
         if self._busy():
             return messages, record
         if cm.TOKEN_CONFIG:
-            # The hard budget already reserves Host input, tools and the operational
-            # frame. Leave 15% of that usable token budget for asynchronous work.
             size = cm.message_cost(messages)
-            floor = max(int(budget * 0.85), int(self._last_after_tokens * 1.1))
+            if "decision_input_tokens" in cm.TOKEN_CONFIG:
+                # Subtract the same reserves from soft trigger and hard admission.
+                # This starts at the configured total input cost, not 85% of it.
+                trigger = budget - (
+                    cm.TOKEN_CONFIG["decision_input_tokens"] - cm.TOKEN_CONFIG["trigger_tokens"]
+                )
+            else:
+                # Older Hosts used trigger_tokens as the hard decision limit.
+                trigger = int(budget * 0.85)
+            floor = max(trigger, int(self._last_after_tokens * 1.1))
         else:
             size = cm.size(messages) + (
                 cm.size(extra_messages) if extra_messages else int(extra_bytes)
             )
             floor = max(self.trigger_bytes, int(self._last_after_bytes * 1.1))
-        if size > floor:
+        if size >= floor:
             return messages, self.start(messages, extra_messages=extra_messages, budget=budget)
         return messages, record
 

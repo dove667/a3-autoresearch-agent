@@ -31,13 +31,27 @@ The Host also reserves provider framing and output space, and enforces input
 headroom against the declared model window. Verify the declarations against the
 actual model catalog and compare estimates with real returned usage.
 
-The default trigger is 64,000 estimated input tokens and target is 32,000, including
-injected reserves. The lower target leaves space for useful normal work before the
-next compression. Host phase instructions and complete operator notices contribute
-to normal-decision reserves. Summary input is separately bounded at 48,000 tokens.
-These are working-policy limits, not advertised model-window sizes. Invalid window,
-trigger or target combinations fail configuration rather than silently increasing
-limits. UTF-8 byte counts remain separately recorded for files and working memory.
+The default soft trigger is 400,000 estimated input tokens and the post-compaction
+soft target is 256,000. Both include injected reserves; tools and the operational
+frame also count toward triggering. A 500,000 configured window retains 10%
+headroom and 8,192 output tokens, so separate hard admission is 441,808 tokens.
+The Host publishes `decision_input_tokens` for the calling role. The client deducts
+the same injected/tool/operational costs from each threshold; it does not start at
+85% of 400,000. Hard admission always wins over repeat-trigger hysteresis.
+
+Summary input remains separately bounded at 48,000 tokens. The 256,000 target
+avoids unnecessarily reducing a large working context to the old 32,000 target,
+while leaving room for continued work and bounded summary chunks. Invalid
+window/target combinations fail rather than increasing the configured cap.
+These are deployment policies and tokenizer estimates, not upstream window claims
+or provider-exact billing. File and memory byte bounds remain separate.
+
+`configs/context-400k.env.example` supplies explicit 500k/400k/256k settings.
+Existing explicit 64k/32k environment values are honored, so changing defaults
+alone does not migrate a deployment. The Host reads budgets at startup; Agent
+input hot reload does not replace them. A matching derived Harness reads the
+current `/context/config` before decisions. Historical Harness packages and active
+processes are not rewritten by a local code or profile change.
 
 Large tool outputs are content-addressed and replaced by retrievable references.
 The ingress bound covers all JSON result types and measures the complete serialized

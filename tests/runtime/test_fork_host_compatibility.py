@@ -360,7 +360,8 @@ def test_real_token_host_budget_includes_tools_and_operational_frame(
     extra = [{"role": "user", "content": "operational reserve " * 1000}]
     fork = module.ForkCompactor(req, tools=tools, trigger_bytes=1000)
     original = tool_history(20, 2000)
-    original[0]["content"] += " semantic history " * 5000
+    # Cross the explicit soft trigger; it is no longer the hard admission limit.
+    original[0]["content"] += " semantic history " * 8000
     fork.before_request(original, extra_messages=extra)
     fork.wait(5)
     prepared, record = fork.before_request(original, extra_messages=extra)

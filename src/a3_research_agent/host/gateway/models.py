@@ -239,12 +239,25 @@ class ModelRoutes:
             {"feedback_id": record["feedback_id"], "sha256": record["sha256"]} for record in records
         ]
         injected = {"instructions": phase if receives_phase else "", "feedback": notes}
+        main_route = (
+            self.evolution is None
+            or experiment == self.evolution.main_owner
+            or experiment in self.root_owners
+            or trial.get("status") == "testing"
+            or self.children.get(experiment, {}).get("purpose") == "candidate_validation"
+        )
+        window = (
+            self.token_budget.main_context_tokens
+            if main_route
+            else self.token_budget.worker_context_tokens
+        )
         return {
             "enabled": True,
             "summary_operation": "/v1/summary",
             "unit": "estimated_tokens",
             "tokenizer": "o200k_base",
             "trigger_tokens": self.token_budget.trigger_tokens,
+            "decision_input_tokens": window * 9 // 10 - self.token_budget.output_reserve_tokens,
             "target_tokens": self.token_budget.target_tokens,
             "summary_input_tokens": self.token_budget.summary_input_tokens,
             "injected_reserve_tokens": count_tokens(injected)

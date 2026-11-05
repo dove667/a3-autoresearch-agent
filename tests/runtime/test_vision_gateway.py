@@ -172,6 +172,8 @@ def test_vision_image_reserve_is_admitted_before_model_call(tmp_path):
         "main_context_tokens": 100000,
         "worker_context_tokens": 100000,
         "summary_context_tokens": 100000,
+        "trigger_tokens": 64000,
+        "target_tokens": 32000,
     }
     client, _, models = client_for(tmp_path, context_budget=budget)
     body = request_body()

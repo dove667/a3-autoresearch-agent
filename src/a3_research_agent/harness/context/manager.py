@@ -43,6 +43,13 @@ def configure(req):
         or any(type(config.get(k)) is not int or config[k] <= 0 for k in required)
         or not config["target_tokens"] < config["trigger_tokens"]
         or config["injected_reserve_tokens"] >= config["target_tokens"]
+        or (
+            "decision_input_tokens" in config
+            and (
+                type(config["decision_input_tokens"]) is not int
+                or config["decision_input_tokens"] < config["trigger_tokens"]
+            )
+        )
     ):
         raise ContextError("invalid or unusable Host token budget")
     # The copied helper uses only the existing offline tokenizer dependency.
@@ -67,7 +74,7 @@ def message_cost(messages):
 def decision_budget(tools):
     if TOKEN_CONFIG:
         return (
-            TOKEN_CONFIG["trigger_tokens"]
+            TOKEN_CONFIG.get("decision_input_tokens", TOKEN_CONFIG["trigger_tokens"])
             - TOKEN_CONFIG["injected_reserve_tokens"]
             - metric(tools)
             - 16 * len(tools)

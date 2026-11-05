@@ -465,7 +465,11 @@ def test_escaping_heavy_summary_is_sized_like_host_envelope(tmp_path, monkeypatc
     original = [{"role": "user", "content": '\\" ' * 40000}] + [
         {"role": "user", "content": "recent fixed fact"} for _ in range(6)
     ]
-    result, record = context.prepare(original, [], request)
+    # Exercise summary-envelope sizing at an explicit small fixture budget;
+    # the new Host's independent hard admission would let this history fit.
+    limit = context.TOKEN_CONFIG["trigger_tokens"] - context.TOKEN_CONFIG["injected_reserve_tokens"]
+    assert context.message_cost(original) > limit
+    result, record = context.prepare(original, [], request, budget_limit=limit)
     assert context.paired(result) and not rejected
     assert provider_calls and len(provider_calls) <= 8
     assert record["after_estimated_tokens"] < record["before_estimated_tokens"]
