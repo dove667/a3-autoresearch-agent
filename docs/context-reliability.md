@@ -32,21 +32,21 @@ headroom against the declared model window. Verify the declarations against the
 actual model catalog and compare estimates with real returned usage.
 
 The default soft trigger is 400,000 estimated input tokens and the post-compaction
-soft target is 256,000. Both include injected reserves; tools and the operational
+soft target is 32,000. Both include injected reserves; tools and the operational
 frame also count toward triggering. A 500,000 configured window retains 10%
 headroom and 8,192 output tokens, so separate hard admission is 441,808 tokens.
 The Host publishes `decision_input_tokens` for the calling role. The client deducts
 the same injected/tool/operational costs from each threshold; it does not start at
 85% of 400,000. Hard admission always wins over repeat-trigger hysteresis.
 
-Summary input remains separately bounded at 48,000 tokens. The 256,000 target
-avoids unnecessarily reducing a large working context to the old 32,000 target,
-while leaving room for continued work and bounded summary chunks. Invalid
-window/target combinations fail rather than increasing the configured cap.
-These are deployment policies and tokenizer estimates, not upstream window claims
-or provider-exact billing. File and memory byte bounds remain separate.
+Summary input remains separately bounded at 48,000 tokens. The configured
+post-compaction soft target is 32,000, preserving the small working state needed
+for the next decision while the full original history remains retrievable. Token
+mode keeps the longest paired tail that fits the target; the newest complete tool
+batch stays protected even if it makes the soft target infeasible. Hard admission
+still applies. File and memory byte limits are separate from tokenizer estimates.
 
-`configs/context-400k.env.example` supplies explicit 500k/400k/256k settings.
+`configs/context-400k.env.example` supplies explicit 500k/400k/32k settings.
 Existing explicit 64k/32k environment values are honored, so changing defaults
 alone does not migrate a deployment. The Host reads budgets at startup; Agent
 input hot reload does not replace them. A matching derived Harness reads the
@@ -161,8 +161,10 @@ deployment choices; no particular provider, account or model is a public default
 ## Durable failure behavior and deployment
 
 Summary attempts are persisted **before** dispatch with completed fragments.
-A restart reuses completed work and does not reset the eight-call budget for the
-same checkpoint, tools, implementation and configuration. Transient failures have
+A restart reuses completed work and does not reset the recorded cumulative budget
+for the same checkpoint, tools, implementation and configuration. Large token policies permit
+at most 16 fragment attempts when eight conservative chunks cannot cover their
+trigger. Smaller policies and byte compatibility keep the original eight. Each summary request still fits its separate 48k input cap. Transient failures have
 at most three attempts per fragment with bounded backoff, within that total.
 A plan that cannot finish in the remaining budget blocks honestly before spending
 more. Corrupt accounting is rejected rather than silently reset.

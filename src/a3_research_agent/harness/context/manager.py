@@ -9,12 +9,14 @@ import pathlib
 import re
 import tempfile
 import time
+from bisect import bisect_left
 
 ROOT = pathlib.Path("context-history")
 WINDOW = int(os.getenv("CONTEXT_WINDOW_ESTIMATE", "96000"))
 RESERVE = int(os.getenv("CONTEXT_RESERVE_ESTIMATE", "48000"))
 SUMMARY_LIMIT = int(os.getenv("CONTEXT_SUMMARY_INPUT_ESTIMATE", "24000"))
 MAX_SUMMARY_CALLS = 8
+MAX_TOKEN_SUMMARY_CALLS = 16
 MAX_FRAGMENT_ATTEMPTS = 3
 KEEP_RECENT = 6
 
@@ -206,6 +208,24 @@ def split_boundary(messages):
     return 0
 
 
+def _token_tail_boundary(messages, target, last_boundary):
+    """Find a paired tail using logarithmically many full-history token counts.
+
+    The caller has validated the complete call/result sequence. Each candidate
+    boundary closes all pending calls; its suffix therefore keeps those pairs.
+    """
+    pending, boundaries = set(), []
+    for boundary, message in enumerate(messages[:last_boundary], 1):
+        if message.get("type") == "function_call":
+            pending.add(message["call_id"])
+        elif message.get("type") == "function_call_output":
+            pending.remove(message["call_id"])
+        if not pending:
+            boundaries.append(boundary)
+    index = bisect_left(boundaries, -target, key=lambda cut: -message_cost(messages[cut:]))
+    return boundaries[index] if index < len(boundaries) else None
+
+
 def text_response(response):
     output = response.get("output")
     if not isinstance(output, list):
@@ -325,6 +345,22 @@ def summary_request(previous, fragment, source, memory_limit=6000, *, compact_re
     }
 
 
+def summary_call_limit():
+    # Keep the original cap when eight conservative fragments cover the trigger.
+    # Large token policies get bounded extra capacity; restarting never resets it.
+    if TOKEN_CONFIG:
+        fragment = max(
+            1,
+            TOKEN_CONFIG.get("summary_input_tokens", 48000)
+            - TOKEN_CONFIG.get("summary_reserve_tokens", 0)
+            - 6000
+            - 512,
+        )
+        if TOKEN_CONFIG["trigger_tokens"] > MAX_SUMMARY_CALLS * fragment:
+            return MAX_TOKEN_SUMMARY_CALLS
+    return MAX_SUMMARY_CALLS
+
+
 def save_progress(state):
     payload = {key: value for key, value in state.items() if key != "content_sha256"}
     payload["content_sha256"] = hashlib.sha256(
@@ -342,7 +378,7 @@ def load_progress(source, tools, chunks, *, decision_limit=None):
         "window": WINDOW,
         "reserve": RESERVE,
         "summary_limit": SUMMARY_LIMIT,
-        "call_limit": MAX_SUMMARY_CALLS,
+        "call_limit": summary_call_limit(),
         "implementation": hashlib.sha256(pathlib.Path(__file__).read_bytes()).hexdigest(),
         "token_config": TOKEN_CONFIG,
     }
@@ -360,9 +396,13 @@ def load_progress(source, tools, chunks, *, decision_limit=None):
         expected = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
         if previous.get("content_sha256") != expected:
             raise ContextError("compaction progress checksum mismatch; explicit recovery required")
+        prior_identity = previous.get("identity")
+        prior_limit = prior_identity.get("call_limit") if isinstance(prior_identity, dict) else None
         if (
-            not isinstance(previous.get("calls"), int)
-            or not 0 <= previous["calls"] <= MAX_SUMMARY_CALLS
+            type(prior_limit) is not int
+            or prior_limit not in (MAX_SUMMARY_CALLS, MAX_TOKEN_SUMMARY_CALLS)
+            or type(previous.get("calls")) is not int
+            or not 0 <= previous["calls"] <= prior_limit
         ):
             raise ContextError("invalid persistent compaction call accounting")
         expected_identity = hashlib.sha256(
@@ -664,14 +704,10 @@ def prepare(messages, tools, req, *, extra_messages=None, budget_limit=None):
             - 6000
         )
         last_boundary = fresh if protect_fresh else len(work) - 1
-        for boundary in range(cut, last_boundary + 1):
-            if (
-                paired(work[:boundary])
-                and paired(work[boundary:])
-                and message_cost(work[boundary:]) <= tail_target
-            ):
-                cut = boundary
-                break
+        # Starting at the legacy six-message cut would ignore a larger target.
+        selected = _token_tail_boundary(work, tail_target, last_boundary)
+        if selected is not None:
+            cut = selected
     old, recent = work[:cut], work[cut:]
     summary_budget = (
         TOKEN_CONFIG["summary_input_tokens"]
@@ -691,10 +727,11 @@ def prepare(messages, tools, req, *, extra_messages=None, budget_limit=None):
     state = load_progress(
         source, tools, chunks_of(old, fragment_limit, source), decision_limit=budget
     )
+    call_limit = state["identity"]["call_limit"]
     failures = 0
     while state["pending"]:
         if TOKEN_CONFIG and (
-            len(state["pending"]) > MAX_SUMMARY_CALLS - state["calls"]
+            len(state["pending"]) > call_limit - state["calls"]
             or request_cost(summary_request(state["summary"], state["pending"][0], source))
             > summary_budget
         ):
@@ -708,7 +745,7 @@ def prepare(messages, tools, req, *, extra_messages=None, budget_limit=None):
                 ),
             )
             save_progress(state)
-        if len(state["pending"]) > MAX_SUMMARY_CALLS - state["calls"]:
+        if len(state["pending"]) > call_limit - state["calls"]:
             stop_progress(state, "compaction call budget cannot finish the pending plan")
         fragment = state["pending"][0]
         request = summary_request(
@@ -773,7 +810,7 @@ def prepare(messages, tools, req, *, extra_messages=None, budget_limit=None):
             if isinstance(status, int) and status < 500 and status not in (408, 429):
                 raise ContextError("non-retryable model gateway rejection; record=" + record)
             failures += 1
-            if state["calls"] >= MAX_SUMMARY_CALLS:
+            if state["calls"] >= call_limit:
                 stop_progress(state, "compaction cumulative call budget exhausted")
             if failures >= MAX_FRAGMENT_ATTEMPTS:
                 raise ContextError(failure + "; bounded retries exhausted; record=" + record)
@@ -813,7 +850,7 @@ def prepare(messages, tools, req, *, extra_messages=None, budget_limit=None):
         "summary_input_limit_bytes": summary_budget,
         "summary_memory_limit_bytes": memory_limit,
         "summary_request_bytes": state["request_sizes"],
-        "summary_call_limit": MAX_SUMMARY_CALLS,
+        "summary_call_limit": call_limit,
         "summary_output_limit_tokens_per_call": 800,
         "cumulative_summary_calls": state["calls"],
         "trigger": "estimated request exceeds budget",

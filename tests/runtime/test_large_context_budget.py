@@ -17,7 +17,7 @@ def test_large_context_defaults_keep_window_separate_from_trigger():
     config = settings()
     assert config["main_context_tokens"] == config["worker_context_tokens"] == 500000
     assert config["trigger_tokens"] == 400000
-    assert config["target_tokens"] == 256000
+    assert config["target_tokens"] == 32000
     assert config["summary_input_tokens"] == 48000
 
 
@@ -56,7 +56,7 @@ def token_fork(tmp_path, monkeypatch):
         "TOKEN_CONFIG",
         {
             "trigger_tokens": 400000,
-            "target_tokens": 256000,
+            "target_tokens": 32000,
             "decision_input_tokens": 441808,
             "injected_reserve_tokens": 10000,
         },
@@ -106,7 +106,7 @@ def test_host_configuration_validates_separate_hard_limit(monkeypatch):
         "unit": "estimated_tokens",
         "tokenizer": "o200k_base",
         "trigger_tokens": 400000,
-        "target_tokens": 256000,
+        "target_tokens": 32000,
         "summary_input_tokens": 48000,
         "injected_reserve_tokens": 10000,
         "summary_reserve_tokens": 5000,

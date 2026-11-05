@@ -10,7 +10,7 @@ class ContextBudget:
     worker_context_tokens: int
     summary_context_tokens: int
     trigger_tokens: int = 400000
-    target_tokens: int = 256000
+    target_tokens: int = 32000
     summary_input_tokens: int = 48000
     output_reserve_tokens: int = 8192
     provider_reserve_tokens: int = 4096

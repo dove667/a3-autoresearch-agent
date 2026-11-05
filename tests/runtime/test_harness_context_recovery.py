@@ -763,3 +763,98 @@ def test_changed_operational_frame_replans_without_resetting_spent_calls(tmp_pat
     )
     assert changed["calls"] == 5 and changed["pending"] == ["new plan", "another fragment"]
     assert changed["summary"] == ""
+
+
+def test_token_target_keeps_useful_tail_instead_of_fixed_six_messages(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    context = load_context()
+    context.TOKEN_CONFIG = {
+        "trigger_tokens": 20000,
+        "decision_input_tokens": 30000,
+        "target_tokens": 16000,
+        "injected_reserve_tokens": 1000,
+        "summary_input_tokens": 8000,
+        "summary_reserve_tokens": 1000,
+    }
+    original = [
+        {"role": "user", "content": f"Historical turn {index}: " + "word " * 250}
+        for index in range(160)
+    ]
+    calls = []
+
+    def summarize(*args):
+        calls.append(args)
+        return completed()
+
+    result, record = context.prepare(original, [], summarize, budget_limit=17000)
+    retained = result[1:]
+    assert len(retained) > context.KEEP_RECENT
+    assert retained == original[-len(retained) :]
+    assert context.paired(result) and context.message_cost(result) <= 17000
+    assert record and 0 < len(calls) <= context.MAX_SUMMARY_CALLS
+
+
+def test_token_tail_search_preserves_pairs_without_linear_tokenizer_passes(monkeypatch):
+    context = load_context()
+    messages = [{"role": "user", "content": "goal"}]
+    for index in range(1000):
+        messages.extend(
+            [
+                {"type": "function_call", "call_id": str(index)},
+                {"type": "function_call_output", "call_id": str(index), "output": "result"},
+            ]
+        )
+    counts = []
+
+    def count(candidate):
+        counts.append(len(candidate))
+        return 100 * len(candidate)
+
+    monkeypatch.setattr(context, "message_cost", count)
+    cut = context._token_tail_boundary(messages, 10000, len(messages) - 2)
+    assert cut is not None and cut <= len(messages) - 2
+    assert context.paired(messages[:cut]) and context.paired(messages[cut:])
+    assert len(messages[cut:]) == 100
+    assert len(counts) <= 11  # 1,000 safe boundaries need at most ten binary-search comparisons.
+
+
+def test_400k_history_can_compact_toward_32k_with_bounded_fragment_accounting(
+    tmp_path, monkeypatch
+):
+    monkeypatch.chdir(tmp_path)
+    context = load_context()
+    context.TOKEN_CONFIG = {
+        "trigger_tokens": 400000,
+        "decision_input_tokens": 441808,
+        "target_tokens": 32000,
+        "injected_reserve_tokens": 5000,
+        "summary_input_tokens": 48000,
+        "summary_reserve_tokens": 5000,
+    }
+    # Offline tokenizer fixture only: summary requests use a local deterministic callback.
+    original = [
+        {"role": "user", "content": f"Historical turn {index}: " + "word " * 2500}
+        for index in range(160)
+    ]
+    assert 390000 < context.message_cost(original) < 420000
+    calls = []
+
+    def summarize(method, path, request):
+        calls.append(request)
+        assert context.request_cost(request) <= 48000
+        return completed()
+
+    result, record = context.prepare(original, [], summarize, budget_limit=260000)
+    assert context.message_cost(result) + 5000 <= 32000
+    assert context.paired(result)
+    assert 8 < len(calls) <= 16
+    assert record["cumulative_summary_calls"] == len(calls)
+    assert record["summary_call_limit"] == 16
+    assert json.loads(pathlib.Path(record["source"]).read_text()) == original
+    before_restart = len(calls)
+    restarted = load_context()
+    restarted.TOKEN_CONFIG = dict(context.TOKEN_CONFIG)
+    again, replay = restarted.prepare(original, [], summarize, budget_limit=260000)
+    assert again == result
+    assert len(calls) == before_restart
+    assert replay["cumulative_summary_calls"] == before_restart
