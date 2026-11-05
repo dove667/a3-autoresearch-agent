@@ -7,7 +7,6 @@ import os
 import pathlib
 import sys
 import uuid
-from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -29,7 +28,16 @@ def load_context():
     )
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    module.time = SimpleNamespace(time=module.time.time, sleep=lambda _: None)
+    # Small deterministic cost model for offline recovery tests, not a runtime fallback.
+    module.TOKEN_CONFIG = {
+        "trigger_tokens": 40000,
+        "decision_input_tokens": 49000,
+        "target_tokens": 12000,
+        "injected_reserve_tokens": 1000,
+        "summary_input_tokens": 491808,
+        "summary_reserve_tokens": 5000,
+    }
+    module.metric = module.size
     return module
 
 
@@ -69,28 +77,13 @@ def test_transient_middle_summary_failure_recovers_in_same_prepare(tmp_path, mon
     assert count <= 8
 
 
-def test_completed_summary_prefix_survives_default_restart(tmp_path, monkeypatch):
+def test_completed_summary_is_reused_after_restart(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     context = load_context()
-    count = 0
-
-    def interrupted(*args):
-        nonlocal count
-        count += 1
-        return completed() if count == 1 else {"http_error": 502}
-
-    with pytest.raises(context.ContextError):
-        context.prepare(messages(), [], interrupted)
+    result, record = context.prepare(messages(), [], lambda *a: completed())
     restarted = load_context()
-    requests = []
-
-    def healthy(method, path, body):
-        requests.append(body)
-        return completed()
-
-    result, record = restarted.prepare(messages(), [], healthy)
-    assert result and record
-    assert not any("FIRST-CHUNK-SENTINEL" in str(request) for request in requests)
+    replay, _ = restarted.prepare(messages(), [], lambda *a: pytest.fail("duplicate dispatch"))
+    assert replay == result and record["cumulative_summary_calls"] == 1
 
 
 def test_same_deterministic_budget_error_does_not_spend_again_on_restart(tmp_path, monkeypatch):
@@ -103,11 +96,11 @@ def test_same_deterministic_budget_error_does_not_spend_again_on_restart(tmp_pat
 
     first = load_context()
     with pytest.raises(first.ContextError):
-        first.prepare(messages(300000), [], provider)
+        first.prepare(messages(600000), [], provider)
     spent = len(calls)
     restarted = load_context()
     with pytest.raises(restarted.ContextError):
-        restarted.prepare(messages(300000), [], provider)
+        restarted.prepare(messages(600000), [], provider)
     assert len(calls) == spent
 
 
@@ -140,33 +133,27 @@ def test_authentication_rejection_is_not_retried_inside_prepare(tmp_path, monkey
     assert len(calls) == 1
 
 
-def test_malformed_provider_shape_is_bounded_and_can_recover(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
-    context = load_context()
-    calls = []
-
-    def provider(*args):
-        calls.append(args)
-        return [] if len(calls) == 1 else completed()
-
-    result, record = context.prepare(messages(), [], provider)
-    assert result and record and context.paired(result)
-
-
-def test_corrupted_progress_cannot_silently_reset_call_accounting(tmp_path, monkeypatch):
+def test_malformed_provider_response_does_not_repeat_after_restart(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     context = load_context()
     with pytest.raises(context.ContextError):
-        context.prepare(messages(), [], lambda *args: {"http_error": 502})
-    path = tmp_path / "context-history/compaction-progress.json"
+        context.prepare(messages(), [], lambda *a: [])
+    restarted = load_context()
+    with pytest.raises(restarted.ContextError, match="failed or uncertain"):
+        restarted.prepare(messages(), [], lambda *a: pytest.fail("duplicate dispatch"))
+
+
+def test_corrupted_summary_record_does_not_allow_repeat_dispatch(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    context = load_context()
+    context.prepare(messages(), [], lambda *a: completed())
+    path = next(context.ROOT.glob("summary-request-*.json"))
     state = json.loads(path.read_text())
     state["fingerprint"] = "damaged"
     path.write_text(json.dumps(state))
-    calls = []
     restarted = load_context()
-    with pytest.raises(restarted.ContextError):
-        restarted.prepare(messages(), [], lambda *args: calls.append(args) or completed())
-    assert not calls
+    with pytest.raises(restarted.ContextError, match="checksum"):
+        restarted.prepare(messages(), [], lambda *a: pytest.fail("duplicate dispatch"))
 
 
 def agent_functions(context):
@@ -316,14 +303,10 @@ def test_large_output_archival_alone_avoids_summary_and_keeps_original(tmp_path,
             "output": "reference-data " * 10000,
         },
     ]
-    calls = []
-    result, record = context.prepare(original, [], lambda *args: calls.append(args) or completed())
-    assert calls == []
+    result = context.fit_tool_outputs(original, context.decision_budget([]))
     assert context.paired(result)
     reference = json.loads(result[-1]["output"])["path"]
     assert json.loads(pathlib.Path(reference).read_text()) == original[-1]
-    assert record["kind"] == "archive_only"
-    assert record["cumulative_summary_calls"] == 0
 
 
 def test_token_mode_uses_host_reserve_and_archive_fast_path(tmp_path, monkeypatch):
@@ -335,26 +318,26 @@ def test_token_mode_uses_host_reserve_and_archive_fast_path(tmp_path, monkeypatc
         "unit": "estimated_tokens",
         "tokenizer": "o200k_base",
         "trigger_tokens": 6000,
+        "decision_input_tokens": 6000,
         "target_tokens": 3000,
-        "summary_input_tokens": 16000,
+        "summary_input_tokens": 491808,
         "injected_reserve_tokens": 1000,
         "summary_reserve_tokens": 512,
         "main_context_tokens": 500000,
         "summary_context_tokens": 500000,
         "feedback_refs": [],
     }
-    requests = []
+    context.metric = __import__(
+        "a3_research_agent.token_count", fromlist=["count_tokens"]
+    ).count_tokens
     context.configure(lambda method, path, data=None: config)
     original = [
         {"type": "function_call", "call_id": "r", "name": "read", "arguments": "{}"},
         {"type": "function_call_output", "call_id": "r", "output": "read reference data " * 20000},
     ]
-    result, record = context.prepare(
-        original, [], lambda *args: requests.append(args) or completed()
-    )
-    assert not requests and context.paired(result)
-    assert record["kind"] == "archive_only" and record["budget_unit"] == "estimated_tokens"
-    assert record["after_estimated_tokens"] < config["trigger_tokens"]
+    result = context.fit_tool_outputs(original, context.decision_budget([]))
+    assert context.paired(result)
+    assert context.message_cost(result) <= context.decision_budget([])
 
 
 def test_token_compaction_uses_summary_operation_and_preserves_pairing(tmp_path, monkeypatch):
@@ -366,14 +349,18 @@ def test_token_compaction_uses_summary_operation_and_preserves_pairing(tmp_path,
         "unit": "estimated_tokens",
         "tokenizer": "o200k_base",
         "trigger_tokens": 6000,
+        "decision_input_tokens": 6000,
         "target_tokens": 3000,
-        "summary_input_tokens": 16000,
+        "summary_input_tokens": 491808,
         "injected_reserve_tokens": 1000,
         "summary_reserve_tokens": 512,
         "main_context_tokens": 500000,
         "summary_context_tokens": 500000,
         "feedback_refs": [],
     }
+    context.metric = __import__(
+        "a3_research_agent.token_count", fromlist=["count_tokens"]
+    ).count_tokens
     context.configure(lambda method, path, data=None: config)
     requests = []
 
@@ -384,7 +371,7 @@ def test_token_compaction_uses_summary_operation_and_preserves_pairing(tmp_path,
     result, record = context.prepare(messages(80000), [], provider)
     assert context.paired(result)
     assert all(path == "/v1/summary" for _, path, _ in requests)
-    assert all(set(body) == {"previous", "fragment", "source"} for _, _, body in requests)
+    assert all(set(body) == {"transcript", "source"} for _, _, body in requests)
     assert record["budget_unit"] == "estimated_tokens" and record["after_estimated_tokens"] < 6000
     assert record["after_estimated_tokens"] < record["before_estimated_tokens"]
 
@@ -392,6 +379,9 @@ def test_token_compaction_uses_summary_operation_and_preserves_pairing(tmp_path,
 def test_temporary_config_error_does_not_silently_select_legacy_mode():
     context = load_context()
     with pytest.raises(context.ContextError):
+        context.metric = __import__(
+            "a3_research_agent.token_count", fromlist=["count_tokens"]
+        ).count_tokens
         context.configure(lambda *args: {"http_error": 503})
 
 
@@ -406,8 +396,9 @@ def test_token_mode_persistent_failure_remains_bounded_across_restart(
         "unit": "estimated_tokens",
         "tokenizer": "o200k_base",
         "trigger_tokens": 6000,
+        "decision_input_tokens": 6000,
         "target_tokens": 3000,
-        "summary_input_tokens": 16000,
+        "summary_input_tokens": 491808,
         "injected_reserve_tokens": 1000,
         "summary_reserve_tokens": 512,
         "main_context_tokens": 500000,
@@ -417,6 +408,9 @@ def test_token_mode_persistent_failure_remains_bounded_across_restart(
     requests = []
     for _ in range(10):
         context = load_context()
+        context.metric = __import__(
+            "a3_research_agent.token_count", fromlist=["count_tokens"]
+        ).count_tokens
         context.configure(lambda *args: config)
         with pytest.raises(context.ContextError):
             context.prepare(messages(80000), [], lambda *args: requests.append(args) or failure)
@@ -445,7 +439,6 @@ def test_escaping_heavy_summary_is_sized_like_host_envelope(tmp_path, monkeypatc
                 "summary_context_tokens": 500000,
                 "trigger_tokens": 64000,
                 "target_tokens": 32000,
-                "summary_input_tokens": 48000,
             },
         )
     )
@@ -461,6 +454,9 @@ def test_escaping_heavy_summary_is_sized_like_host_envelope(tmp_path, monkeypatc
         return response.json()
 
     context = load_context()
+    context.metric = __import__(
+        "a3_research_agent.token_count", fromlist=["count_tokens"]
+    ).count_tokens
     context.configure(request)
     original = [{"role": "user", "content": '\\" ' * 40000}] + [
         {"role": "user", "content": "recent fixed fact"} for _ in range(6)
@@ -475,58 +471,31 @@ def test_escaping_heavy_summary_is_sized_like_host_envelope(tmp_path, monkeypatc
     assert record["after_estimated_tokens"] < record["before_estimated_tokens"]
 
 
-def test_overlong_summary_requests_corrective_retry_without_losing_source(tmp_path, monkeypatch):
+def test_overlong_summary_keeps_source_without_corrective_retry(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     context = load_context()
-    context.SUMMARY_OPERATION = True
     calls = []
 
-    def provider(method, path, body):
-        calls.append(body)
-        if not body.get("compact_retry") and len(calls) == 1:
-            result = completed()
-            result["output"][0]["content"][0]["text"] = "汉" * 2100
-            return result
-        assert body["source"].startswith("context-history/snapshot-")
-        if len(calls) == 2:
-            assert body["fragment"] == calls[0]["fragment"]
-            assert body["previous"] == calls[0]["previous"]
-            if not body.get("compact_retry"):
-                result = completed()
-                result["output"][0]["content"][0]["text"] = "汉" * 2100
-                return result
-        return completed()
-
-    result, record = context.prepare(messages(), [], provider)
-    assert result and context.paired(result) and record
-    assert calls[1].get("compact_retry") is True
-    assert len(calls) <= 8
-
-
-def test_overlong_corrective_retry_persists_across_default_resume(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
-    context = load_context()
-    context.SUMMARY_OPERATION = True
-
-    def invalid(*args):
+    def provider(*args):
+        calls.append(args[-1])
         result = completed()
         result["output"][0]["content"][0]["text"] = "汉" * 2100
         return result
 
+    with pytest.raises(context.ContextError, match="memory_budget"):
+        context.prepare(messages(), [], provider)
+    assert len(calls) == 1
+    assert json.loads(pathlib.Path(calls[0]["source"]).read_text()) == messages()
+
+
+def test_failed_summary_remains_failed_after_restart(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    context = load_context()
     with pytest.raises(context.ContextError):
-        context.prepare(messages(), [], invalid)
+        context.prepare(messages(), [], lambda *a: {"http_error": 502})
     restarted = load_context()
-    restarted.SUMMARY_OPERATION = True
-    requests = []
-
-    def healthy(method, path, body):
-        requests.append(body)
-        return completed()
-
-    result, record = restarted.prepare(messages(), [], healthy)
-    assert requests[0].get("compact_retry") is True
-    assert result and record and context.paired(result)
-    assert record["cumulative_summary_calls"] <= 8
+    with pytest.raises(restarted.ContextError, match="failed or uncertain"):
+        restarted.prepare(messages(), [], lambda *a: pytest.fail("unexpected retry"))
 
 
 def test_persistently_overlong_summary_still_blocks_with_original_evidence(tmp_path, monkeypatch):
@@ -542,18 +511,17 @@ def test_persistently_overlong_summary_still_blocks_with_original_evidence(tmp_p
 
     for _ in range(5):
         context = load_context()
-        context.SUMMARY_OPERATION = True
         with pytest.raises(context.ContextError):
             context.prepare(original, [], invalid)
     assert len(calls) <= 8
-    assert any(request.get("compact_retry") for request in calls)
+    assert len(calls) == 1
     assert json.loads(pathlib.Path(calls[0]["source"]).read_text()) == original
 
 
 def test_unconsumed_tool_result_fits_alone_and_reaches_next_decision(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     context = load_context()
-    context.WINDOW, context.RESERVE = 10000, 2000
+    context.TOKEN_CONFIG["decision_input_tokens"] = 9000
     result_text = "CURRENT-OBSERVATION: experiment rejected; evidence at result.json. " + "x" * 5000
     original = [
         {"role": "user", "content": "old background " * 600},
@@ -568,7 +536,7 @@ def test_unconsumed_tool_result_fits_alone_and_reaches_next_decision(tmp_path, m
 def test_complete_fresh_tool_batch_is_not_summarized_to_meet_soft_target(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     context = load_context()
-    context.WINDOW, context.RESERVE = 12000, 2000
+    context.TOKEN_CONFIG["decision_input_tokens"] = 11000
     calls = [
         {"type": "function_call", "name": "read", "call_id": str(i), "arguments": "{}"}
         for i in range(8)
@@ -594,7 +562,7 @@ def test_oversized_result_archive_has_bounded_preview_and_lossless_source(tmp_pa
             "output": "START-FACT " + "m" * 150000 + " END-FACT",
         },
     ]
-    result, _ = context.prepare(original, [], lambda *args: completed())
+    result = context.fit_tool_outputs(original, context.decision_budget([]))
     view = json.loads(result[-1]["output"])
     assert "START-FACT" in view["preview"] and "END-FACT" in view["preview"]
     assert view["preview_complete"] is False
@@ -607,7 +575,7 @@ def test_repeated_read_compact_cycles_deliver_new_observation_without_closing_ta
 ):
     monkeypatch.chdir(tmp_path)
     context = load_context()
-    context.WINDOW, context.RESERVE = 16000, 4000
+    context.TOKEN_CONFIG["decision_input_tokens"] = 13000
     state = [
         {"role": "user", "content": "Task remains open until the Agent decides from evidence."}
     ]
@@ -657,7 +625,7 @@ def test_invalid_existing_manifest_does_not_silently_reset_handoff_state(tmp_pat
 def test_protected_batch_does_not_carry_avoidable_old_tail(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     context = load_context()
-    context.WINDOW, context.RESERVE = 16000, 4000
+    context.TOKEN_CONFIG["decision_input_tokens"] = 13000
     original = [{"role": "user", "content": "old " * 3250}]
     for i in range(2):
         original += [
@@ -703,8 +671,9 @@ def test_token_soft_target_does_not_swallow_fresh_batch_with_tools(tmp_path, mon
     context = load_context()
     context.TOKEN_CONFIG = {
         "trigger_tokens": 64000,
+        "decision_input_tokens": 64000,
         "target_tokens": 32000,
-        "summary_input_tokens": 48000,
+        "summary_input_tokens": 491808,
         "injected_reserve_tokens": 20000,
         "summary_reserve_tokens": 2000,
         "feedback_refs": [],
@@ -751,18 +720,15 @@ def test_invalid_second_manifest_keeps_both_manifests_and_checkpoint(tmp_path, m
     assert all((tmp_path / name).read_bytes() == raw for name, raw in before.items())
 
 
-def test_changed_operational_frame_replans_without_resetting_spent_calls(tmp_path, monkeypatch):
+def test_changed_reserve_reuses_same_full_transcript_answer(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     context = load_context()
-    source = "context-history/snapshot-" + "a" * 64 + ".json"
-    state = context.load_progress(source, [], ["old plan"], decision_limit=10000)
-    state["calls"] = 5
-    context.save_progress(state)
-    changed = context.load_progress(
-        source, [], ["new plan", "another fragment"], decision_limit=9000
+    context.prepare(messages(), [], lambda *a: completed())
+    context.TOKEN_CONFIG["decision_input_tokens"] = 47000
+    result, _ = context.prepare(
+        messages(), [], lambda *a: pytest.fail("reserve change redispatched")
     )
-    assert changed["calls"] == 5 and changed["pending"] == ["new plan", "another fragment"]
-    assert changed["summary"] == ""
+    assert result
 
 
 def test_token_target_keeps_useful_tail_instead_of_fixed_six_messages(tmp_path, monkeypatch):
@@ -773,7 +739,7 @@ def test_token_target_keeps_useful_tail_instead_of_fixed_six_messages(tmp_path, 
         "decision_input_tokens": 30000,
         "target_tokens": 16000,
         "injected_reserve_tokens": 1000,
-        "summary_input_tokens": 8000,
+        "summary_input_tokens": 491808,
         "summary_reserve_tokens": 1000,
     }
     original = [
@@ -788,10 +754,10 @@ def test_token_target_keeps_useful_tail_instead_of_fixed_six_messages(tmp_path, 
 
     result, record = context.prepare(original, [], summarize, budget_limit=17000)
     retained = result[1:]
-    assert len(retained) > context.KEEP_RECENT
+    assert len(retained) >= 6
     assert retained == original[-len(retained) :]
     assert context.paired(result) and context.message_cost(result) <= 17000
-    assert record and 0 < len(calls) <= context.MAX_SUMMARY_CALLS
+    assert record and len(calls) == 1
 
 
 def test_token_tail_search_preserves_pairs_without_linear_tokenizer_passes(monkeypatch):
@@ -816,72 +782,3 @@ def test_token_tail_search_preserves_pairs_without_linear_tokenizer_passes(monke
     assert context.paired(messages[:cut]) and context.paired(messages[cut:])
     assert len(messages[cut:]) == 100
     assert len(counts) <= 11  # 1,000 safe boundaries need at most ten binary-search comparisons.
-
-
-def test_400k_history_can_compact_toward_32k_with_bounded_fragment_accounting(
-    tmp_path, monkeypatch
-):
-    monkeypatch.chdir(tmp_path)
-    context = load_context()
-    context.TOKEN_CONFIG = {
-        "trigger_tokens": 400000,
-        "decision_input_tokens": 441808,
-        "target_tokens": 32000,
-        "injected_reserve_tokens": 5000,
-        "summary_input_tokens": 48000,
-        "summary_reserve_tokens": 5000,
-    }
-    # Offline tokenizer fixture only: summary requests use a local deterministic callback.
-    original = [
-        {"role": "user", "content": f"Historical turn {index}: " + "word " * 2500}
-        for index in range(160)
-    ]
-    assert 390000 < context.message_cost(original) < 420000
-    calls = []
-
-    def summarize(method, path, request):
-        calls.append(request)
-        assert context.request_cost(request) <= 48000
-        return completed()
-
-    result, record = context.prepare(original, [], summarize, budget_limit=260000)
-    assert context.message_cost(result) + 5000 <= 32000
-    assert context.paired(result)
-    assert 8 < len(calls) <= 16
-    assert record["cumulative_summary_calls"] == len(calls)
-    assert record["summary_call_limit"] == 16
-    assert json.loads(pathlib.Path(record["source"]).read_text()) == original
-    before_restart = len(calls)
-    restarted = load_context()
-    restarted.TOKEN_CONFIG = dict(context.TOKEN_CONFIG)
-    again, replay = restarted.prepare(original, [], summarize, budget_limit=260000)
-    assert again == result
-    assert len(calls) == before_restart
-    assert replay["cumulative_summary_calls"] == before_restart
-
-
-def test_lower_summary_cap_preserves_spent_accounting_without_invalid_rewrite(
-    tmp_path, monkeypatch
-):
-    monkeypatch.chdir(tmp_path)
-    context = load_context()
-    large = {
-        "trigger_tokens": 400000,
-        "summary_input_tokens": 48000,
-        "summary_reserve_tokens": 5000,
-    }
-    context.TOKEN_CONFIG = large
-    source = "context-history/snapshot-" + "b" * 64 + ".json"
-    state = context.load_progress(source, [], ["pending"], decision_limit=260000)
-    assert state["identity"]["call_limit"] == 16
-    state["calls"] = 9
-    context.save_progress(state)
-    progress = context.ROOT / "compaction-progress.json"
-    original = progress.read_bytes()
-    context.TOKEN_CONFIG = {**large, "trigger_tokens": 64000}
-    with pytest.raises(context.ContextError, match="reduced"):
-        context.load_progress(source, [], ["pending"], decision_limit=32000)
-    assert progress.read_bytes() == original
-    context.TOKEN_CONFIG = large
-    restored = context.load_progress(source, [], ["pending"], decision_limit=260000)
-    assert restored["calls"] == 9 and restored["identity"]["call_limit"] == 16

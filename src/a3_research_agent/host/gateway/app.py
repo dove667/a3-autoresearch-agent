@@ -82,8 +82,15 @@ class Gateway(
         self.context_budget = context_budget
         self.fixed_model_options = validate_model_request_options(self.model_request_options)
         self.fixed_roles = validate_role_models(self.role_models)
-        self.token_budget = (
-            ContextBudget(**self.context_budget) if self.context_budget is not None else None
+        self.token_budget = ContextBudget(
+            **(
+                self.context_budget
+                or {
+                    "main_context_tokens": 500000,
+                    "worker_context_tokens": 500000,
+                    "summary_context_tokens": 500000,
+                }
+            )
         )
         self.app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None, lifespan=self.lifespan)
         self.telemetry = TrajectoryTelemetry()

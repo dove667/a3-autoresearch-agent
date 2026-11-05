@@ -78,3 +78,23 @@ Follow every constraint in the spec. No production mutation, push, deployment, m
 - Full combined offline acceptance:1,142 passed. Ruff,235-file format check, local links and skill validation passed. Independent review findings were resolved.
 - A deterministic offline fixture reduced410,281 estimated input tokens to25,408, using11 fragment requests; replay made no additional requests. This validates budget/persistence mechanics, not real-model summary quality.
 - Branch is accepted for local integration. No production merge, push, deployment or experimental acceptance decision was performed.
+
+
+### User correction: one full-transcript summary (2026-11-05)
+
+Supersedes the preceding segmented-summary policy. Trigger remains 400k, soft target
+32k and configured context window 500k. Submit the complete readable transcript once
+to `/v1/summary`; reserve output/framing within that window. Remove the independent
+48k input setting, chunks, automatic summary retries, 8/16-call budgets, byte mode
+and old Host/protocol fallbacks. Keep lossless archives, paired fresh tool results,
+and durable dispatch/completion records so recovery never blindly repeats a request.
+`A3_SUMMARY_INPUT_TOKENS` must be removed at a later authorized deployment. No live
+process or production configuration is changed by this local branch update.
+
+
+Validation for the single-pass correction: complete suite **1144 passed in 70.94s**;
+subsequent focused full-window/unknown-dispatch checks **5 passed in 3.49s**.
+Ruff, formatting and diff checks pass. Independent read-only review found no
+substantive issue and independently reran the five single-pass checks. Tests use
+offline callbacks and validate transport/state behavior, not semantic summary quality.
+Production remains unchanged at `f2b83b9`; no push, deployment or experiment changes.

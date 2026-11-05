@@ -280,7 +280,12 @@ def test_irreducible_envelope_is_a_bounded_failure_not_lost_calls(tmp_path, monk
     monkeypatch.chdir(tmp_path)
     cm = load("context_manager")
     messages = [
-        {"type": "function_call", "call_id": "c", "name": "gateway", "arguments": "x" * 4000},
+        {
+            "type": "function_call",
+            "call_id": "c",
+            "name": "gateway",
+            "arguments": "argument " * 4000,
+        },
         output({"status": "completed"}, "c"),
     ]
     original = json.loads(json.dumps(messages))

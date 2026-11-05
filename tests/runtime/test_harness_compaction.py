@@ -85,8 +85,8 @@ def test_fallback_bounds_an_oversized_fresh_batch_without_erasing_it():
 
 def test_hard_wait_timeout_keeps_running_prefix_identity(monkeypatch):
     with workspace():
-        monkeypatch.setattr(cm, "WINDOW", 40000)
-        monkeypatch.setattr(cm, "RESERVE", 10000)
+        monkeypatch.setitem(cm.TOKEN_CONFIG, "decision_input_tokens", 31000)
+
         started, release = threading.Event(), threading.Event()
         calls = []
 
@@ -103,7 +103,7 @@ def test_hard_wait_timeout_keeps_running_prefix_identity(monkeypatch):
         fork.start(original)
         assert started.wait(2)
         prefix_hash = compaction.digest(original)
-        monkeypatch.setattr(cm, "WINDOW", 20000)
+        monkeypatch.setitem(cm.TOKEN_CONFIG, "decision_input_tokens", 11000)
         try:
             with pytest.raises(cm.ContextError, match="pending|insufficient"):
                 fork.before_request(original)
@@ -116,8 +116,8 @@ def test_hard_wait_timeout_keeps_running_prefix_identity(monkeypatch):
 
 def test_interrupted_fork_fallback_uses_current_operational_reserve(monkeypatch):
     with workspace():
-        monkeypatch.setattr(cm, "WINDOW", 15000)
-        monkeypatch.setattr(cm, "RESERVE", 5000)
+        monkeypatch.setitem(cm.TOKEN_CONFIG, "decision_input_tokens", 11000)
+
         original = [{"role": "user", "content": "goal"}]
         for i in range(6):
             original += [{"role": "user", "content": "u" * 900}] + tool_pair(str(i), "r" * 100)
@@ -147,12 +147,23 @@ def test_interrupted_fork_fallback_uses_current_operational_reserve(monkeypatch)
 def workspace():
     """Fresh cwd so every on-disk artefact is isolated per test."""
     previous = os.getcwd()
+    config, metric = cm.TOKEN_CONFIG, cm.metric
+    cm.TOKEN_CONFIG = {
+        "decision_input_tokens": 49000,
+        "trigger_tokens": 48000,
+        "target_tokens": 12000,
+        "injected_reserve_tokens": 1000,
+        "summary_input_tokens": 491808,
+        "summary_reserve_tokens": 5000,
+    }
+    cm.metric = cm.size
     with tempfile.TemporaryDirectory() as directory:
         os.chdir(directory)
         try:
             yield pathlib.Path(directory)
         finally:
             os.chdir(previous)
+            cm.TOKEN_CONFIG, cm.metric = config, metric
 
 
 def completed(text):
@@ -310,9 +321,7 @@ def test_missing_sections_detects_partial_summary():
 def test_fork_does_not_block_and_applies_later():
     with workspace():
         gateway = Gateway(delay=0.4)
-        compactor = compaction.ForkCompactor(
-            gateway, tools=[], instructions="MAIN-INSTRUCTIONS", trigger_bytes=2000
-        )
+        compactor = compaction.ForkCompactor(gateway, tools=[], trigger_tokens=2000)
         messages = history()
         before = len(messages)
 
@@ -338,25 +347,20 @@ def test_legacy_summary_uses_narrow_instructions_without_main_tools():
         compactor = compaction.ForkCompactor(
             gateway,
             tools=[{"type": "function", "name": "read"}],
-            instructions="MAIN-INSTRUCTIONS",
-            trigger_bytes=2000,
+            trigger_tokens=2000,
         )
         messages = history()
         compactor.before_request(messages)
         compactor.wait(timeout=10)
         body = gateway.calls[0]["body"]
-        assert body["instructions"] != "MAIN-INSTRUCTIONS"
+        assert set(body) == {"transcript", "source"}
         assert "tools" not in body
-        assert body["max_output_tokens"] == 800
-        assert "untrusted" in body["instructions"]
         assert "ROUND-0-START" in json.dumps(body)
 
 
 def test_apply_is_idempotent():
     with workspace():
-        compactor = compaction.ForkCompactor(
-            Gateway(), tools=[], instructions="I", trigger_bytes=1000
-        )
+        compactor = compaction.ForkCompactor(Gateway(), tools=[], trigger_tokens=1000)
         messages = history()
         compactor.before_request(messages)
         compactor.wait(timeout=10)
@@ -369,7 +373,7 @@ def test_apply_is_idempotent():
 def test_unpaired_result_is_skipped_not_forced():
     with workspace():
         compactor = compaction.ForkCompactor(
-            Gateway(), tools=[], instructions="I", trigger_bytes=1000, keep_rounds=5
+            Gateway(), tools=[], trigger_tokens=1000, keep_rounds=5
         )
         messages = history(completed_last=False)
         with pytest.raises(cm.ContextError, match="tool call/result"):
@@ -382,9 +386,7 @@ def test_unpaired_result_is_skipped_not_forced():
 
 def test_summary_failure_builds_recall_checkpoint():
     with workspace():
-        compactor = compaction.ForkCompactor(
-            Gateway(fail=True), tools=[], instructions="I", trigger_bytes=1000
-        )
+        compactor = compaction.ForkCompactor(Gateway(fail=True), tools=[], trigger_tokens=1000)
         messages = history()
         recall.append_history_many(messages)
         recall.write_memory("已确认 2x10 任务需 3200 步，原因是回合长度", kind="fact")
@@ -464,7 +466,9 @@ if __name__ == "__main__":
 def test_token_trigger_does_not_start_at_legacy_byte_threshold(monkeypatch):
     """UTF-8 size alone must not trigger a token-configured background fork."""
     with workspace():
-        monkeypatch.setattr(cm, "TOKEN_CONFIG", {"trigger_tokens": 64000})
+        monkeypatch.setattr(
+            cm, "TOKEN_CONFIG", {"trigger_tokens": 25500, "decision_input_tokens": 30000}
+        )
         monkeypatch.setattr(cm, "decision_budget", lambda tools: 30000)
         monkeypatch.setattr(cm, "message_cost", lambda messages: cm.size(messages) // 4)
         fork = compaction.ForkCompactor(Gateway())
@@ -480,7 +484,9 @@ def test_token_trigger_does_not_start_at_legacy_byte_threshold(monkeypatch):
 
 def test_token_trigger_hysteresis_uses_token_cost(monkeypatch):
     with workspace():
-        monkeypatch.setattr(cm, "TOKEN_CONFIG", {"trigger_tokens": 64000})
+        monkeypatch.setattr(
+            cm, "TOKEN_CONFIG", {"trigger_tokens": 25500, "decision_input_tokens": 30000}
+        )
         monkeypatch.setattr(cm, "decision_budget", lambda tools: 30000)
         monkeypatch.setattr(cm, "message_cost", lambda messages: cm.size(messages) // 4)
         fork = compaction.ForkCompactor(Gateway())
@@ -495,13 +501,19 @@ def test_token_trigger_hysteresis_uses_token_cost(monkeypatch):
 
 def test_restart_recomputes_token_hysteresis_from_saved_replacement(monkeypatch):
     with workspace():
-        monkeypatch.setattr(cm, "TOKEN_CONFIG", {"trigger_tokens": 64000})
+        monkeypatch.setattr(
+            cm, "TOKEN_CONFIG", {"trigger_tokens": 25500, "decision_input_tokens": 30000}
+        )
         monkeypatch.setattr(cm, "decision_budget", lambda tools: 30000)
         monkeypatch.setattr(cm, "message_cost", lambda messages: cm.size(messages) // 4)
         replacement = [{"role": "user", "content": "a" * 100000}]
         saved = {
             "version": 2,
             "applied": True,
+            "trigger_baseline": {
+                "length": len(replacement),
+                "sha256": compaction.digest(replacement),
+            },
             "after_bytes": cm.size(replacement),
             "replacement": replacement,
             "replacement_sha256": compaction.digest(replacement),
@@ -517,7 +529,9 @@ def test_restart_recomputes_token_hysteresis_from_saved_replacement(monkeypatch)
 
 def test_published_tail_hysteresis_survives_ack_and_restart(monkeypatch):
     with workspace():
-        monkeypatch.setattr(cm, "TOKEN_CONFIG", {"trigger_tokens": 64000})
+        monkeypatch.setattr(
+            cm, "TOKEN_CONFIG", {"trigger_tokens": 25500, "decision_input_tokens": 30000}
+        )
         monkeypatch.setattr(cm, "decision_budget", lambda tools: 1000)
         monkeypatch.setattr(cm, "message_cost", lambda messages: cm.size(messages) // 4)
         fork = compaction.ForkCompactor(Gateway())

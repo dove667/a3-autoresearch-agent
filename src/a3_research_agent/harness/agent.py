@@ -560,7 +560,7 @@ def main() -> None:
     TOKEN = os.environ["A3_GATEWAY_TOKEN"]
     WORKER_TASK = work_assignments.worker_task(sys.argv)
     INSTRUCTIONS = work_assignments.decision_instructions(WORKER_TASK)
-    compactor = compaction.ForkCompactor(req, tools=list(tools), instructions=INSTRUCTIONS)
+    compactor = compaction.ForkCompactor(req, tools=list(tools))
     if os.path.exists("checkpoint.json") and "--resume" in sys.argv:
         with open("checkpoint.json", encoding="utf-8") as stream:
             messages = json.load(stream)

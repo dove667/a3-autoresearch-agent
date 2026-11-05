@@ -11,7 +11,6 @@ class ContextBudget:
     summary_context_tokens: int
     trigger_tokens: int = 400000
     target_tokens: int = 32000
-    summary_input_tokens: int = 48000
     output_reserve_tokens: int = 8192
     provider_reserve_tokens: int = 4096
 
@@ -26,18 +25,18 @@ class ContextBudget:
         )
         if not self.target_tokens < self.trigger_tokens < available:
             raise ValueError("Trigger/target exceed the configured model window and headroom")
-        if (
-            not 8000
-            <= self.summary_input_tokens
-            < self.summary_context_tokens * 9 // 10 - self.output_reserve_tokens
-        ):
-            raise ValueError("Summary input limit exceeds the configured model window")
+        if self.trigger_tokens >= self.summary_input_tokens - self.provider_reserve_tokens:
+            raise ValueError("Summary model window cannot contain the full trigger transcript")
+
+    @property
+    def summary_input_tokens(self):
+        return self.summary_context_tokens - self.output_reserve_tokens
 
 
-def read_context_budget(environment: Mapping[str, str]) -> dict | None:
-    if not environment.get("A3_MODEL_CONTEXT_TOKENS"):
-        return None
-    main = int(environment["A3_MODEL_CONTEXT_TOKENS"])
+def read_context_budget(environment: Mapping[str, str]) -> dict:
+    if environment.get("A3_SUMMARY_INPUT_TOKENS"):
+        raise ValueError("A3_SUMMARY_INPUT_TOKENS was removed; summaries use the full model window")
+    main = int(environment.get("A3_MODEL_CONTEXT_TOKENS", "500000"))
     windows = {}
     for role in ("worker", "summary"):
         key = "A3_" + role.upper() + "_CONTEXT_TOKENS"
@@ -49,7 +48,6 @@ def read_context_budget(environment: Mapping[str, str]) -> dict | None:
         for name, key in {
             "trigger_tokens": "A3_CONTEXT_TRIGGER_TOKENS",
             "target_tokens": "A3_CONTEXT_TARGET_TOKENS",
-            "summary_input_tokens": "A3_SUMMARY_INPUT_TOKENS",
         }.items()
         if environment.get(key)
     }

@@ -21,7 +21,6 @@ def test_context_configuration_counts_injected_input_without_model_call(tmp_path
                 "summary_context_tokens": 500000,
                 "trigger_tokens": 64000,
                 "target_tokens": 32000,
-                "summary_input_tokens": 48000,
             },
         )
     )
@@ -57,6 +56,5 @@ def test_context_budget_rejects_threshold_without_model_window_headroom(tmp_path
                 "summary_context_tokens": 4000,
                 "trigger_tokens": 64000,
                 "target_tokens": 32000,
-                "summary_input_tokens": 48000,
             },
         )

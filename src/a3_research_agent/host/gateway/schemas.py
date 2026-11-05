@@ -31,9 +31,7 @@ class ObservationRequest(BaseModel):
 
 class SummaryRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    compact_retry: StrictBool = False
-    previous: str = Field(max_length=6000)
-    fragment: str = Field(min_length=1, max_length=500000)
+    transcript: str = Field(min_length=1)
     source: str = Field(pattern="^context-history/snapshot-[0-9a-f]{64}\\.json$")
 
 

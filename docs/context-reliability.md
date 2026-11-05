@@ -20,7 +20,7 @@ files in their existing package/continuation contract. Historical ready packages
 checkpoints are never automatically upgraded. An old acceptance record does not certify
 new code.
 
-## Token budgets and archive-only recovery
+## Token budgets and full-transcript summaries
 
 The overlay asks authenticated `GET /context/config` for current nonsecret reserves
 before a normal decision. With verified model windows configured, it uses the
@@ -39,7 +39,9 @@ The Host publishes `decision_input_tokens` for the calling role. The client dedu
 the same injected/tool/operational costs from each threshold; it does not start at
 85% of 400,000. Hard admission always wins over repeat-trigger hysteresis.
 
-Summary input remains separately bounded at 48,000 tokens. The configured
+Summary uses the full configured model window in one request, reserving output
+space: a 500,000 window admits 491,808 estimated input tokens, including instructions
+and provider framing. There is no independent 48k input policy. The configured
 post-compaction soft target is 32,000, preserving the small working state needed
 for the next decision while the full original history remains retrievable. Token
 mode keeps the longest paired tail that fits the target; the newest complete tool
@@ -70,19 +72,16 @@ not interpreted. Original encoded envelopes remain available. Missing derived fi
 can be rebuilt from verified original bytes on recovery; corruption is retained and
 reported instead of silently overwritten.
 
-The overlay **rechecks size after archival**. If that representation already fits,
-it saves an `archive_only` checkpoint without calling a summary model. When actual
-summarization is needed, recent tool calls/results stay paired; old details remain
-in the original archive. Working memory targets 2,400 UTF-8 bytes and has a validated
-6,000-byte ceiling. Oversized responses receive diagnostics and bounded retries,
-never silent truncation. Requested output-token limits are not assumed enforced by
-all provider adapters.
+At compaction, the overlay sends the entire readable transcript in one summary
+request, including recent messages retained in the result. It does not replace old
+tool results with archive previews before summarizing. All originals remain in the
+snapshot. Working memory targets 2,400 UTF-8 bytes with a validated 6,000-byte ceiling.
+An oversized or failed response is recorded without automatic retries or truncation.
+The normal hard decision gate may still archive oversized tool outputs to keep a
+request within its model window; that is separate from summary segmentation.
 
-If no verified windows are configured, `/context/config` explicitly reports legacy
-byte compatibility. Older Hosts without the new endpoint can still use that mode;
-a temporary error from a new Host does not silently disable token control. A legacy
-Harness that sends summaries to the ordinary model endpoint must be updated to use
-the explicit summary operation before a separate summary route can apply.
+The current Host token-budget endpoint is required. Missing or older configurations
+are rejected; there is no byte-budget mode or ordinary-model summary fallback.
 
 ## Deliver observations before compacting them
 
@@ -138,8 +137,7 @@ Only the current main may assign the ordinary-session `candidate_validation`
 purpose. It changes neither artifact/data permissions nor the existing formal
 trial/decision mechanism. Role and requested/actual model options are audited.
 
-`POST /v1/summary` accepts `previous`, `fragment`, an optional strict boolean
-`compact_retry`, and a relative
+`POST /v1/summary` accepts the full `transcript` and a relative
 `context-history/snapshot-<SHA256>.json` source reference. It cannot receive client
 instructions, tools, model selection or credentials. The Host supplies concise
 source/uncertainty/correction instructions rather than repeating the whole phase
@@ -147,33 +145,26 @@ contract. The output grants no authority and never executes tools. The full phas
 contract continues to govern normal main and candidate decisions.
 
 Summary metadata binds operator-feedback IDs and hashes. It does not copy every
-full notice into every fragment and does not mark a reference as full delivery.
+full notice into the summary request and does not mark a reference as full delivery.
 Full notices remain durably stored on the Host and are still delivered unchanged
 to that owner's normal decisions, including after compression and resume. They
 are per-run records; a new task needs its own approved initial intervention notice.
 
-To enable token control, set verified `A3_MODEL_CONTEXT_TOKENS` and, for alternate
+Token control defaults to a 500k deployment cap. Set `A3_MODEL_CONTEXT_TOKENS` and, for alternate
 models, `A3_WORKER_CONTEXT_TOKENS` / `A3_SUMMARY_CONTEXT_TOKENS`. Optional
-`A3_CONTEXT_TRIGGER_TOKENS`, `A3_CONTEXT_TARGET_TOKENS` and
-`A3_SUMMARY_INPUT_TOKENS` tune the working policy. Model identifiers and windows are
+`A3_CONTEXT_TRIGGER_TOKENS` and `A3_CONTEXT_TARGET_TOKENS` tune the working policy.
+`A3_SUMMARY_INPUT_TOKENS` was removed and is rejected if present; remove it before
+starting an updated Host. Model identifiers and windows are
 deployment choices; no particular provider, account or model is a public default.
 
 ## Durable failure behavior and deployment
 
-Summary attempts are persisted **before** dispatch with completed fragments.
-A restart reuses completed work and does not reset the recorded cumulative budget
-for the same checkpoint, tools, implementation and configuration. Large token policies permit
-at most 16 fragment attempts when eight conservative chunks cannot cover their
-trigger. Smaller policies and byte compatibility keep the original eight. Each summary request still fits its separate 48k input cap. Transient failures have
-at most three attempts per fragment with bounded backoff, within that total.
-A plan that cannot finish in the remaining budget blocks honestly before spending
-more. Corrupt accounting is rejected rather than silently reset.
-Oversized responses keep the original previous memory and transcript fragment.
-A persisted corrective-retry flag selects a fixed, tighter Host instruction on
-the next existing attempt; it cannot select arbitrary instructions, tools or
-models. The correction does not raise the 6000 UTF-8 byte limit, truncate evidence
-or reset the cumulative attempt budget. Token reserves cover the larger fixed
-corrective prompt, even on normal summary attempts.
+Each complete-transcript request is recorded **before** dispatch. A restart reuses
+a checksummed completed summary; failed or uncertain requests are not automatically
+replayed. There are no fragments, corrective-summary retries, or cumulative 8/16-call
+budgets. Corrupt request records fail explicitly and original snapshots remain intact.
+The new `transcript`/`source` protocol rejects old fields and requires a matching
+Host and Harness update. Local source changes do not update live processes.
 
 Resume and continuation manifests are published before checkpoints that may cite
 new archives. File and parent-directory writes are synchronized. The tool journal
@@ -192,7 +183,7 @@ process through the existing stopped-main recovery path; ordinary unpause alone
 is insufficient. Record the intervention in resume feedback.
 
 Offline tests cover archive-only behavior, role/auth boundaries, injection reserves,
-token/byte separation, persistent retry accounting and storage/journal failure.
+single-pass full-input admission, durable no-replay behavior and storage/journal failure.
 Real validation must separately check actual response models/options, semantic
 corrections/unknowns, source reads, normal tool work after recovery, and reference
 reachability. Neither a process exit code nor a mock response proves those facts.

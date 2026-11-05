@@ -18,7 +18,7 @@ def test_large_context_defaults_keep_window_separate_from_trigger():
     assert config["main_context_tokens"] == config["worker_context_tokens"] == 500000
     assert config["trigger_tokens"] == 400000
     assert config["target_tokens"] == 32000
-    assert config["summary_input_tokens"] == 48000
+    assert "summary_input_tokens" not in config
 
 
 def test_explicit_legacy_settings_are_not_silently_overridden():

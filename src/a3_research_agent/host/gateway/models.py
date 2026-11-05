@@ -15,7 +15,7 @@ from a3_research_agent.host.models.vision import prepare_vision_request
 from a3_research_agent.host.telemetry.diagnostics import CURRENT_REQUEST
 from a3_research_agent.token_count import count_tokens, estimate_request_tokens
 
-from .instructions import MODEL_FIELDS, SUMMARY_COMPACT_RETRY_INSTRUCTIONS, SUMMARY_INSTRUCTIONS
+from .instructions import MODEL_FIELDS, SUMMARY_INSTRUCTIONS
 from .schemas import (
     SummaryRequest,
 )
@@ -208,12 +208,6 @@ class ModelRoutes:
     def context_configuration(self, authorization: Annotated[str | None, Header()] = None):
         self.accepting_resources()
         experiment = self.owner(authorization)
-        if self.token_budget is None:
-            return {
-                "enabled": False,
-                "mode": "legacy_byte_compatibility",
-                "summary_operation": "/v1/summary",
-            }
         with self.session_lock:
             trial = self.evolution.trials.get(experiment, {}) if self.evolution else {}
             receives_phase = bool(
@@ -264,7 +258,7 @@ class ModelRoutes:
             + self.token_budget.provider_reserve_tokens
             + 512
             + 16 * len(notes),
-            "summary_reserve_tokens": count_tokens(SUMMARY_COMPACT_RETRY_INSTRUCTIONS)
+            "summary_reserve_tokens": count_tokens(SUMMARY_INSTRUCTIONS)
             + count_tokens(refs)
             + self.token_budget.provider_reserve_tokens
             + 256,
@@ -291,8 +285,6 @@ class ModelRoutes:
     ):
         self.accepting_resources()
         experiment = self.owner(authorization)
-        if len(body.previous.encode("utf-8")) > 6000:
-            raise HTTPException(422, "Previous working memory exceeds UTF-8 byte limit")
         references = [
             {"feedback_id": record["feedback_id"], "sha256": record["sha256"]}
             for record in (self.human_feedback.records if self.human_feedback else [])
@@ -300,17 +292,12 @@ class ModelRoutes:
         ]
         payload = {
             "source": body.source,
-            "previous": body.previous,
-            "later_transcript": body.fragment,
+            "transcript": body.transcript,
             "operator_feedback_refs": references,
         }
         result = self.forward_response(
             {
-                "instructions": (
-                    SUMMARY_COMPACT_RETRY_INSTRUCTIONS
-                    if body.compact_retry
-                    else SUMMARY_INSTRUCTIONS
-                ),
+                "instructions": SUMMARY_INSTRUCTIONS,
                 "input": [{"role": "user", "content": json.dumps(payload, ensure_ascii=False)}],
                 "max_output_tokens": 1000,
             },

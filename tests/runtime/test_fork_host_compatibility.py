@@ -38,6 +38,16 @@ def modules(tmp_path, monkeypatch):
         monkeypatch.setattr(parent, attribute, module, raising=False)
         spec.loader.exec_module(module)
         loaded[name] = module
+    cm = loaded["context_manager"]
+    cm.TOKEN_CONFIG = {
+        "decision_input_tokens": 49000,
+        "trigger_tokens": 48000,
+        "target_tokens": 12000,
+        "injected_reserve_tokens": 1000,
+        "summary_input_tokens": 491808,
+        "summary_reserve_tokens": 5000,
+    }
+    cm.metric = cm.size
     return loaded
 
 
@@ -109,8 +119,9 @@ def test_real_host_summary_protocol_role_and_feedback(modules, tmp_path):
         )
 
     cm, fork_module = modules["context_manager"], modules["compaction"]
+    cm.metric = __import__("a3_research_agent.token_count", fromlist=["count_tokens"]).count_tokens
     cm.configure(req)
-    fork = fork_module.ForkCompactor(req, trigger_bytes=2000)
+    fork = fork_module.ForkCompactor(req, trigger_tokens=2000)
     original = tool_history(count=6)
     # Tool-only histories may now fit with zero summary calls. Require semantic
     # context here so this test still exercises the actual Host summary protocol.
@@ -165,7 +176,7 @@ def test_resume_history_reconciliation_is_idempotent(modules):
 
 def test_hard_budget_wait_is_bounded_and_never_returns_oversize(modules):
     cm = modules["context_manager"]
-    cm.WINDOW, cm.RESERVE = 10000, 4000
+    cm.TOKEN_CONFIG["decision_input_tokens"] = 7000
     release = threading.Event()
 
     def provider(*args):
@@ -220,13 +231,13 @@ def test_replacement_replays_after_crash_before_checkpoint_and_acknowledges_afte
 
     original = tool_history(10, 700)
     pathlib.Path("checkpoint.json").write_text(json.dumps(original))
-    fork = module.ForkCompactor(provider, trigger_bytes=1000)
+    fork = module.ForkCompactor(provider, trigger_tokens=1000)
     fork.before_request(original)
     fork.wait(5)
     first, record = fork.before_request(original)
     assert record["kind"] == "applied"
     assert json.loads(pathlib.Path(module.RESULT_PATH).read_text())["applied"] is False
-    restarted = module.ForkCompactor(provider, trigger_bytes=1000)
+    restarted = module.ForkCompactor(provider, trigger_tokens=1000)
     second, record = restarted.before_request(original)
     assert second == first and record["kind"] == "applied"
     count = len(calls)
@@ -241,7 +252,7 @@ def test_replacement_replays_after_crash_before_checkpoint_and_acknowledges_afte
 def test_valid_result_is_rejected_after_source_prefix_change(modules):
     module = modules["compaction"]
     original = tool_history(10, 700)
-    fork = module.ForkCompactor(lambda *a: {"http_error": 422}, trigger_bytes=1000)
+    fork = module.ForkCompactor(lambda *a: {"http_error": 422}, trigger_tokens=1000)
     fork.before_request(original)
     fork.wait(5)
     changed = [{"role": "user", "content": "A different scientific goal"}] + original[1:]
@@ -329,7 +340,6 @@ def test_real_token_host_budget_includes_tools_and_operational_frame(
         "summary_context_tokens": 100000,
         "trigger_tokens": 30000,
         "target_tokens": 12000,
-        "summary_input_tokens": 20000,
     }
     client = TestClient(
         create_app(
@@ -353,12 +363,13 @@ def test_real_token_host_budget_includes_tools_and_operational_frame(
         )
 
     cm, module = modules["context_manager"], modules["compaction"]
+    cm.metric = __import__("a3_research_agent.token_count", fromlist=["count_tokens"]).count_tokens
     cm.configure(req)
     tools = [
         {"type": "function", "name": "read", "parameters": {"type": "object", "properties": {}}}
     ]
     extra = [{"role": "user", "content": "operational reserve " * 1000}]
-    fork = module.ForkCompactor(req, tools=tools, trigger_bytes=1000)
+    fork = module.ForkCompactor(req, tools=tools, trigger_tokens=1000)
     original = tool_history(20, 2000)
     # Cross the explicit soft trigger; it is no longer the hard admission limit.
     original[0]["content"] += " semantic history " * 8000
@@ -381,10 +392,9 @@ def test_real_token_host_budget_includes_tools_and_operational_frame(
 
 def test_extra_messages_and_legacy_extra_bytes_cannot_consume_tool_reserve(modules):
     cm = modules["context_manager"]
-    cm.WINDOW, cm.RESERVE = 5000, 2000
+    cm.TOKEN_CONFIG["decision_input_tokens"] = 4000
     tools = [{"type": "function", "name": "probe", "description": "tool schema " * 50}]
     fork = modules["compaction"].ForkCompactor(lambda *a: {}, tools=tools)
-    assert fork._budget(extra_bytes=400) == cm.decision_budget(tools) - 400
     extra = [{"role": "user", "content": "operational " * 50}]
     assert fork._budget(extra_messages=extra) == cm.decision_budget(tools) - cm.message_cost(extra)
     with pytest.raises(cm.ContextError, match="reserves"):
@@ -444,7 +454,7 @@ def test_missing_spill_reference_is_not_a_successful_history_backfill(modules):
 def test_shutdown_apply_ready_never_starts_a_fork_or_provider(modules):
     calls = []
     module = modules["compaction"]
-    fork = module.ForkCompactor(lambda *args: calls.append(args), trigger_bytes=1)
+    fork = module.ForkCompactor(lambda *args: calls.append(args), trigger_tokens=1)
     original = tool_history(4, 100)
     prepared, report = fork.apply_ready(original)
     assert prepared == original and report is None
@@ -453,22 +463,14 @@ def test_shutdown_apply_ready_never_starts_a_fork_or_provider(modules):
 
 
 def test_archive_only_preserves_original_goal_and_worker_assignment_bytes(modules):
-    cm, module = modules["context_manager"], modules["compaction"]
+    cm = modules["context_manager"]
     original = tool_history(1, 20000)
     original[0]["content"] = (
         "Worker assignment: 只验证指定证据。\nScientific goal: preserve scope; do not change acceptance."
     )
     goal_bytes = original[0]["content"].encode("utf-8")
 
-    def forbidden_provider(*args):
-        raise AssertionError("Archiving one large tool output must not need a model")
-
-    fork = module.ForkCompactor(forbidden_provider, trigger_bytes=1000)
-    fork.before_request(original)
-    fork.wait(5)
-    prepared, report = fork.before_request(original)
-    assert report["kind"] == "applied"
-    assert report["strategy"] == "tool_outputs_archived"
+    prepared = cm.fit_tool_outputs(original, 10000)
     assert cm.size(prepared) < cm.size(original) and cm.paired(prepared)
     assert prepared[0] == original[0]
     assert prepared[0]["content"].encode("utf-8") == goal_bytes
@@ -477,7 +479,7 @@ def test_archive_only_preserves_original_goal_and_worker_assignment_bytes(module
 def test_hard_limit_waits_for_slow_summary_without_oversize_decision(modules, monkeypatch):
     """Simulate a 60s summary deadline without sleeping for a minute."""
     cm, module = modules["context_manager"], modules["compaction"]
-    cm.WINDOW, cm.RESERVE = 10000, 4000
+    cm.TOKEN_CONFIG["decision_input_tokens"] = 7000
     release = threading.Event()
 
     def provider(*args):

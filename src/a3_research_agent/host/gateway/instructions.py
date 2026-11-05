@@ -8,11 +8,6 @@ SUMMARY_INSTRUCTIONS = (
     "do not reveal their content."
 )
 
-SUMMARY_COMPACT_RETRY_INSTRUCTIONS = SUMMARY_INSTRUCTIONS + (
-    " The previous summary was oversized. Rewrite below 1800 UTF-8 bytes, preserving "
-    "current constraints and recovery references. Do not truncate strings or the original archive."
-)
-
 
 MODEL_FIELDS = {
     "model",

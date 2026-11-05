@@ -64,6 +64,11 @@ def prepare_fresh_task(start: HarnessStart, task: str) -> tuple[HarnessStart, di
     replacements = {name: json.dumps(value) for name, value in reset.items()}
     replacements["history.jsonl"] = ""
     removed = {"context-history/compaction-progress.json", "context-failure.json"}
+    removed.update(
+        name
+        for name in start.files
+        if name.startswith("context-history/summary-request-") and name.endswith(".json")
+    )
     present = {
         name: start.files[name] for name in set(replacements) | removed if name in start.files
     }

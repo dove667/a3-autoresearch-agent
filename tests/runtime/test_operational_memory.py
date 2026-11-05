@@ -316,6 +316,7 @@ def test_fresh_task_archives_fork_sidecars_and_old_history_without_loading_them(
         "compaction-epoch.json": '{"version":1,"id":"old-task"}',
         "history.jsonl": '{"role":"user","content":"old raw goal"}\n',
         "context-history/compaction-progress.json": '{"old":"spent-call-journal"}',
+        "context-history/summary-request-" + "a" * 64 + ".json": '{"status":"dispatched"}',
         "context-failure.json": '{"error":"old failure"}',
         "memory.jsonl": '{"lesson":"retain long-term experience"}\n',
     }
@@ -330,6 +331,7 @@ def test_fresh_task_archives_fork_sidecars_and_old_history_without_loading_them(
     assert json.loads(fresh.files["compaction-epoch.json"])["id"] is None
     assert fresh.files["history.jsonl"] == ""
     assert "context-history/compaction-progress.json" not in fresh.files
+    assert "context-history/summary-request-" + "a" * 64 + ".json" not in fresh.files
     assert "context-failure.json" not in fresh.files
     assert fresh.files["memory.jsonl"] == old["memory.jsonl"]
     for name in ["resume.json", "continuation.json"]:

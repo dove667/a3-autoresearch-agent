@@ -1,8 +1,8 @@
 """Asynchronous soft compaction with a hard decision gate and Host summaries.
 
-The existing context manager owns summary routing, budgets and durable fragment
-accounting. A fork may run ahead while the current decision still fits. At the
-hard limit, wait for a bounded interval or stop honestly with original evidence
+The context manager sends one full-transcript summary request and persists its
+outcome. A fork may run ahead while the current decision still fits. At the hard
+limit, wait for a bounded interval or stop honestly with original evidence
 retained; never forward an oversized decision to buy time for a background job.
 """
 
@@ -18,16 +18,11 @@ from a3_research_agent.harness.context import manager as cm
 from a3_research_agent.harness.context import spill as spill_tools
 from a3_research_agent.harness.memory import recall as recall_tools
 
-MODEL = "openai/sandbox-model"
 RESULT_PATH = "compaction-result.json"
 EPOCH_PATH = "compaction-epoch.json"
 CHECKPOINT_OPEN = "<compacted-checkpoint>"
 CHECKPOINT_CLOSE = "</compacted-checkpoint>"
-DEFAULT_TRIGGER_BYTES = cm.WINDOW - cm.RESERVE
-SUMMARY_INPUT_BYTES = cm.SUMMARY_LIMIT
 KEEP_ROUNDS = FALLBACK_ROUNDS = 5
-MAX_SUMMARY_CALLS = cm.MAX_SUMMARY_CALLS
-SUMMARY_MEMORY_BYTES = 6000
 SECTION_TITLES = (
     "Primary request and intent",
     "Key technical concepts",
@@ -74,18 +69,13 @@ class ForkCompactor:
         req,
         *,
         tools=None,
-        instructions="",
-        model=MODEL,
-        trigger_bytes=None,
-        summary_budget=None,
+        trigger_tokens=None,
         keep_rounds=KEEP_ROUNDS,
         result_path=RESULT_PATH,
         hard_wait_seconds=300,
     ):
         self.req, self.tools = req, list(tools or [])
-        self.instructions, self.model = instructions, model
-        self.trigger_bytes = int(trigger_bytes or DEFAULT_TRIGGER_BYTES)
-        self.summary_budget = summary_budget  # Legacy constructor compatibility; Host owns budgets.
+        self.trigger_tokens = trigger_tokens
         self.keep_rounds = max(1, int(keep_rounds))
         self.result_path = pathlib.Path(result_path)
         self.hard_wait_seconds = max(0, min(float(hard_wait_seconds), 300))
@@ -105,21 +95,18 @@ class ForkCompactor:
             raise cm.ContextError("Invalid compaction epoch identity")
         return value["id"]
 
-    def _budget(self, extra_messages=None, extra_bytes=0):
+    def _budget(self, extra_messages=None):
         budget = cm.decision_budget(self.tools)
         if extra_messages:
             budget -= cm.message_cost(extra_messages)
-        elif extra_bytes:
-            # Bytes conservatively upper-bound tokenizer tokens for legacy callers.
-            budget -= int(extra_bytes)
         if budget <= 0:
             raise cm.ContextError("Operational/tool reserves exhaust decision budget")
         return budget
 
-    def before_request(self, messages, extra_bytes=0, *, extra_messages=None):
+    def before_request(self, messages, *, extra_messages=None):
         if not cm.paired(messages):
             raise cm.ContextError("Unsafe tool call/result boundary")
-        budget = self._budget(extra_messages, extra_bytes)
+        budget = self._budget(extra_messages)
         candidate, record = self._apply_if_ready(messages, budget)
         if record and record.get("kind") == "applied":
             if cm.message_cost(candidate) > budget:
@@ -166,23 +153,16 @@ class ForkCompactor:
             )
         if self._busy():
             return messages, record
-        if cm.TOKEN_CONFIG:
-            size = cm.message_cost(messages)
-            if "decision_input_tokens" in cm.TOKEN_CONFIG:
-                # Subtract the same reserves from soft trigger and hard admission.
-                # This starts at the configured total input cost, not 85% of it.
-                trigger = budget - (
-                    cm.TOKEN_CONFIG["decision_input_tokens"] - cm.TOKEN_CONFIG["trigger_tokens"]
-                )
-            else:
-                # Older Hosts used trigger_tokens as the hard decision limit.
-                trigger = int(budget * 0.85)
-            floor = max(trigger, int(self._last_after_tokens * 1.1))
-        else:
-            size = cm.size(messages) + (
-                cm.size(extra_messages) if extra_messages else int(extra_bytes)
+        size = cm.message_cost(messages)
+        trigger = budget - (
+            cm.TOKEN_CONFIG["decision_input_tokens"]
+            - (
+                self.trigger_tokens
+                if self.trigger_tokens is not None
+                else cm.TOKEN_CONFIG["trigger_tokens"]
             )
-            floor = max(self.trigger_bytes, int(self._last_after_bytes * 1.1))
+        )
+        floor = max(trigger, int(self._last_after_tokens * 1.1))
         if size >= floor:
             return messages, self.start(messages, extra_messages=extra_messages, budget=budget)
         return messages, record
@@ -365,15 +345,7 @@ class ForkCompactor:
         ):
             published = messages[:count]
         else:
-            # Compatibility with results written before a tail baseline existed.
-            active = result.get("publication", result)
-            published = active.get("replacement") if isinstance(active, dict) else None
-            if (
-                not isinstance(published, list)
-                or digest(published) != active.get("replacement_sha256")
-                or messages[: len(published)] != published
-            ):
-                return
+            return
         self._last_after_bytes = cm.size(published)
         self._last_after_tokens = cm.message_cost(published)
 

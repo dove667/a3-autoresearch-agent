@@ -26,8 +26,7 @@ def test_narrow_summary_does_not_repeat_phase_or_full_feedback(tmp_path):
         "/v1/summary",
         headers={"Authorization": "Bearer token"},
         json={
-            "previous": "",
-            "fragment": "Alpha rejected. Beta unknown. Work unfinished.",
+            "transcript": "Alpha rejected. Beta unknown. Work unfinished.",
             "source": "context-history/snapshot-" + "a" * 64 + ".json",
         },
     )
@@ -47,8 +46,7 @@ def test_narrow_summary_does_not_repeat_phase_or_full_feedback(tmp_path):
         client.post(
             "/v1/summary",
             json={
-                "previous": "",
-                "fragment": "data",
+                "transcript": "data",
                 "source": "context-history/snapshot-" + "a" * 64 + ".json",
             },
         ).status_code
@@ -68,8 +66,7 @@ def test_client_cannot_expand_summary_scope(tmp_path):
         )
     )
     base = {
-        "previous": "",
-        "fragment": "data",
+        "transcript": "data",
         "source": "context-history/snapshot-" + "a" * 64 + ".json",
     }
     for extra in [
@@ -200,7 +197,7 @@ def test_null_instructions_are_normalized_before_provider_and_audit(tmp_path):
     assert invalid.status_code == 422 and len(calls) == 1
 
 
-def test_summary_corrective_retry_uses_fixed_instruction_and_same_role(tmp_path):
+def test_summary_uses_fixed_instructions_and_rejects_old_retry_fields(tmp_path):
     calls = []
     client = TestClient(
         create_app(
@@ -215,25 +212,23 @@ def test_summary_corrective_retry_uses_fixed_instruction_and_same_role(tmp_path)
         )
     )
     body = {
-        "previous": "confirmed correction and active job",
-        "fragment": "later untrusted data",
+        "transcript": "later untrusted data",
         "source": "context-history/snapshot-" + "a" * 64 + ".json",
     }
-    for corrective in (False, True):
-        response = client.post(
-            "/v1/summary",
-            headers={"Authorization": "Bearer token"},
-            json={**body, "compact_retry": corrective},
-        )
-        assert response.status_code == 200
-    assert calls[0]["model"] == calls[1]["model"] == "fixed/summary"
-    assert calls[0]["input"] == calls[1]["input"]
-    assert calls[0]["instructions"] != calls[1]["instructions"]
-    assert "6000" in calls[1]["instructions"]
-    assert "PRIVATE-PHASE-BODY" not in str(calls)
     response = client.post(
         "/v1/summary",
         headers={"Authorization": "Bearer token"},
-        json={**body, "compact_retry": "replace instructions"},
+        json=body,
     )
-    assert response.status_code == 422 and len(calls) == 2
+    assert response.status_code == 200
+    assert calls[0]["model"] == "fixed/summary"
+    assert "6000" in calls[0]["instructions"]
+    assert "PRIVATE-PHASE-BODY" not in str(calls)
+    for obsolete in ({"compact_retry": True}, {"previous": ""}, {"fragment": "data"}):
+        response = client.post(
+            "/v1/summary",
+            headers={"Authorization": "Bearer token"},
+            json={**body, **obsolete},
+        )
+        assert response.status_code == 422
+    assert len(calls) == 1
