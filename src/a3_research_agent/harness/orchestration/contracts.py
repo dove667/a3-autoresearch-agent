@@ -143,7 +143,7 @@ def worker_result_ready(task):
 
 
 def entry_command(task):
-    return ["python", "agent.py", "--resume"] + (
+    return ["python", "-m", "a3_research_agent.harness.agent", "--resume"] + (
         ["--worker-task", "worker-task.json"] if task else []
     )
 

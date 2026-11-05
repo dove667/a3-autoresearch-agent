@@ -7,7 +7,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-from runtime.local.web_cache import MAX_PAYLOAD_BYTES, CacheBusy, WebCache
+from a3_research_agent.host.web.cache import MAX_PAYLOAD_BYTES, CacheBusy, WebCache
 
 
 def payload(text="public page"):
@@ -36,7 +36,7 @@ def test_roundtrip_private_hashed_paths_and_independent_copies(tmp_path):
 
 def test_ttl_does_not_reset_on_read(tmp_path, monkeypatch):
     now = [1000.0]
-    monkeypatch.setattr("runtime.local.web_cache.time.time", lambda: now[0])
+    monkeypatch.setattr("a3_research_agent.host.web.cache.time.time", lambda: now[0])
     cache = WebCache(tmp_path)
     assert cache.put("key", payload())
     now[0] = 1009
@@ -277,7 +277,7 @@ def test_transient_lock_creation_missing_is_retried_with_security_flags(tmp_path
                 raise FileNotFoundError(errno.ENOENT, "transient concurrent creation", name)
         return original_open(name, flags, mode, dir_fd=dir_fd)
 
-    monkeypatch.setattr("runtime.local.web_cache.os.open", transient_open)
+    monkeypatch.setattr("a3_research_agent.host.web.cache.os.open", transient_open)
     cache = WebCache(tmp_path)
     assert cache.warning is None
     assert len(attempts) == 4
@@ -302,7 +302,7 @@ def test_singleflight_transient_missing_does_not_run_provider_unlocked(tmp_path,
                 raise FileNotFoundError(errno.ENOENT, "transient concurrent creation", name)
         return original_open(name, flags, mode, dir_fd=dir_fd)
 
-    monkeypatch.setattr("runtime.local.web_cache.os.open", transient_open)
+    monkeypatch.setattr("a3_research_agent.host.web.cache.os.open", transient_open)
     calls = []
     for _ in range(2):
         with cache.lock("same"):
@@ -327,7 +327,7 @@ def test_lock_creation_missing_retry_is_bounded(tmp_path, monkeypatch):
             raise FileNotFoundError(errno.ENOENT, "persistent missing", name)
         return original_open(name, flags, mode, dir_fd=dir_fd)
 
-    monkeypatch.setattr("runtime.local.web_cache.os.open", missing_open)
+    monkeypatch.setattr("a3_research_agent.host.web.cache.os.open", missing_open)
     cache = WebCache(tmp_path)
     assert len(attempts) == 4
     assert cache._directory is None
@@ -347,7 +347,7 @@ def test_other_open_errors_are_not_retried(tmp_path, monkeypatch):
             raise PermissionError(errno.EACCES, "denied", name)
         return original_open(name, flags, mode, dir_fd=dir_fd)
 
-    monkeypatch.setattr("runtime.local.web_cache.os.open", denied_open)
+    monkeypatch.setattr("a3_research_agent.host.web.cache.os.open", denied_open)
     cache = WebCache(tmp_path)
     assert len(attempts) == 1
     assert cache._directory is None
@@ -367,7 +367,7 @@ def test_removed_directory_does_not_get_recreated_by_lock_retry(tmp_path, monkey
         attempts.append(name)
         return original_open(name, flags, mode, dir_fd=dir_fd)
 
-    monkeypatch.setattr("runtime.local.web_cache.os.open", counted_open)
+    monkeypatch.setattr("a3_research_agent.host.web.cache.os.open", counted_open)
     with cache.lock("key"):
         pass
     assert len(attempts) == 1
@@ -394,7 +394,7 @@ def test_symlink_after_transient_missing_is_not_followed_or_retried(tmp_path, mo
                 raise FileNotFoundError(errno.ENOENT, "transient concurrent creation", name)
         return original_open(name, flags, mode, dir_fd=dir_fd)
 
-    monkeypatch.setattr("runtime.local.web_cache.os.open", replaced_open)
+    monkeypatch.setattr("a3_research_agent.host.web.cache.os.open", replaced_open)
     with cache.lock("key"):
         pass
     assert len(attempts) == 2
@@ -417,7 +417,7 @@ def test_payload_open_missing_is_not_retried(tmp_path, monkeypatch):
             raise FileNotFoundError(errno.ENOENT, "missing payload", name)
         return original_open(name, flags, mode, dir_fd=dir_fd)
 
-    monkeypatch.setattr("runtime.local.web_cache.os.open", missing_payload)
+    monkeypatch.setattr("a3_research_agent.host.web.cache.os.open", missing_payload)
     assert cache.get("key", 60) is None
     assert cache.put("key", payload()) is False
     assert len(attempts) == 2
@@ -444,8 +444,8 @@ def test_removed_root_with_stale_link_count_is_not_retried(tmp_path, monkeypatch
         attempts.append(name)
         return original_open(name, flags, mode, dir_fd=dir_fd)
 
-    monkeypatch.setattr("runtime.local.web_cache.os.fstat", stale_link_count)
-    monkeypatch.setattr("runtime.local.web_cache.os.open", counted_open)
+    monkeypatch.setattr("a3_research_agent.host.web.cache.os.fstat", stale_link_count)
+    monkeypatch.setattr("a3_research_agent.host.web.cache.os.open", counted_open)
     with cache.lock("key"):
         pass
     assert len(attempts) == 1
@@ -471,7 +471,7 @@ def test_root_replacement_after_missing_does_not_redirect_retry(tmp_path, monkey
                 raise FileNotFoundError(errno.ENOENT, "transient creation", name)
         return original_open(name, flags, mode, dir_fd=dir_fd)
 
-    monkeypatch.setattr("runtime.local.web_cache.os.open", replaced_root)
+    monkeypatch.setattr("a3_research_agent.host.web.cache.os.open", replaced_root)
     with cache.lock("key"):
         pass
     assert len(attempts) == 1
@@ -499,7 +499,7 @@ def test_root_symlink_to_same_inode_after_missing_is_not_retried(tmp_path, monke
                 raise FileNotFoundError(errno.ENOENT, "transient creation", name)
         return original_open(name, flags, mode, dir_fd=dir_fd)
 
-    monkeypatch.setattr("runtime.local.web_cache.os.open", symlinked_root)
+    monkeypatch.setattr("a3_research_agent.host.web.cache.os.open", symlinked_root)
     with cache.lock("key"):
         pass
     assert len(attempts) == 1

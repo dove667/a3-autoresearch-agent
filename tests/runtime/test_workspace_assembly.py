@@ -5,9 +5,9 @@ import hashlib
 import pytest
 from fastapi.testclient import TestClient
 
-from runtime.local.candidate_runtime import CandidateRuntime
-from runtime.local.candidate_versions import CandidateVersions
-from runtime.local.host_gateway import create_app
+from a3_research_agent.host.gateway.app import create_app
+from a3_research_agent.host.sessions.containers import CandidateRuntime
+from a3_research_agent.host.sessions.versions import CandidateVersions
 
 
 def sha(raw):
@@ -191,7 +191,7 @@ def test_attachment_hashes_are_bound_to_bytes_read_not_live_paths(assembly):
 
 
 def test_complete_assembled_snapshot_retains_upload_bounds(assembly, monkeypatch):
-    import runtime.local.candidate_versions as version_module
+    import a3_research_agent.host.sessions.versions as version_module
 
     client, _versions, _sandbox, _workspace, _base, body, docker = assembly
     monkeypatch.setattr(version_module, "MAX_INPUT_FILES", 3)
@@ -239,7 +239,7 @@ def test_reference_cannot_choose_another_source_owner(assembly):
 
 
 def test_combined_byte_limit_is_checked_without_saving_version(assembly, monkeypatch):
-    import runtime.local.candidate_versions as version_module
+    import a3_research_agent.host.sessions.versions as version_module
 
     client, versions, _sandbox, _workspace, _base, body, docker = assembly
     monkeypatch.setattr(version_module, "MAX_INPUT_BYTES", 30)

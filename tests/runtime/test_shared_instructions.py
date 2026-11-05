@@ -6,9 +6,9 @@ import yaml
 from fastapi.testclient import TestClient
 from jinja2 import StrictUndefined, Template
 
-from runtime.local.candidate_versions import CandidateVersions
-from runtime.local.host_gateway import create_app
-from runtime.local.input_versions import InputVersions
+from a3_research_agent.host.gateway.app import create_app
+from a3_research_agent.host.inputs.versions import InputVersions
+from a3_research_agent.host.sessions.versions import CandidateVersions
 
 
 class Backend:

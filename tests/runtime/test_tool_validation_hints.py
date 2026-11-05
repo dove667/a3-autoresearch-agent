@@ -2,9 +2,8 @@ import ast
 import pathlib
 
 import pytest
-from harness_sources import HarnessSources
 
-ROOT = HarnessSources(pathlib.Path(__file__).resolve().parents[2] / "runtime/harness_recovery")
+ROOT = pathlib.Path(__file__).resolve().parents[2] / "src/a3_research_agent/harness"
 
 
 def functions():
@@ -70,7 +69,7 @@ def test_schema_exposes_actual_bounded_parameters():
 def test_input_header_names_the_canonical_manifest_path(tmp_path):
     from test_input_versions import sources
 
-    from runtime.local.input_versions import InputVersions
+    from a3_research_agent.host.inputs.versions import InputVersions
 
     v = InputVersions(sources(tmp_path), tmp_path / "run")
     v.activate(v.prepare(), "start")
@@ -81,9 +80,8 @@ def test_real_progress_validation_does_not_mutate_state(tmp_path, monkeypatch):
     import importlib.util
 
     monkeypatch.chdir(tmp_path)
-    monkeypatch.syspath_prepend(str(ROOT))
     spec = importlib.util.spec_from_file_location(
-        "real_progress_validation", ROOT / "memory_state.py"
+        "real_progress_validation", ROOT / "memory/state.py"
     )
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)

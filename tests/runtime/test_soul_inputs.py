@@ -6,8 +6,8 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
-from runtime.local.host_gateway import create_app
-from runtime.local.input_versions import InputVersions, input_sources
+from a3_research_agent.host.gateway.app import create_app
+from a3_research_agent.host.inputs.versions import InputVersions, input_sources
 
 PROFILES = [
     ("phase-one", "standard"),

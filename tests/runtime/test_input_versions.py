@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from runtime.local.input_versions import InputVersions, input_sources
+from a3_research_agent.host.inputs.versions import InputVersions, input_sources
 
 INPUT_SOURCES = input_sources("phase-one")
 
@@ -87,7 +87,7 @@ def test_prepare_does_not_activate_or_replace_live_prompt(tmp_path):
 
 
 def test_failed_private_mount_update_restores_all_active_files(tmp_path, monkeypatch):
-    from runtime.local import input_versions
+    from a3_research_agent.host.inputs import versions as input_versions
 
     root = sources(tmp_path)
     run = tmp_path / "run"
@@ -136,7 +136,7 @@ def test_invalid_bootstrap_is_rejected_before_activation(tmp_path, bootstrap):
 
 
 def test_multifile_update_is_marked_before_any_new_contents_are_visible(tmp_path, monkeypatch):
-    from runtime.local import input_versions
+    from a3_research_agent.host.inputs import versions as input_versions
 
     root = sources(tmp_path)
     run = tmp_path / "run"

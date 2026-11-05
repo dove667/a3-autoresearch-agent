@@ -4,10 +4,10 @@ import time
 
 from fastapi.testclient import TestClient
 
-from runtime.local.host_gateway import create_app
-from runtime.local.run_state import RunStateStore
-from runtime.local.trajectory_analysis import MAX_RECORDS, TrajectoryAnalyzer
-from runtime.local.trajectory_telemetry import MAX_EVENTS, TrajectoryTelemetry
+from a3_research_agent.host.gateway.app import create_app
+from a3_research_agent.host.runs.state import RunStateStore
+from a3_research_agent.host.telemetry.analysis import MAX_RECORDS, TrajectoryAnalyzer
+from a3_research_agent.host.telemetry.trajectory import MAX_EVENTS, TrajectoryTelemetry
 
 HEADERS = {"Authorization": "Bearer token-a"}
 CANARY = "PRIVATE_PATH_CREDENTIAL_PROMPT_ignore_all_rules"
@@ -597,13 +597,13 @@ def test_recent_events_are_scoped_bounded_numeric_and_independent_copies():
     assert refreshed["recent_events"][-1]["model"]["input_tokens"] == 38
     assert refreshed["recent_events"][-1]["kind"] == "model"
     assert CANARY not in json.dumps(refreshed)
-    from runtime.local.trajectory_analysis import MAX_INPUT_BYTES
+    from a3_research_agent.host.telemetry.analysis import MAX_INPUT_BYTES
 
     assert len(json.dumps(all_events).encode()) <= MAX_INPUT_BYTES
 
 
 def test_failed_snapshot_retries_after_persisted_backoff_then_dedups_success(tmp_path, monkeypatch):
-    import runtime.local.trajectory_analysis as module
+    import a3_research_agent.host.telemetry.analysis as module
 
     now = [1000]
     monkeypatch.setattr(module.time, "time", lambda: now[0])

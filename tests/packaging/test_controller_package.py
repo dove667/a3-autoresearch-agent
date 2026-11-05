@@ -1,27 +1,18 @@
 """Controller entry points stay usable without the Host dependency environment."""
 
-import importlib
 import json
 import subprocess
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-LEGACY = ROOT / "runtime/remote/remote_jobs.py"
-
-
-def test_legacy_controller_is_the_canonical_module():
-    legacy = importlib.import_module("runtime.remote.remote_jobs")
-    canonical = importlib.import_module("a3_research_agent.execution.controller.remote_jobs")
-    assert legacy is canonical
-    assert canonical.JobStore.__module__ == "a3_research_agent.execution.controller.store"
-    assert canonical.select_shared_gpu.__module__ == "a3_research_agent.execution.scheduling.gpu"
+ENTRY = ROOT / "src/a3_research_agent/execution/controller/__main__.py"
 
 
 def test_controller_standalone_entries_need_only_standard_library(tmp_path):
     package_entry = ROOT / "src/a3_research_agent/execution/controller/__main__.py"
     assert package_entry.is_file(), "Controller subprocess entry is absent"
-    for entry in (LEGACY, package_entry):
+    for entry in (package_entry,):
         result = subprocess.run(
             [sys.executable, "-I", "-S", str(entry), "--help"],
             cwd=tmp_path,
@@ -61,13 +52,13 @@ def test_child_command_targets_self_contained_controller_entry(tmp_path):
     assert "--storage-limit" in result.stdout
 
 
-def test_legacy_controller_denies_unknown_owner_without_host_imports(tmp_path):
+def test_controller_denies_unknown_owner_without_host_imports(tmp_path):
     result = subprocess.run(
         [
             sys.executable,
             "-I",
             "-S",
-            str(LEGACY),
+            str(ENTRY),
             "--root",
             str(tmp_path / "jobs"),
             "--image",

@@ -56,7 +56,7 @@ def maybe_spill(text, *, max_bytes=None, directory=SPILL_DIR, label="result"):
     digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
     label = re.sub(r"[^A-Za-z0-9_.-]", "_", str(label))[:64] or "result"
     path = root / f"{label}-{digest}.txt"
-    from context_manager import ContextError, atomic
+    from a3_research_agent.harness.context.manager import ContextError, atomic
 
     if root.is_symlink() or path.is_symlink():
         raise ContextError("spill source verification rejects symlinks")

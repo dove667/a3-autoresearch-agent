@@ -5,8 +5,8 @@ from argparse import Namespace
 
 import pytest
 
-from runtime.local import launch
-from runtime.local.run_state import RunStateStore
+from a3_research_agent.host import bootstrap as launch
+from a3_research_agent.host.runs.state import RunStateStore
 
 
 @pytest.mark.parametrize(

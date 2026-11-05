@@ -4,8 +4,12 @@ import json
 
 import pytest
 
-from runtime.local.candidate_versions import CandidateVersions
-from runtime.local.continuation import load_run_result, prepare_fresh_task, publish_run_result
+from a3_research_agent.host.runs.continuation import (
+    load_run_result,
+    prepare_fresh_task,
+    publish_run_result,
+)
+from a3_research_agent.host.sessions.versions import CandidateVersions
 
 
 def test_repeated_new_tasks_copy_the_same_immutable_checkpoint(tmp_path):
@@ -47,7 +51,7 @@ def test_repeated_new_tasks_copy_the_same_immutable_checkpoint(tmp_path):
 
 
 def test_unknown_checkpoint_format_requires_an_explicit_new_task_entry(tmp_path):
-    from runtime.local.continuation import HarnessStart
+    from a3_research_agent.host.runs.continuation import HarnessStart
 
     start = HarnessStart(["python", "custom.py"], {"checkpoint.json": '{"opaque": true}'})
     with pytest.raises(ValueError, match="checkpoint"):
@@ -58,7 +62,7 @@ def test_remote_options_are_host_configured_and_shell_quoted(monkeypatch):
     import shlex
     import subprocess
 
-    from runtime.local import launch
+    from a3_research_agent.host import bootstrap as launch
 
     values = {
         "A3_REMOTE_CONTROLLER": "/project path/remote_jobs.py",
@@ -91,7 +95,7 @@ def test_remote_options_are_host_configured_and_shell_quoted(monkeypatch):
 
 
 def test_local_storage_does_not_count_source_links_or_other_runs(tmp_path):
-    from runtime.local.launch import local_storage_bytes
+    from a3_research_agent.host.bootstrap import local_storage_bytes
 
     run = tmp_path / "run"
     run.mkdir()
@@ -108,7 +112,7 @@ def test_host_reports_storage_independently_of_model_calls(tmp_path):
 
     from fastapi.testclient import TestClient
 
-    from runtime.local.host_gateway import create_app
+    from a3_research_agent.host.gateway.app import create_app
 
     reported = threading.Event()
     app = create_app(

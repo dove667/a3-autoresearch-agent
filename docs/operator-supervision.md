@@ -25,13 +25,13 @@ Version: 0.2.2
 按 [版本规则](agent-inputs.md#需要维护版本的内容) 修改源文件并递增版本；编辑不会自动影响运行中的实验。先预览：
 
 ```bash
-uv run python -m runtime.local.reload_inputs "artifacts/rsi/<run-id>"
+uv run python -m a3_research_agent.cli.reload_inputs "artifacts/rsi/<run-id>"
 ```
 
 核对警告、原版本、新版本和内容摘要，将具体变更与影响交用户批准；获批后使用预览返回的完整摘要发布：
 
 ```bash
-uv run python -m runtime.local.reload_inputs "artifacts/rsi/<run-id>" --confirm <预览摘要>
+uv run python -m a3_research_agent.cli.reload_inputs "artifacts/rsi/<run-id>" --confirm <预览摘要>
 ```
 
 自定义 run 默认仍读取其冻结版本。要在获准后换为另一套完整目录，预览和确认两次命令都增加 `--agent-inputs-dir <完整目录>`；Host 仅允许保持当前阶段、profile 与文件名集合的替换，检查 UTF-8、符号链接、版本及内容摘要。目录参数只在操作者控制入口生效，Agent 无权选择来源。旧 revision 保留，新版本发布后恢复不依赖外部源目录。这个入口不更新 Agent 工作区中的技能副本或索引；如需更新它们，须在已批准范围内显式完成并核对实际版本。
@@ -65,14 +65,14 @@ Host 读取当次 UTF-8 文本（最多 64 KiB），保存内容副本、SHA256 
 Host 已运行新版反馈接口时，可以让实验继续执行，通过独立终端把同一个 `human-feedback.md` 中的最新内容送给当前主 Agent。先预览：
 
 ```bash
-uv run python -m runtime.local.reload_feedback "artifacts/rsi/<run-id>" \
+uv run python -m a3_research_agent.cli.reload_feedback "artifacts/rsi/<run-id>" \
   --feedback-file human-feedback.md
 ```
 
 命令显示正文、接收身份与摘要，尚不注入。核对正文、身份、摘要并取得本次用户明确批准后，使用显示的摘要确认：
 
 ```bash
-uv run python -m runtime.local.reload_feedback "artifacts/rsi/<run-id>" \
+uv run python -m a3_research_agent.cli.reload_feedback "artifacts/rsi/<run-id>" \
   --feedback-file human-feedback.md --confirm <预览摘要>
 ```
 

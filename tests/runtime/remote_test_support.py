@@ -3,7 +3,6 @@
 import importlib
 
 COMPONENTS = (
-    "controller.remote_jobs",
     "controller.files",
     "controller.store",
     "controller.docker",
@@ -16,10 +15,12 @@ COMPONENTS = (
 )
 
 
-def patch_controller(monkeypatch, facade, name, replacement):
+def patch_controller(monkeypatch, name, replacement):
     """Preserve each test's fake backend across component import bindings."""
-    assert hasattr(facade, name), name
+    patched = []
     for component in COMPONENTS:
         module = importlib.import_module(f"a3_research_agent.execution.{component}")
         if hasattr(module, name):
             monkeypatch.setattr(module, name, replacement)
+            patched.append(component)
+    assert patched, name

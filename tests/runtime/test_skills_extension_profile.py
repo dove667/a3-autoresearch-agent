@@ -7,8 +7,9 @@ from pathlib import Path
 
 import pytest
 
-from runtime.local import input_versions, launch
-from runtime.local.continuation import HarnessStart
+from a3_research_agent.host import bootstrap as launch
+from a3_research_agent.host.inputs import versions as input_versions
+from a3_research_agent.host.runs.continuation import HarnessStart
 
 
 def e_source(tmp_path):
@@ -163,8 +164,8 @@ def test_initial_feedback_invalid_skills_cli_before_deployment(tmp_path, monkeyp
 
 @pytest.mark.parametrize("feedback", [None, "Approved fresh F only"])
 def test_valid_skills_cli_and_retained_snapshot_unchanged(tmp_path, monkeypatch, feedback):
-    from runtime.local.candidate_versions import CandidateVersions
-    from runtime.local.continuation import load_run_result, publish_run_result
+    from a3_research_agent.host.runs.continuation import load_run_result, publish_run_result
+    from a3_research_agent.host.sessions.versions import CandidateVersions
 
     start = e_source(tmp_path)
     source = start.previous_run
@@ -234,7 +235,7 @@ def test_e_resume_cannot_change_to_f(tmp_path, monkeypatch):
 
 
 def test_source_inherited_success_is_not_current_f_acceptance(tmp_path):
-    from runtime.local.run_supervisor import evaluate_outcome
+    from a3_research_agent.host.runs.supervisor import evaluate_outcome
 
     start = e_source(tmp_path)
     fresh, _ = launch.prepare_task_start(start, "phase-one", "skills-extension", "F only")
@@ -282,7 +283,7 @@ def test_skills_archive_collision_fails_closed(tmp_path):
 
 
 def test_real_e_snapshot_shape_keeps_e_history_without_terminal_f(tmp_path):
-    from runtime.local.run_supervisor import evaluate_outcome
+    from a3_research_agent.host.runs.supervisor import evaluate_outcome
 
     start = e_source(tmp_path)
     del start.files["run-outcome.json"]

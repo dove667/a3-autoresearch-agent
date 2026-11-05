@@ -3,8 +3,8 @@ from datetime import datetime
 
 import pytest
 
+from a3_research_agent.execution.controller.files import validate_submit
 from a3_research_agent.host.runs import directories as launch
-from runtime.remote.remote_jobs import validate_submit
 
 
 @pytest.fixture

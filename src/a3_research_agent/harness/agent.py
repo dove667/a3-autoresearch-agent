@@ -464,10 +464,8 @@ WAIT_CURSOR = None
 
 def save_manifest():
     files = {
-        "agent.py",
         "web_tools.py",
         "skill_tools.py",
-        "context_manager.py",
         "task.txt",
         "checkpoint.json",
         "memory.jsonl",

@@ -6,7 +6,7 @@ Host控制器负责独立作业的执行和资源分配。模型服务、凭据�
 
 执行端需要 Linux、Python 3.10+、Docker Engine；GPU 作业还需要 NVIDIA Container Toolkit。已有 A3 项目应在 `.venv` 中提供可用的 Python 环境，并在 `.runtime/ffmpeg` 中提供兼容的 FFmpeg。
 
-在服务器 checkout 本仓库，与本地使用相同的部署提交。`runtime/remote/` 保留旧脚本入口，实现位于 `src/a3_research_agent/execution/`。同步完整 checkout，不能只复制入口脚本；watcher 和导出 sealer 也需要同一版本的包模块。
+在服务器 checkout 本仓库，与本地使用相同的部署提交。Controller 与镜像准备实现位于 `src/a3_research_agent/execution/`。同步完整 checkout，不能只复制入口脚本；watcher 和导出 sealer 也需要同一版本的包模块。
 服务器仅运行 controller 时使用系统 Python 标准库，无需安装本地模型服务依赖或执行 `uv sync`。
 需要运行 mini 的一端再初始化 submodule 并安装相应依赖。
 
@@ -14,7 +14,7 @@ Host控制器负责独立作业的执行和资源分配。模型服务、凭据�
 
 ```bash
 export JOB_ROOT="$PWD/artifacts/remote-runtime"
-export CONTROLLER="$PWD/runtime/remote/remote_jobs.py"
+export CONTROLLER="$PWD/src/a3_research_agent/execution/controller/__main__.py"
 export RUNTIME_IMAGE='<runtime-image>'
 ```
 
@@ -26,7 +26,7 @@ export RUNTIME_IMAGE='<runtime-image>'
 
 ```bash
 export BUILD_CONTEXT="$PWD/artifacts/deployment/builds/runtime"
-python3 runtime/remote/prepare_image.py \
+python3 src/a3_research_agent/execution/images/prepare.py \
   --project "$A3_PROJECT" \
   --context "$BUILD_CONTEXT" \
   --image "$RUNTIME_IMAGE"
@@ -96,7 +96,7 @@ watcher 保存退出状态并终止超时作业。取消操作移除容器，覆
 
 ```bash
 python -m pytest tests/runtime/test_remote_jobs.py
-python3 runtime/remote/verify_remote.py \
+python3 src/a3_research_agent/execution/images/verify.py \
   --controller "$CONTROLLER" --root "$JOB_ROOT" \
   --image "$RUNTIME_IMAGE" --output "$VERIFICATION_REPORT"
 ```
@@ -136,7 +136,7 @@ python3 runtime/remote/verify_remote.py \
 
 ## 跨身份只读二进制快照
 
-`readonly_exports.py` 与 controller 一起部署，均只依赖 Python 标准库。Agent 的 HTTP 使用说明见 [Host 接口](../local/README.md#大文件只读交接)。以下 CLI 操作由受信任的 Gateway 调用，experiment_id 由 Host 注入，角色和接收人限制在 Gateway 校验。
+`execution/exports/` 与 Controller 一起部署，均只依赖 Python 标准库。Agent 的 HTTP 使用说明见 [Host 接口](../agent-inputs/shared/execution.md#大文件只读交接)。以下 CLI 操作由受信任的 Gateway 调用，experiment_id 由 Host 注入，角色和接收人限制在 Gateway 校验。
 
 | 操作 | 请求字段（另带 experiment_id） | 用途 |
 | --- | --- | --- |
@@ -158,7 +158,7 @@ submit 的 input_exports 最多 64 个且不能重复；只挂载本身份获授
 
 镜像提供 git，固定只读 A3 目录包含独立的 `.git`。采集和诊断入口可直接执行 `git -C /opt/a3 rev-parse HEAD`，无需 Agent 补装依赖或伪造版本号。数字 UID 作业通过系统级 safe.directory 允许读取该目录；根文件系统仍只读，作业不能改动基线版本库。
 
-prepare_image.py 从部署方提供的 A3 checkout 导出真实 HEAD 的浅对象与索引，并记录 `/opt/a3/source-revision.json`：commit、源工作区是否有改动，以及实际准备进镜像的源码/资源文件 SHA256。工作区有改动时，commit 与文件摘要一起用于定位有效源码；不能只凭 HEAD 声称文件与提交逐字一致。安装环境和运行时依赖不纳入该源码清单。
+`execution/images/prepare.py` 从部署方提供的 A3 checkout 导出真实 HEAD 的浅对象与索引，并记录 `/opt/a3/source-revision.json`：commit、源工作区是否有改动，以及实际准备进镜像的源码/资源文件 SHA256。工作区有改动时，commit 与文件摘要一起用于定位有效源码；不能只凭 HEAD 声称文件与提交逐字一致。安装环境和运行时依赖不纳入该源码清单。
 
 已有镜像不会随部署脚本更新。更新已有部署时保留旧标签，在新标签中补齐 git 与来源信息；复用旧镜像层时先逐文件核对原镜像和来源 checkout，匹配后才附加该来源的 Git 信息。用实际数字 UID、只读根文件系统和无网络的作业验证版本读取与原采集程序的元数据代码，再切换部署配置。历史运行输入和结果保留旧镜像信息，新作业使用当前配置。
 
@@ -175,11 +175,11 @@ GPU jobs mount the controller's `nvidia_egl_vendor.json` read-only and set
 `__EGL_VENDOR_LIBRARY_FILENAMES` to that descriptor. This selects the NVIDIA EGL
 implementation already injected by the NVIDIA container runtime, even when an
 image only contains Mesa's vendor descriptor. Deploy this file alongside
-`remote_jobs.py`. CPU jobs retain their image's default discovery behavior.
+`execution/controller/docker.py`. CPU jobs retain their image's default discovery behavior.
 This does not install drivers, change GPU allocation, or relax container isolation.
 Verify `GL_VENDOR` and `GL_RENDERER` inside a GPU job; successful context creation
 alone can also indicate software rendering.
 
-`verify_remote.py` also checks the vendor and renderer in a current MuJoCo EGL
+`execution/images/verify.py` also checks the vendor and renderer in a current MuJoCo EGL
 context inside its GPU camera job. A Mesa/llvmpipe fallback fails verification
 even when camera images have the expected dimensions.

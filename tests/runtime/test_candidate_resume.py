@@ -2,7 +2,10 @@ import json
 
 import pytest
 
-from runtime.local.candidate_runtime import CandidateContainerMissingError, CandidateRuntime
+from a3_research_agent.host.sessions.containers import (
+    CandidateContainerMissingError,
+    CandidateRuntime,
+)
 
 
 def test_paused_sessions_reconnect_without_reexecuting_or_changing_identity(tmp_path, monkeypatch):

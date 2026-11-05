@@ -1,6 +1,6 @@
 # 上下文压缩与记忆（fork / Recall / spill）
 
-`runtime/harness_recovery/` 提供可选派生 Harness 的 spill、异步整理和原文回查。
+`src/a3_research_agent/harness/` 提供可选派生 Harness 的 spill、异步整理和原文回查。
 源码同步不代表当前进程已加载；部署须保留原现场并记录人工干预。它们不改变 Host 权限、
 A3 物理、评测条件或科学判断。
 
@@ -8,13 +8,13 @@ A3 物理、评测条件或科学判断。
 
 | 层 | 实现 | 边界 |
 | --- | --- | --- |
-| 工具输出归档 | `context_manager.py` | 所有 JSON 结果按完整序列化 envelope 限界，默认每条 12000 UTF-8 字节；原文、哈希和部分预览保留 |
-| fork 整理 | `compaction.py` | 按 token 预算启动一次完整历史摘要；下一主请求仍须满足硬预算 |
-| 回查检查点 | `compaction.py`、`recall.py` | 摘要失败时明确未总结，不伪造完成；原文、最新完整工具批次和当前任务必须保全 |
+| 工具输出归档 | `context/manager.py` | 所有 JSON 结果按完整序列化 envelope 限界，默认每条 12000 UTF-8 字节；原文、哈希和部分预览保留 |
+| fork 整理 | `context/compaction.py` | 按 token 预算启动一次完整历史摘要；下一主请求仍须满足硬预算 |
+| 回查检查点 | `context/compaction.py`、`memory/recall.py` | 摘要失败时明确未总结，不伪造完成；原文、最新完整工具批次和当前任务必须保全 |
 
 有界 read 页的收据记录原始页；preview 不是完整交付或已理解。字典、列表和转义字符串走同一
 入口，显式 Base64 文件响应会生成有来源与哈希的本地解码文件；UTF-8 文件按字符分页，二进制
-返回类型元数据。旧 `spill.py` 字符串 API 保留兼容，但也使用原子写入及内容校验。
+返回类型元数据。`context/spill.py` 的字符串工具输出使用原子写入及内容校验。
 
 ## 安全异步边界
 

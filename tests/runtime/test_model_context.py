@@ -1,7 +1,7 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from runtime.local.host_gateway import create_app
+from a3_research_agent.host.gateway.app import create_app
 
 
 def test_context_configuration_counts_injected_input_without_model_call(tmp_path):
@@ -35,7 +35,7 @@ def test_context_configuration_counts_injected_input_without_model_call(tmp_path
 
 
 def test_token_counter_is_encoding_count_not_utf8_bytes():
-    from runtime.local.token_count import count_tokens
+    from a3_research_agent.token_count import count_tokens
 
     text = "保留纠正后的事实和未知结果。"
     assert count_tokens(text) == 10

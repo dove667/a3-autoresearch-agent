@@ -2,8 +2,8 @@ import json
 
 import pytest
 
-from runtime.local.run_resume import load_resume_state
-from runtime.local.run_state import RunStateStore
+from a3_research_agent.host.runs.resume import load_resume_state
+from a3_research_agent.host.runs.state import RunStateStore
 
 
 def old_run(tmp_path):

@@ -27,13 +27,13 @@ Version: 0.1.0
 
 使用模拟搜索/HTTP 服务验证请求字段、默认参数、basic 固定选项、结构化结果与安全错误、关闭/未配置状态、共享额度及恢复持久性、并发上限、认证、私有地址与重定向拦截、内容/编码/大小/超时限制及密钥不泄露。回归检查确保已有执行路径与阶段规则不变；本计划不宣称真实网络或实验验收已经通过，不进行真实 Tavily 付费请求。
 
-接口与精确字段统一维护于 [Host 执行说明](../../runtime/local/README.md#研究网页网关)，研究行为维护于 [第二阶段 Prompt](../../configs/prompts/phase-two.md)。[配置指南](../setup.md#可选研究网页网关tavily)给出本机 key 位置；[教程](../tutorial.md#第二阶段按需网页研究)说明使用入口。代码与配置用于下一次经批准的新阶段二 run，不自动应用于当前 run；低频监督及每次反馈、热加载或中断仍按[操作者审批规则](../operator-supervision.md)单独确认。
+接口与精确字段统一维护于 [Host 执行说明](../architecture.md#研究网页网关)，研究行为维护于 [第二阶段 Prompt](../../agent-inputs/shared/protocol.md)。[配置指南](../setup.md#可选研究网页网关tavily)给出本机 key 位置；[教程](../tutorial.md#第二阶段按需网页研究)说明使用入口。代码与配置用于下一次经批准的新阶段二 run，不自动应用于当前 run；低频监督及每次反馈、热加载或中断仍按[操作者审批规则](../operator-supervision.md)单独确认。
 
 ### 本地验证记录
 
 ```bash
 PYTHONPATH=. LITELLM_LOCAL_MODEL_COST_MAP=True MSWEA_SILENT_STARTUP=1 python -m pytest -q .
-ruff check runtime/local tests/runtime
+ruff check src tests
 git diff --check
 ```
 

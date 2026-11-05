@@ -1,4 +1,4 @@
-from runtime.local.comparison_checks import check_comparison
+from a3_research_agent.host.runs.comparisons import check_comparison
 
 
 def result(**changes):

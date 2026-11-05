@@ -1,8 +1,8 @@
 from fastapi.testclient import TestClient
 
-from runtime.local.candidate_versions import CandidateVersions
-from runtime.local.host_gateway import create_app
-from runtime.local.run_state import RunStateStore
+from a3_research_agent.host.gateway.app import create_app
+from a3_research_agent.host.runs.state import RunStateStore
+from a3_research_agent.host.sessions.versions import CandidateVersions
 
 
 class Backend:

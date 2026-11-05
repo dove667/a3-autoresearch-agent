@@ -4,8 +4,8 @@ from copy import deepcopy
 import pytest
 from fastapi.testclient import TestClient
 
-from runtime.local.host_gateway import create_app
-from runtime.local.human_feedback import HumanFeedback
+from a3_research_agent.host.gateway.app import create_app
+from a3_research_agent.host.inputs.feedback import HumanFeedback
 
 
 def register(tmp_path, text="Human repaired the runtime; check the interrupted collection job."):
@@ -152,7 +152,7 @@ def test_failed_provider_response_does_not_mark_feedback_forwarded(tmp_path):
 def test_feedback_cli_rejects_fresh_start_before_deployment_calls(tmp_path, monkeypatch):
     import sys
 
-    from runtime.local import launch
+    from a3_research_agent.host import bootstrap as launch
 
     monkeypatch.setattr(sys, "argv", ["launch", "--feedback-file", str(tmp_path / "feedback.md")])
     monkeypatch.setattr(launch, "load_dotenv", lambda *args, **kwargs: pytest.fail("No deployment"))

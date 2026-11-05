@@ -26,17 +26,6 @@ HARNESS_MODULES = (
     "orchestration/collection.py",
     "orchestration/dispatch.py",
 )
-FLAT_MODULES = {
-    "agent.py": "a3_research_agent.harness.agent",
-    "analyzer_client.py": "a3_research_agent.harness.analysis.client",
-    "compaction.py": "a3_research_agent.harness.context.compaction",
-    "context_manager.py": "a3_research_agent.harness.context.manager",
-    "spill.py": "a3_research_agent.harness.context.spill",
-    "recall.py": "a3_research_agent.harness.memory.recall",
-    "memory_state.py": "a3_research_agent.harness.memory.state",
-    "work_assignments.py": "a3_research_agent.harness.orchestration.assignments",
-    "token_count.py": "a3_research_agent.token_count",
-}
 EXTENSION_NAMES = frozenset({"skill_tools.py", "web_tools.py"})
 
 
@@ -50,7 +39,6 @@ def build_harness_payload(extension_sources: Mapping[str, str] | None = None) ->
     package = Path(__file__).resolve().parents[1]
     sources = {
         "__init__.py": package / "__init__.py",
-        "_compat.py": package / "_compat.py",
         "token_count.py": package / "token_count.py",
         "packaging/__init__.py": package / "packaging/__init__.py",
         "packaging/harness_payload.py": Path(__file__).resolve(),
@@ -61,14 +49,6 @@ def build_harness_payload(extension_sources: Mapping[str, str] | None = None) ->
         if path.is_symlink() or not path.is_file():
             raise ValueError("Missing regular Harness source: " + name)
         files["a3_research_agent/" + name] = path.read_bytes().decode("utf-8")
-    for filename, module in FLAT_MODULES.items():
-        files[filename] = (
-            '"""Flat entry compatibility for an explicitly derived Harness."""\n'
-            "from a3_research_agent._compat import redirect\n"
-            f"_implementation = redirect(__name__, {module!r}, globals())\n"
-        )
-        if filename == "agent.py":
-            files[filename] += '\nif __name__ == "__main__":\n    _implementation.main()\n'
     for name, content in (extension_sources or {}).items():
         if name not in EXTENSION_NAMES or not isinstance(content, str):
             raise ValueError("Only explicitly selected text Harness extensions may be attached")

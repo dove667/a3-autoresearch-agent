@@ -1,5 +1,9 @@
 # Component source layout
 
+The compatibility design below is historical. The source-only completion in the
+[implementation plan](../plans/2026-11-04-src-components.md#source-only-completion-2026-11-05)
+supersedes it: maintained code/resources use the canonical package without legacy adapters.
+
 ## Intent
 
 Move fixed infrastructure and the explicit derived Harness overlay into one installable

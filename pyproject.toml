@@ -30,6 +30,7 @@ include = ["a3_research_agent*"]
 [tool.setuptools.package-data]
 "a3_research_agent.execution.controller" = ["nvidia_egl_vendor.json"]
 "a3_research_agent.execution.images" = ["Dockerfile"]
+"a3_research_agent.host.images" = ["Dockerfile"]
 
 [project.scripts]
 a3-research = "a3_research_agent.cli.launch:main"

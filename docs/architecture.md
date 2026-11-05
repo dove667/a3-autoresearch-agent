@@ -34,7 +34,7 @@ flowchart LR
     Stage2 --> Feedback --> Stage2
 ```
 
-源码按 `host/`、`execution/`、`harness/` 分组件，维护于 `src/a3_research_agent/`。Host 的 Gateway 路由分组绑定同一运行实例，身份注册表、锁及 checkpoint 共享。Controller 保持标准库依赖，Harness 通过 HTTP 边界访问 Host；完整源码载荷由显式清单交付。旧 `runtime/` 路径保留适配入口，详见[目录职责](project-structure.md)。
+源码按 `host/`、`execution/`、`harness/` 分组件，维护于 `src/a3_research_agent/`。Host 的 Gateway 路由分组绑定同一运行实例，身份注册表、锁及 checkpoint 共享。Controller 保持标准库依赖，Harness 通过 HTTP 边界访问 Host；完整源码载荷由显式清单交付。所有入口和导入使用该包，详见[目录职责](project-structure.md)。
 
 ## 四个执行单元怎样配合
 
@@ -206,7 +206,7 @@ Agent 自己保存模型消息、工具调用、实验结果、反思和选择�
 
 `gateway-events.jsonl` 的请求关联号帮助区分等待模型、候选容量和远程调用；当前远程调用耗时包含 SSH 与 Controller 处理，尚未完整分拆依赖加载和计算时段。基础设施健康、进程正常退出、A/B/C/D 验收分别核对，实际完成状态来自目标与原始执行证据。
 
-对应实现为本地 `launch.py`、`host_gateway.py`、`candidate_runtime.py`、`candidate_versions.py`、`continuation.py` 和 `recovery.py`，远程为 `remote_jobs.py`。完整 HTTP 字段见 [Host 执行接口](../agent-inputs/shared/execution.md)。
+Host 实现位于 `src/a3_research_agent/host/`，启动入口位于 `cli/launch.py`；远程作业入口位于 `execution/controller/__main__.py`。完整 HTTP 字段见 [Host 执行接口](../agent-inputs/shared/execution.md)。
 
 父版本选择以显式来源为准。最近运行指针只用于定位启动记录，不定义搜索父节点；多个合法分支之间的选择由外部调用者或 Harness 搜索策略作出。每轮的 retained.json 记录本轮明确选择的对外结果，不代表所有候选之间的全局最优。
 
@@ -249,6 +249,6 @@ Host 把 Agent 在 continuation.json 中声明的 remote_exports 验证后记入
 
 ## 人类反馈与恢复上下文
 
-按 [操作者监督](operator-supervision.md) 获得本次操作所需的用户批准后，人类在修复环境或准备专家建议后，可以用 `--resume-from ... --feedback-file ...` 在恢复时加入反馈，也可以用 `runtime.local.reload_feedback` 在运行期间预览并确认注入。热加载摘要绑定正文与当前主身份，主身份交接后旧确认失效。Host 用版本为 0.1.0 的固定封装生成 user message；源文件可反复覆盖，当次内容以反馈 ID、SHA256、私有副本和事件留档。反馈不改变目标、验收或 Agent 的代码，也不替代已有的版本化输入。
+按 [操作者监督](operator-supervision.md) 获得本次操作所需的用户批准后，人类在修复环境或准备专家建议后，可以用 `--resume-from ... --feedback-file ...` 在恢复时加入反馈，也可以用 `a3_research_agent.cli.reload_feedback` 在运行期间预览并确认注入。热加载摘要绑定正文与当前主身份，主身份交接后旧确认失效。Host 用版本为 0.1.0 的固定封装生成 user message；源文件可反复覆盖，当次内容以反馈 ID、SHA256、私有副本和事件留档。反馈不改变目标、验收或 Agent 的代码，也不替代已有的版本化输入。
 
 Gateway 将反馈绑定到登记时的主身份，在下一次完整历史模型请求末尾建立位置；以后沿相同历史前缀插入同一条反馈。已发出的模型请求与作业继续执行。模型可连续参考这条信息，而 Agent 自己的 checkpoint 和原始历史文件保持原样。上下文压缩后只在完整工具结果边界重新定位，并记录事件。该机制不向普通 worker 广播，不自动关注源文件变化，也不启动额外 Agent。人工反馈的使用须在结果中记录，不能把受人工指导的实验描述为全程无人干预。

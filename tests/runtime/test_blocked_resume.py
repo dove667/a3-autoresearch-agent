@@ -3,9 +3,9 @@ import json
 
 import pytest
 
-from runtime.local import run_resume
-from runtime.local.candidate_runtime import CandidateRuntime
-from runtime.local.run_state import RunStateStore
+from a3_research_agent.host.runs import resume as run_resume
+from a3_research_agent.host.runs.state import RunStateStore
+from a3_research_agent.host.sessions.containers import CandidateRuntime
 
 
 def fixture(tmp_path):
@@ -207,7 +207,7 @@ def fake_docker(monkeypatch, runtime, *, fail_create=False):
 def test_rotated_gateway_token_keeps_scope_and_can_self_stop_again(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
 
-    from runtime.local.host_gateway import create_app
+    from a3_research_agent.host.gateway.app import create_app
 
     run, workspace, state, store, runtime = fixture(tmp_path)
     calls = fake_docker(monkeypatch, runtime)
@@ -368,7 +368,7 @@ def test_partial_transition_failure_is_fenced_before_credential_rotation(tmp_pat
 def test_launch_invalid_checkpoint_stops_before_inputs_gateway_or_workers(tmp_path, monkeypatch):
     from argparse import Namespace
 
-    from runtime.local import launch
+    from a3_research_agent.host import bootstrap as launch
 
     run, workspace, state, store, _runtime = fixture(tmp_path)
     state["model_class"] = "adapter"
@@ -435,7 +435,7 @@ def stopped_after_prior_resume(tmp_path, monkeypatch):
     child["self_stopped"] = True
     state["gateway"]["sessions"].pop(child["token"])
     store.save(state)
-    from runtime.local.run_supervisor import evaluate_outcome
+    from a3_research_agent.host.runs.supervisor import evaluate_outcome
 
     outcome = evaluate_outcome(workspace, ())
     outcome["status"] = "incomplete"
@@ -445,7 +445,7 @@ def stopped_after_prior_resume(tmp_path, monkeypatch):
 
 
 def test_explicit_feedback_unlocks_only_audited_stopped_resume_chain(tmp_path, monkeypatch):
-    from runtime.local.human_feedback import HumanFeedback
+    from a3_research_agent.host.inputs.feedback import HumanFeedback
 
     run, _workspace, state, store, runtime, prior = stopped_after_prior_resume(
         tmp_path, monkeypatch
@@ -478,7 +478,7 @@ def test_explicit_feedback_unlocks_only_audited_stopped_resume_chain(tmp_path, m
     ],
 )
 def test_feedback_cannot_revive_unrelated_or_corrupt_stop(tmp_path, monkeypatch, change):
-    from runtime.local.human_feedback import HumanFeedback
+    from a3_research_agent.host.inputs.feedback import HumanFeedback
 
     run, workspace, state, store, runtime, prior = stopped_after_prior_resume(tmp_path, monkeypatch)
     feedback = HumanFeedback.preview("Repair confirmed; continue E.", "main")
@@ -515,8 +515,8 @@ def test_first_resumed_model_gets_feedback_once_with_all_78_original_items(
 ):
     from fastapi.testclient import TestClient
 
-    from runtime.local.host_gateway import create_app
-    from runtime.local.human_feedback import HumanFeedback
+    from a3_research_agent.host.gateway.app import create_app
+    from a3_research_agent.host.inputs.feedback import HumanFeedback
 
     run, workspace, state, store, runtime, _prior = stopped_after_prior_resume(
         tmp_path, monkeypatch
@@ -609,7 +609,7 @@ def test_first_resumed_model_gets_feedback_once_with_all_78_original_items(
 
 
 def test_feedback_receipt_required_before_restart_mutation(tmp_path, monkeypatch):
-    from runtime.local.human_feedback import HumanFeedback
+    from a3_research_agent.host.inputs.feedback import HumanFeedback
 
     run, _workspace, state, store, runtime, _prior = stopped_after_prior_resume(
         tmp_path, monkeypatch
@@ -625,7 +625,7 @@ def test_feedback_receipt_required_before_restart_mutation(tmp_path, monkeypatch
 
 
 def test_workspace_cannot_claim_unrelated_host_restart_attempt(tmp_path, monkeypatch):
-    from runtime.local.human_feedback import HumanFeedback
+    from a3_research_agent.host.inputs.feedback import HumanFeedback
 
     run, _workspace, state, _store, _runtime, _prior = stopped_after_prior_resume(
         tmp_path, monkeypatch
@@ -643,7 +643,7 @@ def test_launch_rejects_invalid_notification_before_input_or_runtime_mutation(
 ):
     from argparse import Namespace
 
-    from runtime.local import launch
+    from a3_research_agent.host import bootstrap as launch
 
     run, _workspace, state, store, _runtime = fixture(tmp_path)
     state["model_class"] = "adapter"

@@ -7,8 +7,8 @@ import time
 import pytest
 from fastapi.testclient import TestClient
 
-from runtime.local.candidate_runtime import CandidateRuntime
-from runtime.local.host_gateway import create_app
+from a3_research_agent.host.gateway.app import create_app
+from a3_research_agent.host.sessions.containers import CandidateRuntime
 
 
 class DockerFixture:
@@ -34,7 +34,9 @@ class DockerFixture:
             return container
         if operation == "inspect":
             if container not in self.states:
-                from runtime.local.candidate_runtime import CandidateContainerMissingError
+                from a3_research_agent.host.sessions.containers import (
+                    CandidateContainerMissingError,
+                )
 
                 raise CandidateContainerMissingError("Container no longer exists")
             return json.dumps(self.states[container])

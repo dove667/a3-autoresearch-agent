@@ -8,8 +8,8 @@ from copy import deepcopy
 import pytest
 from fastapi.testclient import TestClient
 
-from runtime.local.host_gateway import create_app
-from runtime.local.human_feedback import HumanFeedback
+from a3_research_agent.host.gateway.app import create_app
+from a3_research_agent.host.inputs.feedback import HumanFeedback
 
 OPERATOR = {"Authorization": "Bearer operator-secret"}
 MAIN = {"Authorization": "Bearer main-token"}
@@ -96,7 +96,7 @@ def test_invalid_feedback_has_no_side_effects(tmp_path, text):
 
 
 def test_main_change_invalidates_feedback_confirmation(tmp_path, monkeypatch):
-    from runtime.local import host_gateway
+    from a3_research_agent.host.gateway import app as host_gateway
 
     captured = []
     original = host_gateway.EvolutionState
@@ -196,8 +196,8 @@ def test_inflight_call_finishes_before_feedback_reaches_next_call(tmp_path):
 
 
 def test_cli_preview_and_explicit_confirmation(tmp_path, monkeypatch, capsys):
-    from runtime.local import reload_feedback
-    from runtime.local.run_state import RunStateStore
+    from a3_research_agent.cli import reload_feedback
+    from a3_research_agent.host.runs.state import RunStateStore
 
     api, feedback, _ = setup(tmp_path)
     run = tmp_path / "run"

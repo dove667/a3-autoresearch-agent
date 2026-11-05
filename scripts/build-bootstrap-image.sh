@@ -15,7 +15,7 @@ import shutil
 import sys
 import subprocess
 root, context = map(Path, sys.argv[1:])
-shutil.copy2(root / 'runtime/local/Dockerfile', context / 'Dockerfile')
+shutil.copy2(root / 'src/a3_research_agent/host/images/Dockerfile', context / 'Dockerfile')
 mini = root / 'third_party/mini-swe-agent'
 files = subprocess.check_output(['git', '-C', str(mini), 'ls-files', '-z',
                                  '--cached', '--others', '--exclude-standard']).decode().split('\0')

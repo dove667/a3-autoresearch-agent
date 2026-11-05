@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from runtime.local.input_versions import InputVersions, input_sources
+from a3_research_agent.host.inputs.versions import InputVersions, input_sources
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -23,8 +23,8 @@ class PromptResponsibilitiesTests(unittest.TestCase):
             for path in sources.values():
                 text = read(path)
                 for forbidden in (
-                    "runtime.local.reload_inputs",
-                    "runtime.local.reload_feedback",
+                    "a3_research_agent.cli.reload_inputs",
+                    "a3_research_agent.cli.reload_feedback",
                     "外部观察者不在运行中提供策略",
                     "运行中不接受人工评估标签或策略注入",
                     "外部观察者在运行中只观察",
@@ -48,7 +48,7 @@ class PromptResponsibilitiesTests(unittest.TestCase):
                     self.assertIn(read("agent-inputs/shared/protocol.md"), instructions)
                 self.assertNotIn("每次热加载或中断前", instructions)
                 self.assertNotIn("父助手先说明目标 run", instructions)
-                self.assertNotIn("runtime.local.reload_feedback", instructions)
+                self.assertNotIn("a3_research_agent.cli.reload_feedback", instructions)
 
     def test_feedback_is_agent_action_not_operator_approval(self):
         for phase in ("phase-one", "phase-two"):
@@ -75,8 +75,8 @@ class PromptResponsibilitiesTests(unittest.TestCase):
             "每次热加载或中断前",
             "用户明确批准",
             "低频",
-            "runtime.local.reload_inputs",
-            "runtime.local.reload_feedback",
+            "a3_research_agent.cli.reload_inputs",
+            "a3_research_agent.cli.reload_feedback",
             "--confirm",
         ):
             self.assertIn(required, operator)

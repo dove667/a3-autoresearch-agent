@@ -13,8 +13,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from fastapi.testclient import TestClient
 from test_orchestration_pipeline import ProcessSandbox
 
-from runtime.local.candidate_versions import CandidateVersions
-from runtime.local.host_gateway import create_app
+from a3_research_agent.host.gateway.app import create_app
+from a3_research_agent.host.sessions.versions import CandidateVersions
 
 
 def test_agent_tools_assemble_and_execute_without_a_files_payload(tmp_path):
@@ -178,7 +178,8 @@ def test_agent_tools_assemble_and_execute_without_a_files_payload(tmp_path):
                 json={
                     "command": [
                         "python",
-                        "agent.py",
+                        "-m",
+                        "a3_research_agent.harness.agent",
                         "--resume",
                         "--worker-task",
                         "worker-task.json",

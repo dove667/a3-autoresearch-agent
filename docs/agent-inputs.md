@@ -9,7 +9,7 @@ Version: 0.6.4
 已有 `--run-harness` 可以把任意有效的 ready 保留包用于新的任务，不需要为每个任务增加 E/F profile 或专用启动入口：
 
 ```bash
-python -m runtime.local.launch \
+python -m a3_research_agent.host.bootstrap \
   --run-harness artifacts/rsi/<来源-run-id> \
   --agent-inputs-dir /absolute/path/to/my-task-inputs
 ```
@@ -61,7 +61,7 @@ cp agent-inputs/shared/workspace.md "$inputs/workspace-instructions.md"
 确认当次来源、模型和预算后，将该目录交给既有启动命令：
 
 ```bash
-python -m runtime.local.launch \
+python -m a3_research_agent.host.bootstrap \
   --run-harness artifacts/rsi/<选定的-F-run-id> \
   --agent-inputs-dir "$inputs"
 ```
@@ -89,7 +89,7 @@ SOUL 只保留主 Agent 协调、方向、派发和判断，Policy/Harness worke
 | 本文件 / [教程](tutorial.md) | 维护者 / 用户：输入装载、版本、使用入口 | 新增科学验收门槛 |
 | [operator-supervision.md](operator-supervision.md) | 用户 / 父助手 / 操作者：低频弱监督、每次干预的批准与执行核对 | 作为 Agent input 或替 Agent 做验收 |
 
-源码统一位于 `agent-inputs/`，容器内文件名保持不变：SOUL + goal + acceptance，第一阶段另加任务 Prompt，第二阶段另加 protocol，直接进入主身份/接任候选模型请求；execution 等其余输入保持 `/run/input` 可读。不是仅给模型链接而拿走规则正文。普通 worker 仍由主 Agent 提供任务。`docs/` 下操作者文档不加入 `runtime/local/input_versions.py` 清单，也不注入 Agent 请求；SOUL 的装载链有离线回归覆盖；是否实际采用仍以对应运行的输入版本和模型调用记录为准。
+源码统一位于 `agent-inputs/`，容器内文件名保持不变：SOUL + goal + acceptance，第一阶段另加任务 Prompt，第二阶段另加 protocol，直接进入主身份/接任候选模型请求；execution 等其余输入保持 `/run/input` 可读。不是仅给模型链接而拿走规则正文。普通 worker 仍由主 Agent 提供任务。`docs/` 下操作者文档不加入 `src/a3_research_agent/host/inputs/versions.py` 清单，也不注入 Agent 请求；SOUL 的装载链有离线回归覆盖；是否实际采用仍以对应运行的输入版本和模型调用记录为准。
 
 目录结构见 [统一输入目录](../agent-inputs/README.md)。早期目录统一迁移仅改路径并将 execution 递增到 0.8.2；这是历史迁移说明。当前第二阶段已移除单独 instructions，protocol 迁入 shared 但只在该阶段加载，各输入按实际改动独立递增版本。源路径进入 manifest 摘要，因此启动／恢复时产生新 revision；历史 run 的 manifest、input-revisions 与旧源路径记录不追改。`docs/plans/` 保留当时设计与路径，不作为当前加载映射；当前映射以本页和 `input_versions.py` 为准。
 
@@ -121,7 +121,7 @@ SOUL 与 Prompt 发布只提供行为指导，不能证明实际 Agent 已创建
 
 Markdown 在标题之后写 `Version: 0.1.0`；YAML 顶层写 `version: 0.1.0`。这些版本独立维护。任何内容修改都需要递增：兼容性文字修正递增 patch，例如 `0.1.0 → 0.1.1`；能力、协议或验收变化通常递增 minor；不兼容重构递增 major。版本号与 SHA256 同时记录。同一 run 见过的同名同版本文件若内容变化，加载会被拒绝，须先修正版本号。
 
-新增直接发给 Agent 的文件时，添加明确版本，并将其加入 `runtime/local/input_versions.py` 的输入清单。专项 Harness 自己生成的任务、记忆和提示词由 Agent 管理，本规则约束部署方发布的输入。
+新增直接发给 Agent 的文件时，添加明确版本，并将其加入 `src/a3_research_agent/host/inputs/versions.py` 的输入清单。专项 Harness 自己生成的任务、记忆和提示词由 Agent 管理，本规则约束部署方发布的输入。
 
 ## 启动与恢复记录
 

@@ -8,29 +8,15 @@ import contextlib
 import json
 import os
 import pathlib
-import sys
 import tempfile
 import threading
 import time
 
 import pytest
-from harness_sources import HarnessSources
 
-SOURCE = HarnessSources(
-    pathlib.Path(
-        os.environ.get(
-            "HARNESS_SOURCE",
-            str(pathlib.Path(__file__).resolve().parents[2] / "runtime/harness_recovery"),
-        )
-    )
-)
-if str(SOURCE) not in sys.path:
-    sys.path.insert(0, str(SOURCE))
-
-import compaction
-import context_manager as cm
-import recall
-import spill
+from a3_research_agent.harness.context import compaction, spill
+from a3_research_agent.harness.context import manager as cm
+from a3_research_agent.harness.memory import recall
 
 SECTIONS = compaction.SECTION_TITLES
 GOOD_SUMMARY = "\n".join(f"## {title}\n- point" for title in SECTIONS)

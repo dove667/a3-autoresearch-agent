@@ -10,7 +10,7 @@ import pytest
 from PIL import Image, PngImagePlugin
 from pydantic import ValidationError
 
-from runtime.local.vision_media import prepare_vision_request
+from a3_research_agent.host.models.vision import prepare_vision_request
 
 JOB = "a" * 32
 
@@ -235,7 +235,7 @@ def test_reencoding_strips_metadata_and_appended_bytes():
 
 
 def test_permission_and_symlink_rejection_remain_reader_owned(tmp_path):
-    from runtime.local.candidate_runtime import workspace_path
+    from a3_research_agent.host.sessions.containers import workspace_path
 
     outside = tmp_path / "outside.png"
     outside.write_bytes(picture())
@@ -258,7 +258,7 @@ def test_permission_and_symlink_rejection_remain_reader_owned(tmp_path):
 
 
 def test_total_limit_is_enforced_independently_of_per_frame_limit(monkeypatch):
-    from runtime.local import vision_media
+    from a3_research_agent.host.models import vision as vision_media
 
     raw = picture()
     monkeypatch.setattr(vision_media, "MAX_TOTAL_BYTES", len(raw) * 2 - 1)

@@ -48,7 +48,7 @@ submitted code in the coordinator. See [prepared validation](prepared-worker-val
 for the explicit contract and evidence limits.
 
 These are independent operations, not a required sequence for every coordination action.
-A worker runs `python agent.py --resume --worker-task worker-task.json`. Its own completion
+A worker runs `python -m a3_research_agent.harness.agent --resume --worker-task worker-task.json`. Its own completion
 contract is worker-result.json, not the entire run's acceptance. Resume/continuation preserves
 that entry command; reports remain claims for the main Agent to evaluate. Reports accept only the declared fields,
 with a text summary of at most 4000 characters; detailed logs belong in hashed evidence files.

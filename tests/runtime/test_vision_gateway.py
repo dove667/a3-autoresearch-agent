@@ -8,8 +8,8 @@ import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
 
-from runtime.local.host_gateway import create_app
-from runtime.local.human_feedback import HumanFeedback
+from a3_research_agent.host.gateway.app import create_app
+from a3_research_agent.host.inputs.feedback import HumanFeedback
 
 
 def request_body():

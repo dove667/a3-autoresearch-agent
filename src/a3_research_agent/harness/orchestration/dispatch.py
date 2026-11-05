@@ -96,7 +96,14 @@ def dispatch(req, arguments):
             "POST",
             "/sessions",
             {
-                "command": ["python", "agent.py", "--resume", "--worker-task", "worker-task.json"],
+                "command": [
+                    "python",
+                    "-m",
+                    "a3_research_agent.harness.agent",
+                    "--resume",
+                    "--worker-task",
+                    "worker-task.json",
+                ],
                 "files": files,
                 "purpose": "worker",
                 "read_only_exports": task["read_only_exports"],

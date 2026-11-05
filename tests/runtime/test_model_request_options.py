@@ -3,7 +3,7 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
-from runtime.local.host_gateway import create_app
+from a3_research_agent.host.gateway.app import create_app
 
 
 def test_operator_options_apply_to_decisions_summaries_and_workers(tmp_path):

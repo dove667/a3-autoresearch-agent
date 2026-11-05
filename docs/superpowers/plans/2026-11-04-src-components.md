@@ -2,9 +2,12 @@
 
 > **For agentic workers:** Use superpowers:executing-plans for integration; component work may be delegated with exclusive file ownership. Verify each task before local commit.
 
-**Goal:** Deliver an installable component-oriented source tree with compatible legacy entry points and complete execution payloads.
+**Goal:** Deliver one installable component-oriented source tree and complete package-only execution payloads.
 
-**Architecture:** Single src package, Host/Controller/Harness dependency boundaries, explicit payload assembly and legacy adapters. Keep persisted formats unchanged.
+**Architecture:** Single src package, Host/Controller/Harness dependency boundaries and explicit payload assembly. Current entry points use the canonical package. Keep persisted formats unchanged.
+
+The initial compatibility tasks below record the first migration. The source-only
+completion at the end supersedes their legacy-entry decisions.
 
 **Tech Stack:** Existing Python, setuptools, pytest, Ruff, FastAPI and standard-library Controller.
 
@@ -98,3 +101,33 @@ Ruff, formatting and diff checks pass. Independent read-only review found no
 substantive issue and independently reran the five single-pass checks. Tests use
 offline callbacks and validate transport/state behavior, not semantic summary quality.
 Production remains unchanged at `f2b83b9`; no push, deployment or experiment changes.
+
+## Source-only completion (2026-11-05)
+
+The source-only layout supersedes the earlier compatibility design. All maintained
+Python implementations and deployment resources live under `src/a3_research_agent/`.
+Historical run artifacts remain unchanged. No commit, push, deployment, or live-run
+restart is included.
+
+- [x] Replace legacy imports and test source resolvers with canonical package paths.
+- [x] Run Host CLI and Controller processes through canonical entry points; keep the
+  Controller standalone standard-library entry for SSH and watcher/sealer processes.
+- [x] Export package-only Harness payloads, launch through `python -m`, and remove
+  flat wrappers and `_compat.py`; verify worker delivery and recovery commands.
+- [x] Move bootstrap Dockerfile and deployment documentation to their component
+  owners, remove duplicate resources and the complete `runtime/` tree.
+- [x] Update public configuration, current documentation and versioned Agent input
+  references, incrementing modified Agent input versions.
+- [x] Verify wheel/sdist contents, isolated subprocess entry points, complete offline
+  tests, formatting, lint, links and final independent review.
+
+
+Final source-only verification: **1,144 tests passed in 68.31s**. Independent
+review reran 101 Controller/package checks; no unresolved findings remain.
+Wheel/sdist builds, clean installation, package-only worker execution and child
+payload re-export pass. Ruff, 191-file formatting, shell syntax, changed-document
+local links and diff checks pass. Removed 47 tracked runtime entries, `_compat.py`,
+and the test-only Controller aggregation facade. Bootstrap container resources
+are included in the package. No injected Agent input changed; its README navigation
+was updated. Historical fixtures, run archives, personal deployment configuration
+and live processes remain unchanged. No commit, push or remote deployment performed.

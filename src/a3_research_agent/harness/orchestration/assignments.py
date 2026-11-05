@@ -1,4 +1,4 @@
-"""Compatibility-facing worker API; implementations live in focused modules."""
+"""Worker coordination API across focused orchestration components."""
 
 from a3_research_agent.harness.orchestration.collection import (
     artifact,

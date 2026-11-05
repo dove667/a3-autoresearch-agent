@@ -9,18 +9,16 @@ import threading
 
 import pytest
 from fastapi.testclient import TestClient
-from harness_sources import HarnessSources
 
-from runtime.local.host_gateway import create_app
-from runtime.local.human_feedback import HumanFeedback
+from a3_research_agent.host.gateway.app import create_app
+from a3_research_agent.host.inputs.feedback import HumanFeedback
 
-SOURCE = HarnessSources(pathlib.Path(__file__).resolve().parents[2] / "runtime/harness_recovery")
+SOURCE = pathlib.Path(__file__).resolve().parents[2] / "src/a3_research_agent/harness"
 
 
 @pytest.fixture
 def modules(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.syspath_prepend(str(SOURCE))
     loaded = {}
     canonical = {
         "context_manager": "a3_research_agent.harness.context.manager",
@@ -31,10 +29,12 @@ def modules(tmp_path, monkeypatch):
     for name, target in canonical.items():
         parent_name, attribute = target.rsplit(".", 1)
         parent = importlib.import_module(parent_name)
-        spec = importlib.util.spec_from_file_location(target, SOURCE / (name + ".py"))
+        spec = importlib.util.spec_from_file_location(
+            target,
+            SOURCE / (target.removeprefix("a3_research_agent.harness.").replace(".", "/") + ".py"),
+        )
         module = importlib.util.module_from_spec(spec)
         monkeypatch.setitem(sys.modules, target, module)
-        monkeypatch.setitem(sys.modules, name, module)
         monkeypatch.setattr(parent, attribute, module, raising=False)
         spec.loader.exec_module(module)
         loaded[name] = module
@@ -312,7 +312,7 @@ def test_history_repairs_torn_tail_preserves_duplicate_occurrences_and_checks_so
 def test_real_token_host_budget_includes_tools_and_operational_frame(
     modules, tmp_path, monkeypatch
 ):
-    from runtime.local import token_count
+    from a3_research_agent import token_count
 
     monkeypatch.setitem(sys.modules, "token_count", token_count)
     calls = []

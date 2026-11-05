@@ -105,7 +105,7 @@ def test_untrusted_package_cannot_change_contract(tmp_path, monkeypatch, mutatio
     elif mutation == "exports":
         data["task"]["read_only_exports"] = ["export-" + "b" * 32]
     elif mutation == "source_hash":
-        data["files"]["agent.py"] += "changed"
+        data["files"]["a3_research_agent/harness/agent.py"] += "changed"
     elif mutation in {"extra_file", "private_path", "alias_path"}:
         path = {
             "extra_file": "unrequested.json",
@@ -120,7 +120,7 @@ def test_untrusted_package_cannot_change_contract(tmp_path, monkeypatch, mutatio
     elif mutation == "module_hash":
         data["module_sha256"] = "0" * 64
     elif mutation == "missing_core":
-        del data["files"]["agent.py"]
+        del data["files"]["a3_research_agent/harness/agent.py"]
     else:
         data["task"]["token"] = "untrusted"
     refresh(m, tmp_path, request, data)
@@ -189,8 +189,6 @@ def test_preparer_runs_as_separate_process_without_main_environment(tmp_path, mo
     import subprocess
     import sys
 
-    from test_work_assignments import ROOT
-
     m, request, envelope = prepared_fixture(tmp_path, monkeypatch)
     from a3_research_agent.packaging.harness_payload import build_harness_payload
 
@@ -204,12 +202,11 @@ def test_preparer_runs_as_separate_process_without_main_environment(tmp_path, mo
         target.write_text(content)
     source = tmp_path / request["module_path"]
     source.write_text(
-        "import importlib.util, os\n"
-        f'spec = importlib.util.spec_from_file_location("isolated_package", {str(ROOT / "work_assignments.py")!r})\n'
-        "module = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(module)\n"
+        "import os\n"
+        "from a3_research_agent.harness.orchestration.packages import worker_package as prepare\n"
         "def worker_package(arguments, *, coordinator_session_id):\n"
         '    assert "A3_MAIN_ONLY_TEST_SECRET" not in os.environ\n'
-        "    return module.worker_package(arguments, coordinator_session_id=coordinator_session_id)\n"
+        "    return prepare(arguments, coordinator_session_id=coordinator_session_id)\n"
     )
     request["module_sha256"] = m.digest(source.read_bytes())
     args_file = tmp_path / "research/args.json"
@@ -226,7 +223,7 @@ output.write_text(json.dumps({'version':1,'module_sha256':hashlib.sha256(source.
     subprocess.run(
         [sys.executable, "-c", script, str(source), str(args_file), request["package_path"]],
         cwd=tmp_path,
-        env={"PATH": os.defpath, "PYTHONPATH": str(ROOT)},
+        env={"PATH": os.defpath},
         check=True,
         capture_output=True,
         timeout=10,

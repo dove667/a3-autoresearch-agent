@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from runtime.remote import prepare_image
+from a3_research_agent.execution.images import prepare as prepare_image
 
 
 def reference_project(project: Path) -> dict[str, bytes]:
@@ -133,6 +133,6 @@ def test_source_revision_preserves_real_commit_without_private_git_config(tmp_pa
 
 
 def test_remote_dockerfile_provides_git_for_unprivileged_readonly_jobs():
-    dockerfile = Path("runtime/remote/Dockerfile").read_text()
+    dockerfile = Path("src/a3_research_agent/execution/images/Dockerfile").read_text()
     assert "git" in dockerfile.split("apt-get install", 1)[1].split("&&", 1)[0].split()
     assert "safe.directory /opt/a3" in dockerfile

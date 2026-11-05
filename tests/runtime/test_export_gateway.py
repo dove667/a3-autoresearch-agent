@@ -5,10 +5,11 @@ from argparse import Namespace
 import pytest
 from fastapi.testclient import TestClient
 
-from runtime.local.candidate_versions import CandidateVersions
-from runtime.local.host_gateway import create_app
-from runtime.remote import remote_jobs
-from runtime.remote.readonly_exports import ReadonlyExports
+from a3_research_agent.execution.controller import store as job_store
+from a3_research_agent.execution.exports import operations as job_exports
+from a3_research_agent.execution.exports.readonly import ReadonlyExports
+from a3_research_agent.host.gateway.app import create_app
+from a3_research_agent.host.sessions.versions import CandidateVersions
 
 
 class Sandbox:
@@ -34,7 +35,7 @@ class Sandbox:
 
 
 def setup(tmp_path):
-    store = remote_jobs.JobStore(tmp_path / "remote")
+    store = job_store.JobStore(tmp_path / "remote")
     job = store.create("main", ["true"], False, {}, run_id="run-one")
     (store.outputs(job) / "weights.bin").write_bytes(b"\x00\xff" * 4096)
     exports = ReadonlyExports(store.root)
@@ -47,7 +48,7 @@ def setup(tmp_path):
 
     def remote(operation, request):
         try:
-            return remote_jobs.export_operation(store, request, Namespace(operation=operation))
+            return job_exports.export_operation(store, request, Namespace(operation=operation))
         except (PermissionError, ValueError) as error:
             return {"status": "error", "error": type(error).__name__}
 
@@ -182,7 +183,7 @@ def test_worker_can_explicitly_deliver_and_delete_its_own_binary_result(tmp_path
         client.get(f"/jobs/exports/{record['export_id']}", headers=auth("main-token")).status_code
         == 200
     )
-    monkeypatch.setattr(remote_jobs, "active_jobs", lambda store, **kwargs: [])
+    monkeypatch.setattr(job_exports, "active_jobs", lambda store, **kwargs: [])
     assert (
         client.delete(
             f"/jobs/exports/{record['export_id']}", headers=auth(backend.tokens[child])

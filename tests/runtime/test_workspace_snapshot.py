@@ -1,7 +1,7 @@
 import json
 import subprocess
 
-from runtime.local.launch import snapshot_checkout
+from a3_research_agent.host.bootstrap import snapshot_checkout
 
 
 def make_repository(path):
@@ -93,7 +93,7 @@ def test_snapshot_preserves_deleted_tracked_files(tmp_path):
 
 
 def test_recovery_preserves_generated_code_and_evidence_without_old_auth(tmp_path):
-    from runtime.local.recovery import stage_recovery
+    from a3_research_agent.host.runs.recovery import stage_recovery
 
     previous = tmp_path / "previous"
     (previous / "workspace/run").mkdir(parents=True)
@@ -145,7 +145,7 @@ def test_recovery_preserves_generated_code_and_evidence_without_old_auth(tmp_pat
 
 
 def test_recovery_survives_partial_root_and_child_trajectories(tmp_path):
-    from runtime.local.recovery import stage_recovery
+    from a3_research_agent.host.runs.recovery import stage_recovery
 
     previous = tmp_path / "previous"
     (previous / "workspace/run").mkdir(parents=True)
@@ -177,7 +177,7 @@ def test_recovery_survives_partial_root_and_child_trajectories(tmp_path):
 def test_recovery_sanitizes_model_logs_inside_base64_artifacts(tmp_path):
     import base64
 
-    from runtime.local.recovery import stage_recovery
+    from a3_research_agent.host.runs.recovery import stage_recovery
 
     previous = tmp_path / "previous"
     source = previous / "workspace/run"
@@ -211,7 +211,7 @@ def test_recovery_sanitizes_model_logs_inside_base64_artifacts(tmp_path):
 
 
 def test_recovery_preserves_ancestor_binary_evidence_across_private_inputs(tmp_path):
-    from runtime.local.recovery import stage_recovery
+    from a3_research_agent.host.runs.recovery import stage_recovery
 
     first = tmp_path / "first"
     old_data = first / "workspace/run/memory.db"

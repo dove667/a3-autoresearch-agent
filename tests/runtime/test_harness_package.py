@@ -3,8 +3,8 @@ import json
 
 import pytest
 
-from runtime.local.harness_package import load_harness_package
-from runtime.local.recovery import stage_recovery
+from a3_research_agent.host.runs.recovery import stage_recovery
+from a3_research_agent.host.sessions.packages import load_harness_package
 
 
 def test_package_loads_only_explicitly_selected_files(tmp_path):
@@ -44,7 +44,7 @@ def test_recovery_follows_only_host_managed_candidate_workspace_link(tmp_path):
 
 
 def test_retained_run_resumes_via_current_bootstrap_and_exports_prior_candidates(tmp_path):
-    from runtime.local.launch import ROOT, bootstrap_source
+    from a3_research_agent.host.bootstrap import ROOT, bootstrap_source
 
     retained = tmp_path / "retained"
     retained.mkdir()

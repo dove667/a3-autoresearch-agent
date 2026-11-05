@@ -12,13 +12,23 @@ import threading
 import types
 
 import pytest
-from harness_sources import HarnessSources
 
-SOURCE = HarnessSources(pathlib.Path(__file__).resolve().parents[2] / "runtime/harness_recovery")
+SOURCE = pathlib.Path(__file__).resolve().parents[2] / "src/a3_research_agent/harness"
 
 
 def load(name):
-    spec = importlib.util.spec_from_file_location("boundary_" + name, SOURCE / (name + ".py"))
+    spec = importlib.util.spec_from_file_location(
+        "boundary_" + name,
+        SOURCE
+        / (
+            {
+                "context_manager": "context/manager.py",
+                "memory_state": "memory/state.py",
+                "spill": "context/spill.py",
+                "recall": "memory/recall.py",
+            }[name]
+        ),
+    )
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -296,7 +306,6 @@ def test_irreducible_envelope_is_a_bounded_failure_not_lost_calls(tmp_path, monk
 
 def test_binary_read_reports_type_without_generic_execution_failure(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.syspath_prepend(str(SOURCE))
     state = load("memory_state")
     raw = b"\x89PNG\xff\0" * 20
     pathlib.Path("image.bin").write_bytes(raw)
@@ -307,7 +316,6 @@ def test_binary_read_reports_type_without_generic_execution_failure(tmp_path, mo
 
 def test_read_receipt_recovery_is_idempotent_and_can_mark_delivery(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.syspath_prepend(str(SOURCE))
     state = load("memory_state")
     page = {
         "path": "facts.txt",
@@ -329,7 +337,6 @@ def test_read_receipt_recovery_is_idempotent_and_can_mark_delivery(tmp_path, mon
 
 def test_raw_read_journal_rebuilds_receipt_before_model_delivery(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.syspath_prepend(str(SOURCE))
     cm, state = load("context_manager"), load("memory_state")
     base = [{"role": "user", "content": "task"}]
     cm.atomic("checkpoint.json", json.dumps(base))
@@ -394,7 +401,6 @@ def test_decoded_artifact_recovery_regenerates_missing_derived_file(tmp_path, mo
 
 def test_text_paging_streams_source_and_bounds_final_escaped_envelope(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.syspath_prepend(str(SOURCE))
     state = load("memory_state")
     text = '中文🙂\0\\"' * 10000
     pathlib.Path("large.txt").write_text(text)

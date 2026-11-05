@@ -5,8 +5,8 @@ import threading
 import pytest
 from fastapi.testclient import TestClient
 
-from runtime.local.host_gateway import create_app
-from runtime.local.input_versions import InputVersions, input_sources
+from a3_research_agent.host.gateway.app import create_app
+from a3_research_agent.host.inputs.versions import InputVersions, input_sources
 
 INPUT_SOURCES = input_sources("phase-one")
 
@@ -140,8 +140,8 @@ def test_inflight_model_response_keeps_its_version_while_next_call_uses_update(t
 
 
 def test_cli_preview_warns_without_loading_and_confirmation_applies(tmp_path, monkeypatch, capsys):
-    from runtime.local import reload_inputs
-    from runtime.local.run_state import RunStateStore
+    from a3_research_agent.cli import reload_inputs
+    from a3_research_agent.host.runs.state import RunStateStore
 
     client, versions, _ = setup(tmp_path)
     RunStateStore(versions.run).save(
@@ -333,8 +333,8 @@ def test_custom_source_digest_binds_directory_even_for_identical_contents(tmp_pa
 def test_reload_cli_selects_custom_directory_without_replacing_history(
     tmp_path, monkeypatch, capsys
 ):
-    from runtime.local import reload_inputs
-    from runtime.local.run_state import RunStateStore
+    from a3_research_agent.cli import reload_inputs
+    from a3_research_agent.host.runs.state import RunStateStore
 
     client, versions, replacement, _ = custom_setup(tmp_path)
     RunStateStore(versions.run).save(

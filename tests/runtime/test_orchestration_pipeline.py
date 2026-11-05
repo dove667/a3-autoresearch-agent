@@ -18,14 +18,13 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-from harness_sources import HarnessSources
 
-from runtime.local.candidate_runtime import CandidateRuntime
-from runtime.local.candidate_versions import CandidateVersions
-from runtime.local.host_gateway import create_app
+from a3_research_agent.host.gateway.app import create_app
+from a3_research_agent.host.sessions.containers import CandidateRuntime
+from a3_research_agent.host.sessions.versions import CandidateVersions
 
 ROOT = Path(__file__).resolve().parents[2]
-CORE = HarnessSources(ROOT / "runtime/harness_recovery")
+CORE = ROOT / "src/a3_research_agent/harness"
 OLD_MAIN = "OLD-MAIN-CONVERSATION-MUST-NOT-ENTER-WORKER"
 WORKER_MODEL = "chatgpt/gpt-6.1-sol"
 
@@ -134,9 +133,8 @@ def pipeline(tmp_path, monkeypatch, request):
     main = tmp_path / "main"
     main.mkdir()
     monkeypatch.chdir(main)
-    monkeypatch.syspath_prepend(str(CORE))
     spec = importlib.util.spec_from_file_location(
-        "pipeline_assignments", CORE / "work_assignments.py"
+        "pipeline_assignments", CORE / "orchestration/assignments.py"
     )
     assignments = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(assignments)

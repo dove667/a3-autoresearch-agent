@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from runtime.local.run_supervisor import RunSupervisor, evaluate_outcome
+from a3_research_agent.host.runs.supervisor import RunSupervisor, evaluate_outcome
 
 
 def complete_result(workspace):

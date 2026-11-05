@@ -4,21 +4,15 @@ import importlib.util
 import itertools
 import json
 import pathlib
-import sys
 import threading
 
 import pytest
-from harness_sources import HarnessSources
 
 
 def load_client(monkeypatch):
-    root = HarnessSources(pathlib.Path(__file__).resolve().parents[2] / "runtime/harness_recovery")
-    spec = importlib.util.spec_from_file_location("context_manager", root / "context_manager.py")
-    context = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(context)
-    monkeypatch.setitem(sys.modules, "context_manager", context)
+    root = pathlib.Path(__file__).resolve().parents[2] / "src/a3_research_agent/harness"
     spec = importlib.util.spec_from_file_location(
-        "analyzer_client_test", root / "analyzer_client.py"
+        "analyzer_client_test", root / "analysis/client.py"
     )
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)

@@ -4,9 +4,9 @@ import json
 
 from fastapi.testclient import TestClient
 
-from runtime.local.host_gateway import create_app
-from runtime.local.human_feedback import HumanFeedback
-from runtime.local.run_state import RunStateStore
+from a3_research_agent.host.gateway.app import create_app
+from a3_research_agent.host.inputs.feedback import HumanFeedback
+from a3_research_agent.host.runs.state import RunStateStore
 
 
 def client(tmp_path, feedback, store=None):
@@ -106,7 +106,7 @@ def test_interrupted_analyzer_at_restart_is_pending_without_new_model_call(tmp_p
 
 
 def test_analysis_response_and_timestamps_do_not_self_generate_new_event():
-    from runtime.local.wait_signals import snapshot
+    from a3_research_agent.host.gateway.wait_signals import snapshot
 
     record = {"owner": "main", "analysis_id": "report", "status": "completed"}
     before = snapshot("main", is_main=True, manifest={}, feedback=[], analysis=[record])

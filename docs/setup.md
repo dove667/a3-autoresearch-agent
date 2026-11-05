@@ -54,7 +54,7 @@ a3-sim smoke --steps 20
 
 Linux 无显示器环境可按仿真项目要求设置 `MUJOCO_GL=egl`，并单独验证相机输出。执行 Agent 生成的候选代码前，按[冷启动规划](plans/2026-10-29-a3-harness-cold-start.md)准备容器与可写目录。宿主环境、容器环境和渲染链路分别验收。
 
-远程镜像的构建与验证见[执行端部署](../runtime/remote/README.md)。镜像应包含与 A3 源码一起准备的公共 `docs/` 和 `examples/`。远程作业从 `/workspace` 执行，文档里的 `examples/...` 需改用 `/opt/a3/examples/...` 绝对路径，或采用文档提供的完整 Python 模块入口。部署检查应同时确认参考文件存在、评测入口的 `--help` 可运行；这项环境检查不代表 Policy 实验验收通过。
+远程镜像的构建与验证见[执行端部署](remote-execution.md)。镜像应包含与 A3 源码一起准备的公共 `docs/` 和 `examples/`。远程作业从 `/workspace` 执行，文档里的 `examples/...` 需改用 `/opt/a3/examples/...` 绝对路径，或采用文档提供的完整 Python 模块入口。部署检查应同时确认参考文件存在、评测入口的 `--help` 可运行；这项环境检查不代表 Policy 实验验收通过。
 
 ## 本地配置与运行产物
 
@@ -63,7 +63,7 @@ Linux 无显示器环境可按仿真项目要求设置 `MUJOCO_GL=egl`，并单�
 
 ### 执行端 CPU、内存与临时文件
 
-通过 `.env` 的 `A3_REMOTE_CPUS`、`A3_REMOTE_MEMORY`、`A3_REMOTE_PIDS_LIMIT` 配置单作业限额，默认分别为16 CPU、64 GiB、1024个进程与线程，不使用额外swap。`A3_REMOTE_TMP_ROOT` 应指向执行服务器的数据盘；未设置时使用该服务器的 `TMPDIR`。作业内使用 `/job-tmp` 及标准临时目录环境变量，`/tmp`保持只读。临时文件计入run存储额度并在退出后删除，checkpoint和长期产物应写入持久工作区或输出目录。配置在新建作业时生效，详情见[远程执行](../runtime/remote/README.md)。
+通过 `.env` 的 `A3_REMOTE_CPUS`、`A3_REMOTE_MEMORY`、`A3_REMOTE_PIDS_LIMIT` 配置单作业限额，默认分别为16 CPU、64 GiB、1024个进程与线程，不使用额外swap。`A3_REMOTE_TMP_ROOT` 应指向执行服务器的数据盘；未设置时使用该服务器的 `TMPDIR`。作业内使用 `/job-tmp` 及标准临时目录环境变量，`/tmp`保持只读。临时文件计入run存储额度并在退出后删除，checkpoint和长期产物应写入持久工作区或输出目录。配置在新建作业时生效，详情见[远程执行](remote-execution.md)。
 
 ## 可选研究网页网关（Tavily）
 
@@ -124,8 +124,8 @@ a3-research --project-root /path/to/infrastructure-checkout --check
 ```bash
 PYTHON_DOTENV_DISABLED=1 MSWEA_GLOBAL_CONFIG_DIR=/tmp/a3-test-mini-config \
   LITELLM_LOCAL_MODEL_COST_MAP=True uv run python -m pytest tests
-uv run python -m ruff check src runtime tests scripts
-uv run python -m ruff format --check src runtime tests
+uv run python -m ruff check src tests scripts
+uv run python -m ruff format --check src tests
 ```
 
 进程链路测试仅创建临时 localhost 假服务；受限环境需要允许该本地监听。安装产物测试构建 wheel/sdist，通过 `uv pip --no-deps --target` 安装到临时目录，验证标准库 Controller、Host 参数校验与完整 Harness 载荷，不调用真实模型、SSH、GPU 或生产 Docker。

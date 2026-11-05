@@ -4,8 +4,8 @@ import socket
 import pytest
 from fastapi.testclient import TestClient
 
-from runtime.local import web_gateway as web
-from runtime.local.host_gateway import create_app
+from a3_research_agent.host.gateway.app import create_app
+from a3_research_agent.host.web import gateway as web
 
 
 def service(tmp_path, **kwargs):

@@ -12,7 +12,7 @@
 
 ## 第一次启动前准备什么
 
-本地安装 Python 3.11+、uv 和可用的 Docker。当前本地部署入口面向 macOS Docker Desktop；执行端使用 Docker Engine，GPU 作业还需 NVIDIA Container Toolkit。依赖、模型认证和 A3 环境的细节见[环境配置](setup.md)，执行端镜像与 Controller 见[远程部署说明](../runtime/remote/README.md)。
+本地安装 Python 3.11+、uv 和可用的 Docker。当前本地部署入口面向 macOS Docker Desktop；执行端使用 Docker Engine，GPU 作业还需 NVIDIA Container Toolkit。依赖、模型认证和 A3 环境的细节见[环境配置](setup.md)，执行端镜像与 Controller 见[远程部署说明](remote-execution.md)。
 
 ```bash
 git submodule update --init --recursive
@@ -31,7 +31,7 @@ cp .env.example .env
 | `A3_PROJECT_ROOT` | 本地 A3 Git 工作区，供启动器制作隔离副本 |
 | `A3_LOCAL_IMAGE` | 执行初始构建与候选 Harness 的本地镜像 |
 | `A3_REMOTE_HOST` | 已配置免交互连接的 SSH 目标 |
-| `A3_REMOTE_CONTROLLER` | 执行端本仓库的 `runtime/remote/remote_jobs.py` 路径 |
+| `A3_REMOTE_CONTROLLER` | 执行端本仓库的 `src/a3_research_agent/execution/controller/__main__.py` 路径 |
 | `A3_REMOTE_RUN_ROOT` | 执行端作业与资源锁的共同根目录 |
 | `A3_REMOTE_IMAGE` | 已包含 A3 与计算依赖的作业镜像 |
 
@@ -88,7 +88,7 @@ bash scripts/start-rsi.sh --phase phase-two --run-harness "artifacts/rsi/<run-id
 bash scripts/start-rsi.sh
 ```
 
-脚本调用 `runtime/local/launch.py`，创建独立工作区，版本化目标与验收，启动初始 mini。模型可以通过 bash 在构建 Docker 中读写文件、运行程序；生成后的 auto research Agent 使用自己实现的受限工具，并由固定部署边界控制实际权限。
+脚本调用 `python -m a3_research_agent.cli.launch`，创建独立工作区，版本化目标与验收，启动初始 mini。模型可以通过 bash 在构建 Docker 中读写文件、运行程序；生成后的 auto research Agent 使用自己实现的受限工具，并由固定部署边界控制实际权限。
 
 启动器将选定源码复制到独立工作区，包含当前未提交的源码改动，并排除认证、忽略的运行产物与报告工程。它在隔离副本中建立与这些实际文件一致的 Git 基线，让 Agent 从干净的工作区开始；主项目的提交和未提交状态保持原样。
 
@@ -242,7 +242,7 @@ $$
 
 ## 参数表
 
-`scripts/start-rsi.sh` 将参数传给 `runtime/local/launch.py`：
+`scripts/start-rsi.sh` 将参数传给 `a3_research_agent.cli.launch`：
 
 | 参数 | 行为 |
 | --- | --- |
@@ -318,13 +318,13 @@ Docker 只挂载自己的源码目录，Git 对象库和其他 worktree 留在 H
 
 需要继续同一轮中断任务时使用 `--resume-from <该轮目录>`，保留该轮完整上下文。希望从某个阶段二成果再次开始新任务时，明确选择那个成果所在 run，仍走 --run-harness。源历史可只读查阅，不必全部装入新模型上下文。
 
-远程并发、超时、存储额度与只读资产目录通过 `.env.example` 中的 A3_REMOTE_* 选项配置；详见[远程存储与执行限制](../runtime/remote/README.md)。这些部署参数由 Host 管理，不向 Agent 开放修改权限。
+远程并发、超时、存储额度与只读资产目录通过 `.env.example` 中的 A3_REMOTE_* 选项配置；详见[远程存储与执行限制](remote-execution.md)。这些部署参数由 Host 管理，不向 Agent 开放修改权限。
 
 ## 多个小作业共享 GPU
 
 部署方设置 A3_REMOTE_SHARE_GPUS=1，使用 A3_REMOTE_MAX_GPUS 控制同时使用的物理卡数；A3_REMOTE_MAX_JOBS=0 关闭按作业数量的固定限制。同一卡有余量时可继续接收小作业，运行位置由 Host 选择。
 
-A3_REMOTE_GPU_CAPACITY_MB 与 A3_REMOTE_GPU_HEADROOM_MB 分别设置每卡可预留总额和缓冲，缓冲默认 2048 MiB（2 GiB）。共享模式允许与外部进程同卡，只按实际显存与预留量判断剩余空间；总使用卡数仍受 A3_REMOTE_MAX_GPUS 限制。Agent 提交作业时可用 gpu_memory_mb 记录预计峰值，省略时采用 A3_REMOTE_GPU_MEMORY_MB。详细算法与范围见[远程调度说明](../runtime/remote/README.md#显存共享调度)。
+A3_REMOTE_GPU_CAPACITY_MB 与 A3_REMOTE_GPU_HEADROOM_MB 分别设置每卡可预留总额和缓冲，缓冲默认 2048 MiB（2 GiB）。共享模式允许与外部进程同卡，只按实际显存与预留量判断剩余空间；总使用卡数仍受 A3_REMOTE_MAX_GPUS 限制。Agent 提交作业时可用 gpu_memory_mb 记录预计峰值，省略时采用 A3_REMOTE_GPU_MEMORY_MB。详细算法与范围见[远程调度说明](remote-execution.md#显存共享调度)。
 
 
 ## 第二阶段的大文件交接

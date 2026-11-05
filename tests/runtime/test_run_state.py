@@ -3,7 +3,7 @@ import os
 
 import pytest
 
-from runtime.local.run_state import RunLease, RunStateStore
+from a3_research_agent.host.runs.state import RunLease, RunStateStore
 
 
 def test_host_state_is_private_and_atomic(tmp_path):

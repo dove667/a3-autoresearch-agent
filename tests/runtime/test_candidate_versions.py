@@ -2,7 +2,7 @@ import subprocess
 
 import pytest
 
-from runtime.local.candidate_versions import CandidateVersions
+from a3_research_agent.host.sessions.versions import CandidateVersions
 
 
 def test_immutable_versions_and_worktrees_keep_parallel_edits_separate(tmp_path):

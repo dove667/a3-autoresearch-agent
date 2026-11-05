@@ -40,7 +40,7 @@ def test_exported_sources_can_create_complete_child_payload_without_checkout(tmp
         target.write_text(content)
     script = """
 import json
-import work_assignments
+from a3_research_agent.harness.orchestration import assignments as work_assignments
 arguments = dict(id='isolated', role='harness', objective='check sources', stop_condition='done', deliverables=['report.json'], context_files=[], read_only_exports=[])
 task, files = work_assignments.worker_package(arguments, coordinator_session_id='main')
 print(json.dumps({'files': sorted(files), 'source_files': sorted(task['source_hashes'])}))

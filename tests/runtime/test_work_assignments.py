@@ -6,15 +6,13 @@ import json
 import pathlib
 
 import pytest
-from harness_sources import HarnessSources
 
-ROOT = HarnessSources(pathlib.Path(__file__).resolve().parents[2] / "runtime/harness_recovery")
+ROOT = pathlib.Path(__file__).resolve().parents[2] / "src/a3_research_agent/harness"
 
 
 def load(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.syspath_prepend(str(ROOT))
-    path = ROOT / "work_assignments.py"
+    path = ROOT / "orchestration/assignments.py"
     assert path.exists(), "Explicit coordinator/worker contract is not implemented"
     spec = importlib.util.spec_from_file_location("assignments", path)
     module = importlib.util.module_from_spec(spec)
@@ -99,7 +97,7 @@ def test_worker_snapshot_has_fresh_context_and_explicit_source_hashes(tmp_path, 
     task = json.loads(submitted["files"]["worker-task.json"])
     assert task["role"] == "policy" and task["id"] == "policy-check"
     assert task["coordinator_session_id"] == "main"
-    assert task["source_hashes"]["agent.py"]
+    assert task["source_hashes"]["a3_research_agent/harness/agent.py"]
     assert submitted["files"]["research/plan.json"] == (tmp_path / "research/plan.json").read_text()
     with pytest.raises(ValueError, match="already"):
         m.dispatch(gateway, assignment())

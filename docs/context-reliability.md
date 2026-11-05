@@ -1,18 +1,16 @@
 # Context recovery and model roles
 
 The optional overlay is maintained in `src/a3_research_agent/harness/`, with
-context, memory, analysis and orchestration components. `runtime/harness_recovery/`
-contains checkout adapters; copying those adapters alone does not deliver the implementation.
+context, memory, analysis and orchestration components.
 
 Build a new explicitly derived package using
 `a3_research_agent.packaging.harness_payload.build_harness_payload(extension_sources)`.
 The optional mapping accepts only explicitly selected UTF-8 `skill_tools.py` and
 `web_tools.py` source. Copy **every** returned path/content pair into the package,
 preserve its compatible memory and evidence, and record source/version hashes and
-the intervention. The output includes canonical package modules, the token estimator
-and flat compatibility entries; `python agent.py --resume` remains supported.
-Editing a flat `work_assignments.py` adapter changes the adapter, while orchestration
-implementation lives under `a3_research_agent/harness/orchestration/`.
+the intervention. The output includes package modules and the token estimator. Start it with
+`python -m a3_research_agent.harness.agent --resume`; worker orchestration lives
+under `a3_research_agent/harness/orchestration/`.
 
 Export never executes candidate code or selects a live workspace. It does not create
 a retained manifest or authorize dispatch: callers must explicitly include the returned
@@ -174,7 +172,7 @@ promise of perfect semantic summaries. Persistent provider/storage/budget failur
 can still require an explicit operator repair.
 
 Enumerate the copied helper and every required file in `run.json`, `resume.json`
-and `continuation.json`. The ordinary entry remains `python agent.py --resume`.
+and `continuation.json`. The ordinary entry remains `python -m a3_research_agent.harness.agent --resume`.
 Starting a new task uses existing `--run-harness` / `--agent-inputs-dir`; do not edit
 historical outcomes into new success labels. For a paused process, editing disk
 modules does not reload already imported Python code. Any later authorized update

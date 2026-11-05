@@ -3,9 +3,9 @@
 import json
 from pathlib import Path
 
-from runtime.local.continuation import HarnessStart
-from runtime.local.input_versions import InputVersions, input_sources
-from runtime.local.launch import prepare_task_start
+from a3_research_agent.host.bootstrap import prepare_task_start
+from a3_research_agent.host.inputs.versions import InputVersions, input_sources
+from a3_research_agent.host.runs.continuation import HarnessStart
 
 ROOT = Path(__file__).resolve().parents[2]
 

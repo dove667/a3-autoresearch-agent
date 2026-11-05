@@ -4,9 +4,9 @@ import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
-from runtime.local.candidate_runtime import CandidateCapacityError
-from runtime.local.candidate_versions import CandidateVersions
-from runtime.local.host_gateway import create_app
+from a3_research_agent.host.gateway.app import create_app
+from a3_research_agent.host.sessions.containers import CandidateCapacityError
+from a3_research_agent.host.sessions.versions import CandidateVersions
 
 
 class VersionSandbox:

@@ -1,13 +1,14 @@
-from remote_test_support import patch_controller
-
 """Sealed binary exports grant bounded read access across worker identities."""
 
 import json
 import os
 
 import pytest
+from remote_test_support import patch_controller
 
-from runtime.remote.readonly_exports import ReadonlyExports
+from a3_research_agent.execution.controller import store as job_store
+from a3_research_agent.execution.exports import operations as job_exports
+from a3_research_agent.execution.exports.readonly import ReadonlyExports
 
 
 def test_binary_snapshot_is_immutable_and_requires_explicit_grant(tmp_path):
@@ -90,7 +91,7 @@ def test_changed_source_and_interrupted_sealer_are_diagnosed(tmp_path, monkeypat
     def missing_process(pid, signal):
         raise ProcessLookupError
 
-    monkeypatch.setattr("runtime.remote.readonly_exports.os.kill", missing_process)
+    monkeypatch.setattr("a3_research_agent.execution.exports.readonly.os.kill", missing_process)
     exports.refresh_sealer(interrupted["export_id"])
     assert exports.read("main", interrupted["export_id"])["status"] == "failed"
 
@@ -152,7 +153,7 @@ def test_small_fast_copy_still_checks_storage_before_publication(tmp_path):
 
 
 def test_manifest_bytes_count_toward_quota_and_are_removed_on_failure(tmp_path):
-    from runtime.remote.remote_jobs import JobStore
+    from a3_research_agent.execution.controller.store import JobStore
 
     store = JobStore(tmp_path / "runtime")
     exports = ReadonlyExports(store.root)
@@ -187,7 +188,7 @@ def test_failure_record_write_error_does_not_leave_large_snapshot(tmp_path, monk
 
 
 def test_atomic_json_failure_cleans_temporary_file(tmp_path, monkeypatch):
-    from runtime.remote import readonly_exports
+    from a3_research_agent.execution.exports import readonly as readonly_exports
 
     def failed_dump(*args, **kwargs):
         raise OSError(28, "No space left on device")
@@ -201,9 +202,7 @@ def test_atomic_json_failure_cleans_temporary_file(tmp_path, monkeypatch):
 def test_revoke_and_delete_refuse_live_consumers(tmp_path, monkeypatch):
     from argparse import Namespace
 
-    from runtime.remote import remote_jobs
-
-    store = remote_jobs.JobStore(tmp_path / "runtime")
+    store = job_store.JobStore(tmp_path / "runtime")
     exports = ReadonlyExports(store.root)
     source = tmp_path / "model.bin"
     source.write_bytes(b"checkpoint")
@@ -212,22 +211,26 @@ def test_revoke_and_delete_refuse_live_consumers(tmp_path, monkeypatch):
     exports.seal(identifier)
     exports.grant("main", identifier, "worker")
     active = [{"experiment_id": "worker", "input_exports": [identifier]}]
-    patch_controller(monkeypatch, remote_jobs, "active_jobs", lambda store, **kwargs: active)
+    patch_controller(monkeypatch, "active_jobs", lambda store, **kwargs: active)
     request = {"experiment_id": "main", "export_id": identifier, "recipient": "worker"}
     for operation in ("export-revoke", "export-delete"):
         with pytest.raises(ValueError, match="active jobs"):
-            remote_jobs.export_operation(store, request, Namespace(operation=operation))
+            job_exports.export_operation(store, request, Namespace(operation=operation))
     active.clear()
-    remote_jobs.export_operation(store, request, Namespace(operation="export-revoke"))
+    job_exports.export_operation(store, request, Namespace(operation="export-revoke"))
     with pytest.raises(PermissionError):
         exports.read("worker", identifier)
-    remote_jobs.export_operation(store, request, Namespace(operation="export-delete"))
+    job_exports.export_operation(store, request, Namespace(operation="export-delete"))
     assert source.read_bytes() == b"checkpoint"
 
 
 def test_retained_declaration_carries_only_validated_export_references(tmp_path):
-    from runtime.local.candidate_versions import CandidateVersions
-    from runtime.local.continuation import load_run_result, prepare_fresh_task, publish_run_result
+    from a3_research_agent.host.runs.continuation import (
+        load_run_result,
+        prepare_fresh_task,
+        publish_run_result,
+    )
+    from a3_research_agent.host.sessions.versions import CandidateVersions
 
     workspace = tmp_path / "workspace"
     workspace.mkdir()
@@ -257,7 +260,7 @@ def test_retained_declaration_carries_only_validated_export_references(tmp_path)
 
 
 def test_new_run_imports_explicit_retained_exports_and_rolls_back_partial_failure(tmp_path):
-    from runtime.local.continuation import HarnessStart, import_retained_exports
+    from a3_research_agent.host.runs.continuation import HarnessStart, import_retained_exports
 
     exports = ReadonlyExports(tmp_path / "runtime")
     source = tmp_path / "model.bin"

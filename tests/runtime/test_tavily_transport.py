@@ -4,7 +4,7 @@ import ssl
 
 import pytest
 
-from runtime.local import web_gateway as web
+from a3_research_agent.host.web import gateway as web
 from tests.runtime.test_web_gateway import FakeConnection, FakeResponse, service
 
 
@@ -495,7 +495,7 @@ def test_cache_unavailable_is_visible_and_live_success_not_false_hit(tmp_path):
 def test_cache_lock_busy_never_calls_provider(tmp_path, monkeypatch):
     from contextlib import contextmanager
 
-    from runtime.local.web_cache import CacheBusy
+    from a3_research_agent.host.web.cache import CacheBusy
 
     svc = service(tmp_path)
 

@@ -6,8 +6,12 @@ from pathlib import Path
 
 import pytest
 
-from runtime.local.input_versions import SHARED_INPUT_SOURCES, InputVersions, input_sources
-from runtime.local.launch import input_hashes
+from a3_research_agent.host.bootstrap import input_hashes
+from a3_research_agent.host.inputs.versions import (
+    SHARED_INPUT_SOURCES,
+    InputVersions,
+    input_sources,
+)
 
 ROOT = Path(__file__).resolve().parents[2]
 

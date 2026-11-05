@@ -8,8 +8,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from fastapi.testclient import TestClient
 from test_orchestration_pipeline import ProcessSandbox
 
-from runtime.local.candidate_versions import CandidateVersions
-from runtime.local.host_gateway import create_app
+from a3_research_agent.host.gateway.app import create_app
+from a3_research_agent.host.sessions.versions import CandidateVersions
 
 
 def test_actual_agent_supplements_delivery_from_own_worker_child(tmp_path):
@@ -220,7 +220,10 @@ def test_actual_agent_supplements_delivery_from_own_worker_child(tmp_path):
             )
             version = versions.create("main", files)["version_id"]
             sandbox.create_version(
-                "main", ["python", "agent.py", "--resume", "--test"], "main-token", version
+                "main",
+                ["python", "-m", "a3_research_agent.harness.agent", "--resume", "--test"],
+                "main-token",
+                version,
             )
             record = sandbox.records["main"]
             assert record["process"].wait(timeout=20) == 0, (

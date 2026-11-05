@@ -18,7 +18,7 @@ def test_start_script_preserves_arguments_stdin_and_exit_status_with_sleep_guard
     python = root / ".venv/bin/python"
     python.parent.mkdir(parents=True)
     python.symlink_to(sys.executable)
-    launcher = root / "runtime/local/launch.py"
+    launcher = root / "src/a3_research_agent/cli/launch.py"
     launcher.parent.mkdir(parents=True)
     launcher.write_text(
         "import json, sys\n"
@@ -47,5 +47,8 @@ def test_start_script_preserves_arguments_stdin_and_exit_status_with_sleep_guard
         timeout=5,
     )
     assert result.returncode == 7, result.stderr
-    assert json.loads(result.stdout) == {"args": ["--run-harness", "run with spaces"], "stdin": ""}
+    assert json.loads(result.stdout) == {
+        "args": ["--project-root", str(root), "--run-harness", "run with spaces"],
+        "stdin": "",
+    }
     assert marker.exists() == (system == "Darwin")

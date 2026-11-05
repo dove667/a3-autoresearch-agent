@@ -2,7 +2,7 @@
 
 ## 当前状态
 
-项目通过源码 checkout 与脚本运行，由 `pyproject.toml` 管理依赖，固定执行实现集中在 `runtime/`。mini-SWE-agent 以固定提交的 Git submodule 集成。当前可使用第三方 mini 的交互入口；已准备目标、能力验收和无人交互启动配置，可从原始 mini 冷启动或明确选定的保留 Harness 继续。
+项目通过源码 checkout 与脚本运行，由 `pyproject.toml` 管理依赖，固定执行实现集中在 `src/a3_research_agent/`。mini-SWE-agent 以固定提交的 Git submodule 集成。当前可使用第三方 mini 的交互入口；已准备目标、能力验收和无人交互启动配置，可从原始 mini 冷启动或明确选定的保留 Harness 继续。
 
 已提供冷启动容器、宿主模型转发与远程容器作业控制的部署边界。A3 专用研究工具、轨迹反思与自进化逻辑由运行中的 Agent 产生；能力完成情况按正式研究验收判断。
 
@@ -38,7 +38,7 @@ Host 也提供比较协议差异检查和脱敏请求诊断。记忆模块新增
 
 完整目录职责见[项目结构](project-structure.md)。SWE Agent 生成的代码与原始运行材料共同保存在 `artifacts/rsi/`；可选网页报告工程在本地 `reports/` 维护并由 Git 忽略；验证和部署材料分别保存在 `artifacts/validation/`、`artifacts/deployment/`。
 
-本项目固定基础设施、Agent 输入、测试和文档分别放在 `runtime/`、`agent-inputs/`、`tests/` 和 `docs/`。仿真物理、任务计分和资源文件在独立的 `a3_dual_arm_sim` 仓库中维护。
+本项目固定基础设施、Agent 输入、测试和文档分别放在 `src/a3_research_agent/`、`agent-inputs/`、`tests/` 和 `docs/`。仿真物理、任务计分和资源文件在独立的 `a3_dual_arm_sim` 仓库中维护。
 
 第三方源码及原始文档放在 `third_party/mini-swe-agent/`。项目专属行为优先通过组合与子类实现；需要修改 mini 核心时，在 submodule 中维护独立提交，并确保团队可以取得该提交，具体约定见[第三方依赖说明](../third_party/README.md)。
 

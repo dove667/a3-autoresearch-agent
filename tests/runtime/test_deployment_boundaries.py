@@ -3,7 +3,7 @@ import base64
 import pytest
 from fastapi.testclient import TestClient
 
-from runtime.local.host_gateway import create_app
+from a3_research_agent.host.gateway.app import create_app
 
 
 class SandboxBackend:
@@ -69,7 +69,7 @@ def test_session_client_cannot_choose_mounts_owner_or_docker_options(tmp_path):
 
 
 def test_fixture_keeps_peer_identity_private_and_verifies_real_peer_job(tmp_path):
-    from runtime.local.isolation_fixture import IsolationFixtures
+    from a3_research_agent.host.sessions.isolation import IsolationFixtures
 
     records = []
     content = {}
@@ -103,7 +103,7 @@ def test_fixture_keeps_peer_identity_private_and_verifies_real_peer_job(tmp_path
 
 
 def test_fixture_failure_is_not_reported_as_success(tmp_path):
-    from runtime.local.isolation_fixture import IsolationFixtures
+    from a3_research_agent.host.sessions.isolation import IsolationFixtures
 
     fixtures = IsolationFixtures(lambda op, payload: {"status": "resource_busy"}, tmp_path)
     with pytest.raises(RuntimeError, match="resource"):
@@ -111,7 +111,7 @@ def test_fixture_failure_is_not_reported_as_success(tmp_path):
 
 
 def test_candidate_files_and_artifacts_cannot_escape_scope(tmp_path):
-    from runtime.local.candidate_runtime import CandidateRuntime, write_candidate_files
+    from a3_research_agent.host.sessions.containers import CandidateRuntime, write_candidate_files
 
     workspace = tmp_path / "workspace"
     workspace.mkdir()
@@ -131,7 +131,7 @@ def test_candidate_files_and_artifacts_cannot_escape_scope(tmp_path):
 
 
 def test_candidate_capacity_allows_five_active_sessions(tmp_path, monkeypatch):
-    from runtime.local.candidate_runtime import CandidateCapacityError, CandidateRuntime
+    from a3_research_agent.host.sessions.containers import CandidateCapacityError, CandidateRuntime
 
     runtime = CandidateRuntime(
         root=tmp_path, image="image", inputs=tmp_path, public_a3=tmp_path, endpoint="http://gateway"
@@ -185,7 +185,7 @@ class NestedSandboxBackend:
 
 
 def test_parent_close_reclaims_descendants_remote_jobs_and_peer_fixtures(tmp_path):
-    from runtime.local.isolation_fixture import IsolationFixtures
+    from a3_research_agent.host.sessions.isolation import IsolationFixtures
 
     calls = []
 
@@ -282,7 +282,7 @@ def test_shutdown_blocks_new_resources_and_keeps_failed_cleanup_retryable(tmp_pa
 
 @pytest.mark.parametrize("execution_error", ["job timed out", "container start failed"])
 def test_failed_job_execution_does_not_prevent_scope_cleanup(tmp_path, execution_error):
-    from runtime.local.isolation_fixture import IsolationFixtures
+    from a3_research_agent.host.sessions.isolation import IsolationFixtures
 
     def remote(operation, payload):
         if operation == "submit":

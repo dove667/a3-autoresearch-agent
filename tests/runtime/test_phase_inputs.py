@@ -6,8 +6,8 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from runtime.local.host_gateway import create_app
-from runtime.local.input_versions import InputVersions
+from a3_research_agent.host.gateway.app import create_app
+from a3_research_agent.host.inputs.versions import InputVersions
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -119,7 +119,7 @@ def test_retired_common_prompt_is_archived_and_removed_from_active_mounts(tmp_pa
 def test_incomplete_stage_selection_fails_before_deployment(tmp_path, monkeypatch, arguments):
     import sys
 
-    from runtime.local import launch
+    from a3_research_agent.host import bootstrap as launch
 
     monkeypatch.setattr(sys, "argv", ["launch.py", *arguments])
     monkeypatch.setattr(launch, "load_dotenv", lambda *a, **k: pytest.fail("deployment reached"))

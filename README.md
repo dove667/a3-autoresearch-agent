@@ -16,7 +16,7 @@ uv sync --python 3.11
 cp .env.example .env
 ```
 
-实现按组件维护于 `src/a3_research_agent/`；原 `runtime/` 脚本和 checkout 导入保留兼容。安装包、源码目录与完整载荷的说明见[目录职责](docs/project-structure.md)。
+实现与部署资源按组件统一维护于 `src/a3_research_agent/`。安装包、源码目录与完整载荷的说明见[目录职责](docs/project-structure.md)。
 
 按[环境配置](docs/setup.md)和[使用教程](docs/tutorial.md)填写 `.env`、准备本地与远程镜像。模型认证由 Host 保管；个人部署参数与运行材料不进入 Git。
 

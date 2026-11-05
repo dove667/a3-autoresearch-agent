@@ -2,8 +2,12 @@ import json
 
 import pytest
 
-from runtime.local.candidate_versions import CandidateVersions
-from runtime.local.continuation import load_run_result, publish_run_result, resolve_harness_start
+from a3_research_agent.host.runs.continuation import (
+    load_run_result,
+    publish_run_result,
+    resolve_harness_start,
+)
+from a3_research_agent.host.sessions.versions import CandidateVersions
 
 
 @pytest.mark.parametrize("count,size", [(129, 1), (1, 21 * 1024 * 1024)])
@@ -104,7 +108,7 @@ def test_selection_rejects_escaped_files_and_missing_version_objects(tmp_path):
 
 
 def test_resume_retained_run_requires_explicit_checkpoint_entry(tmp_path):
-    from runtime.local.continuation import resolve_resume_start
+    from a3_research_agent.host.runs.continuation import resolve_resume_start
 
     (tmp_path / "startup.json").write_text(
         json.dumps({"mode": "retained-harness", "session_id": "agent", "version_id": "v1"})
@@ -148,7 +152,7 @@ def test_full_file_capacity_snapshot_is_not_modified_by_restart_context(tmp_path
 def test_run_harness_requires_an_explicit_source_before_starting_resources(monkeypatch, tmp_path):
     import sys
 
-    from runtime.local import launch
+    from a3_research_agent.host import bootstrap as launch
 
     def forbidden(*args, **kwargs):
         raise AssertionError("Live deployment must never be used by CLI parsing tests")
@@ -165,7 +169,7 @@ def test_run_harness_requires_an_explicit_source_before_starting_resources(monke
 
 
 def test_cold_start_resume_selects_promoted_main_checkpoint(tmp_path):
-    from runtime.local.continuation import resolve_resume_start
+    from a3_research_agent.host.runs.continuation import resolve_resume_start
 
     (tmp_path / "startup.json").write_text(json.dumps({"mode": "rsi", "run_id": "run-original"}))
     (tmp_path / "evolution.json").write_text(json.dumps({"main_owner": "candidate-promoted"}))
@@ -187,7 +191,7 @@ def test_cold_start_resume_selects_promoted_main_checkpoint(tmp_path):
 
 
 def test_resume_loads_checkpoint_from_host_managed_worktree_link(tmp_path):
-    from runtime.local.continuation import resolve_resume_start
+    from a3_research_agent.host.runs.continuation import resolve_resume_start
 
     owner = "candidate-promoted"
     files = {

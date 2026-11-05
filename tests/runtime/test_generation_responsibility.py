@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from runtime.local.input_versions import InputVersions
+from a3_research_agent.host.inputs.versions import InputVersions
 
 ROOT = Path(__file__).resolve().parents[2]
 

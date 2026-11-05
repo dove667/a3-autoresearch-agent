@@ -1,16 +1,9 @@
-"""Keep canonical and legacy Host entry points compatible."""
+"""Exercise Host component imports and explicit project paths."""
 
 import importlib
 from pathlib import Path
 
 import pytest
-
-
-def test_legacy_host_imports_share_canonical_state():
-    canonical = importlib.import_module("a3_research_agent.host.runs.state")
-    legacy = importlib.import_module("runtime.local.run_state")
-    assert legacy is canonical
-    assert legacy.RunStateStore is canonical.RunStateStore
 
 
 def test_workspace_validation_is_a_leaf_and_rejects_symlinks(tmp_path):

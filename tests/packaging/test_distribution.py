@@ -17,6 +17,13 @@ ROOT = Path(__file__).resolve().parents[2]
 @pytest.fixture(scope="module")
 def distributions(tmp_path_factory):
     output = tmp_path_factory.mktemp("distributions")
+    source = output / "source"
+    source.mkdir()
+    shutil.copytree(
+        ROOT / "src", source / "src", ignore=shutil.ignore_patterns("*.egg-info", "__pycache__")
+    )
+    for name in ("pyproject.toml", "README.md"):
+        shutil.copy2(ROOT / name, source / name)
     result = subprocess.run(
         [
             sys.executable,
@@ -24,7 +31,7 @@ def distributions(tmp_path_factory):
             "import sys; import setuptools.build_meta as b; output=sys.argv[1]; sys.argv=['setup.py']; b.build_sdist(output); b.build_wheel(output)",
             str(output),
         ],
-        cwd=ROOT,
+        cwd=source,
         env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
         check=False,
         capture_output=True,
@@ -41,6 +48,9 @@ def test_artifacts_contain_controller_resources_and_no_private_state(distributio
         names = archive.namelist()
         assert "a3_research_agent/execution/controller/nvidia_egl_vendor.json" in names
         assert "a3_research_agent/execution/images/Dockerfile" in names
+        assert "a3_research_agent/host/images/Dockerfile" in names
+        assert not any(name.startswith("runtime/") or name.endswith("_compat.py") for name in names)
+        assert "a3_research_agent/execution/controller/remote_jobs.py" not in names
         assert not any(
             part in {".env", "artifacts", ".git", "AGENTS.md"}
             for name in names
@@ -102,7 +112,10 @@ print(json.dumps(dict(package=a3_research_agent.__file__, root=checkout_root(), 
     record = json.loads(result.stdout)
     assert Path(record["package"]).is_relative_to(installed)
     assert record["root"] is None
-    assert "agent.py" in record["files"]
+    assert "a3_research_agent/harness/agent.py" in record["files"]
+    assert not any(
+        name.startswith("runtime/") or name.endswith("_compat.py") for name in record["files"]
+    )
     assert "a3_research_agent/harness/orchestration/dispatch.py" in record["files"]
 
     host_script = "import sys; sys.path.insert(0, sys.argv.pop(1)); from a3_research_agent.cli.launch import main; main()"

@@ -5,8 +5,9 @@ import sys
 
 import pytest
 
-from runtime.local import input_versions, launch
-from runtime.local.continuation import HarnessStart
+from a3_research_agent.host import bootstrap as launch
+from a3_research_agent.host.inputs import versions as input_versions
+from a3_research_agent.host.runs.continuation import HarnessStart
 
 
 def source_tree(tmp_path):
@@ -113,8 +114,8 @@ def test_extension_rejects_phase_two_source(tmp_path):
 
 
 def test_existing_retained_source_is_immutable(tmp_path):
-    from runtime.local.candidate_versions import CandidateVersions
-    from runtime.local.continuation import load_run_result, publish_run_result
+    from a3_research_agent.host.runs.continuation import load_run_result, publish_run_result
+    from a3_research_agent.host.sessions.versions import CandidateVersions
 
     source = tmp_path / "source-run"
     workspace = source / "workspace"
@@ -153,8 +154,8 @@ def test_existing_retained_source_is_immutable(tmp_path):
 
 @pytest.mark.parametrize("initial_note", [None, "Explicit approved E-only note\n"])
 def test_valid_profile_cli_resolves_before_deployment(tmp_path, monkeypatch, initial_note):
-    from runtime.local.candidate_versions import CandidateVersions
-    from runtime.local.continuation import publish_run_result
+    from a3_research_agent.host.runs.continuation import publish_run_result
+    from a3_research_agent.host.sessions.versions import CandidateVersions
 
     workspace = tmp_path / "workspace"
     workspace.mkdir()
@@ -198,7 +199,7 @@ def test_profile_resume_mismatch_rejected_before_deployment(tmp_path, monkeypatc
 def test_fresh_extension_retires_copied_terminal_outcome(tmp_path, status):
     import hashlib
 
-    from runtime.local.run_supervisor import evaluate_outcome
+    from a3_research_agent.host.runs.supervisor import evaluate_outcome
 
     old = json.dumps(
         {

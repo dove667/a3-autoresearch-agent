@@ -5,7 +5,7 @@ from types import ModuleType
 
 import pytest
 
-from runtime.remote import verify_remote
+from a3_research_agent.execution.images import verify as verify_remote
 
 
 @pytest.mark.parametrize(

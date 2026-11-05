@@ -3,7 +3,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from fastapi.testclient import TestClient
 
-from runtime.local.host_gateway import create_app
+from a3_research_agent.host.gateway.app import create_app
 
 
 def test_status_snapshot_cannot_miss_a_concurrently_created_successor(tmp_path):

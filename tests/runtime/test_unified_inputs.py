@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from runtime.local.input_versions import InputVersions, input_sources
+from a3_research_agent.host.inputs.versions import InputVersions, input_sources
 
 ROOT = Path(__file__).resolve().parents[2]
 # Frozen source paths and content hashes from 5abaf41, before relocation.
@@ -139,7 +139,7 @@ def test_relocated_sources_resume_old_manifest_without_rewriting_history(tmp_pat
 
 
 def test_bootstrap_workspace_reads_unified_guide(tmp_path, monkeypatch):
-    from runtime.local import launch
+    from a3_research_agent.host import bootstrap as launch
 
     # Keep checkout creation local; exercise the real workspace guide loader.
     monkeypatch.setattr(

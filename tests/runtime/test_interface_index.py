@@ -4,7 +4,7 @@ import hashlib
 
 from test_input_versions import INPUT_SOURCES, sources
 
-from runtime.local.input_versions import InputVersions
+from a3_research_agent.host.inputs.versions import InputVersions
 
 
 def test_execution_sections_match_raw_character_offsets_without_injection(tmp_path):
@@ -31,7 +31,7 @@ def test_execution_sections_match_raw_character_offsets_without_injection(tmp_pa
 def test_custom_many_long_headings_produce_bounded_index_not_lost_source():
     import json
 
-    from runtime.local.input_versions import execution_index
+    from a3_research_agent.host.inputs.versions import execution_index
 
     text = "".join("## " + ("长" * 400) + str(i) + "\nbody\n" for i in range(400))
     index = execution_index(text)

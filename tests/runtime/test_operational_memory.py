@@ -6,16 +6,14 @@ import pathlib
 import uuid
 
 import pytest
-from harness_sources import HarnessSources
 
-ROOT = HarnessSources(pathlib.Path(__file__).resolve().parents[2] / "runtime/harness_recovery")
+ROOT = pathlib.Path(__file__).resolve().parents[2] / "src/a3_research_agent/harness"
 
 
 def load(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.syspath_prepend(str(ROOT))
     spec = importlib.util.spec_from_file_location(
-        "state_" + uuid.uuid4().hex, ROOT / "memory_state.py"
+        "state_" + uuid.uuid4().hex, ROOT / "memory/state.py"
     )
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -139,7 +137,7 @@ def test_changed_evidence_is_flagged_without_automatic_reopening(tmp_path, monke
 
 
 def test_new_task_archives_operational_state_but_keeps_source_immutable(tmp_path):
-    from runtime.local.continuation import HarnessStart, prepare_fresh_task
+    from a3_research_agent.host.runs.continuation import HarnessStart, prepare_fresh_task
 
     source = HarnessStart(
         ["python", "agent.py", "--resume"],
@@ -230,8 +228,7 @@ def test_receipt_failure_cannot_hide_successful_job_result(tmp_path, monkeypatch
     def fail(*args):
         raise OSError("receipt failed")
 
-    monkeypatch.syspath_prepend(str(ROOT))
-    import work_assignments
+    from a3_research_agent.harness.orchestration import assignments as work_assignments
 
     def request(method, path, data=None):
         if path == "/sessions/self":
@@ -308,7 +305,7 @@ def test_large_json_selection_returns_explicit_bounded_not_delivered(tmp_path, m
 
 
 def test_fresh_task_archives_fork_sidecars_and_old_history_without_loading_them(tmp_path):
-    from runtime.local.continuation import HarnessStart, prepare_fresh_task
+    from a3_research_agent.host.runs.continuation import HarnessStart, prepare_fresh_task
 
     old = {
         "checkpoint.json": '[{"role":"user","content":"old goal"}]',

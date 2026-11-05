@@ -2,8 +2,8 @@ import json
 
 from fastapi.testclient import TestClient
 
-from runtime.local.host_gateway import create_app
-from runtime.local.human_feedback import HumanFeedback
+from a3_research_agent.host.gateway.app import create_app
+from a3_research_agent.host.inputs.feedback import HumanFeedback
 
 
 def test_narrow_summary_does_not_repeat_phase_or_full_feedback(tmp_path):

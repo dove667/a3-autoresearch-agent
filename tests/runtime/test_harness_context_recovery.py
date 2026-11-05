@@ -5,26 +5,16 @@ import importlib.util
 import json
 import os
 import pathlib
-import sys
 import uuid
-from unittest.mock import patch
 
 import pytest
-from harness_sources import HarnessSources
 
-SOURCE = HarnessSources(
-    pathlib.Path(
-        os.environ.get(
-            "HARNESS_SOURCE",
-            str(pathlib.Path(__file__).resolve().parents[2] / "runtime/harness_recovery"),
-        )
-    )
-)
+SOURCE = pathlib.Path(__file__).resolve().parents[2] / "src/a3_research_agent/harness"
 
 
 def load_context():
     spec = importlib.util.spec_from_file_location(
-        "context_" + uuid.uuid4().hex, SOURCE / "context_manager.py"
+        "context_" + uuid.uuid4().hex, SOURCE / "context/manager.py"
     )
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -161,13 +151,12 @@ def agent_functions(context):
     wanted = {"save_manifest", "checkpoint", "checkpoint_hash", "recover_journal"}
     nodes = [n for n in source.body if isinstance(n, ast.FunctionDef) and n.name in wanted]
     helper = None
-    if (SOURCE / "work_assignments.py").exists():
+    if (SOURCE / "orchestration/assignments.py").exists():
         spec = importlib.util.spec_from_file_location(
-            "assignment_functions", SOURCE / "work_assignments.py"
+            "assignment_functions", SOURCE / "orchestration/assignments.py"
         )
         helper = importlib.util.module_from_spec(spec)
-        with patch.dict(sys.modules, {"context_manager": context}):
-            spec.loader.exec_module(helper)
+        spec.loader.exec_module(helper)
     namespace = {
         "WORKER_TASK": None,
         "work_assignments": helper,
@@ -311,7 +300,6 @@ def test_large_output_archival_alone_avoids_summary_and_keeps_original(tmp_path,
 
 def test_token_mode_uses_host_reserve_and_archive_fast_path(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.syspath_prepend(str(pathlib.Path(__file__).resolve().parents[2] / "runtime/local"))
     context = load_context()
     config = {
         "enabled": True,
@@ -342,7 +330,6 @@ def test_token_mode_uses_host_reserve_and_archive_fast_path(tmp_path, monkeypatc
 
 def test_token_compaction_uses_summary_operation_and_preserves_pairing(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.syspath_prepend(str(pathlib.Path(__file__).resolve().parents[2] / "runtime/local"))
     context = load_context()
     config = {
         "enabled": True,
@@ -390,7 +377,6 @@ def test_token_mode_persistent_failure_remains_bounded_across_restart(
     tmp_path, monkeypatch, failure
 ):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.syspath_prepend(str(pathlib.Path(__file__).resolve().parents[2] / "runtime/local"))
     config = {
         "enabled": True,
         "unit": "estimated_tokens",
@@ -420,10 +406,9 @@ def test_token_mode_persistent_failure_remains_bounded_across_restart(
 def test_escaping_heavy_summary_is_sized_like_host_envelope(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
 
-    from runtime.local.host_gateway import create_app
+    from a3_research_agent.host.gateway.app import create_app
 
     monkeypatch.chdir(tmp_path)
-    monkeypatch.syspath_prepend(str(pathlib.Path(__file__).resolve().parents[2] / "runtime/local"))
     provider_calls = []
     client = TestClient(
         create_app(

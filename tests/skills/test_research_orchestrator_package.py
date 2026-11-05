@@ -7,7 +7,7 @@ from pathlib import Path
 
 import yaml
 
-from runtime.local.input_versions import InputVersions, input_sources
+from a3_research_agent.host.inputs.versions import InputVersions, input_sources
 
 ROOT = Path(__file__).resolve().parents[2]
 PACKAGES = ("research-orchestrator", "rsi-harness-evolution", "a3-mujoco-autoresearch")

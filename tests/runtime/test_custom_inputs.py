@@ -8,9 +8,9 @@ from pathlib import Path
 
 import pytest
 
-from runtime.local import launch
-from runtime.local.continuation import HarnessStart
-from runtime.local.input_versions import InputVersions, input_sources
+from a3_research_agent.host import bootstrap as launch
+from a3_research_agent.host.inputs.versions import InputVersions, input_sources
+from a3_research_agent.host.runs.continuation import HarnessStart
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -171,9 +171,9 @@ def test_custom_acceptance_ids_required_and_unique(tmp_path, acceptance):
 
 
 def test_custom_from_real_ready_snapshot_validates_without_source_profile(tmp_path, monkeypatch):
-    from runtime.local.candidate_versions import CandidateVersions
-    from runtime.local.continuation import publish_run_result
-    from runtime.local.run_supervisor import evaluate_outcome
+    from a3_research_agent.host.runs.continuation import publish_run_result
+    from a3_research_agent.host.runs.supervisor import evaluate_outcome
+    from a3_research_agent.host.sessions.versions import CandidateVersions
 
     directory = bundle(tmp_path)
     (directory / "initial-feedback.md").write_text("New approved research task")

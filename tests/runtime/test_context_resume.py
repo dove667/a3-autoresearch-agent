@@ -3,7 +3,7 @@ from copy import deepcopy
 
 import pytest
 
-from runtime.local.context_resume import ContextAgent, load_context
+from a3_research_agent.host.runs.context import ContextAgent, load_context
 
 
 class Model:

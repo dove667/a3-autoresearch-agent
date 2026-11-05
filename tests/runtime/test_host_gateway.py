@@ -1,6 +1,6 @@
 from fastapi.testclient import TestClient
 
-from runtime.local.host_gateway import create_app
+from a3_research_agent.host.gateway.app import create_app
 
 
 def client_for(tmp_path, forward=None, remote=None):
