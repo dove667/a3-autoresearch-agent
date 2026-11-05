@@ -1,9 +1,9 @@
 {
   "id": "research-orchestrator",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "status": "reference",
   "comparison_status": "compare-not-proven",
-  "description": "Research coordination: bounded Policy/Harness workers, evidence decisions, explicit data grants and safe main-Harness succession.",
+  "description": "Optional research coordination, bounded assignments and safe main-Harness handoff.",
   "keywords": [
     "research",
     "orchestrator",
@@ -14,14 +14,14 @@
     "handoff",
     "evidence"
   ],
-  "applicability": "Optional methods to select, adapt, skip or combine within the current task; no fixed sequence. Main/worker responsibilities, permissions and safe succession remain binding. Read local_source with ordinary read; not executable through F skill_execute or proof of installed automatic dispatch.",
+  "applicability": "Adapt to the current task; not a mandatory workflow, new tool or permission.",
   "local_source": "skills/research-orchestrator/SKILL.md",
   "provenance": "Externally authored guidance from source inspection of repository 8214647 session, version, export and evolution interfaces; no live coordination or research experiment performed.",
   "evidence": [
-    "runtime/local/host_gateway.py",
-    "runtime/local/candidate_versions.py",
-    "runtime/remote/readonly_exports.py",
-    "runtime/local/continuation.py"
+    "src/a3_research_agent/host/gateway/sessions.py",
+    "src/a3_research_agent/host/sessions/versions.py",
+    "src/a3_research_agent/execution/exports/readonly.py",
+    "src/a3_research_agent/host/runs/continuation.py"
   ],
   "evidence_status": "source-inspected; reference-only; no-live-coordinator-validation",
   "version_history": [
@@ -40,6 +40,10 @@
     {
       "version": "0.1.3",
       "change": "Add optional bounded-validation methods: complete selected inputs, literal deliverables, role-specific hashes, unchanged-evidence reuse and original acceptance scope; no new handoff gates."
+    },
+    {
+      "version": "0.1.4",
+      "change": "Simplify working guidance; judge local repairs by their original purpose, without an added efficiency gate."
     }
   ]
 }

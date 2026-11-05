@@ -162,3 +162,22 @@ def test_promoted_main_can_start_next_generation_and_retired_main_cannot(tmp_pat
         ).status_code
         == 403
     )
+
+
+def test_main_can_retain_reliability_fix_without_positive_efficiency_delta(tmp_path):
+    client, backend, baseline = setup(tmp_path)
+    session = begin(client, baseline)
+    root = {"Authorization": "Bearer root-token"}
+    decision = {
+        "retain": True,
+        "reason": "Original reliability task passed; efficiency unmeasured",
+        "evidence": ["result.json"],
+    }
+    # The same owner/version/evidence guards apply regardless of the adoption motive.
+    missing = client.post(f"/evolution/trials/{session}/decision", headers=root, json=decision)
+    assert missing.status_code == 422
+    backend.records[session]["report"] = True
+    result = client.post(f"/evolution/trials/{session}/decision", headers=root, json=decision)
+    assert result.status_code == 200
+    assert result.json()["main_owner"] == session
+    assert result.json()["trials"][session]["reason"] == decision["reason"]

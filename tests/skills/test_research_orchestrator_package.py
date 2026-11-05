@@ -19,7 +19,7 @@ def test_orchestrator_catalog_maps_to_versioned_readable_reference():
     body = (ROOT / entry["local_source"]).read_text()
     frontmatter = yaml.safe_load(body.split("---", 2)[1])
     assert entry["id"] == frontmatter["name"] == package.name
-    assert entry["version"] == frontmatter["metadata"]["version"] == "0.1.3"
+    assert entry["version"] == frontmatter["metadata"]["version"] == "0.1.4"
     assert entry["status"] == "reference"
     assert entry["comparison_status"] == "compare-not-proven"
     assert len(body.splitlines()) <= 100
@@ -38,7 +38,7 @@ def test_main_validation_coordination_stays_distinct_from_worker_execution():
     assert "Assign concrete implementation, test execution and analysis to workers" in skill
     assert "the main issues required main-identity dispatches" in skill
     assert "not a checklist, fixed sequence" in skill
-    assert "does not authorize workers to impersonate it or bypass guards" in skill
+    assert "Workers cannot impersonate the main or bypass guards" in skill
 
 
 def test_optional_orchestrator_and_dependencies_remain_frozen_input_files(tmp_path):

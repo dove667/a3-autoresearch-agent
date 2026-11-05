@@ -87,7 +87,7 @@ class PromptResponsibilitiesTests(unittest.TestCase):
         for required in ("skills", "不因新任务默认重做通用能力建设", "实际加载代码"):
             self.assertIn(required, execution)
         soul = read("agent-inputs/SOUL.md")
-        self.assertIn("记忆保存经历和证据", soul)
+        self.assertIn("由你判断如何使用", soul)
         self.assertIn("不授予新权限", soul)
         skill = read("skills/a3-mujoco-autoresearch/SKILL.md")
         for required in (
@@ -180,7 +180,7 @@ class PromptResponsibilitiesTests(unittest.TestCase):
         self.assertIn("优先适配、微调", prompt)
         self.assertIn("不自行下载", prompt)
         soul = read("agent-inputs/SOUL.md")
-        self.assertIn("避免重复作业", soul)
+        self.assertIn("避免重复提交", soul)
         self.assertNotIn("在等待其结果的时间里优先", prompt)
         allocation = read("skills/rsi-harness-evolution/references/policy-harness-allocation.md")
         self.assertIn("validation", allocation)

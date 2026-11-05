@@ -1,14 +1,7 @@
-# Keep validation proportional to the decision
+# Resolve the actual blocker
 
-These are optional ways to resolve a blocked assignment, not additional acceptance gates or a fixed handoff procedure.
+Use the original task as the basis for a decision. A narrow reliability repair does not need an efficiency win; a performance claim needs a relevant comparison. Reuse completed work when its conditions still apply, and stop adding checks once the decision can be made.
 
-- Freeze the actual question and original acceptance criteria. Classify a newly discovered concern as a required correction, an optional investigation or an explicit scope change; do not silently turn every diagnostic into a new gate.
-- Supply the complete selected inputs, including the original evidence needed for comparison. A summary of a source is not its bytes. Use existing authorized version snapshots and exact hashes; keep historical fixtures distinct from current operational instructions.
-- Give deliverables literal paths. Put alternatives and conditions in the task text rather than inside a filename. If evidence lives in a permitted child session, use the supported collection route and record its source/hash instead of having models retranscribe it.
-- Permit an appropriate bounded executor when concrete parsing or tests are required. Do not accidentally combine “no local execution” with “no child execution” and then expect a computed result. This does not delegate main-only dispatch or authority.
-- Judge each hash according to its role. A packaging producer and a bundled execution dependency can intentionally be different versions; prove each declared identity and the original contract rather than inventing an equality requirement.
-- Reuse source-matched checks when their dependencies and conditions have not changed. Test the changed boundary and remaining real uncertainty; do not restart ancestor audits or rerun successful work merely because the reviewer changed.
-- A confirmed absent assignment permits a first dispatch when no creation was attempted. A timed-out creation is uncertain and requires reconciliation before retry. Keep both cases distinct, with original identities and idempotency records.
-- Record a bounded next decision: accept, reject or name the precise missing evidence. A successful ordinary worker delivery is not a formal candidate trial or transfer of main ownership. Preserve the existing permission, isolation and formal succession checks.
+Provide the files and permitted execution path needed for the chosen test. Preserve exact source identities, literal result paths and existing collection receipts. The generator and the code bundled for a worker need not be the same version unless that is part of the actual contract.
 
-If the route cannot express the task safely, report the specific missing capability. Do not compensate by repeatedly dispatching equivalent workers, expanding permissions or weakening the original scientific comparison.
+Reconcile uncertain creation before retrying; a confirmed absent assignment is different from an uncertain side effect. Use existing artifact collection and main-only trial/handoff interfaces. These reminders add no acceptance gate, permission or fixed procedure.

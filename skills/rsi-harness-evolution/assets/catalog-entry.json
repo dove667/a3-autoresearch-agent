@@ -1,6 +1,6 @@
 {
   "id": "rsi-harness-evolution",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "status": "reference",
   "comparison_status": "compare-not-proven",
   "description": "Fixed-weight RSI Harness improvement: component diagnosis, context/memory/tools/control/recovery candidates and quality-preserving experiments.",
@@ -48,6 +48,10 @@
     {
       "version": "0.2.4",
       "change": "Separate main coordination from worker implementation and route collaboration, asset sharing and safe succession details to research-orchestrator; retain allocation and scientific comparison guidance."
+    },
+    {
+      "version": "0.2.5",
+      "change": "Remove prescribed workflow and evidence labels; preserve research references, task-specific comparisons and safe handoff."
     }
   ]
 }
