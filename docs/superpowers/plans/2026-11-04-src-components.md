@@ -67,3 +67,14 @@ Follow every constraint in the spec. No production mutation, push, deployment, m
 - Independent whole-branch review found no substantive issues; reviewer independently ran 12 scoped tests.
 - Existing runtime dependency versions are unchanged. The declared setuptools build backend is also a locked dev dependency so artifact tests run in the development environment.
 - Branch is preserved for later integration. No production merge, push, deployment, live Agent changes, real provider calls, SSH, GPU or real Docker validation was performed. Offline regression is not experimental acceptance.
+
+## Local follow-up acceptance: 2026-11-05
+
+- Integrated `e1bd729` into the migrated layout, preserving legacy adapters.
+- Final requested policy: 500k configured context, approximately400k estimated total-input trigger,32k post-compaction soft target. Separate hard admission remains441,808 tokens.
+- Complete configuration is in `configs/context-400k.env.example`. It is not automatically applied; existing deployment values and active processes remain unchanged.
+- Large reductions use up to16 persisted fragment attempts only when eight conservative fragments cannot cover the trigger. Small policies/byte mode keep eight; each summary input stays bounded at48k. Downgrading a policy preserves spent accounting instead of writing an invalid record.
+- SOUL/G/working coordination guidance is shorter and adaptive; A3 knowledge material and scientific protocols are unchanged. Local reliability adoption is judged against its original purpose, without an added efficiency-gain requirement. Existing trial/ownership/evidence-access controls remain unchanged.
+- Full combined offline acceptance:1,142 passed. Ruff,235-file format check, local links and skill validation passed. Independent review findings were resolved.
+- A deterministic offline fixture reduced410,281 estimated input tokens to25,408, using11 fragment requests; replay made no additional requests. This validates budget/persistence mechanics, not real-model summary quality.
+- Branch is accepted for local integration. No production merge, push, deployment or experimental acceptance decision was performed.
