@@ -230,7 +230,7 @@ Host 的 `/evolution` 协议记录清单、版本、决策与唯一主身份，�
 
 初始 mini 的 Bash 工具、提交标记和工作区路径属于 bootstrap 专用配置；跨代共性的目标职责、权限、测试和交接规则集中维护。
 
-主 Agent 与待接任候选通过 Host 获得同一份版本化阶段协议。来源为 `agent-inputs/<phase>/instructions.md`，目标与验收来源为 `agent-inputs/<phase>/`。phase-one 和 phase-two 各自完整，Host 每次只加载所选阶段；第二阶段另附本阶段 protocol.md，不叠加 common Prompt。新 run 显式选择阶段，恢复沿用已记录的阶段，热加载只更新该阶段。初始 mini 在 system 中加载；生成后的模型调用由 Gateway 根据实际身份附带，避免代际交接遗漏。主 Agent 仍自行编写专属提示词、任务及工具。普通测试 Agent 与 worker 的完整提示词由主 Agent 设计，Host 不给这些身份额外附加核心协议。
+主 Agent 与待接任候选通过 Host 获得同一份版本化阶段输入：SOUL、所选阶段的 goal 与 acceptance，以及第一阶段对应任务的 instructions 或第二阶段的 `agent-inputs/shared/protocol.md`。Host 每次只加载所选阶段。新 run 显式选择阶段，恢复沿用已记录的阶段，热加载只更新该阶段。初始 mini 在 system 中加载；生成后的模型调用由 Gateway 根据实际身份附带，避免代际交接遗漏。主 Agent 仍自行编写专属提示词、任务及工具。普通测试 Agent 与 worker 的完整提示词由主 Agent 设计，Host 不给这些身份额外附加核心协议。
 
 角色由 Host 的主身份和 trial 记录判断。启动与恢复采用仓库当前输入，模型对话、工具和专属指令继续保留。运行期间只有 Host 操作者可预览并确认热加载；确认绑定内容摘要，后续请求使用新版本。用量和结束结果记录具体输入清单，完整内容归档在 input-revisions。详见 [输入版本管理](agent-inputs.md)。
 

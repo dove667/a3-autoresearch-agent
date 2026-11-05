@@ -116,13 +116,30 @@ def test_host_configuration_validates_separate_hard_limit(monkeypatch):
         cm.configure(lambda *a: bad)
 
 
-def test_published_profile_is_explicit_and_preserves_500k_cap():
+def test_env_template_publishes_explicit_500k_context_budget():
     from pathlib import Path
 
     from dotenv import dotenv_values
 
-    profile = Path(__file__).resolve().parents[2] / "configs/context-400k.env.example"
-    budget = read_context_budget(dotenv_values(profile))
+    profile = Path(__file__).resolve().parents[2] / ".env.example"
+    values = dotenv_values(profile)
+    assert {
+        key: values[key]
+        for key in (
+            "A3_MODEL_CONTEXT_TOKENS",
+            "A3_WORKER_CONTEXT_TOKENS",
+            "A3_SUMMARY_CONTEXT_TOKENS",
+            "A3_CONTEXT_TRIGGER_TOKENS",
+            "A3_CONTEXT_TARGET_TOKENS",
+        )
+    } == {
+        "A3_MODEL_CONTEXT_TOKENS": "500000",
+        "A3_WORKER_CONTEXT_TOKENS": "500000",
+        "A3_SUMMARY_CONTEXT_TOKENS": "500000",
+        "A3_CONTEXT_TRIGGER_TOKENS": "400000",
+        "A3_CONTEXT_TARGET_TOKENS": "32000",
+    }
+    budget = read_context_budget(values)
     assert budget == settings()
     assert budget["summary_context_tokens"] == 500000
 

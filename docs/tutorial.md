@@ -308,7 +308,7 @@ Docker 只挂载自己的源码目录，Git 对象库和其他 worktree 留在 H
 
 ## 调整核心提示词
 
-`agent-inputs/shared/bootstrap.yaml` 只维护初始 mini 的运行参数、Bash/提交约定和路径。主 Agent 和接任候选使用 `agent-inputs/<phase>/instructions.md` 中所选阶段的完整协议。调整要求时修改对应阶段的文件并递增版本，再启动或显式热加载。Host 为这两类身份提供同一份阶段输入；局部测试 Agent 与普通 worker 的完整提示词由主 Agent 编写。
+`agent-inputs/shared/bootstrap.yaml` 只维护初始 mini 的运行参数、Bash/提交约定和路径。主 Agent 和接任候选共同加载 SOUL、所选阶段的 goal 与 acceptance；第一阶段另加载对应任务的 instructions，第二阶段另加载 `agent-inputs/shared/protocol.md`。调整要求时修改对应输入文件并递增版本，再启动或显式热加载。Host 为这两类身份提供同一份阶段输入；局部测试 Agent 与普通 worker 的完整提示词由主 Agent 编写。
 
 编辑源文件不会自动影响已经运行的实验；恢复启动会采用当前版本。每次热加载或中断前须用户明确批准；具体审批、预览、发布与生效核对见 [外界监督与运行干预](operator-supervision.md#热加载版本化输入)。版本规则、职责表和装载链见 [Agent 输入管理](agent-inputs.md)。
 

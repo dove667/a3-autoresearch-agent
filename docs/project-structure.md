@@ -16,9 +16,14 @@
 │   ├── shared/             bootstrap、execution、workspace、readiness-task
 │   ├── phase-one/          冷启动 goal、acceptance、instructions
 │   ├── phase-one-web/      E-only goal、acceptance、instructions
+│   ├── phase-one-skills/   F-only skills 工具输入
+│   ├── phase-one-context/  G-only 上下文管理输入
 │   └── phase-two/          联合优化 goal、acceptance；protocol 位于 shared/
 ├── tests/runtime/          本地和远程基础设施的回归测试
 ├── scripts/                薄启动入口
+├── skills/                 Agent 按需读取的研究与协作方法包
+├── .env.example            统一部署配置模板
+├── .env                    本机部署配置，不纳入 Git
 ├── third_party/            固定版本的 mini-SWE-agent submodule
 ├── reports/                可选的本地报告工程，不纳入 Git
 ├── docs/                   环境指南、架构、路线与历史设计
@@ -34,11 +39,15 @@
 | `src/a3_research_agent/harness/` | 显式派生包使用的 overlay；不自动替换历史生成代码 | 是 |
 | `src/a3_research_agent/packaging/` | 按显式清单交付完整包源码 | 是 |
 | `agent-inputs/` | 全部部署方 Agent 输入（README 仅作维护者导航）；每次运行另存版本化副本 | 是 |
+| `skills/` | 供 Agent 发现与按需读取的研究方法和协作参考 | 是 |
+| `.env.example`、`.env` | 部署参数的公共模板与本机实际值 | 仅模板 |
 | `tests/runtime/` | 验证固定部署逻辑，不承担 A3 自身的开发测试 | 是 |
 | `reports/` | 可选的本地报告工程，保存展示用正文、数据与图像 | 否 |
 | `third_party/` | 第三方原始源码与独立 Git 历史 | submodule |
 
 人类提前准备固定基础设施和评估条件。专项 auto research Harness、Policy 候选、记忆、反思与选择由 SWE Agent 产生，保存在对应运行中；改进候选形成新版本，原始运行材料持续保留。项目的主实现位于 `src/a3_research_agent/`，`pyproject.toml` 管理包发现、依赖与命令入口。源码 checkout 通过 `scripts/start-rsi.sh` 调用 `a3_research_agent.cli.launch`；安装 wheel 后通过显式 `--project-root` 选择完整基础设施项目目录。该目录与 `A3_PROJECT_ROOT` 指向的独立仿真项目不同。版本化输入、skills 和运行数据继续由部署目录提供，不随 wheel 携带个人配置或实验数据。
+
+部署参数统一由根 `.env.example` 提供模板，Host 加载项目根 `.env`，或通过 `A3_RSI_ENV_FILE` 指定另一份完整配置；加载规则见[环境配置](setup.md#本地配置与运行产物)。
 
 所有 Python 导入使用 `a3_research_agent.*`。Controller 只依赖标准库，通过
 `src/a3_research_agent/execution/controller/__main__.py` 支持系统 Python 的直接执行；

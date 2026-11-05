@@ -2,6 +2,8 @@
 
 Version: 0.1.0
 
+本文记录 E 扩展的原始方案与当时路径。现行输入位于 `agent-inputs/phase-one-web/`，文件映射与加载规则见[输入管理](../agent-inputs.md)。
+
 ## 决定与边界
 
 用新的第一阶段 web-extension run 沿用明确保留的 Harness，只补 E 联网工具；不 resume 已 self-stop 的旧 run，不回到通用 mini 冷启动。普通 phase-one 的 A–D 目标与验收不变；第二阶段科学协议、指标和阈值不变。

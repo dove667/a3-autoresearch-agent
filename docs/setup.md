@@ -41,7 +41,7 @@ MSWEA_CONFIGURED=true uv run mini --model "$MODEL_NAME" \
 
 按 `a3_dual_arm_sim` 的安装指南建立独立环境，并检查其 Python 版本、MuJoCo、训练可选依赖和渲染驱动要求。Agent runtime 与仿真环境各自安装依赖。
 
-默认部署方案通过 SSH 连接远程 GPU 服务器。使用者配置 SSH 目标、项目目录、Python 环境、作业输出目录和可用 GPU；这些参数在后端实现后由部署配置传入。执行前分别验证 SSH 连通性、无相机仿真、相机渲染和所需的训练或推理组件。
+默认部署方案通过 SSH 连接远程 GPU 服务器。使用者配置 SSH 目标、项目目录、Python 环境、作业输出目录和可用 GPU；这些参数由部署配置传入固定执行后端。执行前分别验证 SSH 连通性、无相机仿真、相机渲染和所需的训练或推理组件。
 
 具备兼容 GPU 和图形驱动的机器也可使用规划中的本地执行后端，直接运行相同作业入口。相机渲染是否可用取决于 MuJoCo、图形后端和设备驱动；训练与推理还需检查模型运行库的设备支持。
 
@@ -58,6 +58,12 @@ Linux 无显示器环境可按仿真项目要求设置 `MUJOCO_GL=egl`，并单�
 
 ## 本地配置与运行产物
 
+部署参数统一维护于根 `.env.example`。首次安装将它复制为 `.env`，再填写模型、认证、SSH、镜像与资源配置；已有部署只修改所需项，保留现有值。启动时 Host 加载所选项目根目录的 `.env`；`A3_RSI_ENV_FILE` 可指定另一份完整配置，文件中的值覆盖同名进程环境变量。
+
+上下文预算也在这份配置中维护：main、worker 与 summary 的默认窗口均为 500,000 tokens，约 400,000 tokens 触发压缩，压缩后的软目标为 32,000 tokens。显式旧值继续有效，需要调整时修改对应配置项；新 Host 加载后生效，活动进程保持原配置。
+
+Agent 的版本化目标与协议维护于 `agent-inputs/`，研究与协作方法维护于 `skills/`。它们的加载规则见[输入管理](agent-inputs.md)。
+
 个人部署参数、认证信息和日志保存在版本控制之外。项目的 `artifacts/` 按 `rsi/`、`validation/` 和 `deployment/` 分别保存原始运行、验证与部署产物；目录职责见[项目结构](project-structure.md)。含个人资源或使用习惯的 Agent 指引文件应加入 `.gitignore`。提交示例配置时使用相对路径、清晰占位符和通用参数。
 
 
@@ -67,7 +73,7 @@ Linux 无显示器环境可按仿真项目要求设置 `MUJOCO_GL=egl`，并单�
 
 ## 可选研究网页网关（Tavily）
 
-在启动 Host 的本机项目根目录 `.env` 配置，不在聊天中发送 key。当前 Mac 部署路径为 `/Users/dove/Projects/a3-research-agent/.env`；其他部署使用各自项目根目录或 `A3_RSI_ENV_FILE`。保留原有配置，仅加入或修改以下项：
+在 Host 使用的 `.env` 或 `A3_RSI_ENV_FILE` 配置中加入或修改以下项，保留其余部署参数。真实 key 由部署者在本机填写：
 
 ```dotenv
 TAVILY_API_KEY='<在本机填写自己的 key>'
@@ -80,13 +86,13 @@ A3_WEB_ENABLED='1'
 
 网页正文改由 Tavily Basic Extract 在提供商服务器读取，Host 只访问固定 `api.tavily.com`，不解析或连接目标网站，也不运行本地浏览器或 JavaScript。`/web/fetch` 仍接收 `url` 与 `max_chars`，返回提取正文而非原始 HTTP 页面，不是 PDF、模型或依赖下载器。Host 对目标 URL 做公开域名外形的词法检查，拒绝 IP、明显本地名称、凭据和不允许的端口；这不是目标域名的独立 DNS／重定向安全验证，实际抓取安全由提供商负责，不保证任意页面可读取。远程作业仍离线。
 
-当前 Mac 可沿用已经运行的 Shadowrocket 本地 HTTP 代理：在 `/Users/dove/Projects/a3-research-agent/.env` **保留现有 key 和其他设置**，仅加入以下非敏感项：
+需要通过已有本地 HTTP 代理访问 Tavily 时，在 Host 配置中设置代理地址；下列端口仅为示例，应替换为实际监听端口：
 
 ```dotenv
 A3_TAVILY_HTTP_PROXY='http://127.0.0.1:1082'
 ```
 
-此选项仅影响 Tavily search／extract API，不更改系统代理、全局环境或其他网络链路。省略时直连 Tavily；只接受无凭据的数字回环 HTTP 代理地址。代理仅建立到固定 `api.tavily.com:443` 的 CONNECT 隧道，不携带 API 认证；隧道内仍端到端校验 Tavily TLS 证书及域名，API key 只在 TLS 内发送。Agent 不能选择代理、上游地址或自定义代理头；代理不可用时安全失败，不绕过或关闭 TLS 验证。配置仅在经批准启动／恢复 Host 时加载；本次修改本身不重启 E。
+此选项仅影响 Tavily search／extract API，不更改系统代理、全局环境或其他网络链路。省略时直连 Tavily；只接受无凭据的数字回环 HTTP 代理地址。代理仅建立到固定 `api.tavily.com:443` 的 CONNECT 隧道，不携带 API 认证；隧道内仍端到端校验 Tavily TLS 证书及域名，API key 只在 TLS 内发送。Agent 不能选择代理、上游地址或自定义代理头；代理不可用时安全失败，不绕过或关闭 TLS 验证。配置在启动或恢复 Host 时加载。
 
 Basic Extract 按每 5 个成功提取 URL 消耗 1 credit，失败 URL 提取不收费（[官方额度说明](https://docs.tavily.com/documentation/api-credits)）。本地失败尝试仍计数；若提供商已成功处理而本地超时／响应丢失，不能据本地失败推断未扣费。没有 per-run 总次数上限、不自动开启付费的规则不变。
 

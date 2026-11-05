@@ -46,7 +46,8 @@ mode keeps the longest paired tail that fits the target; the newest complete too
 batch stays protected even if it makes the soft target infeasible. Hard admission
 still applies. File and memory byte limits are separate from tokenizer estimates.
 
-`configs/context-400k.env.example` supplies explicit 500k/400k/32k settings.
+The root `.env.example` supplies explicit 500k/400k/32k settings; copy the
+required values into the Host’s `.env` or selected `A3_RSI_ENV_FILE`.
 Existing explicit 64k/32k environment values are honored, so changing defaults
 alone does not migrate a deployment. The Host reads budgets at startup; Agent
 input hot reload does not replace them. A matching derived Harness reads the
