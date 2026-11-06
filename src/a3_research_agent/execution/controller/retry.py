@@ -7,6 +7,7 @@ import re
 import time
 from argparse import Namespace
 from copy import copy
+from pathlib import Path
 
 from a3_research_agent.execution.scheduling.gpu import active_jobs, select_shared_gpu
 
@@ -95,6 +96,14 @@ def prepare_retry(store: JobStore, previous: dict) -> bool:
                     store, args, jobs, job["gpu_memory_mb"], diagnostics=allocation
                 )
                 reason = "no_eligible_gpu"
+            if gpu and job.get("backend") == "process":
+                from a3_research_agent.execution.scheduling import host_resources
+
+                busy = host_resources.admission(
+                    host_resources.sample(Path(args.data_root)), args, jobs
+                )
+                if busy:
+                    gpu, reason = None, busy["reason"]
             if gpu is None:
                 job["retry"] = {
                     "status": "resource_busy",
@@ -125,6 +134,12 @@ def prepare_retry(store: JobStore, previous: dict) -> bool:
             # Move the committed archive: it remains within the same storage budget.
             archive_path.replace(attempt_directory / "terminal-archive.json")
             cleanup_path.replace(attempt_directory / "cleanup.json")
+            if job.get("backend") == "process":
+                for name in ("stdout.log", "stderr.log"):
+                    path = directory / name
+                    if path.exists():
+                        path.replace(attempt_directory / name)
+                job.pop("process", None)
             durable_json(attempt_directory / "retry.json", retry_record)
             job.setdefault("attempts", []).append(
                 {
@@ -149,7 +164,12 @@ def prepare_retry(store: JobStore, previous: dict) -> bool:
             telemetry = directory / "episode-telemetry/resources.json"
             telemetry.unlink(missing_ok=True)
             try:
-                job["container_id"] = create_container(store, job, args)
+                if job.get("backend") == "process":
+                    from .processes import prepare
+
+                    prepare(store, job, args)
+                else:
+                    job["container_id"] = create_container(store, job, args)
                 job["status"] = "created"
                 store.save(job)
             except Exception:
@@ -181,7 +201,19 @@ def watch_with_retries(args, watch_attempt) -> None:
                 job = store.load(args.job_id, job["experiment_id"])
                 if args.timeout and time.monotonic() - started >= args.timeout:
                     break
-                if not prepare_retry(store, job):
+                prepared = prepare_retry(store, job)
+                while not prepared and job.get("managed"):
+                    job = store.load(args.job_id, job["experiment_id"])
+                    if (
+                        job.get("retry", {}).get("status") != "resource_busy"
+                        or (directory / "cancel_requested").exists()
+                        or args.timeout
+                        and time.monotonic() - started >= args.timeout
+                    ):
+                        break
+                    time.sleep(10)
+                    prepared = prepare_retry(store, job)
+                if not prepared:
                     break
         finally:
             from .lifecycle import lifecycle_lock

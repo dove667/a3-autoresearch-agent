@@ -44,8 +44,8 @@ flowchart LR
 | --- | --- | --- |
 | 本地 Host | 启动器、Gateway、版本服务、Docker 生命周期监督 | 模型认证、SSH、身份分配、固定挂载和本地资源上限 |
 | 本地构建或候选 Docker | 初始 mini 的动作，或生成后 Harness 的完整执行循环 | 本工作区读写、指定公共与历史材料读取、绑定身份的 Gateway 请求 |
-| 远程 Host Controller | 作业归属检查、资源分配、Docker 创建与状态管理 | 执行端 Docker 与共享 GPU 租约 |
-| 远程作业 Docker | A3 仿真、渲染、训练或评测命令 | 本作业目录和分配的计算资源 |
+| 远程 Host Controller | 作业归属检查、资源分配、进程或 Docker 生命周期管理 | 执行端 Docker 与共享 GPU 租约 |
+| 远程作业进程或 Docker | A3 仿真、渲染、训练或评测命令 | 本作业目录和分配的计算资源 |
 
 ```mermaid
 flowchart TB
@@ -68,7 +68,7 @@ flowchart TB
     Gateway --> Provider
     subgraph Remote[远程执行端]
         Controller[Controller：归属与资源分配]
-        Job[作业 Docker：A3]
+        Job[作业进程或 Docker：A3]
         Controller --> Job
     end
     Gateway -->|SSH / JSON| Controller
@@ -89,11 +89,11 @@ Gateway 将候选使用的模型别名映射到部署者配置的服务，调用
 
 Agent 先通过自己的工具读取 A3 的工作流与动作、观测契约，再把实验命令、参数和输入文件提交给 Gateway 的 `/jobs`。
 
-Gateway 从认证中确定实验身份，补入归属字段，经 SSH 调用远程 Controller。调用方不能覆盖自己的身份或传入任意 Host 挂载。Controller 检查并发容量，需要 GPU 时申请租约，为本作业建立独立目录并启动 Docker，返回 job 标识。
+Gateway 从认证中确定实验身份，补入归属字段，经 SSH 调用远程 Controller。调用方不能覆盖自己的身份或传入任意 Host 挂载。Controller 检查并发容量，需要 GPU 时申请租约，为本作业建立独立目录并启动配置的进程或 Docker 后端，返回 job 标识。
 
 Host 在传输前生成并持久保存 job 标识，Controller 使用同一编号创建作业；传输失败的响应携带该编号供后续查询。`GET /jobs` 按身份和 run 分页列出 Controller 元数据并恢复 Host 登记，支持找回历史提交丢失的编号。调度扫描跳过已有可靠回收记录的容器，对其余作业批量检查实际状态；每次提交复用同一次活动作业扫描。Docker 查询失败时停止本次调度，保留已有资源判断边界。
 
-长任务提交后异步运行。Controller 的 watcher 跟踪容器完成与时限；Agent 周期查询 `/jobs/{job_id}`，完成后从 artifacts 接口取回报告、图像等结果。Controller 按请求执行，无需单独运行常驻 HTTP 服务。
+长任务提交后异步运行。Controller 的 watcher 跟踪进程或容器完成与时限；Agent 周期查询 `/jobs/{job_id}`，完成后从 artifacts 接口取回报告、图像等结果。Controller 按请求执行，无需单独运行常驻 HTTP 服务。
 
 Agent 根据原始报告核对协议、逐回合结果和异常，再决定保留、拒绝或继续尝试。Host 提供 `/checks/comparison` 检查提交条件的差异与缺失；实际协议的提取、结论解释和候选选择由 Agent 完成。字段一致不会自动证明真实实验可比。
 
@@ -102,7 +102,7 @@ sequenceDiagram
     participant A as auto research Agent
     participant G as Host Gateway
     participant C as 远程 Controller
-    participant D as 作业 Docker
+    participant D as 作业进程或 Docker
     A->>G: 提交命令、文件与 GPU 需求
     G->>C: 绑定身份，通过 SSH 提交
     C->>D: 分配资源并执行 A3
@@ -263,3 +263,9 @@ Host 把 Agent 在 continuation.json 中声明的 remote_exports 验证后记入
 按 [操作者监督](operator-supervision.md) 获得本次操作所需的用户批准后，人类在修复环境或准备专家建议后，可以用 `--resume-from ... --feedback-file ...` 在恢复时加入反馈，也可以用 `a3_research_agent.cli.reload_feedback` 在运行期间预览并确认注入。热加载摘要绑定正文与当前主身份，主身份交接后旧确认失效。Host 用版本为 0.1.0 的固定封装生成 user message；源文件可反复覆盖，当次内容以反馈 ID、SHA256、私有副本和事件留档。反馈不改变目标、验收或 Agent 的代码，也不替代已有的版本化输入。
 
 Gateway 将反馈绑定到登记时的主身份，在下一次完整历史模型请求末尾建立位置；以后沿相同历史前缀插入同一条反馈。已发出的模型请求与作业继续执行。模型可连续参考这条信息，而 Agent 自己的 checkpoint 和原始历史文件保持原样。上下文压缩后只在完整工具结果边界重新定位，并记录事件。该机制不向其他身份广播，不自动关注源文件变化，也不启动额外 Agent。人工反馈的使用须在结果中记录，不能把受人工指导的实验描述为全程无人干预。
+
+## 受信任的进程执行后端
+
+远程 `process` 后端直接启动执行账号下的进程，不创建 Docker 或单作业 CPU／内存硬限制；Host 根据整机负载、可用内存、待用预算、数据盘余量与现有 GPU 租约准入。所有管理目录须在配置的独立数据设备。环境变量与作业 context 给出真实路径，不建立全局 `/outputs` 等别名。此后端采用账号权限，不提供 Docker 的根文件系统、网络和跨 run 文件隔离；Gateway 的归属和管理权限仍检查，模型凭据留在本地 Host。
+
+切换只影响新作业。已存在 Docker 作业保留原 watcher、预算与路径，新旧后端共享 GPU 调度。进程 PID 结合启动时刻与系统启动标识核对，取消使用 pidfd 对验证后的自有进程发信号，包括独立 episode 后代；文件和日志保留。模型加载显存竞争沿同一逻辑编号重试。历史容器大清单先与真实 Docker inventory 比对，不反复 inspect 已消失的 ID；历史记录保留。配置和资源契约见[进程后端](process-backend.md)。

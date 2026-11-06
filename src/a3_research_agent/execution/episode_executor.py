@@ -38,6 +38,18 @@ class ResourceMonitor:
     """Measure the whole cgroup using counters, including all episode descendants."""
 
     def __init__(self, root=Path("/sys/fs/cgroup")):
+        self.native = os.environ.get("A3_JOB_RESOURCE_BACKEND") == "process"
+        if self.native:
+            self.root = Path("/proc") if root == Path("/sys/fs/cgroup") else root
+            self.cpus = float(
+                len(os.sched_getaffinity(0))
+                if hasattr(os, "sched_getaffinity")
+                else os.cpu_count() or 1
+            )
+            self.previous = None
+            self.gpu_limit_mb = int(os.environ.get("A3_JOB_GPU_MEMORY_MB", "0"))
+            self.gpu_uuid = os.environ.get("A3_JOB_GPU_UUID", "")
+            return
         self.root = root
         quota, period = (root / "cpu.max").read_text().split()
         self.cpus = float(os.cpu_count() or 1) if quota == "max" else int(quota) / int(period)
@@ -50,7 +62,35 @@ class ResourceMonitor:
         self.previous = None
         self.last_oom = None
 
+    def sample_host(self):
+        memory = {
+            line.split(":")[0]: int(line.split()[1]) * 1024
+            for line in (self.root / "meminfo").read_text().splitlines()
+        }
+        counters = [int(x) for x in (self.root / "stat").read_text().splitlines()[0].split()[1:9]]
+        total, idle = sum(counters), counters[3] + counters[4]
+        cpu = None
+        if self.previous and total > self.previous[0]:
+            cpu = self.cpus * max(0, 1 - (idle - self.previous[1]) / (total - self.previous[0]))
+        self.previous = total, idle
+        reserve = int(os.environ.get("A3_HOST_MEMORY_RESERVE_MB", "32768")) * 1024**2
+        result = {
+            "time": time.monotonic(),
+            "cpu_cores": cpu,
+            "cpu_limit": self.cpus,
+            "memory_bytes": memory["MemTotal"] - memory["MemAvailable"],
+            "memory_limit": max(1, memory["MemTotal"] - reserve),
+            "pids": 0,
+            "pids_limit": None,
+            "oom_kills": 0,
+            "new_oom": False,
+            "gpu_available": not bool(self.gpu_limit_mb),
+        }
+        return self.with_gpu_sample(result)
+
     def sample(self):
+        if self.native:
+            return self.sample_host()
         now = time.monotonic()
         stats = dict(line.split() for line in (self.root / "cpu.stat").read_text().splitlines())
         usage = int(stats["usage_usec"]) / 1e6
@@ -75,9 +115,16 @@ class ResourceMonitor:
             "gpu_available": not bool(self.gpu_limit_mb),
         }
         self.last_oom = oom
+        return self.with_gpu_sample(result)
+
+    def with_gpu_sample(self, result):
         if self.gpu_limit_mb:
             try:
-                telemetry = json.loads(Path("/run/a3/telemetry/resources.json").read_text())
+                telemetry = json.loads(
+                    Path(
+                        os.environ.get("A3_JOB_TELEMETRY", "/run/a3/telemetry/resources.json")
+                    ).read_text()
+                )
                 if telemetry.get("error") or not 0 <= time.time() - telemetry["sampled_at"] <= 10:
                     raise ValueError("Host GPU telemetry unavailable or stale")
                 for name in (
@@ -493,7 +540,10 @@ class EpisodeExecutor:
                     self.launch(pending.pop(0))
                 if pending and not self.active:
                     blocked_since = blocked_since or now
-                    if now - blocked_since >= self.manifest["idle_timeout_seconds"]:
+                    if (
+                        now - blocked_since >= self.manifest["idle_timeout_seconds"]
+                        and os.environ.get("A3_JOB_MANAGED") != "1"
+                    ):
                         resource_blocked = True
                         break
                 else:

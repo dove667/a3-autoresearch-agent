@@ -27,6 +27,24 @@ class Monitor:
         }
 
 
+def test_managed_batch_waits_through_resource_pressure_without_returning_to_model(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("A3_JOB_MANAGED", "1")
+    path = manifest(tmp_path, 1, idle_timeout_seconds=1)
+    start = time.monotonic()
+
+    class TemporarilyBusy(Monitor):
+        def sample(self):
+            result = super().sample()
+            if time.monotonic() - start < 1.3:
+                result["memory_bytes"] = result["memory_limit"]
+            return result
+
+    assert executor.EpisodeExecutor(path, tmp_path / "batch", TemporarilyBusy()).run() == 0
+    assert time.monotonic() - start > 1
+
+
 def manifest(tmp_path, count=6, **options):
     items = []
     for i in range(count):

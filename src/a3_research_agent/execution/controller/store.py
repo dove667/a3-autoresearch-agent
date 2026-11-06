@@ -21,6 +21,48 @@ class JobStore:
             raise PermissionError("job is not accessible")
         return self.root / "jobs" / job_id / "job.json"
 
+    def job_statuses(self, request: dict) -> dict:
+        """Read only selected watcher records; never inspect containers, GPUs or logs."""
+        identifiers = request.get("job_ids")
+        if not isinstance(identifiers, list) or not 1 <= len(identifiers) <= 64:
+            raise ValueError("Select 1 to 64 job IDs")
+        if not all(isinstance(identifier, str) for identifier in identifiers):
+            raise ValueError("Job IDs must be strings")
+        if len(set(identifiers)) != len(identifiers):
+            raise ValueError("Select distinct job IDs")
+        jobs = [self.load(identifier, request.get("experiment_id")) for identifier in identifiers]
+        observed_at = time.time()
+        records = []
+        for job in jobs:
+            record = {
+                "job_id": job["job_id"],
+                "status": public_job_status(job),
+                "exit_code": job.get("exit_code")
+                if public_job_status(job) in {"completed", "failed", "cancelled"}
+                else None,
+                "retry_count": job.get("retry_count", 0),
+                "observed_at": observed_at,
+                **({"error": job["error"]} if "error" in job else {}),
+            }
+            if (
+                job.get("backend") == "process"
+                and record["status"] in {"running", "created"}
+                and observed_at - job.get("admitted_at", job["created_at"]) > 30
+            ):
+                from .processes import is_running
+
+                if not is_running({"process": job.get("watcher")}):
+                    if job.get("managed"):
+                        # Infrastructure recovery belongs to the server dispatcher/operator.
+                        record.update(status="pending", exit_code=None)
+                        record.pop("error", None)
+                    else:
+                        record.update(status="observation_error", error="watcher_unavailable")
+            records.append(record)
+        return {
+            "jobs": records,
+        }
+
     def load(self, job_id: str, experiment_id: str) -> dict:
         try:
             job = json.loads(self.metadata_path(job_id).read_text())
@@ -60,6 +102,8 @@ class JobStore:
                     },
                 }
             )
+            if job.get("managed"):
+                jobs[-1].pop("gpu_uuid", None)
             if len(jobs) > limit:
                 break
         return {
@@ -85,10 +129,15 @@ class JobStore:
         total = (
             json.loads(report.read_text()).get("host_storage_bytes", 0) if report.exists() else 0
         )
-        roots = [self.run_directory(run_id)]
+        roots = [self.run_directory(run_id), self.root / "shared-cache" / run_id]
         for metadata in (self.root / "jobs").glob("*/job.json"):
             job = json.loads(metadata.read_text())
             if job.get("run_id") == run_id:
+                if job.get("backend") == "process":
+                    for name in ("stdout.log", "stderr.log"):
+                        log = metadata.parent / name
+                        if log.exists():
+                            total += log.stat().st_size
                 total += directory_storage_bytes(metadata.parent / "attempts")
                 archive = metadata.parent / "terminal-archive.json"
                 if archive.exists():

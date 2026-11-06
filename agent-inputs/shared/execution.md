@@ -1,10 +1,12 @@
 # Host提供的执行与验收入口
 
-Version: 0.15.21
+Version: 0.18.0
 
 部署方运行 gateway、容器引擎、模型认证与远程资源调度。候选 Harness 在独立容器内运行，
 通过 HTTP 请求这些固定能力。工具名称、研究逻辑、反思方法和版本选择由 Agent 设计。
 目标和验收以本次只读的 `goal.md`、`acceptance.md` 为准。
+
+`deployment.json.remote_limits.managed_jobs=true` 表示服务器托管执行：Agent 只提交命令、输入、科研参数和是否需要 GPU，Controller 持久保存队列、选择设备、分配显存预算、等待资源及管理安全重试。普通返回不包含服务器 CPU、内存或显卡分配明细。Controller 的诊断、修复与运维由人类操作者负责；基础设施问题不转成 Agent 的研究任务。
 
 摘要返回超过硬字节上限时，客户端可在同一原文分段的有界重试中发送 `compact_retry: true`；Host 仅选择固定的更紧凑提示，不接受自定义指令或模型。纠正状态与累计调用数持久保存，不截断原文、不放宽 6000 UTF-8 字节限制；当前 run 的冻结输入不因部署修复而自动更新。
 
@@ -17,7 +19,7 @@ Version: 0.15.21
 不会改变这些调用的来源。验收不要求候选再嵌套生成另一层模型进程。
 
 远程 `/jobs` 是执行仿真、相机和评测代码的受控作业。模型调用位于候选进程，通过 Host
-转发；远程作业按部署设计没有模型凭据或网络。候选实际调用受限工具并读取作业结果，
+转发；远程作业不获得 Host 模型凭据；Docker 后端关闭网络，受信任的 process 后端使用执行账号的文件系统与网络权限。候选实际调用受限工具并读取作业结果，
 就是这条执行链，不需要在远程作业中再次运行模型。
 
 候选由模型驱动只说明执行主体成立。普通第一阶段 A/B/C/D 仍分别需要版本化标准要求的真实能力、
@@ -228,9 +230,19 @@ Host 在发送请求前保存任务编号。提交遇到传输失败时，502 �
 [文件传递](../../docs/workspace-snapshot-assembly.md#send-selected-workspace-files-to-a-remote-job)。
 
 
+### 受信任的进程后端与真实路径
+
+以 `deployment.json.remote_limits.backend`、提交与状态响应的 `backend` 判断环境。`process` 在服务器既有 Python 环境直接运行，不创建远程 Docker，也不设置单作业 CPU、内存或 PID 硬上限。Controller 根据整机负载、可用内存、待用内存估计、GPU 预留、run 存储额度和数据盘余量接收作业；`resource_busy` 的 `host_cpu_pressure`、`host_memory_pressure`、`data_disk_headroom` 是退避原因，不要绕过调度。内存和 CPU 准入估计不是内核保证，持续监控真实使用量。
+
+process 作业工作目录为真实数据盘 workspace；提交响应含 `paths`、`input_paths`，作业内 `a3-job-context.json` 保存同一映射。使用 `python` 选择部署 Python；脚本从环境变量读取 `A3_WORKSPACE`、`A3_OUTPUTS`、`A3_SHARED_CACHE`、`A3_TEMPORARY`、`A3_MODELS`、`A3_DATASETS`、`A3_A3`、`A3_EPISODE_EXECUTOR`、`A3_PYTHON`。资产未配置时对应变量不存在。`A3_INPUT_EXPORTS_JSON` 是 export ID 到真实目录的 JSON 映射。不要把 `/opt/a3`、`/workspace`、`/outputs`、`/inputs/...` 或 `/run/a3` 写死到新 process 脚本；历史 manifest 引用这些路径时，根据明确的 export 来源映射解析，不修改历史证据或重新训练。命令参数不执行 shell 变量展开，需要时用 Python launcher 解析环境后启动程序。
+
+所有数据、下载、临时文件与编译缓存写入提供的数据盘目录，禁止使用 `/tmp`、系统盘或未配置的全局根路径。Host 为 HOME、TMPDIR、XDG、HF、Torch、Triton、CUDA 等常见可写缓存设置数据盘位置，并核验管理目录位于独立数据设备。process 是受信任执行，未用内核阻止程序显式写任意路径；Agent 必须遵守路径约定，不读取凭据、不修改环境或公共基线、不操作其他用户任务。共享缓存放在 `A3_SHARED_CACHE`，其实际字节计入本轮额度。内容哈希、预处理格式、原子发布、并发锁与复用校验由 Agent 实现；缓存改进应测数据等待、命中、解码次数、写入量与训练吞吐，不重复已完成的科学回合。
+
+切换只影响新提交。已有 Docker 作业保持原进程、路径、预算、日志与输出，按原方式查询、完成和自动回收；新旧作业共用 GPU 调度。取消只清理本作业可验证的进程及后代，保留文件与日志，不因 Host 恢复重复执行训练。需要跨后端继续实验时适配新脚本路径，复用已有 checkpoint 和产物。旧 watcher 的 run 存储阈值在其退出前仍有效，新增写入须同时顾及在途旧作业预算。
+
 ### 独立 episode 执行器
 
-采集和评估中的独立 episode 统一使用作业内只读的 `/run/a3/episode_executor.py`。由 Agent 判断任务独立性，编写包含科学参数、种子、协议与报告路径的 manifest；不要另写固定两个并发的循环。提交远程 job 时将 manifest 和所需程序放入作业工作区，命令示例：
+采集和评估中的独立 episode 统一使用固定执行器：process 作业读取 `A3_EPISODE_EXECUTOR`，Docker 作业为 `/run/a3/episode_executor.py`。由 Agent 判断任务独立性，编写包含科学参数、种子、协议与报告路径的 manifest；不要另写固定两个并发的循环。提交远程 job 时将 manifest 和所需程序放入作业工作区，命令示例：
 
 ```bash
 python /run/a3/episode_executor.py --manifest research/episodes.json --output /outputs/example-batch
@@ -238,7 +250,7 @@ python /run/a3/episode_executor.py --manifest research/episodes.json --output /o
 
 manifest 是 JSON：`version` 为 1，`episodes` 中每项提供唯一 `id`、参数数组 `command`、绝对报告路径 `report`（建议放在 `/outputs`），可选 `work_units`（默认 1）。可选 `max_parallel`、`threads_per_episode`、`warmup_seconds`、`adjust_seconds`、`idle_timeout_seconds` 默认分别为 1024、1、15、15、60（时间单位为秒）。命令须写出所声明的 JSON 报告；进程退出码为 0 且报告为有效 JSON 对象才记为完成，报告中科学结果 `success:false` 仍是有效完成。学习型模型计算仍须遵循下方 GPU 规则。
 
-执行器要求 cgroup v2 和有限的内存额度；在固定作业额度内，根据容器 CPU、内存、进程资源及 GPU 显存余量和完成吞吐调整并发，不改变额度，也不为降低并发终止在途 episode。并发上限还受 CPU 配额、每 episode 线程数和任务数约束；每次资源观测至多启动一个 episode，GPU 遥测不可用、报错或超过 10 秒时立即停止新增。输出目录保存 `ledger.json`、`metrics.jsonl` 和 `summary.json`。同一 batch 有排他锁，恢复时校验 manifest 摘要和已完成报告哈希并跳过已完成项；资源或测量持续阻塞，且无在途 episode、仍有 pending 达到 `idle_timeout_seconds` 时以退出码 75 结束；核查资源后可用同一 manifest 和目录继续 pending。状态不确定的 launching/running 项和失败项拒绝重复执行；失败项不自动重试，先核查并明确处理。收到退出信号时清理本次子进程并保留已有结果；未完成的在途项会按退出码和报告记账为失败，尚未启动的项保留 pending。主进程退出后若仍有后台后代，执行器清理其进程组并将该项记为失败；报告路径与内部控制文件、日志、临时文件或 manifest 冲突时在写入前拒绝。吞吐验证使用独立输出和任务，不重跑已完成的科学 episode。完整契约见 [episode 执行器](../../docs/episode-executor.md)。
+Docker 执行器使用 cgroup v2 的 CPU、内存和 PID 额度；process 执行器使用整机 CPU 增量、可用内存与部署内存余量。两种模式都结合 GPU 显存与完成吞吐调整并发，不为降低并发终止在途 episode。并发上限还受 CPU 配额、每 episode 线程数和任务数约束；每次资源观测至多启动一个 episode，GPU 遥测不可用、报错或超过 10 秒时立即停止新增。输出目录保存 `ledger.json`、`metrics.jsonl` 和 `summary.json`。同一 batch 有排他锁，恢复时校验 manifest 摘要和已完成报告哈希并跳过已完成项；资源或测量持续阻塞，且无在途 episode、仍有 pending 达到 `idle_timeout_seconds` 时以退出码 75 结束；核查资源后可用同一 manifest 和目录继续 pending。状态不确定的 launching/running 项和失败项拒绝重复执行；失败项不自动重试，先核查并明确处理。收到退出信号时清理本次子进程并保留已有结果；未完成的在途项会按退出码和报告记账为失败，尚未启动的项保留 pending。主进程退出后若仍有后台后代，执行器清理其进程组并将该项记为失败；报告路径与内部控制文件、日志、临时文件或 manifest 冲突时在写入前拒绝。吞吐验证使用独立输出和任务，不重跑已完成的科学 episode。完整契约见 [episode 执行器](../../docs/episode-executor.md)。
 
 ### 模型计算必须使用 GPU
 
@@ -249,7 +261,7 @@ manifest 是 JSON：`version` 为 1，`episodes` 中每项提供唯一 `id`、�
 CPU 仍可用于轻量元数据检查、预处理、日志分析、命令帮助与合成单元测试 fixture；这些不是训练／推理的替代执行通路，也不能当作真实模型能力证据。上文 gateway `/v1/responses` 的远端模型调用保持原接口，不要求调用方申请本地 GPU；提供商执行不属于本地 CPU 回退。
 
 ### 作业环境与接口
-作业镜像内 A3 位于 `/opt/a3`，Python、仿真与相机依赖已准备好；命令工作目录为 `/workspace`。
+process 后端使用 `A3_A3`、`A3_PYTHON` 和真实数据盘工作目录。以下固定路径、挂载与网络限制适用于 Docker 后端：A3 位于 `/opt/a3`，命令工作目录为 `/workspace`。
 公共参考文件为 `/opt/a3/README.md`、`/opt/a3/docs/workflow_guide.md` 和 `/opt/a3/docs/contracts.md`，示例入口位于 `/opt/a3/examples/`。文档中的 `examples/...` 相对 A3 根目录；在作业工作目录中调用时使用绝对路径，或使用 Python 模块入口。例如检查评测命令：
 
 ```json
@@ -258,11 +270,15 @@ CPU 仍可用于轻量元数据检查、预处理、日志分析、命令帮助�
 
 等效示例入口为 `["python", "/opt/a3/examples/benchmark_cookie_batch.py", "--help"]`。不要假设存在 `python -m a3` 或包根目录的 `__main__`；参考文档与这些示例随同一 A3 源码准备进镜像。生成后的 Harness 自行组织文档访问和接口知识交接。
 作业根文件系统只读、无网络，只挂载自己的工作区，无 SSH、Docker socket 或 gateway 令牌。
-任务结束后通过 `GET /jobs/{job_id}` 查询状态，通过
+正常远程训练、采集和评估由 Controller 管理生命周期、资源和已支持的可恢复失败。提交独立作业后继续处理其他研究工作；等待依赖结果时使用 `POST /jobs/wait`，正文如 `{"job_ids":["<job-id>"],"seconds":25}`，每次最多 64 个作业，seconds 为 0–300。Host 一次读取一组作业的精简记录，活动快照最多缓存 30 秒，终态最多缓存 5 分钟；不读取 Docker 日志或扫描显卡。返回 `reason:terminal`、`notification` 或 `timeout` 和简短的 jobs 状态，不返回服务器 CPU、显存或训练日志。任一所选作业完成、失败或取消即返回 terminal；已有终态也会立即返回，后续等待列表移除已处理项。Controller 自动重试中的 restarting 属于非终态。通知覆盖新反馈、输入或分析信号。
+
+Harness 在程序内部续接 timeout，不为正常运行、排队或等待超时发起模型调用；HTTP 超时须覆盖 seconds 加远程连接余量（建议至少 seconds+65 秒）。将完成或中途停止的结果交给模型；如果有预先计划的 checkpoint 评估，由作业程序按计划安排。托管作业的 queued、pending、created、running、restarting 都属于等待状态，资源紧张与可恢复基础设施问题由 Controller 处理。作业确实停止后按真实状态返回失败，不推断成功或重放未知进度。非托管 process 作业的 observation_error 由操作者核查。等待不会持有会话锁，其他任务仍可提交。新反馈和输入更新仍作为明确授权的通知投递。
+
+需要诊断时通过 `GET /jobs/{job_id}` 读取详细状态与日志尾部；重复请求使用同一快照缓存（活动 30 秒、终态 5 分钟），取消后失效。缓存不跨 Host 重启，显式产物读取保持实时。通过
 `GET /jobs/{job_id}/artifacts?path=relative_path` 默认只读取该作业 `/workspace` 下的产物。若程序写入 `/outputs`，显式加 `area=outputs`，path 仍为相对于该目录的路径，不带 `/outputs/` 前缀。outputs 成功响应必须带 `area:"outputs"`；缺少标记不能当作读取了 outputs，新 Host 对未确认的旧 controller 响应拒绝返回成功。Host/controller/输入应同步部署。outputs 在同一 run 内按 owner 共享，不保证文件只由所选 job 写入；结合原始日志、哈希和作业记录验证来源。接口先核验 job 属于本轮已登记研究身份，按该作业实际 owner 读取，不隐式切换目录；取消和其他管理操作仍核验本身份或已采用 lineage 权限。旧无 run 记录的作业不支持 outputs。找不到文件时返回所选 area 的固定诊断，不表示作业未执行，不自动重跑。取消为 `DELETE /jobs/{job_id}`。
 资源忙时稍后重试。长任务先提交再查询，避免单条本地命令超时。
 
-实际限制以 deployment.json 的 remote_limits 为准。作业可共享同一张 GPU；Host 按实际显存与预留量准入，物理 GPU 数和作业数量分别配置。max_jobs=0 不设作业数量上限，timeout_seconds=0 不设时限。
+实际限制以 deployment.json 的 remote_limits 为准；process 的 CPU、memory、pids_limit 为 null，表示无单作业硬上限。作业可共享同一张 GPU；Host 按实际显存与预留量准入，物理 GPU 数和作业数量分别配置。max_jobs=0 不设作业数量上限，timeout_seconds=0 不设时限。
 这是单作业资源边界，总研究 step、候选代数与总时长没有上限。
 
 ## 受控双身份验收资源
@@ -466,25 +482,25 @@ web-extension 新任务可携带部署方显式提供的已批准初始反馈：
 
 ## 同卡多作业与显存预留
 
-memory_shared 模式允许多个独立 Docker 作业共享同一张 GPU，文件、身份与输出仍各自隔离。Agent 不指定卡号；Host 根据显存余量和整机已使用卡数分配，max_gpus 约束本项目同时使用的物理卡数，max_jobs=0 时不按作业数量阻止新增任务。
+托管 process 部署由 Controller 维护队列、共享 GPU 租约及整机准入。Agent 在命令和依赖就绪后提交作业，不指定卡号、不读取服务器资源快照、不计算并发或显存预算。暂时无资源时保持 queued，已有 GPU 作业继续执行；Controller 获得余量后启动同一 job ID。独立 episode 在固定执行器内根据内部遥测调整并发。
 
-共享模式下，`resource_busy` 的 `reason=no_eligible_gpu` 表示本次没有符合准入条件的卡，`gpu_allocation` 给出请求显存、活动卡数，以及逐卡实际占用、可用容量和排除原因；`reason=job_count_limit` 则表示达到作业数量上限。不要把两者都理解为整机没有空闲算力。成功 GPU 提交也返回分配报告。资源判断只描述提交时的快照；稍后可按事实重试，已经在 CPU 上运行的作业不会自动迁移到 GPU。
+常规部署说明和托管作业结果省略服务器 CPU、内存、显卡 UUID 和分配报告。部署者从服务器 Controller 记录诊断资源与基础设施；这些内容不需要进入研究模型上下文。科研报告使用实际作业提供的耗时和训练指标，不为补服务器字段周期查询。数据盘容量及权限问题交由操作者处理。
 
-共享模式按剩余显存接纳任务，允许与外部进程同卡；已有显存占用和 GPU 利用率不会单独触发排除。Host 同时检查本项目活动卡数、每卡预留上限、整卡实际显存和尚未兑现的预留，并保留默认 2 GiB 缓冲。Agent 不能自行更改这些部署限制，也不能控制或回收外部作业。
+Controller 继续遵守整机资源、数据盘余量、存储额度和外部作业边界。显存共享不提供内核级硬隔离。研究程序应使用有界缓存和线程，不能改变调度服务、部署配置或操作外部任务。
 
-共享 GPU 作业默认启用模型初始化显存竞争重试。Controller 在归档失败日志、确认旧容器退出并移除后，识别 `from_pretrained` → `__init__` → `.to(...device...)` 调用中的 PyTorch CUDA OOM；错误须包含总量、余量及本进程占用，且本进程尚未用满申请预算、其他占用已挤入预算。符合条件时自动按原资源上限重新选卡，沿用同一 `job_id`、命令、工作区和 `/outputs`，最多重试两次。重试决策期间状态为 `restarting`；查询返回 `retry_count`、`attempts` 与 `retry`。每次失败日志独立保留，存储继续计入 run 额度；总作业时限不因重试重新开始。原有在途作业沿用启动时 watcher，不自动改写或重新执行。
+共享 GPU 作业默认启用模型初始化显存竞争重试。Controller 在归档失败日志、确认旧容器或本作业进程退出后，识别 `from_pretrained` → `__init__` → `.to(...device...)` 调用中的 PyTorch CUDA OOM；错误须包含总量、余量及本进程占用，且本进程尚未用满申请预算、其他占用已挤入预算。符合条件时自动按原资源上限重新选卡，沿用同一 `job_id`、命令、工作区和 `/outputs`，最多重试两次。重试决策期间状态为 `restarting`；查询返回 `retry_count`、`attempts` 与 `retry`。每次失败日志独立保留，存储继续计入 run 额度；总作业时限不因重试重新开始。原有在途作业沿用启动时 watcher，不自动改写或重新执行。
 
-重新准入没有合适 GPU 或达到作业数量上限时，原作业最终 `failed`，`retry.status=resource_busy` 并给出原因与分配报告，由 Agent 安排后续时间；重试耗尽返回 `retry.status=exhausted`。模型自身显存不足、训练中前向／反向 OOM、其他代码错误、取消、超时以及日志未安全归档时不自动重试。检测依赖上述日志格式，无法识别时保留失败供分析。Controller 会重跑原命令；包含既有训练／评估成果后再次加载模型、或其他不可重复副作用的复合作业，应设置 `retry_on_gpu_contention: false`。此字段为严格布尔值，默认 true。训练中断接续和跳过已完成 episode 仍由研究脚本负责。
+托管作业重新准入暂时没有资源时，由 Controller 内部等待；重试耗尽才以真实终态返回。模型自身显存不足、训练中前向／反向 OOM、其他代码错误、取消、超时以及日志未安全归档时不自动重放。Controller 会重跑符合安全加载条件的原命令；包含既有训练／评估成果后再次加载模型、或其他不可重复副作用的复合作业，应设置 `retry_on_gpu_contention: false`。此字段为严格布尔值，默认 true。训练中断接续和跳过已完成 episode 由研究脚本保存的 checkpoint 和 ledger 实现。
 
-POST /jobs 可选 gpu_memory_mb，表示预计显存峰值，单位 MiB。未提供时采用部署方的默认预留；小仿真可直接使用默认值，大模型加载/训练应提交合理的峰值估计。Host 同时检查每卡预留总额、实际显存和尚未兑现的预留，扣除缓冲。过大请求返回 resource_unavailable；暂时无余量返回 resource_busy。
+`POST /jobs` 的 gpu_memory_mb 在托管部署中可以省略，Controller 自动分配可用容量；既有客户端的估计仅作启动需求提示。非托管 Docker／process 部署保留旧的即时准入接口；其 resource_busy 由部署者按部署方案处理。不要在科研循环内诊断或优化 Controller。
 
-最多同时使用的物理卡数仅统计本项目作业所在的卡；外部进程不消耗这个名额，其显存计入整卡实际占用。此模式共享计算与显存，不提供每作业硬显存隔离。GPU UUID、共享标志和预留量随作业保存；比较运行时间时记录同卡并发条件。
+任务完成或中途停止时，分析研究代码、训练曲线、视频和结果；基础设施停止保留 job ID 并等待操作者处理，不自行修改服务或重提状态不明的实验。
 
 ## 人类准备的离线模型资源
 
 backbone、tokenizer 及相关预训练资源由人类提前准备、校验后只读提供。作业禁用网络，HF_HUB_OFFLINE 与 TRANSFORMERS_OFFLINE 固定为 1，缺项应记录并请求补齐，不自行下载。部署方可提供 /model-cache，其中的 Hugging Face 与 Torch 缓存只包含本项目已批准的资源。
 
-模型附属配置若引用原始资源目录，Host 可把同一只读模型目录同时挂载到原路径；这只开放既定模型资产，不开放原路径的其他文件。USER/LOGNAME 使用固定的 agent，HOME 位于可写临时目录；远程新建作业默认上限为16 CPU、64 GiB内存和1024个进程与线程，禁止额外swap；实际限额以部署信息和作业记录为准。临时文件与PyTorch编译等可写缓存使用独立 `/job-tmp`，由Host挂载执行服务器数据盘目录，计入本轮存储并在作业退出后回收。`/tmp`只读；需保留和恢复的checkpoint、数据与报告写入 `/outputs` 或 `/workspace`。旧作业不自动更换挂载。
+以下限额、只读根目录和挂载适用于 Docker 后端；process 路径与整机准入见上文。模型附属配置若引用原始资源目录，Host 可把同一只读模型目录同时挂载到原路径；这只开放既定模型资产，不开放原路径的其他文件。USER/LOGNAME 使用固定的 agent，HOME 位于可写临时目录；远程新建作业默认上限为16 CPU、64 GiB内存和1024个进程与线程，禁止额外swap；实际限额以部署信息和作业记录为准。临时文件与PyTorch编译等可写缓存使用独立 `/job-tmp`，由Host挂载执行服务器数据盘目录，计入本轮存储并在作业退出后回收。`/tmp`只读；需保留和恢复的checkpoint、数据与报告写入 `/outputs` 或 `/workspace`。旧作业不自动更换挂载。
 
 
 ## 大文件只读交接
@@ -494,7 +510,7 @@ backbone、tokenizer 及相关预训练资源由人类提前准备、校验后�
 1. 先让写入选定文件的作业完成或停止写入，再 `POST /jobs/{job_id}/exports`，例如 `{"location":"outputs","path":"checkpoints/best"}`。location 可用 outputs 或 workspace，path 是本身份作业内的相对路径。只接受普通文件和目录，拒绝符号链接与特殊文件。
 2. 返回 export_id 和 preparing。用 `GET /jobs/exports/{export_id}` 等待 ready；失败返回 failed 与 error。封存使用独立进程，不占 GPU。每个文件复制并计算 SHA256，源文件在封存期间改变则失败；ready 后源文件再改变不影响快照。`GET /jobs/exports/{export_id}/manifest` 返回相对路径、字节数与逐文件 SHA256。`GET /jobs/exports` 列出本轮研究身份已获授权的只读快照。
 3. 创建唯一完整接任候选时，在 `/evolution/trials` 请求中加入 `"read_only_exports":["export-..."]`。Host 验证引用在本轮可读，并为远程作业挂载落实相应只读授权。也可用 `POST /jobs/exports/{export_id}/grants {"session_id":"candidate-..."}` 为本轮身份落实所需的只读挂载授权；该操作不开放跨 run 访问。
-4. 本轮可读该快照的 Agent 提交 `/jobs` 时加入 `"input_exports":["export-..."]`。执行端把每份快照挂载为只读 `/inputs/<export_id>/`，保留选定目录的相对结构；选单个文件时路径为 `/inputs/<export_id>/<文件名>`。本地 Agent Docker 不挂载这些执行端二进制文件，需要通过远程作业使用。本轮不可读或未 ready 的引用拒绝提交，不分配作业资源。每个请求最多 64 个引用。
+4. 本轮可读该快照的 Agent 提交 `/jobs` 时加入 `"input_exports":["export-..."]`。Docker 执行端把每份快照挂载为只读 `/inputs/<export_id>/`；process 通过 `A3_INPUT_EXPORTS_JSON` 提供封存目录，按只读约定使用；两者均保留选定目录的相对结构；选单个文件时路径为 `/inputs/<export_id>/<文件名>`。本地 Agent Docker 不挂载这些执行端二进制文件，需要通过远程作业使用。本轮不可读或未 ready 的引用拒绝提交，不分配作业资源。每个请求最多 64 个引用。
 5. 接任主身份后可继续把已获授权的引用交给下一代唯一候选。退出、container 回收和同 run 恢复保留快照及授权。跨轮使用时，把选定 ID 写入自己的 continuation.json 顶层 remote_exports 数组；Host 保存前验证 ready 与可读性。之后显式 `--run-harness <该run>` 会把引用授权给新 run 的主身份及初始 Harness，无需人工复制大文件；新的模型上下文仍按阶段初始化。
 
 例如保留声明：

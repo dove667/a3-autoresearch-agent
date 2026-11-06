@@ -21,6 +21,7 @@ from a3_research_agent.host.web.gateway import WebConfig, WebGateway
 
 from .analysis import AnalysisRoutes
 from .control import ControlRoutes
+from .job_observation import JobStatusCache
 from .jobs import JobRoutes
 from .models import ModelRoutes
 from .schemas import ObservationRequest
@@ -113,6 +114,7 @@ class Gateway(
         self.children: dict[str, dict] = {}
         self.scope_parents: dict[str, str] = {}
         self.jobs: dict[str, set[str]] = {}
+        self.job_status_cache = JobStatusCache()
         self.root_owners = set(self.sessions.values())
         self.app.state.closing = False
         self.evolution = (
@@ -210,6 +212,7 @@ class Gateway(
         self.app.add_api_route("/vision/inspect", self.inspect_vision, methods=["POST"])
         self.app.add_api_route("/jobs", self.submit, methods=["POST"])
         self.app.add_api_route("/jobs", self.list_jobs, methods=["GET"])
+        self.app.add_api_route("/jobs/wait", self.wait_jobs, methods=["POST"])
         self.app.add_api_route("/jobs/exports", self.list_exports, methods=["GET"])
         self.app.add_api_route("/jobs/{job_id}/exports", self.publish_export, methods=["POST"])
         self.app.add_api_route("/jobs/exports/{export_id}", self.export_status, methods=["GET"])

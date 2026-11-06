@@ -4,11 +4,11 @@
 
 **Policy** 决定机械臂怎样运动；**Harness** 组织模型调用、工具执行、实验记录、记忆和后继运行。人类提前准备目标、验收与受控执行环境，SWE Agent 自己编写并迭代专项实现。阶段一验证 Policy 优化、Harness 轨迹反思、实验隔离与持久记忆；第二阶段面向持续的 Policy 与 Harness 联合优化。
 
-模型接入复用 mini-SWE-agent 的多提供商支持。当前执行方案是在本地运行 Agent，通过 SSH 把仿真、渲染和计算任务交给远程 Docker；A3 仿真项目在独立的 `a3_dual_arm_sim` 仓库中维护。
+模型接入复用 mini-SWE-agent 的多提供商支持。当前执行方案是在本地运行 Agent，通过 SSH 把仿真、渲染和计算任务交给远程执行端（Docker 或受信任的 Linux 进程后端）；A3 仿真项目在独立的 `a3_dual_arm_sim` 仓库中维护。
 
 ## 安装与准备
 
-需要 Python 3.11+、uv、可用的模型服务、Docker，以及配置好的 A3 执行端。在仓库根目录安装：
+需要 Python 3.11+、uv、可用的模型服务、本地 Docker，以及配置好的 A3 执行端。远程受信任进程后端的环境、数据盘与资源调度配置见[进程执行](docs/process-backend.md)。在仓库根目录安装：
 
 ```bash
 git submodule update --init --recursive

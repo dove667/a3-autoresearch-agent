@@ -52,6 +52,26 @@ def test_builder_is_started_once_and_waits_without_feedback(tmp_path):
     assert len(calls) == 1
     assert calls[0][0] == ""
     assert len(waits) == 160
+    assert set(waits) == {15}
+
+
+def test_supervisor_records_changes_instead_of_identical_heartbeats(tmp_path):
+    supervisor = RunSupervisor(
+        run=tmp_path,
+        workspace=tmp_path,
+        required_checks=(),
+        sessions=list,
+        execute_builder=lambda *a: None,
+    )
+    sessions = [{"session_id": "main", "status": "running"}]
+    supervisor.record("supervising", {}, sessions)
+    supervisor.record("supervising", {}, sessions)
+    sessions[0]["status"] = "exited"
+    supervisor.record("supervising", {}, sessions)
+    events = [
+        json.loads(line) for line in (tmp_path / "supervisor-events.jsonl").read_text().splitlines()
+    ]
+    assert [event["sessions"][0]["status"] for event in events] == ["running", "exited"]
 
 
 def test_incomplete_submission_stops_without_assigning_another_task(tmp_path):

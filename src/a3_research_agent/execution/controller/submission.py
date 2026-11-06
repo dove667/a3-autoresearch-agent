@@ -2,6 +2,7 @@
 
 import fcntl
 import subprocess
+import time
 from pathlib import Path
 
 from a3_research_agent.execution.exports.readonly import ReadonlyExports
@@ -18,7 +19,7 @@ from .files import ACTIVE_STATES, atomic_json, validate_submit
 from .store import JobStore
 
 
-def submit(store: JobStore, request: dict, args) -> dict:
+def submit(store: JobStore, request: dict, args, *, queued_job: dict | None = None) -> dict:
     validate_submit(request)
     exports = ReadonlyExports(store.root)
     for identifier in request.get("input_exports", []):
@@ -44,7 +45,20 @@ def submit(store: JobStore, request: dict, args) -> dict:
                     "used_bytes": used,
                     "limit_bytes": limit,
                 }
+        native = getattr(args, "backend", "docker") == "process"
+        if native:
+            from a3_research_agent.execution.scheduling import host_resources
+
+            from .processes import validate_data_paths
+
+            validate_data_paths(
+                Path(args.data_root), [store.root, Path(args.tmp_root or store.root / "temporary")]
+            )
         jobs = active_jobs(store)
+        if native:
+            busy = host_resources.admission(host_resources.sample(Path(args.data_root)), args, jobs)
+            if busy:
+                return busy
         if args.max_jobs and len(jobs) >= args.max_jobs:
             result = {
                 "job_id": None,
@@ -97,14 +111,23 @@ def submit(store: JobStore, request: dict, args) -> dict:
                         **({"gpu_allocation": allocation} if allocation else {}),
                     },
                 )
-            job = store.create(
-                request["experiment_id"],
-                request["command"],
-                request["gpu"],
-                request.get("files", {}),
-                run_id=run_id,
-                job_id=request.get("job_id"),
-            )
+            if queued_job is not None:
+                job = store.load(queued_job["job_id"], request["experiment_id"])
+                if job["status"] != "queued":
+                    return {"job_id": job["job_id"], "status": job["status"]}
+                if job["command"] != request["command"] or job["run_id"] != run_id:
+                    raise ValueError("Queued request does not match its durable job")
+                job["status"] = "created"
+                job["admitted_at"] = time.time()
+            else:
+                job = store.create(
+                    request["experiment_id"],
+                    request["command"],
+                    request["gpu"],
+                    request.get("files", {}),
+                    run_id=run_id,
+                    job_id=request.get("job_id"),
+                )
             job["controller_options"] = {
                 key: str(value) if isinstance(value, Path) else value
                 for key, value in vars(args).items()
@@ -117,8 +140,15 @@ def submit(store: JobStore, request: dict, args) -> dict:
             job["gpu_memory_mb"] = memory_mb if request["gpu"] else 0
             if allocation:
                 job["gpu_allocation"] = allocation
-            container_id = create_container(store, job, args)
-            job["container_id"] = container_id
+            if native:
+                from .processes import command as process_command
+                from .processes import prepare
+
+                prepare(store, job, args)
+                process_command(job)  # Reject obsolete interpreter paths before starting a watcher.
+            else:
+                container_id = create_container(store, job, args)
+                job["container_id"] = container_id
             store.save(job)
             if lease:
                 atomic_json(
@@ -126,6 +156,7 @@ def submit(store: JobStore, request: dict, args) -> dict:
                     {
                         "job_id": job["job_id"],
                         "container_id": container_id,
+                        "experiment_id": job["experiment_id"],
                     },
                 )
             command = controller_command(
@@ -154,8 +185,15 @@ def submit(store: JobStore, request: dict, args) -> dict:
                 "gpu_uuid": gpu_uuid,
                 **({"gpu_allocation": allocation} if allocation else {}),
             }
+            if native:
+                result.update(backend="process", paths=job["paths"], input_paths=job["input_paths"])
             return result
         except Exception:
+            if native and "job" in locals():
+                job.update(
+                    status="failed", error="Process job preparation or watcher launch failed"
+                )
+                store.save(job)
             if container_id:
                 docker(["rm", "-f", container_id], check=False)
             stopped = (

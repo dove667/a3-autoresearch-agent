@@ -96,7 +96,12 @@ from a3_research_agent.host.inputs.task_preparation import (
     validate_skills_source,
 )
 from a3_research_agent.host.runs.directories import create_run_directory, local_storage_bytes
-from a3_research_agent.host.transport import remote_call, remote_limits, validate_remote_health
+from a3_research_agent.host.transport import (
+    remote_call,
+    remote_limits,
+    remote_path_hints,
+    validate_remote_health,
+)
 from a3_research_agent.host.workspaces import git, snapshot_checkout
 
 
@@ -330,12 +335,13 @@ def launch_run(args, run: Path, a3: Path, image: str, start) -> None:
         (inputs / "deployment.json").write_text(
             json.dumps(
                 {
-                    "version": "0.2.1",
+                    "version": "0.2.3",
                     "gateway": endpoint,
                     "web": web_gateway.status(),
                     "workspace": "/workspace",
                     "jobs": "POST /jobs {command: [...], gpu: bool, files: {relative_path: text}}",
                     "status": "GET /jobs/{job_id}",
+                    "wait": "POST /jobs/wait {job_ids:[...],seconds:25}; renew timeouts inside Harness without a model call",
                     "cancel": "DELETE /jobs/{job_id}",
                     "artifact": "GET /jobs/{job_id}/artifacts?path=relative_path",
                     "authorization": "Bearer $A3_GATEWAY_TOKEN",
@@ -348,12 +354,7 @@ def launch_run(args, run: Path, a3: Path, image: str, start) -> None:
                     "usage_accounting": "host gateway model-usage.jsonl; alias prices are unknown",
                     "model_api_base": endpoint + "/v1",
                     "model_api_key": "$A3_GATEWAY_TOKEN",
-                    "remote_a3": "/opt/a3",
-                    "remote_workspace": "/workspace",
-                    "remote_outputs": "/outputs (persistent within a research identity; adopted main inherits predecessor job access)",
-                    "remote_models": "/models (read-only, when configured)",
-                    "remote_model_cache": "/model-cache (read-only, when configured)",
-                    "remote_datasets": "/datasets (read-only, when configured)",
+                    **remote_path_hints(),
                     "sessions": {
                         "create": "No worker creation; POST /sessions is disabled for Agent credentials",
                         "trial": "POST /evolution/trials {baseline_version, checklist, command: [...], files: {...}}; one pending successor; predecessor waits for self-tests then retains or rejects",
@@ -398,7 +399,10 @@ def launch_run(args, run: Path, a3: Path, image: str, start) -> None:
         )
     else:
         deployment = json.loads((inputs / "deployment.json").read_text())
-        deployment["version"] = "0.2.1"
+        deployment["version"] = "0.2.3"
+        deployment["wait"] = (
+            "POST /jobs/wait {job_ids:[...],seconds:25}; renew timeouts inside Harness without a model call"
+        )
         deployment["sessions"]["create"] = (
             "No worker creation; POST /sessions is disabled for Agent credentials"
         )
@@ -410,6 +414,7 @@ def launch_run(args, run: Path, a3: Path, image: str, start) -> None:
         )
         deployment["sessions"]["max_active"] = MAX_ACTIVE_CANDIDATES
         deployment["remote_limits"] = remote_limits()
+        deployment.update(remote_path_hints())
         deployment["web"] = web_gateway.status()
         (inputs / "deployment.json").write_text(json.dumps(deployment, indent=2))
     current_deployment = (inputs / "deployment.json").read_bytes()
@@ -423,7 +428,7 @@ def launch_run(args, run: Path, a3: Path, image: str, start) -> None:
             stream.write(
                 json.dumps(
                     {
-                        "version": "0.2.1",
+                        "version": "0.2.3",
                         "previous_sha256": previous_hash,
                         "sha256": hashlib.sha256(current_deployment).hexdigest(),
                         "time": time.time(),

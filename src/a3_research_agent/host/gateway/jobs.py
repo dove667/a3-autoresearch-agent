@@ -1,16 +1,20 @@
 """Jobs Gateway behavior on the shared runtime instance."""
 
 import json
+import time
 import uuid
+from collections import defaultdict
 from pathlib import PurePosixPath
 from typing import Annotated, Literal
 
 from fastapi import Header, HTTPException
 
+from .job_observation import TERMINAL_STATES, compact_status
 from .schemas import (
     ExportGrantRequest,
     ExportRequest,
     JobRequest,
+    JobWaitRequest,
 )
 
 
@@ -283,16 +287,110 @@ class JobRoutes:
 
     def status(self, job_id: str, authorization: Annotated[str | None, Header()] = None):
         actor = self.owner(authorization)
-        return self.remote(
-            "status",
-            {"experiment_id": self.job_owner(actor, job_id, shared_read=True), "job_id": job_id},
-        )
+        scope = self.job_owner(actor, job_id, shared_read=True)
+        key = ("detail", scope, job_id)
+        result = self.job_status_cache.read_many(
+            [key],
+            lambda keys: {key: self.remote("status", {"experiment_id": scope, "job_id": job_id})},
+        )[key]
+        if result.get("managed"):
+            for name in ("gpu_uuid", "gpu_shared", "gpu_memory_mb", "gpu_allocation"):
+                result.pop(name, None)
+        return result
+
+    def observe_jobs(self, actor, job_ids):
+        keys = [
+            ("summary", self.job_owner(actor, job_id, shared_read=True), job_id)
+            for job_id in dict.fromkeys(job_ids)
+        ]
+
+        def fetch(missing):
+            groups = defaultdict(list)
+            for _, scope, job_id in missing:
+                groups[scope].append(job_id)
+            values = {}
+            for scope, identifiers in groups.items():
+                response = self.remote(
+                    "jobs-status", {"experiment_id": scope, "job_ids": identifiers}
+                )
+                rows = response.get("jobs", [])
+                if (
+                    not isinstance(rows, list)
+                    or not all(isinstance(row, dict) for row in rows)
+                    or len(rows) != len(identifiers)
+                    or {row.get("job_id") for row in rows} != set(identifiers)
+                ):
+                    raise HTTPException(502, "Controller returned incomplete job observations")
+                for row in rows:
+                    try:
+                        values[("summary", scope, row["job_id"])] = compact_status(row)
+                    except ValueError:
+                        raise HTTPException(502, "Controller omitted job status") from None
+            return values
+
+        values = self.job_status_cache.read_many(keys, fetch)
+        return [values[key] for key in keys]
+
+    def wait_jobs(
+        self, body: JobWaitRequest, authorization: Annotated[str | None, Header()] = None
+    ):
+        """Hold a request without a model call; running jobs do not wake the Agent."""
+        self.accepting_resources()
+        actor = self.owner(authorization)
+        deadline = time.monotonic() + body.seconds
+        signals = self.wait_signals(authorization)
+        rows = []
+        while True:
+            self.accepting_resources()
+            try:
+                rows = self.observe_jobs(actor, body.job_ids)
+            except HTTPException as error:
+                if error.status_code < 500:
+                    raise
+                with (
+                    self.log_lock,
+                    self.usage_log.with_name("controller-incidents.jsonl").open("a") as stream,
+                ):
+                    stream.write(
+                        json.dumps(
+                            {
+                                "time": time.time(),
+                                "operation": "jobs-status",
+                                "status_code": error.status_code,
+                            }
+                        )
+                        + "\n"
+                    )
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    reason = "timeout"
+                    break
+                time.sleep(min(10, remaining))
+                continue
+            if any(row["status"] == "observation_error" for row in rows):
+                reason = "observation_error"
+                break
+            if any(row["status"] in TERMINAL_STATES for row in rows):
+                reason = "terminal"
+                break
+            current = self.wait_signals(authorization)
+            if current["pending"] or current["cursor"] != signals["cursor"]:
+                reason = "notification"
+                break
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                reason = "timeout"
+                break
+            time.sleep(min(1, remaining))
+        return {"reason": reason, "jobs": rows, "status_source": "controller_metadata"}
 
     def cancel(self, job_id: str, authorization: Annotated[str | None, Header()] = None):
         actor = self.owner(authorization)
-        return self.remote(
-            "cancel", {"experiment_id": self.job_owner(actor, job_id), "job_id": job_id}
-        )
+        scope = self.job_owner(actor, job_id)
+        try:
+            return self.remote("cancel", {"experiment_id": scope, "job_id": job_id})
+        finally:
+            self.job_status_cache.invalidate(scope, job_id)
 
     def artifact(
         self,

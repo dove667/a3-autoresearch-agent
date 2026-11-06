@@ -22,3 +22,5 @@
 开发状态见[路线与实现状态](roadmap.md)，早期设计与实施记录保存在 `plans/`。
 
 - [远程执行端部署](remote-execution.md)：Controller 入口、镜像准备、资源调度与验证。
+
+- [远程进程后端](process-backend.md)：数据盘路径、整机资源调度与 Docker 作业平滑退出。

@@ -91,6 +91,7 @@ class RunSupervisor:
         self.input_manifest = input_manifest
         self.on_finishing = on_finishing
         self.turn = 0
+        self.last_event = None
 
     def record(self, phase: str, outcome: dict, sessions: list[dict]) -> None:
         state = {
@@ -106,8 +107,13 @@ class RunSupervisor:
         temporary = self.run_directory / "supervision.tmp"
         temporary.write_text(text)
         temporary.replace(self.run_directory / "supervision.json")
-        with (self.run_directory / "supervisor-events.jsonl").open("a") as stream:
-            stream.write(json.dumps(state, ensure_ascii=False) + "\n")
+        event = json.dumps(
+            {key: value for key, value in state.items() if key != "updated_at"}, sort_keys=True
+        )
+        if event != self.last_event:
+            with (self.run_directory / "supervisor-events.jsonl").open("a") as stream:
+                stream.write(json.dumps(state, ensure_ascii=False) + "\n")
+            self.last_event = event
 
     @staticmethod
     def active(sessions: list[dict]) -> list[str]:
@@ -132,7 +138,7 @@ class RunSupervisor:
         sessions = self.sessions()
         while self.active(sessions):
             self.record("supervising", {}, sessions)
-            self.wait(2)
+            self.wait(15)
             sessions = self.sessions()
 
         # Structural checks and snapshot publication happen only after execution ends.

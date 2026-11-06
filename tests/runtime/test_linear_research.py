@@ -90,12 +90,13 @@ def test_same_run_reads_are_shared_but_job_management_follows_adoption(tmp_path)
         json={"retain": True, "reason": "fixture", "evidence": ["result.json"]},
     )
     assert retained.status_code == 200
+    adoption_calls = len(calls)
     assert client.get("/jobs/old-job", headers=headers).status_code == 200
     assert (
         client.get("/jobs/old-job/artifacts?path=result.json", headers=headers).status_code == 200
     )
     assert client.delete("/jobs/old-job", headers=headers).status_code == 200
-    assert all(payload["experiment_id"] == "root" for _, payload in calls[-3:])
+    assert all(payload["experiment_id"] == "root" for _, payload in calls[adoption_calls:])
     assert gateway.job_owner(successor, "unrelated-job") == successor
     assert gateway.job_owner("unrelated-agent", "old-job") == "unrelated-agent"
 

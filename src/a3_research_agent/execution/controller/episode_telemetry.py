@@ -5,6 +5,7 @@ import math
 import subprocess
 import threading
 import time
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from .files import atomic_json
@@ -21,16 +22,54 @@ def nonnegative_number(value: str) -> float:
     return number
 
 
+def process_gpu_memory(device_arguments):
+    """Include EGL graphics contexts; retain a conservative older-driver fallback."""
+    try:
+        root = ET.fromstring(command_output([*device_arguments, "-q", "-x"]))
+        devices = root.findall("gpu")
+        if len(devices) != 1 or devices[0].find("processes") is None:
+            raise ValueError("GPU process table is unavailable")
+        memory_by_pid = {}
+        for row in devices[0].findall("processes/process_info"):
+            pid = int(row.findtext("pid", ""))
+            memory, unit = row.findtext("used_memory", "").split()
+            if pid <= 0 or unit != "MiB":
+                raise ValueError("Unsupported GPU process measurement")
+            memory_by_pid[pid] = max(memory_by_pid.get(pid, 0), nonnegative_number(memory))
+        return memory_by_pid, "owned_compute_and_graphics_plus_unattributed"
+    except (ET.ParseError, ValueError, OSError, subprocess.SubprocessError):
+        rows = csv.reader(
+            command_output(
+                [
+                    *device_arguments,
+                    "--query-compute-apps=pid,used_gpu_memory",
+                    "--format=csv,noheader,nounits",
+                ]
+            ).splitlines(),
+            skipinitialspace=True,
+        )
+        return {int(pid): nonnegative_number(memory) for pid, memory in rows}, (
+            "conservative_graphics_upper_bound"
+        )
+
+
 def sample_gpu_resources(job: dict) -> dict:
-    """Match host-visible container PIDs to compute processes on its assigned GPU."""
+    """Attribute compute and rendering memory to this job's host-visible processes."""
     sampled_at = time.time()
-    process_table = command_output(["docker", "top", job["container_id"], "-eo", "pid"])
-    lines = process_table.splitlines()
-    if not lines or lines[0].strip().upper() != "PID":
-        raise ValueError("Container process table is unavailable")
-    pids = {int(line.strip()) for line in lines[1:] if line.strip()}
-    if not pids:
-        raise ValueError("Container has no measurable processes")
+    if job.get("backend") == "process":
+        from .processes import process_ids
+
+        pids = set(process_ids(job))
+        if not pids:
+            raise ValueError("Job has no measurable processes")
+    else:
+        process_table = command_output(["docker", "top", job["container_id"], "-eo", "pid"])
+        lines = process_table.splitlines()
+        if not lines or lines[0].strip().upper() != "PID":
+            raise ValueError("Container process table is unavailable")
+        pids = {int(line.strip()) for line in lines[1:] if line.strip()}
+        if not pids:
+            raise ValueError("Container has no measurable processes")
     device_arguments = ["nvidia-smi", "-i", job["gpu_uuid"]]
     device_rows = list(
         csv.reader(
@@ -49,26 +88,10 @@ def sample_gpu_resources(job: dict) -> dict:
     used, total, utilization = map(nonnegative_number, device_rows[0])
     if total <= 0:
         raise ValueError("Assigned GPU capacity is unavailable")
-    processes = csv.reader(
-        command_output(
-            [
-                *device_arguments,
-                "--query-compute-apps=pid,used_gpu_memory",
-                "--format=csv,noheader,nounits",
-            ]
-        ).splitlines(),
-        skipinitialspace=True,
-    )
-    owned_compute_memory = 0.0
-    all_compute_memory = 0.0
-    for pid, memory in processes:
-        memory_mb = nonnegative_number(memory)
-        all_compute_memory += memory_mb
-        if int(pid) in pids:
-            owned_compute_memory += memory_mb
-    # Graphics-only contexts and driver allocations are absent from compute-apps.
-    # Charge the unassigned remainder conservatively instead of hiding EGL usage.
-    budget_used = owned_compute_memory + max(0, used - all_compute_memory)
+    process_memory, accounting = process_gpu_memory(device_arguments)
+    owned_memory = sum(memory for pid, memory in process_memory.items() if pid in pids)
+    # Keep unattributed driver overhead conservative without charging other jobs' EGL.
+    budget_used = owned_memory + max(0, used - sum(process_memory.values()))
     return {
         "sampled_at": sampled_at,
         "gpu_used_mb": used,
@@ -76,7 +99,7 @@ def sample_gpu_resources(job: dict) -> dict:
         "gpu_util_percent": utilization,
         "gpu_budget_used_mb": budget_used,
         "gpu_limit_mb": job["gpu_memory_mb"],
-        "gpu_accounting": "conservative_graphics_upper_bound",
+        "gpu_accounting": accounting,
     }
 
 

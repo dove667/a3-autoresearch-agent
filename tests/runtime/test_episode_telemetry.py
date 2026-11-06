@@ -12,12 +12,23 @@ from a3_research_agent.execution.controller import lifecycle
 from a3_research_agent.execution.controller.store import JobStore
 
 
+def process_xml(entries):
+    return (
+        "<nvidia_smi_log><gpu><processes>"
+        + "".join(
+            f"<process_info><pid>{pid}</pid><used_memory>{memory} MiB</used_memory></process_info>"
+            for pid, memory in entries
+        )
+        + "</processes></gpu></nvidia_smi_log>"
+    )
+
+
 def test_shared_gpu_accounts_owned_compute_and_unknown_graphics(monkeypatch):
     outputs = iter(
         [
             "PID\n101\n102\n",
             "3000, 24000, 75\n",
-            "101, 100\n102, 200\n999, 2500\n",
+            process_xml([(101, 100), (102, 200), (999, 2500)]),
         ]
     )
     calls = []
@@ -37,13 +48,13 @@ def test_shared_gpu_accounts_owned_compute_and_unknown_graphics(monkeypatch):
     assert sample["gpu_budget_used_mb"] == 500
     assert sample["gpu_used_mb"] == 3000
     assert sample["gpu_limit_mb"] == 800
-    assert sample["gpu_accounting"] == "conservative_graphics_upper_bound"
+    assert sample["gpu_accounting"] == "owned_compute_and_graphics_plus_unattributed"
     assert "101" not in json.dumps(sample) and "999" not in json.dumps(sample)
     assert all("GPU-selected" in command for command in calls[1:])
 
 
 def test_graphics_only_memory_is_not_reported_as_zero(monkeypatch):
-    outputs = iter(["PID\n101\n", "150, 24000, 5\n", ""])
+    outputs = iter(["PID\n101\n", "150, 24000, 5\n", process_xml([])])
     monkeypatch.setattr(telemetry, "command_output", lambda _: next(outputs))
     sample = telemetry.sample_gpu_resources(
         {
@@ -53,6 +64,38 @@ def test_graphics_only_memory_is_not_reported_as_zero(monkeypatch):
         }
     )
     assert sample["gpu_budget_used_mb"] == 150
+
+
+def test_other_jobs_graphics_are_not_charged_to_this_job(monkeypatch):
+    outputs = iter(
+        [
+            "PID\n101\n",
+            "2000, 24000, 5\n",
+            process_xml([(101, 200), (999, 1700)]),
+        ]
+    )
+    monkeypatch.setattr(telemetry, "command_output", lambda _: next(outputs))
+    sample = telemetry.sample_gpu_resources(
+        {"container_id": "container", "gpu_uuid": "GPU-test", "gpu_memory_mb": 1024}
+    )
+    assert sample["gpu_budget_used_mb"] == 300  # Own 200 + unassigned 100.
+
+
+def test_missing_xml_memory_falls_back_to_conservative_accounting(monkeypatch):
+    outputs = iter(
+        [
+            "PID\n101\n",
+            "2000, 24000, 5\n",
+            process_xml([(101, "N/A")]),
+            "101, 200\n",
+        ]
+    )
+    monkeypatch.setattr(telemetry, "command_output", lambda _: next(outputs))
+    sample = telemetry.sample_gpu_resources(
+        {"container_id": "container", "gpu_uuid": "GPU-test", "gpu_memory_mb": 1024}
+    )
+    assert sample["gpu_budget_used_mb"] == 2000
+    assert sample["gpu_accounting"] == "conservative_graphics_upper_bound"
 
 
 @pytest.mark.parametrize("output", ["", "PID\n", "PID\n101\n"])

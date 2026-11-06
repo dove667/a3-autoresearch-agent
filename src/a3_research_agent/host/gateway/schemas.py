@@ -56,6 +56,12 @@ class JobRequest(BaseModel):
     workspace_files: list[JobWorkspaceFileReference] = Field(default_factory=list, max_length=16)
 
 
+class JobWaitRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    job_ids: list[str] = Field(min_length=1, max_length=64)
+    seconds: int = Field(default=25, ge=0, le=300, strict=True)
+
+
 class SessionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     command: list[str] = Field(min_length=1, max_length=256)

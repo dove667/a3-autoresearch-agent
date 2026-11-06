@@ -178,12 +178,15 @@ def reclaim_terminal(store: JobStore, job: dict) -> dict:
 
 def watch(args) -> None:
     job = json.loads(JobStore(args.root).metadata_path(args.job_id).read_text())
+    attempt = watch_attempt
+    if job.get("backend") == "process":
+        from .processes import watch_attempt as attempt
     if job.get("gpu_shared") and job.get("retry_on_gpu_contention", False):
         from .retry import watch_with_retries
 
-        watch_with_retries(args, watch_attempt)
+        watch_with_retries(args, attempt)
     else:
-        watch_attempt(args)
+        attempt(args)
 
 
 def watch_attempt(args) -> None:
@@ -286,6 +289,10 @@ def state_for_status(container_id: str) -> dict:
 
 def status(store: JobStore, request: dict) -> dict:
     job = store.load(request.get("job_id"), request.get("experiment_id"))
+    if job.get("backend") == "process":
+        from .processes import status as process_status
+
+        return process_status(store, request)
     with lifecycle_lock(store, job):
         job = store.load(job["job_id"], job["experiment_id"])
         if job["container_id"] is None:
@@ -354,6 +361,10 @@ def status(store: JobStore, request: dict) -> dict:
 
 def cancel(store: JobStore, request: dict) -> dict:
     job = store.load(request.get("job_id"), request.get("experiment_id"))
+    if job.get("backend") == "process":
+        from .processes import cancel as process_cancel
+
+        return process_cancel(store, request)
     with lifecycle_lock(store, job):
         job = store.load(job["job_id"], job["experiment_id"])
         if job.get("retry_pending"):

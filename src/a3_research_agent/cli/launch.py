@@ -148,8 +148,11 @@ def launch_main(runtime) -> None:
         "A3_REMOTE_HOST",
         "A3_REMOTE_CONTROLLER",
         "A3_REMOTE_RUN_ROOT",
-        "A3_REMOTE_IMAGE",
     )
+    if os.environ.get("A3_REMOTE_BACKEND", "docker") == "process":
+        required += ("A3_REMOTE_DATA_ROOT", "A3_REMOTE_PROCESS_PYTHON")
+    else:
+        required += ("A3_REMOTE_IMAGE",)
     for key in required:
         if not os.environ.get(key):
             raise SystemExit(f"Missing deployment setting: {key}")

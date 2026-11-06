@@ -107,7 +107,7 @@ def test_protocol_reference_revision_preserves_scientific_body():
     old = (Path(__file__).parent / "fixtures/relocated_phase_two_protocol_0_3_0.md").read_text()
     new = (ROOT / "agent-inputs/shared/protocol.md").read_text()
     expected = (
-        old.replace("Version: 0.3.0", "Version: 0.3.3")
+        old.replace("Version: 0.3.0", "Version: 0.3.4")
         .replace(
             "Agent 的具体行动、反馈核查与作业处理见 phase-instructions.md。",
             "长期行为原则见 SOUL.md，实际接口、反馈投递与作业处理见 execution.md。",
@@ -118,10 +118,11 @@ def test_protocol_reference_revision_preserves_scientific_body():
         )
         .replace(
             "## 1. Policy 完整网格",
-            "互相独立且输入已就绪的远程作业，先在权限与资源额度内并行提交，再统一查询与收集结果；"
-            "有数据依赖的作业按依赖推进。采集和评估中的独立 episode 统一使用 "
-            "`/run/a3/episode_executor.py`，由 Agent 固定科学参数、seed、协议与输出；"
-            "不另写固定两个并发的循环，不重复已完成的科学 episode 测吞吐。\n\n"
+            "互相独立且输入已就绪的远程作业先批量提交，服务器 Controller 负责排队、资源分配及执行，"
+            "Harness 内部等待完成或中途停止的结果；正常运行和等待超时不调用模型。"
+            "有数据依赖的作业按依赖推进。采集和评估中的独立 episode 统一使用部署方提供的执行器"
+            "（process 中为 `A3_EPISODE_EXECUTOR`），由 Agent 固定科学参数、seed、协议与输出，"
+            "执行器调节并发。Controller 的诊断、修复及运维归部署者，Agent 负责研究代码与实验结果。\n\n"
             "## 1. Policy 完整网格",
         )
         .replace(

@@ -135,3 +135,7 @@ uv run python -m ruff format --check src tests
 ```
 
 进程链路测试仅创建临时 localhost 假服务；受限环境需要允许该本地监听。安装产物测试构建 wheel/sdist，通过 `uv pip --no-deps --target` 安装到临时目录，验证标准库 Controller、Host 参数校验与完整 Harness 载荷，不调用真实模型、SSH、GPU 或生产 Docker。
+
+## 无 Docker 的远程进程执行
+
+受信任的 Linux 执行端可设置 `A3_REMOTE_BACKEND=process`，复用已有 A3 Python 环境，不创建远程容器。配合 `A3_REMOTE_MANAGED_JOBS=1` 由服务器持久排队、分配资源并在资源满足后执行，Agent 无需管理服务器。本地 Agent 容器保持原样。必需配置、数据盘路径、整机调度和旧作业平滑退出见[进程后端](process-backend.md)；常规 Docker 配置继续支持隔离部署。

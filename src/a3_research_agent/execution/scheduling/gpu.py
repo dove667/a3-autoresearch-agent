@@ -4,12 +4,13 @@ import csv
 import fcntl
 import json
 import os
+import re
 import subprocess
 import time
 from pathlib import Path
 
 from a3_research_agent.execution.controller.docker import container_state, container_states, docker
-from a3_research_agent.execution.controller.files import ACTIVE_STATES
+from a3_research_agent.execution.controller.files import ACTIVE_STATES, atomic_json
 from a3_research_agent.execution.controller.store import JobStore
 
 
@@ -59,7 +60,13 @@ def acquire_gpu(store: JobStore, allowed: set[str] | None):
         record_path = lease.path.with_suffix(".json")
         if record_path.exists():
             previous = json.loads(record_path.read_text())
-            if container_state(previous["container_id"])["Status"] in ACTIVE_STATES:
+            if previous.get("container_id"):
+                occupied = container_state(previous["container_id"])["Status"] in ACTIVE_STATES
+            else:
+                from a3_research_agent.execution.controller.processes import is_running
+
+                occupied = is_running(store.load(previous["job_id"], previous["experiment_id"]))
+            if occupied:
                 lease.close()
                 continue
         return gpu_uuid, lease
@@ -111,6 +118,10 @@ def gpu_process_memory() -> dict[tuple[str, int], float]:
 
 
 def container_gpu_memory(job: dict, processes: dict) -> float:
+    if job.get("backend") == "process":
+        from a3_research_agent.execution.controller.processes import process_ids
+
+        return sum(processes.get((job["gpu_uuid"], pid), 0) for pid in process_ids(job))
     result = docker(["top", job["container_id"], "-eo", "pid"], check=False)
     if result.returncode:
         if container_state(job["container_id"])["Status"] != "running":
@@ -203,17 +214,54 @@ def record_scheduler_event(store: JobStore, request: dict, result: dict) -> None
 
 def active_jobs(store: JobStore, *, input_export: str | None = None) -> list[dict]:
     tracked = []
+    native = []
     for path in (store.root / "jobs").glob("*/job.json"):
         job = json.loads(path.read_text())
         if input_export is not None and input_export not in job.get("input_exports", []):
             continue
+        if job.get("backend") == "process":
+            from a3_research_agent.execution.controller.processes import (
+                is_running,
+                process_ids,
+                read_process,
+            )
+
+            if job["status"] in ACTIVE_STATES or is_running(job):
+                pages = sum(
+                    (read_process(pid) or {}).get("rss_pages", 0) for pid in process_ids(job)
+                )
+                job["observed_memory_mb"] = pages * os.sysconf("SC_PAGE_SIZE") / 1024**2
+                native.append(job)
+            continue
         cleanup = path.with_name("cleanup.json")
         if cleanup.exists() and json.loads(cleanup.read_text()).get("status") == "removed":
             continue
+        absent = path.with_name("container-absent.json")
+        if absent.exists() and json.loads(absent.read_text()).get("container_id") == job.get(
+            "container_id"
+        ):
+            continue
         if job["container_id"]:
             tracked.append(job)
+    if len(tracked) > 32:
+        inventory = docker(["ps", "-a", "--no-trunc", "--format", "{{.ID}}"])
+        present = set(inventory.stdout.splitlines())
+        if any(not re.fullmatch(r"[a-f0-9]{64}", identifier) for identifier in present):
+            raise RuntimeError("Invalid Docker inventory")
+        existing = []
+        for job in tracked:
+            if job["container_id"] in present:
+                existing.append(job)
+            else:
+                atomic_json(
+                    store.metadata_path(job["job_id"]).with_name("container-absent.json"),
+                    {"container_id": job["container_id"], "observed_at": time.time()},
+                )
+        tracked = existing
     states = container_states([job["container_id"] for job in tracked])
-    return [job for job in tracked if states[job["container_id"]]["Status"] in ACTIVE_STATES]
+    return native + [
+        job for job in tracked if states[job["container_id"]]["Status"] in ACTIVE_STATES
+    ]
 
 
 def count_active_jobs(store: JobStore) -> int:
