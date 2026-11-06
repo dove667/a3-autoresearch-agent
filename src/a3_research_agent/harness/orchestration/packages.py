@@ -125,16 +125,23 @@ def worker_package(arguments, *, coordinator_session_id=None):
                     files[name] = text_file(name)
                 entries.append(entry)
                 continue
-            if (entry.get("reference_id", entry.get("id")) not in selected) or entry.get(
-                "status"
-            ) != "reference":
+            if (
+                entry.get("reference_id", entry.get("id")) not in selected
+                and not (
+                    entry.get("managed_by") == "skills" and role in entry.get("worker_roles", [])
+                )
+            ) or entry.get("status") != "reference":
                 continue
             source = relative_path(entry["local_source"])
             if pathlib.PurePosixPath(source).parts[0] != "skills":
                 raise ValueError("Reference source must be inside skills")
             directory = pathlib.Path(source).parent
             for path in sorted(directory.rglob("*")):
-                if "__pycache__" in path.parts or path.suffix == ".pyc":
+                if (
+                    "__pycache__" in path.parts
+                    or "revisions" in path.relative_to(directory).parts
+                    or path.suffix == ".pyc"
+                ):
                     continue
                 if path.is_symlink():
                     raise ValueError("Skill sources cannot be symlinks")

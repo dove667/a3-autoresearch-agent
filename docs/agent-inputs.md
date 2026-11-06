@@ -97,9 +97,17 @@ SOUL 只保留主 Agent 协调、方向、派发和判断，Policy/Harness worke
 
 `agent-inputs/SOUL.md` 定义跨阶段的研究者角色、主动行动、经验复用与诚实反馈原则；第一阶段任务 Prompt 保留专项流程；第二阶段不再有独立 Prompt 文件，goal/acceptance/protocol 分别保持目标、完成证据和科学规则职责。agent-inputs/SOUL.md 由 Host 版本化，作为 /run/input/SOUL.md 提供，并进入主身份与接任候选的模型输入，不靠 Agent 偶然发现文件。普通测试 worker 仍由主 Agent 编写具体任务，不自动承担全部研究目标。
 
-Agent 自己积累的 skills 是工作区可复用知识与代码，不是部署方版本化指令或新增权限。实际 E 保留包尚无统一技能发现、加载和保存机制；这些工具能力交给下一轮第一阶段 F，由 Agent 自主实现，设计见 [F 任务草案](plans/2026-11-02-phase-one-skills-f.md)。F 的版本化输入已接入 skills-extension profile，但本次不会代写技能工具或启动实验。
+Agent 可主动把可复用方法写入自己的工作区 skill；具体经历、证据与待办进入长期记忆。SOUL 提供任务切换、重复失败与派发前的发现提示；实际读取、沉淀和复用由 Agent 执行。部署没有自动按任务匹配和注入 skill 正文的触发器。
 
-SOUL 与 Prompt 发布只提供行为指导，不能证明实际 Agent 已创建、加载或验证 skills。F 完成后还需用真实调用与恢复证据确认；保留清单不能自动替代技能发现和使用。本轮不会修改已完成 E 的保留包，也不自动启动第二阶段或热加载。
+当前派生 Harness 内置 `skills` 工具：list 按关键词搜索摘要并提示未登记正文，read 返回有界正文与哈希，save 自动维护目录、版本和不可变正文，archive 隐藏默认发现但保留内容。更新与归档要求传入读取到的原内容哈希，冲突须重新读取合并。目录采用文件锁与原子替换，当前正文保持稳定路径，旧正文快照进入 `skills/<id>/revisions/`。save 可设置 worker_roles 为 policy、harness 或两者，派发对应角色时自动携带该 skill 的当前正文和同目录引用文件，跳过历史 revisions；新技能省略角色时不自动分发，现有 Worker 副本不自动更新。普通引用文件仍由 Agent 在工作区维护。旧 skill_discover/skill_read 仍可搜索同一 JSON 目录；新工具没有接管旧 synthetic checker 的执行授权。完整参数见[执行说明](../agent-inputs/shared/execution.md#工作区技能的读取与沉淀)。
+
+工具 schema 只提供使用入口，不自动注入全部技能正文。SOUL 指导 Agent 在任务切换、重复失败和委派前按需使用。没有新工具的历史 Harness 仍可使用普通 read/write；另建 LOCAL-INDEX.md 不会自动进入 JSON 目录搜索。新增 Python 模块和 tool schema 需恢复进程加载，单独热加载 Prompt 不会安装工具。
+
+### 运行中的技能导出与回流
+
+Docker `/workspace` 挂载到对应候选的 Host 工作区。Agent 写入的正文、索引与记忆随即对 Host 可见；`artifacts/rsi/<run-id>/candidates/<session-id>/workspace` 可能是指向受管 worktree 的链接，可先解析路径。运行中即可复制选定 skill 的普通文本文件到 Git 忽略的审阅快照，记录 session、相对路径、版本和 SHA256，复制前后核对来源未变化；来源变化则重取。不要复制认证、完整对话或无关运行数据，也不要覆盖正在写入的工作区。
+
+回流到仓库 `skills/` 时审阅通用性、私人信息、引用、索引和版本，再按授权提交发布。Host 可以读取正在写入的文件，因此快照校验仍有必要。根目录公共 skill、Agent 可写副本、只读 `/run/input` 和各 Worker 工作区分别维护，双向内容不会自动合并。热加载部署方输入也不会自动覆盖 Agent 的 skill 副本和发现索引。需要应用到当前 Agent 时，经批准显式交付选定内容并通知 Agent；纯文本重新读取可采用，工具代码需检查实际重载机制。正式保留与后继交接仍检查声明的文件清单。
 
 ## 需要维护版本的内容
 

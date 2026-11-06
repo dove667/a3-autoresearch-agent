@@ -7,6 +7,7 @@ from pathlib import Path
 HARNESS_MODULES = (
     "__init__.py",
     "agent.py",
+    "skill_registry.py",
     "analysis/__init__.py",
     "analysis/client.py",
     "context/__init__.py",

@@ -10,6 +10,7 @@ import urllib.request
 
 os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
 
+from a3_research_agent.harness import skill_registry
 from a3_research_agent.harness.analysis import client as analyzer_client
 from a3_research_agent.harness.context import compaction
 from a3_research_agent.harness.context import manager as context_manager
@@ -110,6 +111,8 @@ def select_json_fields(raw, fields, path):
 
 
 def tool(name, a):
+    if name == "skills":
+        return skill_registry.dispatch(a)
     if name == "recall":
         return recall_tools.recall_tool(a)
     if name == "memory":
@@ -483,6 +486,7 @@ tools = (
     ]
     + list(getattr(web_tools, "TOOLS", []))
     + list(getattr(skill_tools, "TOOLS", []))
+    + skill_registry.TOOLS
 )
 
 

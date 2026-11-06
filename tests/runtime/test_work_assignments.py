@@ -234,6 +234,27 @@ def test_input_reference_is_discoverable_and_worker_copy_matches_source(tmp_path
     assert package[skill["local_source"]] == source.read_text()
     assert skill["source_sha256"] == hashlib.sha256(source.read_bytes()).hexdigest()
 
+    from a3_research_agent.harness import skill_registry
+
+    current = skill_registry.dispatch({"action": "read", "id": skill["id"]}, root=tmp_path)
+    updated = skill_registry.dispatch(
+        {
+            "action": "save",
+            "id": skill["id"],
+            "description": "Refined coordination",
+            "content": "Use refined guidance",
+            "source": "experience",
+            "expected_sha256": current["sha256"],
+        },
+        root=tmp_path,
+    )
+    assert "error" not in updated
+    saved = (tmp_path / "skills/index.json").read_bytes()
+    m.install_input_skills(inputs)
+    assert (tmp_path / "skills/index.json").read_bytes() == saved
+    _, new_package = m.worker_package(assignment())
+    assert new_package[updated["local_source"]] == "Use refined guidance"
+
 
 @pytest.mark.parametrize("path", ["/jobs?label=fixture", "/jobs/"])
 def test_coordinator_job_guard_also_covers_equivalent_urls(tmp_path, monkeypatch, path):
@@ -557,3 +578,25 @@ def test_optional_reference_overflow_keeps_one_aggregate_record(tmp_path, monkey
     hashes, delivery = m.collect_report_references(request, "worker", "assignment", [text], {})
     assert not hashes and len(calls) == 8 and len(delivery) == 9
     assert delivery["__omitted__"]["count"] == 4
+
+
+def test_managed_skill_is_copied_only_to_selected_worker_role(tmp_path, monkeypatch):
+    from a3_research_agent.harness import skill_registry
+
+    m = load(tmp_path, monkeypatch)
+    seed_sources(m, tmp_path)
+    saved = skill_registry.dispatch(
+        {
+            "action": "save",
+            "id": "parallel",
+            "description": "Parallel episodes",
+            "content": "Use independent jobs",
+            "source": "feedback",
+            "worker_roles": ["policy"],
+        },
+        root=tmp_path,
+    )
+    assert "error" not in saved
+    _, package = m.worker_package(assignment())
+    assert package[saved["local_source"]] == "Use independent jobs"
+    assert not any("/revisions/" in name for name in package)

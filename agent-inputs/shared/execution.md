@@ -1,6 +1,6 @@
 # Host提供的执行与验收入口
 
-Version: 0.15.13
+Version: 0.15.15
 
 部署方运行 gateway、容器引擎、模型认证与远程资源调度。候选 Harness 在独立容器内运行，
 通过 HTTP 请求这些固定能力。工具名称、研究逻辑、反思方法和版本选择由 Agent 设计。
@@ -134,6 +134,20 @@ Host 验证并去除图像 metadata 后，向配置的 worker 视觉辅助模型
 普通 `purpose=worker` 会话及现有权限已支持这些工作包，不新增身份能力。主 Agent 必须显式提供所需协议/输入快照和数据授权，worker 通过后代产物接口交付证据、封存并授权资产后由主判断；不能只返回一个主身份无权查询的远程作业 ID。接任通常不继承旧主其他 worker 的管理权，交权前应结清相关 worker 并明确交付；不得靠取消在途作业或共享令牌绕过。
 
 可选派生 Harness 的 `delegate` 支持独立的 assign/collect/decide/list/reconcile 操作，采用完整受限源码包、新任务上下文、持久预留和证据哈希核验；它不是强制调用顺序或新的 Host 权限。当前主的直接 `POST /jobs` 在该适配层被拒绝，worker 仍按原固定边界执行。部分 worker 异常退出且未封存资产时仍需明确恢复处理，不能假称已交付。详细方法按需读 orchestrator skill 与项目 `docs/research-orchestration.md`，实际能力以本轮加载的版本为准。
+
+## 工作区技能的读取与沉淀
+
+当前派生 Harness 提供统一 `skills` 工具，管理本身份可写的技能目录；进入新类任务、重复遇到同类问题或派发可复用工作时先搜索匹配技能。
+
+- `skills(action="list", query="关键词")` 返回最多24条摘要及未登记的 `SKILL.md` 路径；`offset` 翻目录页，省略 query 列出目录，`include_archived=true` 包含归档项。先看摘要，按需读正文，不每轮加载全部技能。
+- `skills(action="read", id="技能ID", offset=0, limit=4000)` 直接返回正文、完整 SHA256、版本和分页位置；limit 最大8000字符。仅阅读所需正文与引用。
+- `skills(action="save", id="小写字母数字与连字符", description="适用条件与用途", content="Markdown正文", source="经验来源与证据", keywords=["关键词"])` 创建技能，自动登记 `skills/index.json`、生成版本并保存不可变正文。正文写适用条件、可复用步骤、已知限制及引用。单篇最多128 KiB。
+- 更新已有技能先 read，再给 save 增加 `expected_sha256`。旧内容不符返回 revision_conflict，重新读取并合并。更新自动递增补丁版本，正文入口路径保持稳定，旧正文另存 revisions/ 并保留目录修订记录。不要把技能自述版本与工具返回的目录版本混为一谈。
+- `skills(action="archive", id="技能ID", expected_sha256="当前正文哈希")` 从默认发现中隐藏，正文和历史仍可读；以后通过 save 更新可重新启用。
+
+工具只管理文本，不执行 skill 代码或扩大权限。旧 `skill_discover` 与 `skill_read` 仍可读取同一JSON目录中的信息；旧 skill_read 只返回元数据，优先用新 skills/read 读取正文。没有新工具的旧 Harness 可用普通 read/write；普通文件修改不会自动维护索引和版本，另建 LOCAL-INDEX.md 也不会自动被JSON目录搜索。
+
+把具体经历、证据与待办写长期记忆，把通用方法写 skill。save 可增加 `worker_roles=["policy"]`、`["harness"]` 或两者；后续派发对应角色时自动携带该 skill 的当前正文、目录条目和同目录引用文件，跳过历史 revisions/，仍受工作包大小上限约束。省略时新技能不自动分发。当前已存在的 Worker 不自动同步。其他 skill 仍沿用显式交付；各 Worker 的工作区独立。保存不自动复制到部署方只读输入、公共仓库 skills/ 或其他身份。Host 可在运行期间从挂载工作区读取快照，无需等退出。正式保留与后继交接须核对文件清单包含所需 skill、目录和引用；Python 工具模块的变更仍须验证实际重载。
 
 ## 独立候选执行
 
