@@ -1,6 +1,7 @@
 """Jobs Gateway behavior on the shared runtime instance."""
 
 import json
+import uuid
 from pathlib import PurePosixPath
 from typing import Annotated, Literal
 
@@ -85,6 +86,8 @@ class JobRoutes:
                 if retired:
                     raise HTTPException(403, "Retired main cannot submit new research")
             request = body.model_dump(exclude_none=True, exclude={"workspace_files"})
+            if body.retry_on_gpu_contention:
+                request.pop("retry_on_gpu_contention")
             source_files = []
             if body.workspace_files:
                 self.own_session(authorization)
@@ -128,8 +131,33 @@ class JobRoutes:
                 request.pop("input_exports")
             elif len(self.research_read_scopes(experiment)) > 1:
                 self.validate_exports(experiment, body.input_exports)
-            result = self.remote("submit", request | {"experiment_id": experiment})
+            # Persist identity before sending bytes: an SSH timeout does not undo admission.
+            job_id = uuid.uuid4().hex
+            self.jobs.setdefault(experiment, set()).add(job_id)
+            self.save_checkpoint()
+            try:
+                result = self.remote(
+                    "submit", request | {"experiment_id": experiment, "job_id": job_id}
+                )
+            except HTTPException as error:
+                if error.status_code == 502:
+                    raise HTTPException(
+                        502,
+                        {
+                            "code": "submission_unknown",
+                            "job_id": job_id,
+                            "status_path": f"/jobs/{job_id}",
+                            "hint": "Submission may still complete. Query this ID or GET /jobs; do not submit the experiment again.",
+                        },
+                    ) from None
+                self.jobs[experiment].discard(job_id)
+                self.save_checkpoint()
+                raise
+            if not result.get("job_id"):
+                self.jobs[experiment].discard(job_id)
+                self.save_checkpoint()
             if result.get("job_id"):
+                self.jobs[experiment].discard(job_id)
                 self.jobs.setdefault(experiment, set()).add(result["job_id"])
                 self.save_checkpoint()
                 if source_files:
@@ -145,6 +173,30 @@ class JobRoutes:
                         stream.write(json.dumps(receipt) + "\n")
                     result = result | {"source_files": source_files}
             return result
+
+    def list_jobs(
+        self,
+        authorization: Annotated[str | None, Header()] = None,
+        scope: str | None = None,
+        after: str = "",
+        limit: int = 200,
+    ):
+        actor = self.owner(authorization)
+        scope = scope or actor
+        if scope not in self.research_read_scopes(actor):
+            raise HTTPException(403, "Research scope is not accessible")
+        with self.session_lock:
+            result = self.remote(
+                "jobs-list",
+                {
+                    "experiment_id": scope,
+                    "after": after,
+                    "limit": limit,
+                },
+            )
+            self.jobs.setdefault(scope, set()).update(job["job_id"] for job in result["jobs"])
+            self.save_checkpoint()
+        return result | {"scope": scope, "status_source": "controller_metadata"}
 
     def list_exports(self, authorization: Annotated[str | None, Header()] = None):
         actor = self.owner(authorization)

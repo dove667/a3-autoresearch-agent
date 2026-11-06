@@ -1,6 +1,6 @@
 # Host提供的执行与验收入口
 
-Version: 0.15.19
+Version: 0.15.21
 
 部署方运行 gateway、容器引擎、模型认证与远程资源调度。候选 Harness 在独立容器内运行，
 通过 HTTP 请求这些固定能力。工具名称、研究逻辑、反思方法和版本选择由 Agent 设计。
@@ -208,6 +208,8 @@ Host 先记录停止意图，再停止进程；若中断留下未确认的停止
 ## 远程 A3 作业
 
 `POST /jobs` 接受 `{"command": [...], "gpu": false, "files": {"probe.py": "..."}}`。
+
+Host 在发送请求前保存任务编号。提交遇到传输失败时，502 的 detail 包含 `code:submission_unknown`、`job_id` 和 `status_path`；按原编号查询，勿重新提交同一实验。`GET /jobs` 列出当前身份在本 run 的 Controller 作业记录，可恢复旧版提交丢失的编号；可用 `scope` 选择本轮可读研究身份，`limit` 为 1–200，`after` 接上页 `next_after`。列表的 `status_source:controller_metadata` 表示持久记录，精确容器状态和报告仍用 `GET /jobs/{job_id}` 查询。列表中暂时缺失的任务可能仍在等待调度锁，不能据此判定未提交。
 身份由 gateway 注入。需要 GPU 时设置 `gpu: true`，由同一服务器 controller 分配。
 
 作业可用 `workspace_files` 直接传递本身份工作区中已存在的源码，无需把文件全文复制进模型请求：
@@ -469,6 +471,10 @@ memory_shared 模式允许多个独立 Docker 作业共享同一张 GPU，文件
 共享模式下，`resource_busy` 的 `reason=no_eligible_gpu` 表示本次没有符合准入条件的卡，`gpu_allocation` 给出请求显存、活动卡数，以及逐卡实际占用、可用容量和排除原因；`reason=job_count_limit` 则表示达到作业数量上限。不要把两者都理解为整机没有空闲算力。成功 GPU 提交也返回分配报告。资源判断只描述提交时的快照；稍后可按事实重试，已经在 CPU 上运行的作业不会自动迁移到 GPU。
 
 共享模式按剩余显存接纳任务，允许与外部进程同卡；已有显存占用和 GPU 利用率不会单独触发排除。Host 同时检查本项目活动卡数、每卡预留上限、整卡实际显存和尚未兑现的预留，并保留默认 2 GiB 缓冲。Agent 不能自行更改这些部署限制，也不能控制或回收外部作业。
+
+共享 GPU 作业默认启用模型初始化显存竞争重试。Controller 在归档失败日志、确认旧容器退出并移除后，识别 `from_pretrained` → `__init__` → `.to(...device...)` 调用中的 PyTorch CUDA OOM；错误须包含总量、余量及本进程占用，且本进程尚未用满申请预算、其他占用已挤入预算。符合条件时自动按原资源上限重新选卡，沿用同一 `job_id`、命令、工作区和 `/outputs`，最多重试两次。重试决策期间状态为 `restarting`；查询返回 `retry_count`、`attempts` 与 `retry`。每次失败日志独立保留，存储继续计入 run 额度；总作业时限不因重试重新开始。原有在途作业沿用启动时 watcher，不自动改写或重新执行。
+
+重新准入没有合适 GPU 或达到作业数量上限时，原作业最终 `failed`，`retry.status=resource_busy` 并给出原因与分配报告，由 Agent 安排后续时间；重试耗尽返回 `retry.status=exhausted`。模型自身显存不足、训练中前向／反向 OOM、其他代码错误、取消、超时以及日志未安全归档时不自动重试。检测依赖上述日志格式，无法识别时保留失败供分析。Controller 会重跑原命令；包含既有训练／评估成果后再次加载模型、或其他不可重复副作用的复合作业，应设置 `retry_on_gpu_contention: false`。此字段为严格布尔值，默认 true。训练中断接续和跳过已完成 episode 仍由研究脚本负责。
 
 POST /jobs 可选 gpu_memory_mb，表示预计显存峰值，单位 MiB。未提供时采用部署方的默认预留；小仿真可直接使用默认值，大模型加载/训练应提交合理的峰值估计。Host 同时检查每卡预留总额、实际显存和尚未兑现的预留，扣除缓冲。过大请求返回 resource_unavailable；暂时无余量返回 resource_busy。
 

@@ -43,6 +43,7 @@ def main() -> None:
         "operation",
         choices=[
             "submit",
+            "jobs-list",
             "status",
             "cancel",
             "artifact",
@@ -76,6 +77,9 @@ def main() -> None:
         if not isinstance(request, dict):
             raise TypeError("request must be an object")
         store = JobStore(args.root)
+        if args.operation == "jobs-list":
+            print(json.dumps(store.list_jobs(request)))
+            return
         if args.operation.startswith("export"):
             print(json.dumps(export_operation(store, request, args)))
             return

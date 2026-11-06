@@ -286,6 +286,7 @@ def test_job_materializes_owned_sources_without_child_or_export_redelegation(ass
                 },
                 "input_exports": ["export-existing"],
                 "experiment_id": "caller",
+                "job_id": calls[1][1]["job_id"],
             },
         )
     ]

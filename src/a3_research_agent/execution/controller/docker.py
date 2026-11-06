@@ -31,10 +31,37 @@ def docker(arguments: list[str], *, check: bool = True) -> subprocess.CompletedP
 def container_state(container_id: str) -> dict:
     result = docker(["inspect", "--format", "{{json .State}}", container_id], check=False)
     if result.returncode:
-        if "No such object" in result.stderr or "No such container" in result.stderr:
+        if (
+            "no such object" in result.stderr.lower()
+            or "no such container" in result.stderr.lower()
+        ):
             return {"Status": "removed", "ExitCode": None}
         raise RuntimeError("cannot inspect container state")
     return json.loads(result.stdout)
+
+
+def container_states(identifiers: list[str]) -> dict[str, dict]:
+    """Batch inspect tracked containers, accepting only explicit missing-object errors."""
+    states = {}
+    for offset in range(0, len(identifiers), 128):
+        batch = identifiers[offset : offset + 128]
+        result = docker(["inspect", *batch], check=False)
+        records = json.loads(result.stdout)
+        if not isinstance(records, list):
+            raise TypeError("cannot inspect container states")
+        found = {record["Id"]: record["State"] for record in records}
+        if not found.keys() <= set(batch) or any(
+            not isinstance(state, dict) or "Status" not in state for state in found.values()
+        ):
+            raise RuntimeError("invalid container states")
+        missing = set(batch) - found.keys()
+        errors = {line.strip().lower() for line in result.stderr.splitlines() if line.strip()}
+        expected = {f"error: no such object: {identifier}" for identifier in missing}
+        if errors != expected or bool(result.returncode) != bool(missing):
+            raise RuntimeError("cannot inspect all tracked containers")
+        states.update(found)
+        states.update({identifier: {"Status": "removed"} for identifier in missing})
+    return states
 
 
 def cleanup_temporary_directory(job: dict) -> None:

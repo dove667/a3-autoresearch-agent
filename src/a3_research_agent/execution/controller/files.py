@@ -60,8 +60,15 @@ def validate_submit(request: dict) -> None:
         "gpu_memory_mb",
         "files",
         "input_exports",
+        "job_id",
+        "retry_on_gpu_contention",
     }:
         raise ValueError("unknown submit fields")
+    if "job_id" in request and (
+        not isinstance(request["job_id"], str)
+        or not re.fullmatch(r"[a-f0-9]{32}", request["job_id"])
+    ):
+        raise ValueError("invalid job_id")
     owner = request.get("experiment_id")
     if not isinstance(owner, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", owner):
         raise ValueError("invalid experiment_id")
@@ -75,6 +82,8 @@ def validate_submit(request: dict) -> None:
         raise ValueError("command contains invalid arguments")
     if not isinstance(request.get("gpu"), bool):
         raise TypeError("gpu must be a boolean")
+    if type(request.get("retry_on_gpu_contention", True)) is not bool:
+        raise TypeError("retry_on_gpu_contention must be a boolean")
     memory = request.get("gpu_memory_mb")
     if memory is not None and (type(memory) is not int or memory < 1):
         raise ValueError("gpu_memory_mb must be a positive integer")
@@ -108,3 +117,10 @@ def directory_storage_bytes(root: Path) -> int:
             except FileNotFoundError:
                 pass  # A running job may replace or remove a file during the scan.
     return total
+
+
+def public_job_status(job: dict) -> str:
+    """Keep a failed attempt nonterminal while its watcher decides whether to retry."""
+    if job.get("retry_pending") and job["status"] == "failed":
+        return "restarting"
+    return job["status"]

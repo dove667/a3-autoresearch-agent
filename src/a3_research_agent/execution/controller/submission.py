@@ -2,12 +2,12 @@
 
 import fcntl
 import subprocess
+from pathlib import Path
 
 from a3_research_agent.execution.exports.readonly import ReadonlyExports
 from a3_research_agent.execution.scheduling.gpu import (
     acquire_gpu,
     active_jobs,
-    count_active_jobs,
     record_scheduler_event,
     select_shared_gpu,
 )
@@ -44,7 +44,8 @@ def submit(store: JobStore, request: dict, args) -> dict:
                     "used_bytes": used,
                     "limit_bytes": limit,
                 }
-        if args.max_jobs and count_active_jobs(store) >= args.max_jobs:
+        jobs = active_jobs(store)
+        if args.max_jobs and len(jobs) >= args.max_jobs:
             result = {
                 "job_id": None,
                 "status": "resource_busy",
@@ -71,9 +72,7 @@ def submit(store: JobStore, request: dict, args) -> dict:
                     }
                     record_scheduler_event(store, request, result)
                     return result
-                gpu_uuid = select_shared_gpu(
-                    store, args, active_jobs(store), memory_mb, diagnostics=allocation
-                )
+                gpu_uuid = select_shared_gpu(store, args, jobs, memory_mb, diagnostics=allocation)
             else:
                 allowed = set(args.gpu_ids.split(",")) if args.gpu_ids else None
                 gpu_uuid, lease = acquire_gpu(store, allowed)
@@ -104,7 +103,13 @@ def submit(store: JobStore, request: dict, args) -> dict:
                 request["gpu"],
                 request.get("files", {}),
                 run_id=run_id,
+                job_id=request.get("job_id"),
             )
+            job["controller_options"] = {
+                key: str(value) if isinstance(value, Path) else value
+                for key, value in vars(args).items()
+            }
+            job["retry_on_gpu_contention"] = request.get("retry_on_gpu_contention", True)
             job["storage_limit_bytes"] = limit
             job["input_exports"] = request.get("input_exports", [])
             job["gpu_uuid"] = gpu_uuid

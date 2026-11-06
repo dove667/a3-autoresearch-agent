@@ -61,6 +61,7 @@ def test_job_owner_is_injected_and_cannot_be_supplied_by_container(tmp_path):
                 "gpu": False,
                 "files": {},
                 "experiment_id": "experiment-a",
+                "job_id": calls[0][1]["job_id"],
             },
         )
     ]
@@ -102,3 +103,41 @@ def test_provider_errors_do_not_expose_credentials(tmp_path):
     )
     assert response.status_code == 502
     assert "PRIVATE_CREDENTIAL" not in response.text
+
+
+def test_submission_timeout_returns_pre_registered_job_id(tmp_path):
+    submitted = []
+
+    def remote(operation, payload):
+        if operation == "submit":
+            submitted.append(payload)
+            raise TimeoutError("lost SSH response after admission")
+        return {"job_id": payload["job_id"], "status": "running"}
+
+    client = client_for(tmp_path, remote=remote)
+    headers = {"Authorization": "Bearer token-a"}
+    response = client.post("/jobs", headers=headers, json={"command": ["true"]})
+    assert response.status_code == 502
+    receipt = response.json()["detail"]
+    assert receipt["code"] == "submission_unknown"
+    assert receipt["job_id"] == submitted[0]["job_id"]
+    assert len(receipt["job_id"]) == 32
+    assert client.get(receipt["status_path"], headers=headers).json()["status"] == "running"
+    assert len(submitted) == 1
+
+
+def test_job_list_recovers_owned_history_without_new_submissions(tmp_path):
+    calls = []
+
+    def remote(operation, payload):
+        calls.append((operation, payload))
+        return {"jobs": [{"job_id": "a" * 32}], "next_after": None}
+
+    client = client_for(tmp_path, remote=remote)
+    headers = {"Authorization": "Bearer token-a"}
+    result = client.get("/jobs?limit=10", headers=headers)
+    assert result.status_code == 200
+    assert result.json()["status_source"] == "controller_metadata"
+    assert calls == [("jobs-list", {"experiment_id": "experiment-a", "after": "", "limit": 10})]
+    assert client.get("/jobs?scope=outsider", headers=headers).status_code == 403
+    assert len(calls) == 1

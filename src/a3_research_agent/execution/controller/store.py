@@ -6,7 +6,7 @@ import time
 import uuid
 from pathlib import Path
 
-from .files import atomic_json, directory_storage_bytes, write_files
+from .files import atomic_json, directory_storage_bytes, public_job_status, write_files
 
 
 class JobStore:
@@ -33,6 +33,40 @@ class JobStore:
     def save(self, job: dict) -> None:
         atomic_json(self.metadata_path(job["job_id"]), job)
 
+    def list_jobs(self, request: dict) -> dict:
+        """Page owned metadata without inspecting containers or changing jobs."""
+        owner = request.get("experiment_id")
+        if not isinstance(owner, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", owner):
+            raise PermissionError("invalid experiment_id")
+        after = request.get("after", "")
+        if after:
+            self.metadata_path(after)
+        limit = request.get("limit", 200)
+        if type(limit) is not int or not 1 <= limit <= 200:
+            raise ValueError("limit must be between 1 and 200")
+        jobs = []
+        for path in sorted((self.root / "jobs").glob("*/job.json")):
+            if path.parent.name <= after:
+                continue
+            job = json.loads(path.read_text())
+            if job["experiment_id"] != owner or job.get("run_id") != request.get("run_id"):
+                continue
+            jobs.append(
+                {
+                    "status": public_job_status(job),
+                    **{
+                        key: job.get(key)
+                        for key in ("job_id", "created_at", "gpu", "gpu_uuid", "exit_code")
+                    },
+                }
+            )
+            if len(jobs) > limit:
+                break
+        return {
+            "jobs": jobs[:limit],
+            "next_after": jobs[limit - 1]["job_id"] if len(jobs) > limit else None,
+        }
+
     def workspace(self, job: dict) -> Path:
         if job.get("run_id"):
             return self.run_directory(job["run_id"]) / job["experiment_id"] / "jobs" / job["job_id"]
@@ -55,6 +89,7 @@ class JobStore:
         for metadata in (self.root / "jobs").glob("*/job.json"):
             job = json.loads(metadata.read_text())
             if job.get("run_id") == run_id:
+                total += directory_storage_bytes(metadata.parent / "attempts")
                 archive = metadata.parent / "terminal-archive.json"
                 if archive.exists():
                     total += archive.stat().st_size
@@ -89,9 +124,10 @@ class JobStore:
         files: dict,
         *,
         run_id: str | None = None,
+        job_id: str | None = None,
     ) -> dict:
         job = {
-            "job_id": uuid.uuid4().hex,
+            "job_id": job_id or uuid.uuid4().hex,
             "experiment_id": experiment_id,
             "command": command,
             "gpu": gpu,

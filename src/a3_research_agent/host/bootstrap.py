@@ -258,7 +258,7 @@ def launch_run(args, run: Path, a3: Path, image: str, start) -> None:
         phase_instructions = ""  # Readiness checks are test sessions, not main Agents.
 
     def remote_for_run(operation, payload):
-        if operation == "submit":
+        if operation in {"submit", "jobs-list"}:
             payload = {**payload, "run_id": run_id}
         return remote_call(operation, payload)
 

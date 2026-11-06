@@ -49,6 +49,7 @@ class JobRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     command: list[str] = Field(min_length=1, max_length=256)
     gpu: StrictBool = False
+    retry_on_gpu_contention: StrictBool = True
     gpu_memory_mb: int | None = Field(default=None, ge=1, strict=True)
     files: dict[str, str] = Field(default_factory=dict)
     input_exports: list[str] = Field(default_factory=list, max_length=64)

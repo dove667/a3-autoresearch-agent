@@ -14,7 +14,7 @@ from pathlib import Path
 
 from .docker import cleanup_temporary_directory, container_state, docker
 from .episode_telemetry import EpisodeTelemetry
-from .files import ACTIVE_STATES, MAX_ARCHIVE_LOG_BYTES, atomic_json, job_timeout
+from .files import ACTIVE_STATES, MAX_ARCHIVE_LOG_BYTES, atomic_json, job_timeout, public_job_status
 from .store import JobStore
 
 
@@ -177,6 +177,16 @@ def reclaim_terminal(store: JobStore, job: dict) -> dict:
 
 
 def watch(args) -> None:
+    job = json.loads(JobStore(args.root).metadata_path(args.job_id).read_text())
+    if job.get("gpu_shared") and job.get("retry_on_gpu_contention", False):
+        from .retry import watch_with_retries
+
+        watch_with_retries(args, watch_attempt)
+    else:
+        watch_attempt(args)
+
+
+def watch_attempt(args) -> None:
     store = JobStore(args.root)
     job = json.loads(store.metadata_path(args.job_id).read_text())
     cancel_path = store.metadata_path(args.job_id).parent / "cancel_requested"
@@ -278,6 +288,15 @@ def status(store: JobStore, request: dict) -> dict:
     job = store.load(request.get("job_id"), request.get("experiment_id"))
     with lifecycle_lock(store, job):
         job = store.load(job["job_id"], job["experiment_id"])
+        if job["container_id"] is None:
+            return {
+                "job_id": job["job_id"],
+                "status": public_job_status(job),
+                "gpu_uuid": job.get("gpu_uuid"),
+                "exit_code": job.get("exit_code"),
+                "output": "",
+                "cleanup": {"status": "retained"},
+            }
         state = state_for_status(job["container_id"])
         if (
             job.get("watcher_ended")
@@ -315,6 +334,8 @@ def status(store: JobStore, request: dict) -> dict:
             current = job["status"]
             if current in ACTIVE_STATES:
                 current = "completed" if state.get("ExitCode") == 0 else "failed"
+        if current == "failed":
+            current = public_job_status(job)
         return {
             "job_id": job["job_id"],
             "status": current,
@@ -325,12 +346,22 @@ def status(store: JobStore, request: dict) -> dict:
             "output": output[-65536:],
             "cleanup": cleanup,
             **({"error": job["error"]} if "error" in job else {}),
+            "retry_count": job.get("retry_count", 0),
+            "retry": job.get("retry"),
+            "attempts": job.get("attempts", []),
         }
 
 
 def cancel(store: JobStore, request: dict) -> dict:
     job = store.load(request.get("job_id"), request.get("experiment_id"))
     with lifecycle_lock(store, job):
+        job = store.load(job["job_id"], job["experiment_id"])
+        if job.get("retry_pending"):
+            (store.metadata_path(job["job_id"]).parent / "cancel_requested").touch()
+        if job["container_id"] is None:
+            job.update(status="cancelled", finished_at=time.time())
+            store.save(job)
+            return {"job_id": job["job_id"], "status": "cancelled"}
         state = container_state(job["container_id"])
         if state["Status"] in ACTIVE_STATES:
             owned_container(store, job)

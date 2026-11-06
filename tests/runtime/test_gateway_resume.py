@@ -75,3 +75,31 @@ def test_gateway_restart_preserves_main_trials_tokens_and_job_owner(tmp_path):
         restored.get("/evolution", headers={"Authorization": "Bearer unknown"}).status_code == 401
     )
     assert store.load()["gateway"]["jobs"][trial] == ["job-1"]
+
+
+def test_timeout_job_identity_survives_host_restart(tmp_path):
+    store = RunStateStore(tmp_path)
+
+    def remote(operation, payload):
+        if operation == "submit":
+            assert payload["job_id"] in store.load()["gateway"]["jobs"]["owner"]
+            raise TimeoutError("response lost")
+        return {"job_id": payload["job_id"], "status": "running"}
+
+    def build(restored=None):
+        return create_app(
+            model_name="test/model",
+            sessions={"token": "owner"},
+            forward_model=lambda **kw: {},
+            remote_call=remote,
+            usage_log=tmp_path / "usage.jsonl",
+            state_store=store,
+            restored_state=restored,
+        )
+
+    headers = {"Authorization": "Bearer token"}
+    response = TestClient(build()).post("/jobs", headers=headers, json={"command": ["true"]})
+    identifier = response.json()["detail"]["job_id"]
+    restored = TestClient(build(store.load()["gateway"]))
+    assert store.load()["gateway"]["jobs"]["owner"] == [identifier]
+    assert restored.get(f"/jobs/{identifier}", headers=headers).json()["status"] == "running"

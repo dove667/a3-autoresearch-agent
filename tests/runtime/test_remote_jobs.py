@@ -457,3 +457,80 @@ def test_artifact_read_refuses_directory_swap_after_path_validation(tmp_path, mo
         job_artifacts.read_artifact(
             store, {"experiment_id": "owner", "job_id": job["job_id"], "path": "frames/a.png"}
         )
+
+
+def test_scheduler_skips_only_confirmed_removed_containers(tmp_path, monkeypatch):
+    store = job_store.JobStore(tmp_path)
+    removed = store.create("owner", ["true"], False, {})
+    retained = store.create("owner", ["true"], False, {})
+    for job in (removed, retained):
+        job.update(status="completed", container_id=job["job_id"])
+        store.save(job)
+    job_files.atomic_json(
+        store.metadata_path(removed["job_id"]).with_name("cleanup.json"), {"status": "removed"}
+    )
+    calls = []
+    patch_controller(
+        monkeypatch,
+        "container_states",
+        lambda ids: calls.extend(ids) or {cid: {"Status": "running"} for cid in ids},
+    )
+    assert job_gpu.active_jobs(store) == [retained]
+    assert calls == [retained["container_id"]]
+
+
+def test_controller_job_listing_is_paged_and_owner_run_scoped(tmp_path):
+    store = job_store.JobStore(tmp_path)
+    owned = [
+        store.create("owner", ["true"], False, {}, run_id="run-one", job_id=x * 32) for x in "abc"
+    ]
+    store.create("outsider", ["true"], False, {}, run_id="run-one")
+    store.create("owner", ["true"], False, {}, run_id="run-two")
+    first = store.list_jobs({"experiment_id": "owner", "run_id": "run-one", "limit": 2})
+    assert [x["job_id"] for x in first["jobs"]] == [x["job_id"] for x in owned[:2]]
+    second = store.list_jobs(
+        {"experiment_id": "owner", "run_id": "run-one", "after": first["next_after"]}
+    )
+    assert [x["job_id"] for x in second["jobs"]] == [owned[2]["job_id"]]
+    assert second["next_after"] is None
+    with pytest.raises(ValueError):
+        store.list_jobs({"experiment_id": "owner", "limit": 201})
+
+
+def test_status_before_container_creation_preserves_pending_job(tmp_path, monkeypatch):
+    store = job_store.JobStore(tmp_path)
+    job = store.create("owner", ["true"], False, {})
+    patch_controller(monkeypatch, "docker", lambda *a, **kw: pytest.fail("no container yet"))
+    result = job_lifecycle.status(store, {"experiment_id": "owner", "job_id": job["job_id"]})
+    assert result["status"] == "created"
+    assert result["cleanup"]["status"] == "retained"
+
+
+def test_batch_container_inspection_handles_missing_and_rejects_daemon_errors(monkeypatch):
+    import json
+
+    calls = []
+
+    def inspect(args, **kwargs):
+        calls.append(args)
+        return subprocess.CompletedProcess(
+            args,
+            1,
+            json.dumps([{"Id": "live", "State": {"Status": "running"}}]),
+            "Error: No such object: old\n",
+        )
+
+    monkeypatch.setattr(job_docker, "docker", inspect)
+    states = job_docker.container_states(["live", "old"])
+    assert states["live"]["Status"] == "running"
+    assert states["old"]["Status"] == "removed"
+    assert calls == [["inspect", "live", "old"]]
+    monkeypatch.setattr(
+        job_docker,
+        "docker",
+        lambda *a, **kw: subprocess.CompletedProcess(
+            [], 1, "[]", "Cannot connect to Docker daemon"
+        ),
+    )
+    with pytest.raises(RuntimeError):
+        job_docker.container_states(["live"])

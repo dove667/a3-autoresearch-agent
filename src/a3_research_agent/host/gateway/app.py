@@ -209,6 +209,7 @@ class Gateway(
         self.app.add_api_route("/vision/status", self.vision_status, methods=["GET"])
         self.app.add_api_route("/vision/inspect", self.inspect_vision, methods=["POST"])
         self.app.add_api_route("/jobs", self.submit, methods=["POST"])
+        self.app.add_api_route("/jobs", self.list_jobs, methods=["GET"])
         self.app.add_api_route("/jobs/exports", self.list_exports, methods=["GET"])
         self.app.add_api_route("/jobs/{job_id}/exports", self.publish_export, methods=["POST"])
         self.app.add_api_route("/jobs/exports/{export_id}", self.export_status, methods=["GET"])

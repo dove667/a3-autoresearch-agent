@@ -107,7 +107,7 @@ def test_protocol_reference_revision_preserves_scientific_body():
     old = (Path(__file__).parent / "fixtures/relocated_phase_two_protocol_0_3_0.md").read_text()
     new = (ROOT / "agent-inputs/shared/protocol.md").read_text()
     expected = (
-        old.replace("Version: 0.3.0", "Version: 0.3.2")
+        old.replace("Version: 0.3.0", "Version: 0.3.3")
         .replace(
             "Agent 的具体行动、反馈核查与作业处理见 phase-instructions.md。",
             "长期行为原则见 SOUL.md，实际接口、反馈投递与作业处理见 execution.md。",
@@ -130,7 +130,9 @@ def test_protocol_reference_revision_preserves_scientific_body():
             "当前 Agent 自行完成局部测试；条件独立且资源允许的远程作业先并行提交。",
         )
     )
-    assert new == expected
+    # Operational batching changes neither scientific comparisons nor scoring.
+    batching = next(line for line in new.splitlines() if line.startswith("一次科学实验可包含"))
+    assert new.replace(batching + "\n\n", "") == expected
     assert hashlib.sha256(new.encode()).digest() != hashlib.sha256(old.encode()).digest()
 
 

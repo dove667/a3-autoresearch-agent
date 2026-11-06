@@ -8,7 +8,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from a3_research_agent.execution.controller.docker import container_state, docker
+from a3_research_agent.execution.controller.docker import container_state, container_states, docker
 from a3_research_agent.execution.controller.files import ACTIVE_STATES
 from a3_research_agent.execution.controller.store import JobStore
 
@@ -202,14 +202,18 @@ def record_scheduler_event(store: JobStore, request: dict, result: dict) -> None
 
 
 def active_jobs(store: JobStore, *, input_export: str | None = None) -> list[dict]:
-    jobs = []
+    tracked = []
     for path in (store.root / "jobs").glob("*/job.json"):
         job = json.loads(path.read_text())
         if input_export is not None and input_export not in job.get("input_exports", []):
             continue
-        if job["container_id"] and container_state(job["container_id"])["Status"] in ACTIVE_STATES:
-            jobs.append(job)
-    return jobs
+        cleanup = path.with_name("cleanup.json")
+        if cleanup.exists() and json.loads(cleanup.read_text()).get("status") == "removed":
+            continue
+        if job["container_id"]:
+            tracked.append(job)
+    states = container_states([job["container_id"] for job in tracked])
+    return [job for job in tracked if states[job["container_id"]]["Status"] in ACTIVE_STATES]
 
 
 def count_active_jobs(store: JobStore) -> int:
