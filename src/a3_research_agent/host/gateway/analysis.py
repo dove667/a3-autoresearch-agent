@@ -55,7 +55,9 @@ class AnalysisRoutes:
         with self.human_feedback.lock if self.human_feedback else nullcontext():
             feedback = [dict(x) for x in self.human_feedback.records] if self.human_feedback else []
         with self.analyzer.lock:
-            analysis = [dict(x) for x in self.analyzer.state["records"]]
+            analysis = (
+                [dict(x) for x in self.analyzer.state["records"]] if self.analyzer.enabled else []
+            )
         return wait_snapshot(
             actor,
             is_main=actor == current_main,

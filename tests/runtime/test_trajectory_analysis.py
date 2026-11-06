@@ -723,3 +723,36 @@ def test_queued_signal_failure_is_not_consumed_or_reported_as_success(tmp_path):
     assert client.get("/analysis", headers=HEADERS).json()["deferred_triggers"] == [
         "before_handoff"
     ]
+
+
+def test_disabled_analyzer_preserves_history_without_calls_or_notifications(tmp_path):
+    store = RunStateStore(tmp_path)
+    analyzer = TrajectoryAnalyzer(advisory, {"model_name": "test", "request_options": {}}, store)
+    old = {"analysis_id": "old", "owner": "main", "status": "completed", "suggestions": []}
+    analyzer.state["records"].append(old)
+    analyzer._save()
+
+    def unexpected_call(**kwargs):
+        raise AssertionError("Disabled analyzer must never call a model")
+
+    app = create_app(
+        model_name="test",
+        sessions={"token-a": "main"},
+        main_owner="main",
+        forward_model=unexpected_call,
+        remote_call=lambda *args: {},
+        usage_log=tmp_path / "usage.jsonl",
+        state_store=store,
+        analyzer_enabled=False,
+    )
+    client = TestClient(app)
+    assert client.get("/analysis", headers=HEADERS).json()["status"] == "disabled"
+    assert client.post("/analysis", headers=HEADERS).json()["status"] == "disabled"
+    assert (
+        client.post("/analysis", headers=HEADERS, json={"enqueue_only": True}).json()["status"]
+        == "disabled"
+    )
+    assert client.get("/analysis/old", headers=HEADERS).json()["analysis_id"] == "old"
+    assert client.get("/wait/signals", headers=HEADERS).json()["analysis"]["pending_ids"] == []
+    assert store.load()["trajectory_analysis"]["calls"] == 0
+    assert store.load()["trajectory_analysis"]["records"] == [old]

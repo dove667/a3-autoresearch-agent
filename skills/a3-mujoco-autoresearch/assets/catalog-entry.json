@@ -1,6 +1,6 @@
 {
   "id": "a3-mujoco-autoresearch",
-  "version": "0.1.10",
+  "version": "0.1.11",
   "status": "reference",
   "comparison_status": "compare-not-proven",
   "description": "A3 MuJoCo autoresearch and model training: ACT, Diffusion/Flow, VLA, world models, diagnostics and paired evaluation.",
@@ -18,7 +18,11 @@
     "visual-diagnostics",
     "video",
     "episode-executor",
-    "parallel"
+    "parallel",
+    "task-conditioning",
+    "task-id",
+    "language",
+    "instruction"
   ],
   "applicability": "Research planning and authorized execution for the declared A3 task. Recommendations are not local performance evidence. Read SKILL.md and selected references using the ordinary read tool. Helpers require an authorized job/execution tool, not skill_execute.",
   "local_source": "skills/a3-mujoco-autoresearch/SKILL.md",
@@ -74,6 +78,10 @@
     {
       "version": "0.1.10",
       "change": "Preserve evidence-backed behavioral policy progress beyond aggregate score and broaden exploration across supported trainable model families."
+    },
+    {
+      "version": "0.1.11",
+      "change": "Require explicit task conditions in actual training and inference action computation, with consistent ACT embeddings or VLA/pi text processing and real-path validation."
     }
   ]
 }

@@ -52,7 +52,8 @@ class Advisory(BaseModel):
 
 
 class TrajectoryAnalyzer:
-    def __init__(self, forward, route, state_store=None):
+    def __init__(self, forward, route, state_store=None, *, enabled=True):
+        self.enabled = enabled
         self.forward = forward
         self.route = route
         self.store = state_store
@@ -72,6 +73,7 @@ class TrajectoryAnalyzer:
         }
         if state_store is not None and state_store.path.exists():
             self.state.update(state_store.load().get("trajectory_analysis", {}))
+        self.state["enabled"] = enabled
         # An interrupted reserved call is consumed and never blindly retried.
         for record in self.state["records"]:
             if record["status"] == "running":
@@ -92,6 +94,8 @@ class TrajectoryAnalyzer:
 
     def latest(self, actor):
         with self.lock:
+            if not self.enabled:
+                return self.disabled_report()
             records = [r for r in self.state["records"] if actor is None or r["owner"] == actor]
             result = (
                 self._public(records[-1])
@@ -118,6 +122,16 @@ class TrajectoryAnalyzer:
                 },
             )
             return result
+
+    @staticmethod
+    def disabled_report():
+        return {
+            "status": "disabled",
+            "advisory_only": True,
+            "pending_reports": [],
+            "deferred_triggers": [],
+            "response_required": False,
+        }
 
     @staticmethod
     def _pending(record):
@@ -168,6 +182,8 @@ class TrajectoryAnalyzer:
 
     def enqueue(self, trigger):
         with self.lock:
+            if not self.enabled:
+                return self.disabled_report()
             self.state["signal_sequence"] += 1
             self.state["deferred_triggers"][trigger] = self.state["signal_sequence"]
             self._save()
@@ -183,6 +199,8 @@ class TrajectoryAnalyzer:
                 self.state["deferred_triggers"].pop(trigger, None)
 
     def analyze(self, actor, snapshot, trigger="manual"):
+        if not self.enabled:
+            return self.disabled_report()
         serialized = json.dumps(snapshot, sort_keys=True)
         if len(serialized.encode()) > MAX_INPUT_BYTES:
             raise HTTPException(422, "Telemetry exceeds analyzer input bound")

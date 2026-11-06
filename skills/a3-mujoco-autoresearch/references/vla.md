@@ -42,6 +42,10 @@ Only add asynchronous execution after measured latency justifies it. Log observa
 
 **A3 π0.5 mismatch:** pinned code currently restricts benchmark task/prompt, and full scene alignment changes evaluation geometry. Reproducing the provider's own scene can diagnose a checkpoint but must be labeled separately. A fair phase-two candidate needs an adapter compatible with the fixed observation/action/task protocol; don't change the scene to claim a gain.
 
+## Task text throughout training and inference
+
+Pass the actual declared task instruction into the language-conditioned model in both training and inference. Trace dataset text to tokenizer tokens/mask and model forward, and benchmark text through the real runner and adapter to inference. Reject empty or unknown task conditions; do not replace the instruction with an empty string or leave it only in logs. Check task-distinguishing tokens survive truncation and both paths use matching task semantics, tokenizer assets, prompt construction and preprocessing. Exercise the actual runner and real model as well as synthetic tests. Fixed-observation prompt changes test the active condition path; matched behavioral evaluation tests whether the model learned to follow it.
+
 ## Data/transfer checklist
 
 Keep immutable base revision, finetune lineage, task text, tokenizer, processor, train statistics and model hashes together. Detect prompt truncation, language shortcuts, camera permutation, gripper inversion and per-axis scale errors. Normalize once and invert once. An input dimension that fits a padded tensor still needs semantic alignment. Fine-tuning weights without processor state is an incomplete policy artifact.

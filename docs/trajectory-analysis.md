@@ -76,3 +76,7 @@ Simulation tests cover normal training waits, repetition, false-progress noise,
 periodic coverage, failed-cache retry deadlines, bounded persistent failure, queued
 handoff/repetition during cooldown and inflight work, restarts and non-main identities. They do not establish
 long-run analyzer usefulness or an absence of false positives and negatives.
+
+## Disable advisory analysis
+
+Set `A3_TRAJECTORY_ANALYZER_ENABLED=0` in the deployment environment and resume the existing run to disable analyzer model calls and queued analysis notifications. The default is `1`. The Host returns `status: disabled` for new analysis and enqueue requests; retained reports remain readable by ID. Main research and remote jobs retain their existing lifecycle. Re-enabling uses the preserved analysis history and cooldown.

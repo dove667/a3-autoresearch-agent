@@ -123,6 +123,9 @@ def supervised_sessions(client: httpx.Client) -> list[dict]:
 
 def launch_run(args, run: Path, a3: Path, image: str, start) -> None:
     model_request_options = read_model_request_options(os.environ)
+    analyzer_setting = os.environ.get("A3_TRAJECTORY_ANALYZER_ENABLED", "1")
+    if analyzer_setting not in {"0", "1"}:
+        raise ValueError("A3_TRAJECTORY_ANALYZER_ENABLED must be 0 or 1")
     role_models = read_role_models(os.environ)
     context_budget = read_context_budget(os.environ)
     package = (start.command, start.files) if start else None
@@ -290,6 +293,7 @@ def launch_run(args, run: Path, a3: Path, image: str, start) -> None:
         forward_model=litellm.responses,
         model_request_options=model_request_options,
         role_models=role_models,
+        analyzer_enabled=analyzer_setting == "1",
         context_budget=context_budget,
         remote_call=remote_for_run,
         usage_log=run / "model-usage.jsonl",

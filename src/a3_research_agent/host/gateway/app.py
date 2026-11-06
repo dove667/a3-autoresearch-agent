@@ -57,6 +57,7 @@ class Gateway(
         model_request_options: dict | None = None,
         role_models: dict | None = None,
         context_budget: dict | None = None,
+        analyzer_enabled: bool = True,
     ) -> None:
         self.model_name = model_name
         self.sessions = sessions
@@ -101,6 +102,7 @@ class Gateway(
                 {"model_name": self.model_name, "request_options": self.fixed_model_options},
             ),
             self.state_store,
+            enabled=analyzer_enabled,
         )
         self.diagnostics = GatewayDiagnostics(
             self.usage_log.with_name("gateway-events.jsonl"), self.telemetry.record
@@ -249,6 +251,7 @@ def create_app(
     model_request_options: dict | None = None,
     role_models: dict | None = None,
     context_budget: dict | None = None,
+    analyzer_enabled: bool = True,
 ) -> FastAPI:
     return Gateway(
         model_name=model_name,
@@ -273,6 +276,7 @@ def create_app(
         model_request_options=model_request_options,
         role_models=role_models,
         context_budget=context_budget,
+        analyzer_enabled=analyzer_enabled,
     ).app
 
 

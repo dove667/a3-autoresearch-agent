@@ -12,6 +12,14 @@ Use training-only normalization and round-trip tests. Log near-constant dimensio
 
 Treat filtering as reversible masks with reasons. Removing all failed/slow trajectories can remove recovery behavior and difficult cases. Balance phases only when the data support reliable phase labels; compare at matched exposure. Don't call repeated held-out evaluation “untouched test” after using it for targeted fixes.
 
+## Task conditioning from data to actions
+
+Trace the declared task from dataset metadata through the sampled batch, preprocessing and model forward, then from the benchmark instruction through runner, adapter and inference forward. Both paths must use the same task semantics, mapping and fusion/tokenization. Inspect the tensors actually consumed by the action predictor; a label in metadata, a sampler stratum or a discarded batch field does not satisfy this requirement.
+
+For ACT, add a learned task-ID condition when the architecture has no language input. Include its parameters in optimization, checkpoint save/reload and deployment; keep its fusion position relative to state normalization identical. For language policies, verify nonempty real task text, tokenizer/processor revision, attention masks and truncation preserve the distinguishing instruction. Fail clearly on unknown conditions. Do not silently reuse an unconditioned adapter or pass an empty instruction.
+
+Exercise the actual model and entrypoint in addition to synthetic plumbing checks. Test condition gradients where applicable and a fixed observation with changed task input, then assess whether the trained policy performs the requested task in matched closed-loop comparisons. A nonzero gradient or changed output demonstrates an active path; task-appropriate behavior requires behavioral evidence. Preserve existing unconditioned results as their original experiments.
+
 ## Visual process evidence
 
 Prefer an original episode's existing video and trace when a grasp, transfer, placement or stagnation hypothesis needs visual evidence. Select useful step/time intervals rather than recording every rollout or using a fixed frame checklist. The current research Agent chooses the question, extracts frames in its authorized job, performs the diagnosis and evaluates findings. Final target count alone cannot localize failure. Missing action in sparse frames is not proof it never happened; report occlusion, sampling gaps and conflicting signals.
