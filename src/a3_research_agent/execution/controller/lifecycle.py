@@ -13,6 +13,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from .docker import cleanup_temporary_directory, container_state, docker
+from .episode_telemetry import EpisodeTelemetry
 from .files import ACTIVE_STATES, MAX_ARCHIVE_LOG_BYTES, atomic_json, job_timeout
 from .store import JobStore
 
@@ -179,6 +180,7 @@ def watch(args) -> None:
     store = JobStore(args.root)
     job = json.loads(store.metadata_path(args.job_id).read_text())
     cancel_path = store.metadata_path(args.job_id).parent / "cancel_requested"
+    telemetry = None
     try:
         with lifecycle_lock(store, job):
             if cancel_path.exists():
@@ -186,6 +188,9 @@ def watch(args) -> None:
             docker(["start", job["container_id"]])
             job["status"] = "running"
             store.save(job)
+        if job.get("gpu_uuid") and job.get("episode_telemetry_directory"):
+            telemetry = EpisodeTelemetry(job)
+            telemetry.start()
         timeout = job_timeout(args.timeout)
         if job.get("storage_limit_bytes"):
             started = time.monotonic()
@@ -220,6 +225,8 @@ def watch(args) -> None:
     except (OSError, ValueError, TypeError, RuntimeError, subprocess.SubprocessError) as error:
         job.update(status="failed", error=str(error))
     finally:
+        if telemetry is not None:
+            telemetry.stop()
         with lifecycle_lock(store, job):
             if cancel_path.exists():
                 job["status"] = "cancelled"

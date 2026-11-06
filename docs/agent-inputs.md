@@ -1,6 +1,6 @@
 # Agent 输入的版本与加载
 
-Version: 0.6.4
+Version: 0.6.5
 
 本文件面向维护输入的部署方；运行监督与审批见 [操作者文档](operator-supervision.md)。目标、验收、Prompt 和执行说明由部署方维护。使用内置 profile 时，新启动、`--resume-from` 和 `--run-harness` 采用启动时仓库里的当前文件，包括未提交的工作区内容。显式自定义输入目录则使用下述独立冻结快照，不回退到仓库模板。恢复保留原 run、身份、生成的 Harness 和模型对话历史；部署方 system Prompt 与所选阶段协议更新为当前版本。
 
@@ -108,6 +108,10 @@ Agent 可主动把可复用方法写入自己的工作区 skill；具体经历�
 Docker `/workspace` 挂载到对应候选的 Host 工作区。Agent 写入的正文、索引与记忆随即对 Host 可见；`artifacts/rsi/<run-id>/candidates/<session-id>/workspace` 可能是指向受管 worktree 的链接，可先解析路径。运行中即可复制选定 skill 的普通文本文件到 Git 忽略的审阅快照，记录 session、相对路径、版本和 SHA256，复制前后核对来源未变化；来源变化则重取。不要复制认证、完整对话或无关运行数据，也不要覆盖正在写入的工作区。
 
 回流到仓库 `skills/` 时审阅通用性、私人信息、引用、索引和版本，再按授权提交发布。Host 可以读取正在写入的文件，因此快照校验仍有必要。根目录公共 skill、Agent 可写副本、只读 `/run/input` 和各 Worker 工作区分别维护，双向内容不会自动合并。热加载部署方输入也不会自动覆盖 Agent 的 skill 副本和发现索引。需要应用到当前 Agent 时，经批准显式交付选定内容并通知 Agent；纯文本重新读取可采用，工具代码需检查实际重载机制。正式保留与后继交接仍检查声明的文件清单。
+
+## 独立 episode 执行
+
+SOUL 指导采集与评估默认使用统一执行器，execution 提供作业内入口与恢复规则；manifest、资源调节和输出契约见 [episode 执行器](episode-executor.md)。Agent 自行决定任务独立性和科研参数。执行器随远端 controller 部署，修改输入文件不会更新已运行作业；输入更新与运行时部署分别处理，遵循现有授权和版本流程。
 
 ## 需要维护版本的内容
 

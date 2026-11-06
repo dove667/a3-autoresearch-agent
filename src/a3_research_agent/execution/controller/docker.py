@@ -125,6 +125,15 @@ def create_container(store: JobStore, job: dict, args) -> str:
         "--mount",
         f"type=bind,source={store.workspace(job)},target=/workspace",
     ]
+    executor = Path(__file__).resolve().parents[1] / "episode_executor.py"
+    arguments += [
+        "--mount",
+        f"type=bind,source={executor},target=/run/a3/episode_executor.py,readonly",
+        "--env",
+        f"A3_JOB_GPU_MEMORY_MB={job.get('gpu_memory_mb', 0)}",
+        "--env",
+        f"A3_JOB_GPU_UUID={job.get('gpu_uuid') or ''}",
+    ]
     if job.get("run_id"):
         arguments += ["--mount", f"type=bind,source={store.outputs(job)},target=/outputs"]
     for option, target in (("models_root", "/models"), ("datasets_root", "/datasets")):
@@ -160,6 +169,14 @@ def create_container(store: JobStore, job: dict, args) -> str:
         source = exports.data_path(job["experiment_id"], identifier)
         arguments += ["--mount", f"type=bind,source={source},target=/inputs/{identifier},readonly"]
     if job["gpu_uuid"]:
+        telemetry = store.metadata_path(job["job_id"]).parent / "episode-telemetry"
+        telemetry.mkdir(mode=0o700, exist_ok=True)
+        job["episode_telemetry_directory"] = str(telemetry)
+        store.save(job)
+        arguments += [
+            "--mount",
+            f"type=bind,source={telemetry},target=/run/a3/telemetry,readonly",
+        ]
         # Driver libraries can be injected without their GLVND discovery descriptor.
         vendor = Path(__file__).resolve().with_name("nvidia_egl_vendor.json")
         arguments += [

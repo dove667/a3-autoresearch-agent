@@ -1,6 +1,6 @@
 # Host提供的执行与验收入口
 
-Version: 0.15.15
+Version: 0.15.16
 
 部署方运行 gateway、容器引擎、模型认证与远程资源调度。候选 Harness 在独立容器内运行，
 通过 HTTP 请求这些固定能力。工具名称、研究逻辑、反思方法和版本选择由 Agent 设计。
@@ -236,6 +236,18 @@ Host 先记录停止意图，再停止进程；若中断留下未确认的停止
 `version_id` 不属于作业接口；固定版本装配仍使用 `/sessions`。详见
 [文件传递](../../docs/workspace-snapshot-assembly.md#send-selected-workspace-files-to-a-remote-job)。
 
+
+### 独立 episode 执行器
+
+采集和评估中的独立 episode 默认使用作业内只读的 `/run/a3/episode_executor.py`。由 Agent 判断任务独立性，编写包含科学参数、种子、协议与报告路径的 manifest；不要另写固定两个并发的循环。提交远程 job 时将 manifest 和所需程序放入作业工作区，命令示例：
+
+```bash
+python /run/a3/episode_executor.py --manifest research/episodes.json --output /outputs/example-batch
+```
+
+manifest 是 JSON：`version` 为 1，`episodes` 中每项提供唯一 `id`、参数数组 `command`、绝对报告路径 `report`（建议放在 `/outputs`），可选 `work_units`（默认 1）。可选 `max_parallel`、`threads_per_episode`、`warmup_seconds`、`adjust_seconds`、`idle_timeout_seconds` 默认分别为 1024、1、15、15、60（时间单位为秒）。命令须写出所声明的 JSON 报告；进程退出码为 0 且报告为有效 JSON 对象才记为完成，报告中科学结果 `success:false` 仍是有效完成。学习型模型计算仍须遵循下方 GPU 规则。
+
+执行器要求 cgroup v2 和有限的内存额度；在固定作业额度内，根据容器 CPU、内存、进程资源及 GPU 显存余量和完成吞吐调整并发，不改变额度，也不为降低并发终止在途 episode。并发上限还受 CPU 配额、每 episode 线程数和任务数约束；每次资源观测至多启动一个 episode，GPU 遥测不可用、报错或超过 10 秒时立即停止新增。输出目录保存 `ledger.json`、`metrics.jsonl` 和 `summary.json`。同一 batch 有排他锁，恢复时校验 manifest 摘要和已完成报告哈希并跳过已完成项；资源或测量持续阻塞，且无在途 episode、仍有 pending 达到 `idle_timeout_seconds` 时以退出码 75 结束；核查资源后可用同一 manifest 和目录继续 pending。状态不确定的 launching/running 项和失败项拒绝重复执行；失败项不自动重试，先核查并明确处理。收到退出信号时清理本次子进程并保留已有结果；未完成的在途项会按退出码和报告记账为失败，尚未启动的项保留 pending。主进程退出后若仍有后台后代，执行器清理其进程组并将该项记为失败；报告路径与内部控制文件、日志、临时文件或 manifest 冲突时在写入前拒绝。吞吐验证使用独立输出和任务，不重跑已完成的科学 episode。完整契约见 [episode 执行器](../../docs/episode-executor.md)。
 
 ### 模型计算必须使用 GPU
 

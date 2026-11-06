@@ -2,7 +2,7 @@
 name: a3-mujoco-autoresearch
 description: Develop and improve learned policies for the A3 dual-arm MuJoCo cookie-packing project. Use for method selection, ACT/Diffusion/Flow/VLA/world-model experiments, data and training diagnostics, paired closed-loop evaluation, and reusable research experience. Applies to research planning or authorized execution, not permission to start training or change the benchmark.
 metadata:
-  version: 0.1.6
+  version: 0.1.7
 ---
 
 # A3 MuJoCo autoresearch
@@ -16,6 +16,19 @@ Read the current run's goal, acceptance, protocol and feedback, then [project co
 For each next action, identify the limiting uncertainty: a broken adapter, insufficient data coverage, open-loop drift, underfitting, inference latency, or research-process overhead. Choose an experiment that can distinguish explanations. Autonomously compare training, data improvement, deployment changes and Harness work by their expected performance or information benefit, total time/compute and validation cost, risk and dependencies. A cheap interface test or deployment ablation is useful when it resolves a consequential uncertainty; cheapness alone does not justify repeating it instead of a more valuable training or data experiment. No direction or section order is a default optimum. Training need not be the expensive stage: if collection or closed-loop simulation dominates, optimize the measured pipeline bottleneck and reuse valid data/results rather than repeatedly recollecting or reevaluating.
 
 **A3 traps to check first:** absolute joint targets rather than deltas; 16D dual-arm versus published 8D left-arm action; inactive arm held at reset pose, not zero; observation state may include more than action channels; 20 Hz control; consistent camera preprocessing; commanded versus applied-action labels; chunk queues and reset; final count rather than transient peak. See the contract for source-qualified details.
+
+## Schedule independent episodes
+
+For collection and evaluation, submit an episode manifest to the deployment's unified executor:
+`python /run/a3/episode_executor.py --manifest research/episodes.json --output /outputs/<batch>`.
+Read the current execution reference's episode-executor section for the manifest and recovery contract.
+Keep task parameters, seeds, policy weights and output paths explicit. Let the executor adjust concurrency
+inside the job's existing CPU, memory and GPU reservation; avoid replacing it with a fixed two-process loop.
+It limits per-episode numerical threads and observes the whole container plus Host GPU telemetry.
+Scientific `success:false` remains a completed observation when the command and report are valid.
+Reuse completed reports, reconcile uncertain submissions before retrying, and keep diagnostic throughput
+runs separate from registered scientific evaluations. Compare valid episodes per wall time with matched
+workloads; raising CPU use alone does not establish an improvement.
 
 ## Select a research branch
 

@@ -1,6 +1,6 @@
 {
   "id": "a3-mujoco-autoresearch",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "status": "reference",
   "comparison_status": "compare-not-proven",
   "description": "A3 MuJoCo autoresearch and model training: ACT, Diffusion/Flow, VLA, world models, diagnostics and paired evaluation.",
@@ -16,7 +16,9 @@
     "world-model",
     "evaluation",
     "visual-diagnostics",
-    "video"
+    "video",
+    "episode-executor",
+    "parallel"
   ],
   "applicability": "Research planning and authorized execution for the declared A3 task. Recommendations are not local performance evidence. Read SKILL.md and selected references using the ordinary read tool. Helpers require an authorized job/execution tool, not skill_execute.",
   "local_source": "skills/a3-mujoco-autoresearch/SKILL.md",
@@ -56,6 +58,10 @@
     {
       "version": "0.1.6",
       "change": "Add optional video/trace process diagnosis and bounded visual inspection; distinguish native diagnostic retention, partial observations and new replay evidence without adding evaluation gates. Native diagnostics source-inspected at A3 7c34d38; no simulation or model experiment performed."
+    },
+    {
+      "version": "0.1.7",
+      "change": "Route independent collection and evaluation episodes through the quota-aware unified executor; preserve protocol parameters and completed results."
     }
   ]
 }

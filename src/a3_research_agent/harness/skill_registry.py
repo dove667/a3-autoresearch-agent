@@ -180,9 +180,13 @@ def operate(root, args):
                 "unindexed": unindexed[:24],
             }
         skill_id = args.get("id", "")
-        if not isinstance(skill_id, str) or not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,79}", skill_id):
+        if not isinstance(skill_id, str):
             raise SkillError("invalid_skill_id")
         entry = next((e for e in entries if e["id"] == skill_id), None)
+        # Host-installed references include semantic versions in their existing IDs.
+        pattern = r"[a-z0-9][a-z0-9.-]{0,159}" if entry else r"[a-z0-9][a-z0-9-]{0,79}"
+        if not re.fullmatch(pattern, skill_id):
+            raise SkillError("invalid_skill_id")
         if action == "read":
             if entry is None:
                 raise SkillError("unknown_skill")

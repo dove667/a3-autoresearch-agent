@@ -218,3 +218,42 @@ def test_catalog_write_failure_restores_active_body(tmp_path, monkeypatch):
     assert result["error"]
     assert (tmp_path / old["local_source"]).read_text() == "original"
     assert (tmp_path / "skills/index.json").read_bytes() == before
+
+
+def test_existing_host_reference_with_versioned_id_is_readable(tmp_path):
+    from a3_research_agent.harness.skill_registry import dispatch
+
+    directory = tmp_path / "skills"
+    directory.mkdir()
+    (directory / "SKILL.md").write_text("Existing deployed reference")
+    import json
+
+    (directory / "index.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "skills": [
+                    {
+                        "id": "reference-0.1.6-hash",
+                        "version": "0.1.6",
+                        "status": "reference",
+                        "local_source": "skills/SKILL.md",
+                        "description": "Existing reference",
+                    }
+                ],
+            }
+        )
+    )
+    read = dispatch({"action": "read", "id": "reference-0.1.6-hash"}, root=tmp_path)
+    assert read["content"] == "Existing deployed reference"
+    create = dispatch(
+        {
+            "action": "save",
+            "id": "new-0.1.0",
+            "description": "New",
+            "source": "test",
+            "content": "New skill",
+        },
+        root=tmp_path,
+    )
+    assert create["error"] == "invalid_skill_id"
