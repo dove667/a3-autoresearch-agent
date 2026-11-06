@@ -4,7 +4,7 @@ Sources checked 2026-11-02: [AIDE](https://arxiv.org/abs/2502.13138), [implement
 
 ## Research search instead of linear edits
 
-Maintain a useful incumbent and a small evidence-backed frontier of alternatives. Branch from promising checkpoints/configs rather than always from the newest edit. Rank the next experiment by expected information, possible gain, feasibility and cost. A null result can prune a hypothesis; a broken job is not a refutation of the learning method.
+Maintain a useful incumbent and a small evidence-backed frontier of alternatives. Branch from promising checkpoints/configs rather than always from the newest edit. Inventory supported trainable model families and cover unexplored methods with meaningful data and training budgets before concentrating on small edits to one checkpoint. Rank the next experiment by expected information, possible gain, feasibility and cost. A null result can prune a hypothesis; a broken job is not a refutation of the learning method.
 
 Choose a cheap test appropriate to the question: static dataset audit for leakage, tiny fit for plumbing, learning curve for stability, same-weight deployment ablation for action age, paired rollouts for behavioral quality. Methods with slower startup may need different diagnostic windows; don't prune solely because another method improves faster initially. Equal updates, equal examples, equal GPU-hours and equal wall time answer different questions.
 
@@ -21,6 +21,8 @@ Pair the same scenes and fixed external conditions. Identical random-seed intege
 A scenario bootstrap of one trained checkpoint addresses scenario variability, not training variability. Independent training seeds answer a different question. Do not count frames as independent episodes or repeated rollouts as independent training runs. A zero-width bootstrap from constant tiny samples does not demonstrate certainty. See [helper](evaluation-helper.md); multi-training-run hierarchy needs separate analysis.
 
 The complete phase-two metric is six-cell equal-weight normalized final count; original success remains separate. Good offline loss or final-count gain without complete success should be described precisely, not silently relabeled solved.
+
+Inspect real video/frames together with synchronized actions and states to compare grasp, transport, placement, stability and recovery. Anchor observations to steps and matched conditions; quantify the relevant behavior when feasible. Preserve a candidate with supported improvement in any useful capability, its weights/configuration and evidence, even when final aggregate score is unchanged. Keep uncertain visual signs as pending verification. Maintain several capability-specific candidates; aggregate-score improvement is not a prerequisite for retention. Report native benchmark results and behavioral improvements at their respective scopes, including tradeoffs.
 
 ## Research and Harness can improve together
 

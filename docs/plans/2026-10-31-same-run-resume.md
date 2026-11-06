@@ -1,5 +1,7 @@
 # 同一 run 的中断恢复
 
+> 历史方案；当前执行约定以 [单研究 Agent 工作流](../research-orchestration.md) 和 [执行接口](../../agent-inputs/shared/execution.md) 为准，旧 worker、分叉和派发描述不作为当前操作指引。
+
 目标：`--resume-from` 在原 run 目录、原时间戳、原逻辑身份和原工作区继续执行；`--run-harness` 才开启新 run。
 
 ## 实现范围

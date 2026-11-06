@@ -1,6 +1,6 @@
 {
   "id": "rsi-harness-evolution",
-  "version": "0.2.5",
+  "version": "0.2.8",
   "status": "reference",
   "comparison_status": "compare-not-proven",
   "description": "Fixed-weight RSI Harness improvement: component diagnosis, context/memory/tools/control/recovery candidates and quality-preserving experiments.",
@@ -52,6 +52,18 @@
     {
       "version": "0.2.5",
       "change": "Remove prescribed workflow and evidence labels; preserve research references, task-specific comparisons and safe handoff."
+    },
+    {
+      "version": "0.2.6",
+      "change": "Replace research-worker delegation and branch search with one research Agent, parallel independent remote jobs and one linear formal candidate trial."
+    },
+    {
+      "version": "0.2.7",
+      "change": "Share research reads and analyzer reports among registered identities in one run; retain owner/adopted-lineage mutation authority and explicit cross-run grants."
+    },
+    {
+      "version": "0.2.8",
+      "change": "Preserve evidence-backed behavioral policy progress beyond aggregate score and broaden exploration across supported trainable model families."
     }
   ]
 }

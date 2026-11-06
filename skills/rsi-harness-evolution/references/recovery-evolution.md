@@ -16,9 +16,9 @@ Editing files, exercising a candidate and transferring the main role are differe
 
 ## B. Candidate code is edited but not used
 
-**Diagnose.** Check actual entrypoint, imported module path, code/config digests and trace events from the loaded process. Long-running imports, stale workers or inherited prompts can mask a change.
+**Diagnose.** Check actual entrypoint, imported module path, code/config digests and trace events from the loaded process. Long-running imports, stale processes or inherited prompts can mask a change.
 
-**Options.** New isolated process/session for a candidate; startup records of loaded version; behavioral tests that distinguish candidate from baseline; carefully scoped reload only when the architecture supports it. Avoid adding a new hot-loader merely to demonstrate a simple improvement.
+**Options.** One formal isolated trial for a full candidate; startup records of loaded version; behavioral tests that distinguish candidate from baseline; carefully scoped reload only when the architecture supports it. Avoid adding a new hot-loader merely to demonstrate a simple improvement.
 
 **Cheap experiment.** Use a deterministic input on which old and new behavior differ, then run the candidate through its real model/tool interface. Compare the tested and retained implementation digests. Static unit tests support correctness but are not proof the main process adopted the new version.
 
@@ -26,7 +26,7 @@ Editing files, exercising a candidate and transferring the main role are differe
 
 ## C. Selection, handoff and rollback
 
-Use the existing A3 trial and decision contract from current execution.md. An isolated worker can verify a local component without becoming the main Agent. A complete candidate that is adopted follows the existing main-identity transition; a rejected candidate need not be promoted merely to complete an experiment.
+Use the existing A3 trial and decision contract from current execution.md. The current Agent verifies local components itself; ordinary worker creation is denied. The predecessor waits for the one candidate to self-test, and that candidate does not start independent research before adoption. A complete candidate that is adopted follows the existing main-identity transition; a rejected candidate need not be promoted merely to complete an experiment.
 
 A handoff record should include the selected implementation, current confirmed conclusions, their evidence references, unfinished work, active jobs and the intended next action. Verify the actual authoritative main identity before the previous owner exits. Do not create simultaneous owners, assume a trial has already transferred authority, or make every successor re-audit all historical experiments.
 
@@ -34,7 +34,7 @@ Keep a known usable implementation and a compatible state checkpoint. Reverting 
 
 ## D. Search over harness designs
 
-A single candidate chain is often sufficient: one observed problem, one scoped change, one matched comparison. A branch archive can help when designs have complementary strengths or a rejected branch might be useful later; it also increases maintenance and selection cost. Population search and elaborate multi-agent optimizers are optional mechanisms, not the definition of RSI.
+Use a single linear candidate chain: one observed problem, one scoped change and one matched comparison. Preserve rejected versions and their evidence for later reference. A rejection returns to the predecessor; adoption transfers ownership to the same candidate. Do not fork concurrent research Agents or start population search.
 
 [HarnessPro](https://arxiv.org/abs/2610.26770v2) is a recent direct reference for trajectory-driven, fixed-weight harness code improvement; its reported results are not an independently reproduced A3 guarantee. [DGM](https://arxiv.org/abs/2505.22954) studies self-modifying coding agents and an archive; its outer exploration machinery is not arbitrarily self-changing. [STOP](https://arxiv.org/abs/2310.02304) studies an optimizer improving its own scaffold. [ADAS](https://arxiv.org/abs/2408.08435) searches agent designs, while [GEPA](https://arxiv.org/abs/2507.19457) uses reflective feedback to optimize textual components. Use the relevant mechanism without collapsing these distinct claims into “RSI proven.”
 

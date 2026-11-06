@@ -18,7 +18,6 @@ PROPERTIES = {
     "content": {"type": "string"},
     "keywords": {"type": "array", "items": {"type": "string"}},
     "source": {"type": "string"},
-    "worker_roles": {"type": "array", "items": {"type": "string", "enum": ["policy", "harness"]}},
     "expected_sha256": {"type": "string"},
     "offset": {"type": "integer", "minimum": 0},
     "limit": {"type": "integer", "minimum": 1, "maximum": 8000},
@@ -249,11 +248,6 @@ def operate(root, args):
                 raise SkillError("skill_body_must_be_markdown")
             path = checked_path(root, relative)
             path.parent.mkdir(parents=True, exist_ok=True)
-            roles = args.get("worker_roles", entry.get("worker_roles", []) if entry else [])
-            if not isinstance(roles, list) or any(
-                role not in {"policy", "harness"} for role in roles
-            ):
-                raise SkillError("invalid_worker_roles")
             revision = checked_path(
                 root, f"skills/{skill_id}/revisions/{version}-{digest}/SKILL.md"
             )
@@ -292,7 +286,6 @@ def operate(root, args):
                 "sha256": digest,
                 "source_sha256": digest,
                 "managed_by": "skills",
-                "worker_roles": roles,
                 "version_history": history,
             }
             if entry:

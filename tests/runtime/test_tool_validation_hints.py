@@ -68,8 +68,7 @@ def test_schema_exposes_actual_bounded_parameters():
     tools = {x["name"]: x["parameters"]["properties"] for x in functions()["tools"]}
     assert tools["progress"]["note"]["maxLength"] == 400
     assert tools["progress"]["evidence"]["maxItems"] == 8
-    assert tools["delegate"]["objective"]["maxLength"] == 8000
-    assert tools["delegate"]["context_files"]["maxItems"] == 32
+    assert "delegate" not in tools
     assert tools["wait"]["seconds"]["maximum"] == 600
 
 
@@ -120,22 +119,3 @@ def test_whitelist_is_exact_and_scoped_to_the_expected_tool():
 
     ns["tool"] = wrong_scope
     assert "hint" not in ns["dispatch_tool_call"]({"name": "read", "arguments": "{}"})
-
-
-@pytest.mark.parametrize(
-    "message,code",
-    [
-        ("Undeclared prepared file", "prepared_undeclared_file"),
-        ("Invalid fixed-skill evidence contract", "prepared_skill_evidence"),
-    ],
-)
-def test_prepared_failure_reports_safe_precreation_boundary(message, code):
-    ns = functions()
-
-    def reject(*args):
-        raise ValueError(message)
-
-    ns["tool"] = reject
-    result = ns["dispatch_tool_call"]({"name": "delegate", "arguments": "{}"})
-    assert result["code"] == code
-    assert "No session was created" in result["hint"]

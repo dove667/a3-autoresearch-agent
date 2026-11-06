@@ -4,6 +4,7 @@ import hashlib
 
 import pytest
 from fastapi.testclient import TestClient
+from host_fixtures import host_create_session
 
 from a3_research_agent.host.gateway.app import create_app
 from a3_research_agent.host.sessions.containers import CandidateRuntime
@@ -80,7 +81,7 @@ def assembly(tmp_path, monkeypatch):
 
 
 def post(client, body, token="caller-token"):
-    return client.post("/sessions", headers={"Authorization": "Bearer " + token}, json=body)
+    return host_create_session(client, headers={"Authorization": "Bearer " + token}, json=body)
 
 
 def test_snapshot_and_workspace_references_produce_complete_new_version(assembly):
@@ -269,7 +270,11 @@ def test_job_materializes_owned_sources_without_child_or_export_redelegation(ass
         },
     )
     assert response.status_code == 200, response.text
-    assert calls == [
+    assert calls[0] == (
+        "exports-check",
+        {"experiment_id": "caller", "export_ids": ["export-existing"]},
+    )
+    assert calls[1:] == [
         (
             "submit",
             {

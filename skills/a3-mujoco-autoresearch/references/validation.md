@@ -1,4 +1,8 @@
-# Current validation: version 0.1.4
+# Version 0.1.9 maintenance checks
+
+The current reference uses one research Agent, parallel independent remote jobs and one linear Harness trial. Same-run research reads and analyzer reports are shared while writes and management remain restricted. Scientific comparison values are unchanged; the helper accepts protocol 0.3.2 with matched version and digest requirements. Skill/catalog versions, changed Markdown link targets and whitespace were checked. Runtime and helper regression results belong to the current repository validation record; the older results below retain their original scope.
+
+# Historical validation: version 0.1.4
 
 Prepared from repository `6bde3b5` on 2026-11-02. The helper accepts protocol 0.3.0 and reference-only 0.3.1, requires matching version and digests in a pair, rejects unknown versions and reports the actual input version. Tests show identical scientific outputs for identical fixtures under either supported version. This is offline helper evidence, not a new policy result or live skill adoption. Earlier integration evidence below is historical and was not rerun as a live Agent test. Full offline repository suite: 590 passed; Ruff, whitespace, skill metadata and relative links pass.
 

@@ -2,6 +2,7 @@
 
 import pytest
 from fastapi.testclient import TestClient
+from host_fixtures import host_create_session
 
 from a3_research_agent.harness.context import compaction
 from a3_research_agent.harness.context import manager as cm
@@ -168,8 +169,8 @@ def test_worker_receives_its_own_smaller_admission_window(tmp_path):
             context_budget=budget,
         )
     )
-    result = client.post(
-        "/sessions",
+    result = host_create_session(
+        client,
         headers={"Authorization": "Bearer token"},
         json={"command": ["true"], "files": {"entry.py": "pass"}},
     )

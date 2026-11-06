@@ -104,7 +104,7 @@ $$
 
 run ID 使用 Host 系统本地时间，格式为 `run-YYYYMMDD-HHMMSS-ffffff`，最后六位是微秒。例如 `run-20261031-110415-123456` 表示 2026 年 10 月 31 日 11:04:15.123456 启动。创建目录时若仍重名，会追加 `-2`、`-3` 等序号，分别保存并发运行。
 
-初始 SWE 只启动一次，自主组织实现、迭代与验收；需要交接时，由 SWE 自己创建后继并传递状态。Host 保留正在运行的后继和 Gateway，不定时重建 Agent，不因未完成而重派任务。全部 worker 停止后记录结果；未完成如实记录，不自动重新开始。结果字段见 [Host 执行接口](../agent-inputs/shared/execution.md#整轮结束与未完成交接)。
+初始 SWE 只启动一次，自主组织实现、迭代与验收；需要交接时，由 SWE 自己创建后继并传递状态。Host 保留正在运行的后继和 Gateway，不定时重建 Agent，不因未完成而重派任务。全部研究进程停止后记录结果；未完成如实记录，不自动重新开始。结果字段见 [Host 执行接口](../agent-inputs/shared/execution.md#整轮结束与未完成交接)。
 
 ## 中断恢复：保留原任务继续推进
 
@@ -128,7 +128,7 @@ bash scripts/start-rsi.sh --resume-from "artifacts/rsi/<run-id>" --feedback-file
 
 通知说明修复了什么、基础设施检查不替代哪些 Agent 验收，以及继续工作的边界。`registered` 不等于已送达；检查 HumanFeedback 的 `forwarded` 事件及 model-usage 的 `human_feedback_ids` 才能确认成功转发。通知经现有独立 user feedback 进入完整历史，不另建上下文；同一反馈不会在历史中重复追加。若上次 blocked 恢复后又因旧上下文自停，只有已完成 attempt 的原 blocked 归档与当前主身份关联核验通过，并显式提供通知，才恢复该窄情况；不是放开普通 incomplete 或已完成任务。
 
-同一个 `--resume-from` 也支持：当前主 Agent 因有效外部 blocked 主动 self-stop 后，由操作者明确恢复。Host 必须已停止，Docker 停止已确认，主身份未完成、未 closed、未交权，checkpoint 和外部阻塞证据有效。保留同 run、身份、工作区、模型和全部历史；旧 terminal／console／outcome 先归档，再把活动 outcome 设为 continue，并仅轮换相同 scope 的临时 token。不会自动重试、重注入反馈或复活其他已停止 worker。若出现 `.host/blocked-resume/<attempt>/attempt.json` pending，CLI 拒绝重复启动，先核查实际 container 和归档，不直接删除 pending 或改停止标志。详见[恢复协议](../agent-inputs/shared/execution.md#上下文-checkpoint-与-resume)。
+同一个 `--resume-from` 也支持：当前主 Agent 因有效外部 blocked 主动 self-stop 后，由操作者明确恢复。Host 必须已停止，Docker 停止已确认，主身份未完成、未 closed、未交权，checkpoint 和外部阻塞证据有效。保留同 run、身份、工作区、模型和全部历史；旧 terminal／console／outcome 先归档，再把活动 outcome 设为 continue，并仅轮换相同 scope 的临时 token。不会自动重试、重注入反馈或复活其他已停止会话。若出现 `.host/blocked-resume/<attempt>/attempt.json` pending，CLI 拒绝重复启动，先核查实际 container 和归档，不直接删除 pending 或改停止标志。详见[恢复协议](../agent-inputs/shared/execution.md#上下文-checkpoint-与-resume)。
 
 恢复直接使用指定的原 run 目录，保持 run ID、时间戳、当前主 Agent 身份、全部工作区文件与版本库。目标、验收、执行说明和部署方 Prompt 加载启动时仓库当前文件，记录版本号与摘要。startup.json 不改写，恢复时间和输入清单另记在 resume-events.jsonl。初始 mini 保留原 `trajectory.json` 中的用户/模型对话、工具结果与调用/费用统计，刷新部署方 system 消息后继续，不重新加入整套任务；不透明 provider 上下文按原样保留。
 
@@ -138,7 +138,7 @@ SWE 生成的 Harness 自主管理其 checkpoint。它须在主 session 工作�
 
 主会话使用 Git worktree 时，恢复入口只接受指向该 session 自身 worktree 的 Host 工作区链接；其他链接仍被拒绝。
 
-Host 将身份令牌、父子关系、主身份、trial、作业归属和 fixture 记录原子保存到本轮 `.host/state.json`，仅 Host 可读，不挂载进 Agent Docker。恢复使用原 Gateway 端口和授权 scope；暂停中的候选 Docker 直接接回，不重放模型或工具调用。主进程确已退出时，才在同一工作区以同一身份执行其 `resume.json`，其他已完成 worker 不重新运行。
+Host 将身份令牌、父子关系、主身份、trial、作业归属和 fixture 记录原子保存到本轮 `.host/state.json`，仅 Host 可读，不挂载进 Agent Docker。恢复使用原 Gateway 端口和授权 scope；暂停中的候选 Docker 直接接回，不重放模型或工具调用。主进程确已退出时，才在同一工作区以同一身份执行其 `resume.json`，其他已完成会话 不重新运行。
 
 Ctrl-C 中断时暂停候选 Docker，并保留远程作业及其权限；远程作业继续受原时限与资源分配约束。整轮正常结束时仍清理资源。已取消或失败的作业保持真实状态，恢复不会把它变成成功或自动重跑。进程锁阻止两个 Host 同时启动同一个 run；端口被占用或恢复入口缺失时明确报错。
 
@@ -154,7 +154,7 @@ bash scripts/start-rsi.sh --run-harness "artifacts/rsi/<run-id>"
 
 必须给出选定的运行目录，将 `<run-id>` 替换为实际标识。启动器读取该目录的明确保留结果，创建独立工作区和新身份，自动把授权历史提供给本轮主会话，并使用**当前仓库**的目标与验收。
 
-没有参数的 `--run-harness` 会直接报错。`latest-run.txt` 只记录最近启动的运行，用于查找日志；它不代表最佳版本、验收通过版本或搜索中的父节点。多个分支都有可用结果时，调用者应明确选择本轮的父分支。
+没有参数的 `--run-harness` 会直接报错。`latest-run.txt` 只记录最近启动的运行，用于查找日志；它不代表最佳版本、验收通过版本或搜索中的父节点。有多个历史保留结果时，调用者明确选择本轮来源；本轮只沿单一版本链推进。
 
 $$
 H_1 \xrightarrow[\text{current goals}]{\text{new run}} H_2.
@@ -214,13 +214,13 @@ Agent 在结束前，通过已有文件写入能力留下 `continuation.json`：
 
 `command` 是下一轮的启动命令数组，`files` 是完整的 UTF-8 启动文件清单。保留原版时也可以声明原版；选择哪个版本由 Agent 决定。初始构建 Agent 把声明放在自己的 `/workspace/run/`，已启动的 Harness 把声明放在主会话 `/workspace/`。路径相对声明所在工作区，不能指向其他身份、凭据目录或 Host 文件。
 
-人类无需逐轮整理这些文件。Host 在所有 worker 停止后读取声明，将选定文件保存成固定 Git 快照，并在 run 根目录写 `retained.json`。下一次 `--run-harness` 直接从快照读取；之后改动旧工作区也不会改变已保留版本。本地保存和从保留版本启动不设 128 个文件、20 MiB 的上传上限，实际仍需足够的磁盘空间与内存；路径、身份和凭据保护继续生效。Agent 经 HTTP 创建候选或提交版本时，每次上传仍限 128 个 UTF-8 文件、合计 20 MiB。二进制数据保存在授权历史中，由 Harness 按需读取或恢复，记忆系统可以使用数据库或其他格式。
+人类无需逐轮整理这些文件。Host 在全部研究进程停止后读取声明，将选定文件保存成固定 Git 快照，并在 run 根目录写 `retained.json`。下一次 `--run-harness` 直接从快照读取；之后改动旧工作区也不会改变已保留版本。本地保存和从保留版本启动不设 128 个文件、20 MiB 的上传上限，实际仍需足够的磁盘空间与内存；路径、身份和凭据保护继续生效。Agent 经 HTTP 创建候选或提交版本时，每次上传仍限 128 个 UTF-8 文件、合计 20 MiB。二进制数据保存在授权历史中，由 Harness 按需读取或恢复，记忆系统可以使用数据库或其他格式。
 
 没有有效声明时，结果会标记为缺失，下一轮不会用文件时间猜测优胜候选，也不会自动回到通用 Agent。跨轮启动只读取明确发布的 `retained.json` 与对应版本快照。
 
 ### 多个前驱怎样选择
 
-如果已经有分支 $H_1^{(a)}$ 与 $H_1^{(b)}$，两者都可继续演化，应先选择本轮的前驱 $H_p$，再执行：
+若有多个历史保留版本，先明确选择本轮的前驱 $H_p$，再按单一版本链继续：
 
 $$
 H_{\mathrm{new}} = E(H_p; G_{\mathrm{current}}).
@@ -228,17 +228,17 @@ $$
 
 这里 $E$ 表示一次演化过程，$G_{\mathrm{current}}$ 是本轮目标。时间上最后启动的运行不决定 $H_p$。外部命令中的 run 目录明确定位父运行，其 `retained.json` 再定位固定的 `version_id` 与 commit。
 
-目前每轮发布一个对外保留结果。同轮内部还有其他可用候选时，由 Harness 明确发布需要继续的分支或可启动 manifest；外部启动器不会扫描候选并代选优胜者。自动提供历史是文件传递机制，父版本选择是实验决策。
+目前每轮发布一个对外保留结果。候选按线性版本逐次试运行，不并行推进研究分支；外部启动器不会扫描候选并代选优胜者。自动提供历史是文件传递机制，父版本选择是实验决策。
 
 ### Agent 可以在同一轮内继续迭代
 
-`--run-harness` 是运行之间的外部启动入口。正在执行的 Agent 也可以通过自己的工具请求 `POST /sessions`，加载候选版本并继续执行：
+`--run-harness` 是运行之间的外部启动入口。正在执行的 Agent 也可以通过自己的工具请求 `POST /evolution/trials`，加载候选版本并继续执行：
 
 $$
 H_k \xrightarrow{\text{evaluate and select}} H_{k+1}.
 $$
 
-外部启动与内部后继都调用同一个 Host 候选执行服务，使用相同的版本保存、Docker、身份、资源与回收规则。目标、分支选择和上下文交接由 Harness 组织，因此第二阶段可以在一次长运行内自主推进很多代。
+外部启动与内部后继都调用同一个 Host 候选执行服务，使用相同的版本保存、Docker、身份、资源与回收规则。目标、版本选择和上下文交接由 Harness 组织，因此第二阶段可以在一次长运行内自主推进很多代。
 
 ## 参数表
 
@@ -284,9 +284,9 @@ bash scripts/start-rsi.sh --verify-deployment
 
 本地候选名额不足会返回 `candidate_capacity` 和重试间隔；远程 `resource_busy` 表示当前资源不可用。Agent 应查询和等待。整轮正常完成会回收登记的会话、远程作业与隔离 fixture；中断启动器会暂停候选、保留状态和资源以便恢复。未完成清理保存在 `cleanup-errors.json`。运行目录和原始证据继续保留。
 
-已退出的 worker 无需等整轮结束才清理。Host 每两秒检查，并在确认退出、保存控制台与退出记录后自动删除其 container。工作区里的 checkpoint、记忆、源码和产物保留，仍可用原 session ID 查询状态与结果。运行和暂停中的 worker、其他 worker 及远程作业均不受这项回收影响。单个 worker 清理失败时，`candidates/<session_id>/session.json` 与状态接口提供 `cleanup_error`，Host 存活期间自动重试。运行目录和镜像、构建缓存仍需单独管理磁盘空间。
+已退出的研究进程 无需等整轮结束才清理。Host 每两秒检查，并在确认退出、保存控制台与退出记录后自动删除其 container。工作区里的 checkpoint、记忆、源码和产物保留，仍可用原 session ID 查询状态与结果。运行和暂停中的研究进程、其他会话 及远程作业均不受这项回收影响。单个会话 清理失败时，`candidates/<session_id>/session.json` 与状态接口提供 `cleanup_error`，Host 存活期间自动重试。运行目录和镜像、构建缓存仍需单独管理磁盘空间。
 
-`--resume-from` 可以恢复已经自动删除 container 的主 Agent：Host 根据原工作区的 `resume.json` 重新创建 Docker，沿用原 run、身份、上下文和记忆；已完成的辅助 worker 不重跑。恢复能力依赖 Harness 退出前保存有效 checkpoint，通过自身停止接口明确结束的会话不自动重启；操作者明确恢复有效外部 blocked 当前主身份时，适用上文的窄例外。
+`--resume-from` 可以恢复已经自动删除 container 的主 Agent：Host 根据原工作区的 `resume.json` 重新创建 Docker，沿用原 run、身份、上下文和记忆；已完成的辅助会话 不重跑。恢复能力依赖 Harness 退出前保存有效 checkpoint，通过自身停止接口明确结束的会话不自动重启；操作者明确恢复有效外部 blocked 当前主身份时，适用上文的窄例外。
 
 Agent 写下完成或阻塞说明后，其运行程序还需要实际退出。生成的 Harness 应在自身循环中实现正常退出分支；Host 也提供 `POST /sessions/self/stop`，允许候选保存状态后只结束自己，后继和远程作业继续保留。该终结操作可能在 HTTP 响应返回前结束进程，不能把保存放在调用之后。Host 不根据验收声明自动杀进程，也不自动重启通过此接口结束的 session。接口详见 [Host 执行说明](../agent-inputs/shared/execution.md#独立候选执行)。
 
@@ -294,21 +294,31 @@ Agent 写下完成或阻塞说明后，其运行程序还需要实际退出。�
 
 **commit** 是选定源码的固定快照，由 Host 在本轮私有 Git 仓库中保存。它不会给本项目的开发分支提交，也不会自动 push。**worktree** 是从快照展开的独立工作目录，供一个执行身份读写；创建新 worktree 会继承原代码，同时保留旧目录供复核。
 
-Docker 只挂载自己的源码目录，Git 对象库和其他 worktree 留在 Host。跨轮关系通过 `parent_run`、`source_version` 和保留结果记录，代码版本、会话身份与远程作业标识分别追踪。这个版本层提供复跑与隔离；Agent 如何分工和避免重复实验，仍由后续协调策略决定。
+Docker 只挂载自己的源码目录，Git 对象库和其他 worktree 留在 Host。跨轮关系通过 `parent_run`、`source_version` 和保留结果记录，代码版本、会话身份与远程作业标识分别追踪。这个版本层提供复跑与隔离；当前 Agent 通过记忆和真实作业状态避免重复实验。
+
+## 本轮研究内容的读取
+
+同一 run 的已登记研究身份使用自己的令牌，通过会话与作业接口读取本轮源码、记忆、可见轨迹、日志、产物、作业状态及已授权只读 exports。按问题取必要片段并保留版本和来源，不必为了让候选读前任资料建立额外 worker。可写工作区仍独立；取消、封存和管理权限沿本身份或已采用 lineage 检查。其他 run、Host 凭据和外部用户数据不因本轮共享而开放。
+
+analyzer 读取本轮汇总统计并返回建议，全部本轮身份均可读取；仅当前主 Agent 发起分析并记录采纳、拒绝或推迟。接口与限额见[轨迹分析](trajectory-analysis.md)。
 
 ## Harness 试运行与主身份交接
 
+独立且输入就绪的远程作业先在授权资源内并行提交，再统一查询与收集；有依赖的作业按依赖推进。采集与评估中的独立 episode 统一通过 `/run/a3/episode_executor.py` 执行，固定科学参数、seed、快照和输出，复用已完成结果。
+
+普通脚本、参数与结果解析问题由当前 Agent 在当前任务中修复并验证；需要 Host 权限、凭据、服务或资源配置变更时，保留错误证据，向操作者报告所缺条件和具体操作。
+
 每代主 Agent 只核查自己负责的实验闭环：先记录假设、实际执行，再依据结果决定保留、拒绝或证据不足，满足本次交接条件才交权。交接已确认结论、适用条件、版本、证据引用及明确未完成任务；后继可将前任已确认结论作为已知结论，无需读全历史消息或逐条重验。遇到明确矛盾可针对性核查，不能默认全历史审计；未完成或未知不能当作通过。接手未完事项是新的执行责任，不接管前任过去的合规责任。候选先完成本次改动与接任能力验证，接任后执行自身研究，不要求在接任前完成整个 run。最终主身份汇总可引用各代结论，不重新执行或审计前任实验；各阶段科学门槛不变，不因交接而重复最终网格或已完成的配对比较。
 
-局部功能验证用普通 `/sessions` worker，事先提供输入、工具、期望结果和停止条件；局部测试完成后可退出。将有效改动整合进当前完整 Harness，再使用 `/evolution/trials` 测试能否接任；这份候选须保留已有能力与自主执行循环。主 Agent 启动前检查自己提供的任务、工具和源码是否完整，并把两类协议交给下一代。
+当前研究 Agent 自己实现 Policy 与 Harness、采集数据、训练评估、修复脚本并判断验收。局部检查使用本身份工具与远程作业，普通 `POST /sessions` worker 创建被拒绝。完整 Harness 使用唯一 `/evolution/trials` 候选：前任等待候选自测，候选交权前只自测并等待；拒绝回收或由原候选接任，旧主交权后退出。单次运行不分叉并行研究 Agent。
 
-常规演化中，主 Agent 先提出 Harness 改动和验收清单，启动一个完整候选进行实际执行；检查结果后决定保留或拒绝。拒绝回到当前版本，保留则让同一候选进程成为下一代主 Agent，原主 Agent 保存交接后退出。无需人工提供下一轮任务。Policy 优化可以在这些迭代之间进行。E-only profile 只做实现与实际加载所需的局部验证；需要主身份更替时遵守此协议，不无条件追加完整演化或 Policy 实验。
+常规演化中，主 Agent 先提出 Harness 改动和验收清单，启动一个完整候选进行实际执行；检查结果后决定保留或拒绝。拒绝回到当前版本，保留则让同一候选进程成为下一代主 Agent，原主 Agent 保存交接后退出。无需人工提供下一轮任务。前任在 trial 期间等待自测结果，候选交权前不开展独立研究；Policy 优化在这些迭代之间进行。E-only profile 只做实现与实际加载所需的局部验证；需要主身份更替时遵守此协议，不无条件追加完整演化或 Policy 实验。
 
 `evolution.json` 记录主身份、版本化清单、候选版本和选择理由。原始轨迹与各 session 代码仍保留在 run 中。主身份交接不等同于故障 resume：新一代的消息和记忆如何承接由 SWE 实现；网络故障恢复则要求显式 checkpoint。详见 [执行协议](../agent-inputs/shared/execution.md#主身份与候选试运行)。
 
 ## 调整核心提示词
 
-`agent-inputs/shared/bootstrap.yaml` 只维护初始 mini 的运行参数、Bash/提交约定和路径。主 Agent 和接任候选共同加载 SOUL、所选阶段的 goal 与 acceptance；第一阶段另加载对应任务的 instructions，第二阶段另加载 `agent-inputs/shared/protocol.md`。调整要求时修改对应输入文件并递增版本，再启动或显式热加载。Host 为这两类身份提供同一份阶段输入；局部测试 Agent 与普通 worker 的完整提示词由主 Agent 编写。
+`agent-inputs/shared/bootstrap.yaml` 只维护初始 mini 的运行参数、Bash/提交约定和路径。主 Agent 和接任候选共同加载 SOUL、所选阶段的 goal 与 acceptance；第一阶段另加载对应任务的 instructions，第二阶段另加载 `agent-inputs/shared/protocol.md`。调整要求时修改对应输入文件并递增版本，再启动或显式热加载。Host 为这两类身份提供同一份阶段输入；普通 worker 创建被拒绝。
 
 编辑源文件不会自动影响已经运行的实验；恢复启动会采用当前版本。每次热加载或中断前须用户明确批准；具体审批、预览、发布与生效核对见 [外界监督与运行干预](operator-supervision.md#热加载版本化输入)。版本规则、职责表和装载链见 [Agent 输入管理](agent-inputs.md)。
 

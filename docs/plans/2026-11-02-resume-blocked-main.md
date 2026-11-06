@@ -1,5 +1,7 @@
 # Explicit blocked-main resume implementation plan
 
+> 历史方案；当前执行约定以 [单研究 Agent 工作流](../research-orchestration.md) 和 [执行接口](../../agent-inputs/shared/execution.md) 为准，旧 worker、分叉和派发描述不作为当前操作指引。
+
 **Goal:** Extend existing `--resume-from`, not add a new run entry point.
 **Architecture:** Preflight the stopped current main and its external-blocker evidence, then journal an explicit restart before rotating only its scoped ephemeral credential. Reuse its workspace, identity and exact checkpoint; archive terminal declarations before setting active outcome to continue.
 **Constraints:** No generated-code rewrites, context copying, feedback reinjection, live execution, commit or push. Ordinary interrupted resume stays unchanged. Completed runs, closed/retired workers and unconfirmed stops cannot be revived.

@@ -20,7 +20,7 @@ Verify metadata discovery, body/reference readability and persistence after the 
 
 ## Apply the right contract
 
-Current execution.md describes `/sessions`, `/jobs`, `/versions` and `/evolution` contracts. Inspect those definitions before using them; this skill does not rename them to invented APIs such as `selfmodifyharness`. A worker tests the assigned component. A complete main-harness candidate uses the existing trial/decision and main-owner checks when adopted. Local edits do not automatically reload a running process.
+Current execution.md describes `/jobs`, `/versions`, `/evolution` and session lifecycle contracts. Ordinary `POST /sessions` creation is denied to Agent tokens. Inspect those definitions before using them; this skill does not rename them to invented APIs such as `selfmodifyharness`. The current Agent implements and tests components itself. A complete main-harness candidate uses the existing trial/decision and main-owner checks when adopted. Local edits do not automatically reload a running process.
 
 The new RSI skill complements `a3-mujoco-autoresearch`: the latter helps choose and test robot-learning changes; this one helps improve the Agent's research machinery. Keep source versions and outcomes separately attributable. A current capability task such as G uses only its own acceptance, not every optimization direction here or the entire phase-two protocol.
 

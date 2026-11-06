@@ -20,7 +20,7 @@ Use `passed`, `failed`, `incomplete` and `unknown` distinctly. A tool outage and
 
 ## 3. Keep the entire cost account
 
-Report available input/output/cached tokens, tool calls, retries, worker calls, elapsed time, external wait and useful completed work. Include summarization, routing, evaluation and child-Agent overhead. Distinguish one-time optimization/search cost from recurring per-task execution cost. Unknown usage remains unknown; no model-name-based money estimate.
+Report available input/output/cached tokens, tool calls, retries, trial calls, elapsed time, external wait and useful completed work. Include summarization, routing, evaluation and candidate-trial overhead. Distinguish one-time optimization/search cost from recurring per-task execution cost. Unknown usage remains unknown; no model-name-based money estimate.
 
 Separate cold and warm caches, and record backend/provider work versus tool-call attempts. Where uncontrolled load or model randomness matters, interleave or vary order and use repetitions proportionate to the decision. Tiny samples justify per-pair results and cautious decisions, not polished p95 or universal percentage claims. Token savings need not imply latency or financial savings.
 

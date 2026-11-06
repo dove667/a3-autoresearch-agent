@@ -38,10 +38,21 @@ def relocation_fixture_content(name, path):
         "agent-inputs/shared/bootstrap.yaml": "relocated_bootstrap_0_1_1.yaml",
         "agent-inputs/SOUL.md": "relocated_soul_0_1_0.md",
         "agent-inputs/phase-two/instructions.md": "relocated_phase_two_0_7_0.md",
+        # Verbatim source blobs from e9800c60c3011239825bcbbfaf01f1fbda50e209.
+        # These were unchanged by relocation; the fixed pre-relocation SHA256
+        # below verifies their provenance independently of current templates.
+        "agent-inputs/shared/readiness-task.md": "relocated_readiness_task_0_1_1.md",
+        "agent-inputs/shared/workspace.md": "relocated_workspace_0_1_0.md",
+        "agent-inputs/phase-one/goal.md": "relocated_phase_one_goal_0_2_0.md",
+        "agent-inputs/phase-one/acceptance.md": "relocated_phase_one_acceptance_0_3_0.md",
+        "agent-inputs/phase-one/instructions.md": "relocated_phase_one_instructions_0_3_0.md",
+        "agent-inputs/phase-one-web/goal.md": "relocated_phase_one_web_goal_0_2_0.md",
+        "agent-inputs/phase-one-web/acceptance.md": "relocated_phase_one_web_acceptance_0_2_0.md",
+        "agent-inputs/phase-one-web/instructions.md": "relocated_phase_one_web_instructions_0_2_0.md",
     }
     if path in frozen:
         return (Path(__file__).parent / "fixtures" / frozen[path]).read_bytes()
-    return (ROOT / path).read_bytes()
+    raise AssertionError(f"historical relocation source has no pinned fixture: {path}")
 
 
 def previous_content(name, content):

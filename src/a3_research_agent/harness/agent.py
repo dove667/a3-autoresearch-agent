@@ -27,7 +27,7 @@ try:
     import web_tools
 except ImportError:
     web_tools = None
-from a3_research_agent.harness.orchestration import assignments as work_assignments
+from a3_research_agent.harness import input_skills, lifecycle, waiting
 
 BASE = None
 TOKEN = None
@@ -121,8 +121,6 @@ def tool(name, a):
         return web_tools.dispatch(name, a)
     if name in getattr(skill_tools, "ROUTES", {}):
         return skill_tools.dispatch(name, a)
-    if name == "delegate":
-        return work_assignments.dispatch(req, a)
     if name == "progress":
         return memory_state.progress(a)
     if name == "gateway":
@@ -142,7 +140,7 @@ def tool(name, a):
             ]
         ):
             return "path not allowed"
-        work_assignments.guard_gateway(req, a["method"], path, a.get("body"))
+        lifecycle.guard_gateway(req, a["method"], path, a.get("body"))
         if a["method"] == "POST" and path == "/evolution/trials":
             analyzer.trigger("before_handoff")
         result = req(a["method"], path, a.get("body"))
@@ -188,7 +186,7 @@ def tool(name, a):
             return select_json_fields(p.read_bytes(), a["fields"], str(p))
         return memory_state.read_page(p, a.get("offset", 0), a.get("limit", 4000))
     if name == "wait":
-        return work_assignments.wait_for_change(
+        return waiting.wait_for_change(
             req,
             a.get("seconds", 5),
             cursor=WAIT_CURSOR,
@@ -216,68 +214,6 @@ SAFE_VALIDATION_ERRORS = {
         "Operational item capacity reached; preserve and consolidate explicitly": (
             "progress_capacity",
             "Operational item capacity reached. Inspect existing items; preserve history and consolidate explicitly rather than dropping records.",
-        ),
-    },
-    "delegate": {
-        "Invalid assignment ledger; preserve and inspect it": (
-            "assignment_ledger_invalid",
-            "The assignment ledger is invalid; preserve it. Absence, creation outcome and retry safety are not established.",
-        ),
-        "Invalid assignment lookup identity": (
-            "assignment_lookup_identity",
-            "Use an existing bounded assignment ID; do not use paths.",
-        ),
-        "Assignment archive lookup is ambiguous or invalid": (
-            "assignment_lookup_archive",
-            "Archive integrity or identity is ambiguous; preserve it and inspect the exact receipts. Absence and retry safety are not established.",
-        ),
-        "Undeclared prepared file": (
-            "prepared_undeclared_file",
-            "No session was created. Prepared files must be core/control/selected context or supported skill assets; inspect the frozen package and explicit skill evidence contract, not arbitrary extra files.",
-        ),
-        "Invalid fixed-skill evidence contract": (
-            "prepared_skill_evidence",
-            "No session was created. The fixed synthetic-report-checker needs its exact backend source and declared evidence hashes; undeclared, changed or duplicate assets are rejected.",
-        ),
-        "Prepared task differs from the main's explicit assignment": (
-            "prepared_task_mismatch",
-            "No session was created. Compare all explicit task fields with the frozen package; do not silently change the original task.",
-        ),
-        "Prepared context lacks matching collected content": (
-            "prepared_context_receipt",
-            "No session was created. Select the exact original context bytes through an existing verified collection receipt.",
-        ),
-        "Prepared control files must contain only the fresh bounded task": (
-            "prepared_control_files",
-            "No session was created. The packaged checkpoint/task must contain only the original fresh worker assignment, not historical conversation.",
-        ),
-        "Assignment needs a bounded id and policy|harness role": (
-            "assignment_identity",
-            "Use an id matching [A-Za-z0-9][A-Za-z0-9_-]{0,63} and role policy|harness.",
-        ),
-        "Assignment needs a bounded objective and stop condition": (
-            "assignment_objective",
-            "assign requires objective 1..8000 characters and stop_condition 1..4000 characters.",
-        ),
-        "Assignment needs 1..16 relative deliverables": (
-            "assignment_deliverables",
-            "assign requires 1..16 workspace-relative deliverable paths.",
-        ),
-        "Assignment context or export count exceeds bound": (
-            "assignment_context_count",
-            "Use at most 32 context_files and 64 read_only_exports.",
-        ),
-        "Select research context only; never copy checkpoint or private logs": (
-            "assignment_context_scope",
-            "Context files must be inside research/ or orchestration/results/. Use permitted sourced research notes; never copy private history or bypass scope.",
-        ),
-        "Private/control files cannot be assignment context": (
-            "assignment_private_context",
-            "Private/control names cannot be context. Do not rename secrets to bypass this restriction.",
-        ),
-        "Worker package exceeds existing Host upload bound": (
-            "assignment_package_size",
-            "The complete worker package exceeds the existing upload bound. Reduce the selected inputs or use existing permitted sealed exports; do not omit required evidence or broaden access.",
         ),
     },
     "wait": {
@@ -348,13 +284,12 @@ def spec(name, props, required):
         "type": "function",
         "name": name,
         "description": {
-            "gateway": 'Call Host APIs. For remote job creation POST /jobs body {command:["python","-m","module","--help"],gpu:false,files:{}}; command MUST be an array. GET /jobs/{id} checks your own job. Other paths /sessions, /versions, /checks/comparison, /fixtures/isolation, /evolution. Jobs execute isolated code, not local host commands.',
+            "gateway": 'Call Host APIs. For remote job creation POST /jobs body {command:["python","-m","module","--help"],gpu:false,files:{}}; command MUST be an array. GET /jobs/{id} reads a registered job in this run; research workspaces, versions and artifacts are shared for reading. Other paths /sessions, /versions, /checks/comparison, /fixtures/isolation, /evolution. Jobs execute isolated code, not local host commands.',
             "read": "Read a bounded character page with content, whole-file SHA256, offset/end/total and EOF. limit is 1..8000, default 4000. Same-path changed hashes are different sources. Optional fields selects top-level JSON keys instead.",
             "write": "Write text in workspace.",
             "list": "List accessible directory.",
-            "delegate": "Coordinate bounded policy/harness worker assignments: assign, assign_prepared (collected hash-pinned package data; never run candidate code in main), collect verified reports, collect_artifacts from a collected worker’s stopped descendants (research paths + SHA256; data-only), decide, or list (bounded summary; list with id returns the complete record). Workers use fresh contexts and existing identities; no new permission or automatic scientific adoption.",
             "progress": "List or explicitly update bounded operational items with evidence references. These are your claims, not validated scientific acceptance; closed items remain recorded across summaries.",
-            "wait": "Wait up to 600 seconds for existing worker/job state changes, input changes or deadline; observation errors return immediately. No work is submitted or collected.",
+            "wait": "Wait up to 600 seconds for owned job state changes, input changes or deadline; observation errors return immediately. No work is submitted or collected.",
             "recall": (
                 "Search original history by keyword over an n..m round window "
                 "(n=1 is the most recent round). Use after compaction or whenever "
@@ -414,56 +349,6 @@ tools = (
             },
             ["action"],
         ),
-        spec(
-            "delegate",
-            {
-                "action": {
-                    "type": "string",
-                    "enum": [
-                        "assign",
-                        "assign_prepared",
-                        "collect",
-                        "collect_artifacts",
-                        "decide",
-                        "list",
-                        "reconcile",
-                    ],
-                },
-                "id": S,
-                "role": {"type": "string", "enum": ["policy", "harness"]},
-                "objective": {"type": "string", "minLength": 1, "maxLength": 8000},
-                "stop_condition": {"type": "string", "minLength": 1, "maxLength": 4000},
-                "deliverables": {"type": "array", "minItems": 1, "maxItems": 16, "items": S},
-                "context_files": {"type": "array", "maxItems": 32, "items": S},
-                "read_only_exports": {
-                    "type": "array",
-                    "maxItems": 64,
-                    "items": {"type": "string", "pattern": "^export-[a-f0-9]{32}$"},
-                },
-                "source_session_id": {"type": "string", "pattern": "^candidate-[a-f0-9]{32}$"},
-                "artifacts": {
-                    "type": "array",
-                    "minItems": 1,
-                    "maxItems": 16,
-                    "items": {
-                        "type": "object",
-                        "additionalProperties": False,
-                        "properties": {
-                            "path": S,
-                            "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
-                        },
-                        "required": ["path", "sha256"],
-                    },
-                },
-                "package_path": S,
-                "package_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
-                "module_path": S,
-                "module_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
-                "decision": {"type": "string", "enum": ["adopt", "reject", "follow_up"]},
-                "reason": {"type": "string", "minLength": 1, "maxLength": 4000},
-            },
-            ["action"],
-        ),
         spec("write", {"path": S, "content": S}, ["path", "content"]),
         spec("list", {"path": S}, ["path"]),
         spec("wait", {"seconds": {"type": "integer", "minimum": 0, "maximum": 600}}, []),
@@ -490,7 +375,6 @@ tools = (
 )
 
 
-WORKER_TASK = None
 INSTRUCTIONS = ""
 compactor = None
 analyzer = None
@@ -529,8 +413,8 @@ def save_manifest():
         p for p in files if pathlib.Path(p).is_file() or p in ("resume.json", "continuation.json")
     )
     for filename, command in [
-        ("resume.json", work_assignments.entry_command(WORKER_TASK)),
-        ("continuation.json", work_assignments.entry_command(WORKER_TASK)),
+        ("resume.json", ["python", "-m", "a3_research_agent.harness.agent", "--resume"]),
+        ("continuation.json", ["python", "-m", "a3_research_agent.harness.agent", "--resume"]),
     ]:
         data = {**manifests[filename], "command": command, "files": files}
         context_manager.atomic(filename, json.dumps(data))
@@ -588,11 +472,12 @@ def recover_journal(messages):
 
 def main() -> None:
     """Initialize one explicit execution; importing this module never starts it."""
-    global BASE, TOKEN, WORKER_TASK, INSTRUCTIONS, compactor, analyzer, WAIT_CURSOR
+    global BASE, TOKEN, INSTRUCTIONS, compactor, analyzer, WAIT_CURSOR
     BASE = os.environ["A3_GATEWAY_URL"]
     TOKEN = os.environ["A3_GATEWAY_TOKEN"]
-    WORKER_TASK = work_assignments.worker_task(sys.argv)
-    INSTRUCTIONS = work_assignments.decision_instructions(WORKER_TASK)
+    if "--worker-task" in sys.argv:
+        raise ValueError("Worker entry points were removed; use the single research Agent")
+    INSTRUCTIONS = lifecycle.INSTRUCTIONS
     compactor = compaction.ForkCompactor(req, tools=list(tools))
     if os.path.exists("checkpoint.json") and "--resume" in sys.argv:
         with open("checkpoint.json", encoding="utf-8") as stream:
@@ -607,18 +492,18 @@ def main() -> None:
             messages = recover_journal(messages)
         context_manager.restore_artifact_views(messages)
         recall_tools.ensure_history(messages)
-        work_assignments.install_input_skills()
+        input_skills.install_input_skills()
     except Exception as e:  # noqa: BLE001 - preserve recoverable state on unexpected failures
         log({"recovery_error": str(e)})
         sys.exit(1)
-    WAIT_CURSOR = work_assignments.wait_cursor(messages)
+    WAIT_CURSOR = waiting.wait_cursor(messages)
     analyzer = analyzer_client.start(req, memory_state.signals)
     empty = 0
     loop_phase = "decision_prepare"
     while True:
         try:
             loop_phase = "decision_prepare"
-            if work_assignments.should_retire(req, WORKER_TASK):
+            if lifecycle.should_retire(req):
                 checkpoint(messages)
                 log({"role_transition": "former_main_saved_and_exiting"})
                 break
@@ -639,11 +524,6 @@ def main() -> None:
                 break
             operational_data = memory_state.view()
             operational_data["independent_analysis"] = analyzer.view()
-            operational_data["assignments"] = work_assignments.view()
-            if WORKER_TASK is not None:
-                operational_data["worker_delivery"] = work_assignments.worker_delivery_status(
-                    WORKER_TASK
-                )
             operational = {
                 "role": "user",
                 "content": json.dumps(operational_data, ensure_ascii=False),
@@ -694,7 +574,7 @@ def main() -> None:
             save_manifest()
             # All waits in this response use the pre-decision cursor: a tool result
             # is not yet a normal model decision observing the notification.
-            WAIT_CURSOR = work_assignments.wait_cursor(messages)
+            WAIT_CURSOR = waiting.wait_cursor(messages)
             messages.extend(out)
             recall_tools.append_history_many(out)
             for c in calls:
@@ -706,25 +586,20 @@ def main() -> None:
             checkpoint(messages)
             context_manager.atomic("pending-calls.json", "null")
             save_manifest()
-            if work_assignments.worker_result_ready(WORKER_TASK):
-                break
             if "--test" in sys.argv and calls:
                 break
             if not calls:
-                if (
-                    WORKER_TASK is None
-                    and pathlib.Path("run-outcome.json").exists()
-                    and json.loads(pathlib.Path("run-outcome.json").read_text()).get("status")
-                    in ("complete", "blocked")
-                ):
+                if pathlib.Path("run-outcome.json").exists() and json.loads(
+                    pathlib.Path("run-outcome.json").read_text()
+                ).get("status") in ("complete", "blocked"):
                     break
                 messages.append(
                     {
                         "role": "user",
                         "content": (
-                            "Continue only the bounded worker assignment; save worker-result.json and stop when delivered, or preserve a real blocker."
-                            if WORKER_TASK
-                            else "Continue autonomously as coordinator; delegate concrete research, assess evidence and preserve state under the current goal. Check actual Host main identity before handoff."
+                            "Continue the research yourself: implement, submit independent jobs in "
+                            "parallel, inspect results and repair ordinary script errors in this task. "
+                            "Preserve evidence and use only a single linear successor for Harness handoff."
                         ),
                     }
                 )

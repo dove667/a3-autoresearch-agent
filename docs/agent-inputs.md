@@ -1,6 +1,6 @@
 # Agent 输入的版本与加载
 
-Version: 0.6.5
+Version: 0.6.6
 
 本文件面向维护输入的部署方；运行监督与审批见 [操作者文档](operator-supervision.md)。目标、验收、Prompt 和执行说明由部署方维护。使用内置 profile 时，新启动、`--resume-from` 和 `--run-harness` 采用启动时仓库里的当前文件，包括未提交的工作区内容。显式自定义输入目录则使用下述独立冻结快照，不回退到仓库模板。恢复保留原 run、身份、生成的 Harness 和模型对话历史；部署方 system Prompt 与所选阶段协议更新为当前版本。
 
@@ -29,7 +29,7 @@ python -m a3_research_agent.host.bootstrap \
 
 可选 `protocol.md`；若指定 `--phase phase-two` 则它必需，而 `phase-instructions.md` 不必提供，也不生成空壳。为兼容显式旧输入，第二阶段自定义目录若包含 `phase-instructions.md`，它仍需 Version 并作为附加阶段层注入、冻结与恢复；不能把该保留行为误认为新 preset 仍有该文件。可选 `initial-feedback.md` 放入当次获批的人工干预说明。其他 UTF-8 文本文件或子目录也按原相对路径完整快照并挂载到 `/run/input`。必需文件沿用语义版本约定；附加资料和初始反馈可以没有 Version 行，仍记录内容哈希。禁止符号链接、非普通文件和 Host 保留路径（如 `deployment.json`、`input-manifest.json`、`history/`），避免输入冒充运行元数据。不会读取整个项目目录或自动寻找密钥；请只传专门整理的 Agent 输入目录。
 
-SOUL、goal、acceptance、存在的 phase-instructions 以及 protocol 正文直接进入主 Agent/接任候选的模型请求。其他文件**挂载可读但不自动全文注入**，可在目标/指令中说明用途。`initial-feedback.md` 经既有反馈内容校验后作为新 checkpoint 的第二条 user 消息注入，附 SHA256，task_context 记录来源文件与摘要；它不是运行中热加载。不要把这项通知当成验收通过标签。普通 worker 仍由主 Agent 分配任务。
+SOUL、goal、acceptance、存在的 phase-instructions 以及 protocol 正文直接进入主 Agent/接任候选的模型请求。其他文件**挂载可读但不自动全文注入**，可在目标/指令中说明用途。`initial-feedback.md` 经既有反馈内容校验后作为新 checkpoint 的第二条 user 消息注入，附 SHA256，task_context 记录来源文件与摘要；它不是运行中热加载。不要把这项通知当成验收通过标签。普通 worker 创建被拒绝，当前 Agent 自行执行研究。
 
 自定义验收用唯一命名标题，例如 `## skill_reuse. 真实工具闭环`，Host 据此检查 `acceptance.skill_reuse`，不限定 A–F。也可继续使用 `## A.` 等旧格式。至少需要一个验收项；重复 ID 或无可识别项会在启动前失败。
 
@@ -66,13 +66,17 @@ python -m a3_research_agent.host.bootstrap \
   --agent-inputs-dir "$inputs"
 ```
 
-本轮只有 `acceptance.G`；不传 E/F 专项 profile，不加载 phase-two protocol。初始反馈通过目录里的文件注入，不另传 `--initial-feedback-file`。若需要随新任务提供研究 skill，可把已检查的 `skills/research-orchestrator/`、`skills/a3-mujoco-autoresearch/` 与 `skills/rsi-harness-evolution/` 纯文本文件树复制到该输入目录同名子路径。复制时排除运行生成的缓存，例如 `mkdir -p "$inputs/skills"` 后运行 `rsync -a --exclude='__pycache__/' --exclude='*.pyc' --exclude='*.tmp' skills/research-orchestrator skills/a3-mujoco-autoresearch skills/rsi-harness-evolution "$inputs/skills/"`；仍须核对输入只含 UTF-8 普通文件。三者只读挂载，不自动注入正文或自动登记为 Agent 的活动 skill。正文读取、未来工作区复制及目录合并见 skill 自带集成说明，这不是 G 的新增验收项目。
+本轮只有 `acceptance.G`；不传 E/F 专项 profile，不加载 phase-two protocol。初始反馈通过目录里的文件注入，不另传 `--initial-feedback-file`。若需要随新任务提供研究 skill，可把已检查的 `skills/a3-mujoco-autoresearch/` 与 `skills/rsi-harness-evolution/` 纯文本文件树复制到该输入目录同名子路径。复制时排除运行生成的缓存，例如 `mkdir -p "$inputs/skills"` 后运行 `rsync -a --exclude='__pycache__/' --exclude='*.pyc' --exclude='*.tmp' skills/a3-mujoco-autoresearch skills/rsi-harness-evolution "$inputs/skills/"`；仍须核对输入只含 UTF-8 普通文件。两者只读挂载，不自动注入正文或自动登记为 Agent 的活动 skill。正文读取、未来工作区复制及目录合并见 skill 自带集成说明，这不是 G 的新增验收项目。
 
-### 研究协作的职责与装载
+### 本轮研究读取与单 Agent 执行
 
-SOUL 只保留主 Agent 协调、方向、派发和判断，Policy/Harness worker 负责具体实现与执行的职责摘要。[research-orchestrator](../skills/research-orchestrator/SKILL.md) 维护工作包、证据回传、显式资产授权和安全交权细节；RSI 的 allocation 维护工作价值权衡，A3 skill 维护可选研究方法。简单协调由主 Agent 直接完成，不要求为每次读状态或记决定再创建 worker。
+同 run 已登记研究身份可读彼此的源码、记忆、可见轨迹、日志、产物、作业状态和本轮已授权只读 exports。工作区写入限本身份，作业取消和管理限本身份或已采用 lineage；Host 凭据、私有控制状态、其他 run 和外部用户数据保持隔离。analyzer 使用本轮汇总统计，不执行工具；本轮身份可读建议，发起分析和记录采用决定仍由当前主 Agent 完成。
 
-新 skill 的 [catalog fragment](../skills/research-orchestrator/assets/catalog-entry.json) 沿用 F 的 reference-only 形式：`skill_discover` 查元数据，`skill_read` 返回元数据，正文按 `local_source` 用普通 read 读取，不增加通用 `skill_execute`。需要持久采用时，在获准的新工作区合并 `skills/index.json` 的 skills 数组并检查保留声明。复制目录、更新 SOUL 或合并 catalog 本身不会安装自动派发、限制主工具或迁移旧 worker 的监督权；实际执行保障须检查已加载的 Harness 代码和验证证据。源码准备不表示当前 run 已采用，也不授权热加载。
+### 单研究 Agent 的职责与装载
+
+当前研究 Agent 自己实现 Policy 与 Harness、采集数据、训练评估、修复脚本并判断验收。局部检查使用本身份工具与远程作业，普通 `POST /sessions` worker 创建被拒绝。完整 Harness 使用唯一 `/evolution/trials` 候选：前任等待候选自测，候选交权前只自测并等待；拒绝回收或由原候选接任，旧主交权后退出。单次运行不分叉并行研究 Agent。
+
+研究 skill 提供可选方法与经验，RSI skill 提供线性候选与版本交接参考。按需读取正文并显式保留目录、引用和索引；技能不会创建 worker 或扩大工具权限。
 
 启动后应核实实际 input manifest、`acceptance_checks=["G"]`、新任务状态及初始反馈消息，不能只看仓库文件。自定义 run 的恢复使用其冻结输入；每次人工恢复的说明继续走已有 feedback 流程。G 通过保存退出，不自动开始第二阶段。准备输入或发布源码本身不证明 Agent 已实现上下文管理。
 
@@ -89,19 +93,19 @@ SOUL 只保留主 Agent 协调、方向、派发和判断，Policy/Harness worke
 | 本文件 / [教程](tutorial.md) | 维护者 / 用户：输入装载、版本、使用入口 | 新增科学验收门槛 |
 | [operator-supervision.md](operator-supervision.md) | 用户 / 父助手 / 操作者：低频弱监督、每次干预的批准与执行核对 | 作为 Agent input 或替 Agent 做验收 |
 
-源码统一位于 `agent-inputs/`，容器内文件名保持不变：SOUL + goal + acceptance，第一阶段另加任务 Prompt，第二阶段另加 protocol，直接进入主身份/接任候选模型请求；execution 等其余输入保持 `/run/input` 可读。不是仅给模型链接而拿走规则正文。普通 worker 仍由主 Agent 提供任务。`docs/` 下操作者文档不加入 `src/a3_research_agent/host/inputs/versions.py` 清单，也不注入 Agent 请求；SOUL 的装载链有离线回归覆盖；是否实际采用仍以对应运行的输入版本和模型调用记录为准。
+源码统一位于 `agent-inputs/`，容器内文件名保持不变：SOUL + goal + acceptance，第一阶段另加任务 Prompt，第二阶段另加 protocol，直接进入主身份/接任候选模型请求；execution 等其余输入保持 `/run/input` 可读。不是仅给模型链接而拿走规则正文。普通 worker 创建被拒绝。`docs/` 下操作者文档不加入 `src/a3_research_agent/host/inputs/versions.py` 清单，也不注入 Agent 请求；SOUL 的装载链有离线回归覆盖；是否实际采用仍以对应运行的输入版本和模型调用记录为准。
 
 目录结构见 [统一输入目录](../agent-inputs/README.md)。早期目录统一迁移仅改路径并将 execution 递增到 0.8.2；这是历史迁移说明。当前第二阶段已移除单独 instructions，protocol 迁入 shared 但只在该阶段加载，各输入按实际改动独立递增版本。源路径进入 manifest 摘要，因此启动／恢复时产生新 revision；历史 run 的 manifest、input-revisions 与旧源路径记录不追改。`docs/plans/` 保留当时设计与路径，不作为当前加载映射；当前映射以本页和 `input_versions.py` 为准。
 
 ## 长期行为与 Agent 自有知识
 
-`agent-inputs/SOUL.md` 定义跨阶段的研究者角色、主动行动、经验复用与诚实反馈原则；第一阶段任务 Prompt 保留专项流程；第二阶段不再有独立 Prompt 文件，goal/acceptance/protocol 分别保持目标、完成证据和科学规则职责。agent-inputs/SOUL.md 由 Host 版本化，作为 /run/input/SOUL.md 提供，并进入主身份与接任候选的模型输入，不靠 Agent 偶然发现文件。普通测试 worker 仍由主 Agent 编写具体任务，不自动承担全部研究目标。
+`agent-inputs/SOUL.md` 定义跨阶段的研究者角色、主动行动、经验复用与诚实反馈原则；第一阶段任务 Prompt 保留专项流程；第二阶段不再有独立 Prompt 文件，goal/acceptance/protocol 分别保持目标、完成证据和科学规则职责。agent-inputs/SOUL.md 由 Host 版本化，作为 /run/input/SOUL.md 提供，并进入主身份与接任候选的模型输入，不靠 Agent 偶然发现文件。当前 Agent 自行实现与验证目标，唯一候选只承担自测与接任。
 
-Agent 可主动把可复用方法写入自己的工作区 skill；具体经历、证据与待办进入长期记忆。SOUL 提供任务切换、重复失败与派发前的发现提示；实际读取、沉淀和复用由 Agent 执行。部署没有自动按任务匹配和注入 skill 正文的触发器。
+Agent 可主动把可复用方法写入自己的工作区 skill；具体经历、证据与待办进入长期记忆。SOUL 提供任务切换、重复失败与开展相关任务前的发现提示；实际读取、沉淀和复用由 Agent 执行。部署没有自动按任务匹配和注入 skill 正文的触发器。
 
-当前派生 Harness 内置 `skills` 工具：list 按关键词搜索摘要并提示未登记正文，read 返回有界正文与哈希，save 自动维护目录、版本和不可变正文，archive 隐藏默认发现但保留内容。更新与归档要求传入读取到的原内容哈希，冲突须重新读取合并。目录采用文件锁与原子替换，当前正文保持稳定路径，旧正文快照进入 `skills/<id>/revisions/`。save 可设置 worker_roles 为 policy、harness 或两者，派发对应角色时自动携带该 skill 的当前正文和同目录引用文件，跳过历史 revisions；新技能省略角色时不自动分发，现有 Worker 副本不自动更新。普通引用文件仍由 Agent 在工作区维护。旧 skill_discover/skill_read 仍可搜索同一 JSON 目录；新工具没有接管旧 synthetic checker 的执行授权。完整参数见[执行说明](../agent-inputs/shared/execution.md#工作区技能的读取与沉淀)。
+当前派生 Harness 内置 `skills` 工具：list 按关键词搜索摘要并提示未登记正文，read 返回有界正文与哈希，save 自动维护目录、版本和不可变正文，archive 隐藏默认发现但保留内容。更新与归档要求传入读取到的原内容哈希，冲突须重新读取合并。目录采用文件锁与原子替换，当前正文保持稳定路径，旧正文快照进入 `skills/<id>/revisions/`。技能由当前 Agent 按需读取，随版本显式交接。普通引用文件仍由 Agent 在工作区维护。旧 skill_discover/skill_read 仍可搜索同一 JSON 目录；新工具没有接管旧 synthetic checker 的执行授权。完整参数见[执行说明](../agent-inputs/shared/execution.md#工作区技能的读取与沉淀)。
 
-工具 schema 只提供使用入口，不自动注入全部技能正文。SOUL 指导 Agent 在任务切换、重复失败和委派前按需使用。没有新工具的历史 Harness 仍可使用普通 read/write；另建 LOCAL-INDEX.md 不会自动进入 JSON 目录搜索。新增 Python 模块和 tool schema 需恢复进程加载，单独热加载 Prompt 不会安装工具。
+工具 schema 只提供使用入口，不自动注入全部技能正文。SOUL 指导 Agent 在任务切换、重复失败和开展相关任务前按需使用。没有新工具的历史 Harness 仍可使用普通 read/write；另建 LOCAL-INDEX.md 不会自动进入 JSON 目录搜索。新增 Python 模块和 tool schema 需恢复进程加载，单独热加载 Prompt 不会安装工具。
 
 ### 运行中的技能导出与回流
 
@@ -151,9 +155,9 @@ web-extension 的新副本将已知旧任务状态归档至 `inherited-task-stat
 
 发布开始时所有挂载先标记 status=updating（更新中），完成后才标记 active（可读取）。每次启动或更新的完整内容保存在 `input-revisions/revision-*/`；`input-events.jsonl` 保存切换记录。原始 `startup.json` 保持不变，恢复事件附带当前清单写入 `resume-events.jsonl`。旧运行首次升级时，原输入另存历史副本。
 
-普通挂载与主会话的私有输入挂载同步发布。主 Agent 与接任候选每次模型请求都获得 SOUL、目标和验收正文；第一阶段另提供专项 Prompt，第二阶段另提供 protocol.md；普通测试 worker 的任务与 Prompt 继续由主 Agent 提供。用量日志记录请求采用的 input_revision、各文件版本与摘要。初始 mini 刷新部署方 system 消息，保留已有用户消息、模型回复和工具结果。
+普通挂载与主会话的私有输入挂载同步发布。主 Agent 与接任候选每次模型请求都获得 SOUL、目标和验收正文；第一阶段另提供专项 Prompt，第二阶段另提供 protocol.md；普通 worker 创建被拒绝。用量日志记录请求采用的 input_revision、各文件版本与摘要。初始 mini 刷新部署方 system 消息，保留已有用户消息、模型回复和工具结果。
 
-全部 worker 停止后，Host 先关闭更新入口，再按最终生效的验收版本作结构检查，并把该版本清单写入 outcome。历史结果保留各自产生时的版本；变更验收后仅按影响范围判断相关已有结论是否适用，不将其扩为全历史重审。各代交权前核查自己的实验闭环，后继继承已确认结论及证据引用，不承担前任过去的验收责任；最终汇总仍须如实保留未完成与未知。
+全部研究进程停止后，Host 先关闭更新入口，再按最终生效的验收版本作结构检查，并把该版本清单写入 outcome。历史结果保留各自产生时的版本；变更验收后仅按影响范围判断相关已有结论是否适用，不将其扩为全历史重审。各代交权前核查自己的实验闭环，后继继承已确认结论及证据引用，不承担前任过去的验收责任；最终汇总仍须如实保留未完成与未知。
 
 ## 第一阶段 F 的独立输入
 
@@ -173,11 +177,11 @@ F 输入接入不是技能工具实现；实际模型发现、读取、执行、
 
 恢复时与运行中均可显式登记反馈，完整操作和批准范围见 [操作者文档](operator-supervision.md#恢复时加入人类反馈)。反馈不是目标、验收或计分文件的替换；固定 0.1.0 封装协议生成独立 user message，以反馈 ID 和 SHA256 追踪。源文件可覆盖，无需用户手动改版本；封装协议变化需递增实现中的 PROTOCOL_VERSION 并同步文档。
 
-副本、登记/定位/成功转发事件与状态保存在 `.host/human-feedback/`，不自动监视源文件。同一身份最近同内容反馈去重；反馈只绑定登记时主身份，不广播到 worker 或后继。有效历史前缀摘要定位注入位置，工具调用与结果保持配对，重建上下文时记录重新定位。模型用量 human_feedback_ids 标识该请求携带的反馈；forwarded 不表示 Agent 已采纳。没有反馈时原请求路径不变。Agent 的范围核查、决定及影响留档见各阶段 Prompt，外界批准流程只由操作者承担。
+副本、登记/定位/成功转发事件与状态保存在 `.host/human-feedback/`，不自动监视源文件。同一身份最近同内容反馈去重；反馈只绑定登记时主身份，不广播到其他身份或后继。有效历史前缀摘要定位注入位置，工具调用与结果保持配对，重建上下文时记录重新定位。模型用量 human_feedback_ids 标识该请求携带的反馈；forwarded 不表示 Agent 已采纳。没有反馈时原请求路径不变。Agent 的范围核查、决定及影响留档见各阶段 Prompt，外界批准流程只由操作者承担。
 
 ## 第二阶段核心输入与历史兼容
 
-新 preset 第二阶段只直接注入 SOUL、goal、acceptance、protocol；execution 等按 manifest 挂载可读。第一阶段（包括 G 的完整自定义输入）仍要求 phase-instructions。模型主身份/候选/普通 worker 的分工不变。
+新 preset 第二阶段只直接注入 SOUL、goal、acceptance、protocol；execution 等按 manifest 挂载可读。第一阶段（包括 G 的完整自定义输入）仍要求 phase-instructions。当前研究 Agent 与唯一候选按线性自测、决定和交权协议推进。
 
 显式恢复旧 preset 时沿用原有“当前仓库输入＋原历史”语义：旧 phase-instructions 保存在历史 revision/legacy，活动挂载和后续模型核心输入不再包含已删除层；不会仅因更新仓库就改动未恢复或正在运行的 run。旧 custom 无论是否含该可选层，都按原冻结清单校验和恢复，不从仓库补入或删除文件。
 
@@ -195,6 +199,6 @@ F 输入接入不是技能工具实现；实际模型发现、读取、执行、
 
 `GET /wait/signals` 使用已有候选身份鉴权，按 owner 返回稳定游标、该身份反馈的数量/最新 ID、自己的终态 analyzer 通知 ID、输入 revision/generation/status 和是否仍为主身份。不返回正文、私有路径或凭据；读取不确认消费，不触发模型或分析。反馈已转发、分析已回应等确认变化不单独改变游标，避免自行制造唤醒；新终态通知仍会改变它。
 
-恢复 Harness 的等待工具每约 2 秒检查信号，worker/job 每约 10 秒检查状态。每个等待进程最多约 1800 次信号 GET/小时，每个受监控目标约 360 次状态 GET/小时，另有短请求与日志成本，无模型 token 成本。1/2 秒的信号/状态请求超时使通知不会被一轮多个慢作业饿死；延迟仍包括在途请求、OS 调度和 Host 可用性。请求失败返回观察错误，不能当作没有事件。
+恢复 Harness 的等待工具每约 2 秒检查信号，候选/job 每约 10 秒检查状态。每个等待进程最多约 1800 次信号 GET/小时，每个受监控目标约 360 次状态 GET/小时，另有短请求与日志成本，无模型 token 成本。1/2 秒的信号/状态请求超时使通知不会被一轮多个慢作业饿死；延迟仍包括在途请求、OS 调度和 Host 可用性。请求失败返回观察错误，不能当作没有事件。
 
 游标从已配对 wait call/result 读取，与既有 journal/checkpoint 一起恢复，不新增服务端消费游标。等待结束边界不会清空新事件；同一批多个 wait 均使用模型决策前游标。历史压缩可能使旧游标不再就地可见，此时对仍待回应的分析建议保守重送。该设计是至少一次的保守通知，不提供退出后自动重启或恰好一次处理；主 Agent 仍决定如何回应建议。

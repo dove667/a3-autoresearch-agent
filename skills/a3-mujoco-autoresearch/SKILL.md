@@ -2,7 +2,7 @@
 name: a3-mujoco-autoresearch
 description: Develop and improve learned policies for the A3 dual-arm MuJoCo cookie-packing project. Use for method selection, ACT/Diffusion/Flow/VLA/world-model experiments, data and training diagnostics, paired closed-loop evaluation, and reusable research experience. Applies to research planning or authorized execution, not permission to start training or change the benchmark.
 metadata:
-  version: 0.1.7
+  version: 0.1.10
 ---
 
 # A3 MuJoCo autoresearch
@@ -17,9 +17,15 @@ For each next action, identify the limiting uncertainty: a broken adapter, insuf
 
 **A3 traps to check first:** absolute joint targets rather than deltas; 16D dual-arm versus published 8D left-arm action; inactive arm held at reset pose, not zero; observation state may include more than action channels; 20 Hz control; consistent camera preprocessing; commanded versus applied-action labels; chunk queues and reset; final count rather than transient peak. See the contract for source-qualified details.
 
+## Execute research in one Agent
+
+The current Agent implements, trains, evaluates and fixes its own scripts. Do not create ordinary `/sessions` workers or delegate research to an orchestrator. A full Harness replacement uses one `/evolution/trials` candidate: the predecessor waits for self-test results; the candidate self-tests and waits without independent research until adoption. Reject and return to the predecessor, or retain the same candidate and retire the predecessor. Preserve scientific evidence, memory, resource limits and explicit cross-run asset grants.
+
+Fix ordinary script and adapter failures within the current task and verify the repair. Report specific missing infrastructure permissions, services or resources to the operator.
+
 ## Schedule independent episodes
 
-For collection and evaluation, submit an episode manifest to the deployment's unified executor:
+Submit independent ready remote jobs in parallel within the existing resource limits, then collect their results. Respect data dependencies. For collection and evaluation, submit an episode manifest to the deployment's unified executor:
 `python /run/a3/episode_executor.py --manifest research/episodes.json --output /outputs/<batch>`.
 Read the current execution reference's episode-executor section for the manifest and recovery contract.
 Keep task parameters, seeds, policy weights and output paths explicit. Let the executor adjust concurrency
@@ -47,7 +53,13 @@ These are options, not a mandatory ladder. Prefer the strongest executable basel
 
 Read only the branch and support material needed. [Sources](references/sources.md) distinguishes papers, implementation versions and local observations. Use web search to resolve a specific mechanism, reproduce an official implementation, or investigate a failure; do not collect citations indefinitely instead of testing a hypothesis.
 
-For a concrete grasp, transfer, placement or stagnation question, prefer existing episode video and synchronized traces. [Training diagnostics](references/training-diagnostics.md#visual-process-evidence) describes optional native capture and bounded visual inspection. The main coordinates and judges; a Policy worker prepares and inspects process evidence. Neither routine recording nor a new rollout is required. Sparse frames and final counts do not establish an unseen action never occurred; a replay is new evidence, not the original episode video.
+For a concrete grasp, transfer, placement or stagnation question, prefer existing episode video and synchronized traces. [Training diagnostics](references/training-diagnostics.md#visual-process-evidence) describes optional native capture and bounded visual inspection. The research Agent prepares and inspects process evidence, then decides what it supports. Neither routine recording nor a new rollout is required. Sparse frames and final counts do not establish an unseen action never occurred; a replay is new evidence, not the original episode video.
+
+## Preserve behavioral progress and explore model families
+
+Keep candidates with demonstrated improvements in grasping, transport, placement, stability or recovery, even when aggregate score or complete success is unchanged. Inspect real video/frames with synchronized action/state traces and matched task conditions; report the specific capability, coverage, uncertainty and tradeoffs. Preserve weights/checkpoints, configuration and evidence for each useful capability. Keep uncertain visual improvements as candidates for targeted verification. Maintain several useful alternatives rather than discarding every model that does not beat one scalar baseline. Native benchmark metrics remain reported under the active protocol.
+
+Inventory the actually trainable policy families, prior attempts and missing prerequisites. Give unexplored supported families meaningful data, training budgets and closed-loop diagnostics before repeatedly fine-tuning the same checkpoint. Tiny plumbing tests do not reject an algorithm family. Submit independent ready experiments within fixed quotas and reuse valid data, recordings and evaluations. See [research workflow](references/experiment-workflow.md) for candidate retention and process comparisons.
 
 ## Conduct the experiment
 
@@ -56,7 +68,7 @@ For a concrete grasp, transfer, placement or stagnation question, prefer existin
 3. Establish interface correctness and a meaningful learning/control signal before scaling. Use tiny-batch fitting, replay and short rollouts when they answer the current uncertainty; they do not count as benchmark success.
 4. Execute the authorized experiment with immutable versions and linked job/output locations. If a job is merely slow, diagnose utilization and progress instead of duplicating it.
 5. Compare matched closed-loop results. Training loss is a diagnostic, not the policy-selection objective. Report execution failures separately from genuine task failure.
-6. Keep, reject, or mark inconclusive using the recorded conditions. State coverage, remaining uncertainty, and the next discriminating action. A null result can still produce a valuable reusable diagnostic.
+6. Preserve useful behavioral improvements and mark uncertain candidates for targeted verification using the recorded conditions; keep aggregate benchmark conclusions scoped to their evidence. State coverage, remaining uncertainty, and the next discriminating action. A null result can still produce a valuable reusable diagnostic.
 
 Policy and Harness improvements may proceed in parallel when dependencies and resources permit. Attribute gains separately: a cheaper policy, fewer evaluation episodes or omitted evidence is not a Harness efficiency improvement. A later generation inherits confirmed conclusions and their boundaries; it need not re-audit all predecessors.
 
@@ -71,3 +83,7 @@ Use [evaluation helper](references/evaluation-helper.md) for strict offline comp
 Promote a method into a locally validated recipe only after linking actual code/config/data versions and evidence. Keep evidence levels distinct: `literature`, `implementation-inspected`, `offline-helper-tested`, `local-rollout-tested`, and `paired-local-improvement`. Add applicability, counterexamples and invalidation conditions; amend or retire stale advice rather than append contradictory rules. Preserve raw evidence outside the skill and reference it. Do not turn a single seed's gain into a universal hyperparameter.
 
 When retained or handed off, include this entrypoint, referenced files and helper code, plus any required skill catalog and dependency declarations. Follow the verified [F integration contract](references/integration.md) and supplied catalog fragment; the mere presence of this directory is not proof it is loaded by an Agent.
+
+## Research access within one run
+
+Registered research identities in the same run may read each other's code, memory, visible traces, logs, artifacts, job status and read-only exports already authorized to that run. Use the Host interfaces with your own token and keep provenance. Workspace writes remain owner-only; job cancellation and other management require ownership or adopted linear lineage. Other runs, external users and Host credentials remain protected. Analyzer reports are readable within the run; only the current main initiates analysis and records adoption decisions. The analyzer uses run-level aggregate statistics and has no execution tools.

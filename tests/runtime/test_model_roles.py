@@ -133,7 +133,7 @@ def test_host_roles_keep_main_and_behavioral_trial_on_primary(tmp_path):
     assert [x["model_role"] for x in logs] == ["main", "worker", "candidate"]
 
 
-def test_declared_candidate_validation_uses_primary_and_full_phase(tmp_path):
+def test_linear_trial_uses_primary_and_full_phase(tmp_path):
     calls = []
     restored = {
         "sessions": {"m": "main", "v": "validator"},
@@ -144,12 +144,16 @@ def test_declared_candidate_validation_uses_primary_and_full_phase(tmp_path):
                 "parent": "main",
                 "token": "v",
                 "closed": False,
-                "purpose": "candidate_validation",
+                "purpose": "successor",
             }
         },
         "scope_parents": {"validator": "main"},
         "jobs": {},
-        "evolution": {"main_owner": "main", "trials": {}, "transitions": []},
+        "evolution": {
+            "main_owner": "main",
+            "trials": {"validator": {"status": "testing"}},
+            "transitions": [],
+        },
     }
     client = TestClient(
         create_app(

@@ -3,7 +3,13 @@
 import json
 
 import pytest
-from test_work_assignments import load
+
+from a3_research_agent.harness import waiting
+
+
+def load(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    return waiting
 
 
 class Clock:
@@ -19,12 +25,14 @@ class Clock:
 
 def setup_wait(tmp_path, monkeypatch):
     m = load(tmp_path, monkeypatch)
-    m.save({"version": 1, "assignments": {"a": {"status": "assigned", "session_id": "worker-1"}}})
+    (tmp_path / "operational-state.json").write_text(
+        json.dumps({"jobs": {"job-1": {"status": "running"}}})
+    )
     clock = Clock()
     return m, clock
 
 
-def test_unchanged_worker_waits_requested_deadline_without_model_roundtrips(tmp_path, monkeypatch):
+def test_unchanged_job_waits_requested_deadline_without_model_roundtrips(tmp_path, monkeypatch):
     m, clock = setup_wait(tmp_path, monkeypatch)
     calls = []
 
@@ -38,7 +46,7 @@ def test_unchanged_worker_waits_requested_deadline_without_model_roundtrips(tmp_
     assert 2 <= len(calls) <= 14
 
 
-def test_worker_completion_returns_before_deadline(tmp_path, monkeypatch):
+def test_job_completion_returns_before_deadline(tmp_path, monkeypatch):
     m, clock = setup_wait(tmp_path, monkeypatch)
     result = m.wait_for_change(
         lambda *a, **k: {"status": "exited" if clock.now >= 20 else "running", "exit_code": 7},
@@ -48,7 +56,7 @@ def test_worker_completion_returns_before_deadline(tmp_path, monkeypatch):
     )
     assert clock.now == 20
     assert result["reason"] == "state_changed"
-    assert result["changes"]["/sessions/worker-1"]["exit_code"] == 7
+    assert result["changes"]["/jobs/job-1"]["exit_code"] == 7
 
 
 def test_request_error_is_reported_without_automatic_replay(tmp_path, monkeypatch):
@@ -104,25 +112,7 @@ def test_known_job_failure_interrupts_wait(tmp_path, monkeypatch):
     assert result["changes"]["/jobs/job-1"]["status"] == "failed"
 
 
-def test_already_pending_decision_returns_without_wait_or_network(tmp_path, monkeypatch):
-    m, clock = setup_wait(tmp_path, monkeypatch)
-    m.save(
-        {
-            "version": 1,
-            "assignments": {"a": {"status": "awaiting_decision", "session_id": "worker-1"}},
-        }
-    )
-
-    def req(*a, **k):
-        pytest.fail("No status request needed for an already delivered result")
-
-    assert (
-        m.wait_for_change(req, 600, clock=clock.time, sleep=clock.sleep)["reason"]
-        == "decision_pending"
-    )
-
-
-def test_restart_observes_already_finished_worker_without_job_replay(tmp_path, monkeypatch):
+def test_restart_observes_already_finished_job_without_job_replay(tmp_path, monkeypatch):
     m, clock = setup_wait(tmp_path, monkeypatch)
     calls = []
 
@@ -132,7 +122,7 @@ def test_restart_observes_already_finished_worker_without_job_replay(tmp_path, m
 
     result = m.wait_for_change(req, 600, clock=clock.time, sleep=clock.sleep)
     assert result["reason"] == "state_changed"
-    assert calls == [("GET", "/sessions/worker-1")]
+    assert calls == [("GET", "/jobs/job-1")]
     assert clock.now == 0
 
 
@@ -145,14 +135,8 @@ def test_malformed_status_is_not_silently_treated_as_waiting(tmp_path, monkeypat
 
 def test_deadline_is_checked_between_slow_status_requests(tmp_path, monkeypatch):
     m, clock = setup_wait(tmp_path, monkeypatch)
-    m.save(
-        {
-            "version": 1,
-            "assignments": {
-                "a": {"status": "assigned", "session_id": "worker-1"},
-                "b": {"status": "assigned", "session_id": "worker-2"},
-            },
-        }
+    (tmp_path / "operational-state.json").write_text(
+        json.dumps({"jobs": {"job-1": {"status": "running"}, "job-2": {"status": "running"}}})
     )
     calls = []
 
@@ -182,12 +166,12 @@ def test_initial_updating_inputs_do_not_enter_sleep(tmp_path, monkeypatch):
     assert clock.now == 0
 
 
-def test_deadline_result_retains_last_observed_worker_state(tmp_path, monkeypatch):
+def test_deadline_result_retains_last_observed_job_state(tmp_path, monkeypatch):
     m, clock = setup_wait(tmp_path, monkeypatch)
     result = m.wait_for_change(
         lambda *a, **k: {"status": "running"}, 20, clock=clock.time, sleep=clock.sleep
     )
-    assert result["observed"]["/sessions/worker-1"]["status"] == "running"
+    assert result["observed"]["/jobs/job-1"]["status"] == "running"
 
 
 def signal(cursor="a" * 64, pending=False):
@@ -280,13 +264,8 @@ def test_signal_error_is_visible_and_not_slept_through(tmp_path, monkeypatch):
 
 def test_slow_status_request_does_not_starve_notification_check(tmp_path, monkeypatch):
     m, clock = setup_wait(tmp_path, monkeypatch)
-    m.save(
-        {
-            "version": 1,
-            "assignments": {
-                str(i): {"status": "assigned", "session_id": "worker-" + str(i)} for i in range(3)
-            },
-        }
+    (tmp_path / "operational-state.json").write_text(
+        json.dumps({"jobs": {"job-" + str(i): {"status": "running"} for i in range(3)}})
     )
 
     def status(*a, **k):
@@ -385,7 +364,9 @@ def test_two_waits_in_one_model_batch_keep_prebatch_cursor(tmp_path, monkeypatch
     from types import SimpleNamespace
 
     m, clock = setup_wait(tmp_path, monkeypatch)
-    from test_work_assignments import ROOT
+    from pathlib import Path
+
+    ROOT = Path(__file__).resolve().parents[2] / "src/a3_research_agent/harness"
 
     source = (ROOT / "agent.py").read_text()
     function = next(
@@ -400,7 +381,7 @@ def test_two_waits_in_one_model_batch_keep_prebatch_cursor(tmp_path, monkeypatch
             {"type": "function_call", "name": "wait", "call_id": "two"},
         ],
         "req": lambda *a, **k: signal("b" * 64),
-        "work_assignments": SimpleNamespace(
+        "waiting": SimpleNamespace(
             wait_cursor=m.wait_cursor,
             wait_for_change=lambda req, seconds, **kw: m.wait_for_change(
                 lambda *a, **k: {"status": "running"},

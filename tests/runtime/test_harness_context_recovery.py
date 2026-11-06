@@ -150,16 +150,7 @@ def agent_functions(context):
     source = ast.parse((SOURCE / "agent.py").read_text())
     wanted = {"save_manifest", "checkpoint", "checkpoint_hash", "recover_journal"}
     nodes = [n for n in source.body if isinstance(n, ast.FunctionDef) and n.name in wanted]
-    helper = None
-    if (SOURCE / "orchestration/assignments.py").exists():
-        spec = importlib.util.spec_from_file_location(
-            "assignment_functions", SOURCE / "orchestration/assignments.py"
-        )
-        helper = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(helper)
     namespace = {
-        "WORKER_TASK": None,
-        "work_assignments": helper,
         "context_manager": context,
         "pathlib": pathlib,
         "os": os,

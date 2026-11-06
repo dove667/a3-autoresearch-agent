@@ -135,9 +135,9 @@ def test_continuous_phase_two_contract_is_loaded_without_new_runtime_profile(tmp
     _, instructions = versions.model_instructions()
     assert manifest["acceptance_checks"] == list("ABCD")
     assert manifest["task_profile"] == "standard"
-    assert manifest["files"]["goal.md"]["version"] == "0.4.0"
-    assert manifest["files"]["acceptance.md"]["version"] == "0.4.0"
-    assert manifest["files"]["protocol.md"]["version"] == "0.3.1"
+    assert manifest["files"]["goal.md"]["version"] == "0.4.2"
+    assert manifest["files"]["acceptance.md"]["version"] == "0.4.2"
+    assert manifest["files"]["protocol.md"]["version"] == "0.3.2"
     assert "phase-instructions.md" not in manifest["files"]
     for name in ("goal.md", "acceptance.md"):
         assert proposal["contents"][name] in instructions

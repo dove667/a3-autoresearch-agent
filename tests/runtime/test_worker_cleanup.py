@@ -6,6 +6,7 @@ import time
 
 import pytest
 from fastapi.testclient import TestClient
+from host_fixtures import host_create_session
 
 from a3_research_agent.host.gateway.app import create_app
 from a3_research_agent.host.sessions.containers import CandidateRuntime
@@ -116,7 +117,7 @@ def test_exited_worker_is_removed_but_evidence_status_and_peers_survive(tmp_path
     assert status["output"] == "worker output\n"
     artifact = runtime.artifact("finished", "finished", "result.txt")
     assert base64.b64decode(artifact["data"]) == b"experiment evidence"
-    runtime.check_capacity()
+    runtime.check_capacity(exclude="running")
     runtime.suspend()
     assert docker.states["running"]["Status"] == "paused"
     # Explicit later session closure must not try to inspect/delete the removed container.
@@ -198,11 +199,11 @@ def test_gateway_reaps_without_agent_polling_and_preserves_other_worker_and_jobs
     )
     root = {"Authorization": "Bearer root-token"}
     with TestClient(app) as client:
-        parent = client.post("/sessions", headers=root, json={"command": ["true"]}).json()[
+        parent = host_create_session(client, headers=root, json={"command": ["true"]}).json()[
             "session_id"
         ]
         parent_auth = {"Authorization": "Bearer " + docker.tokens[parent]}
-        child = client.post("/sessions", headers=parent_auth, json={"command": ["true"]}).json()[
+        child = host_create_session(client, headers=parent_auth, json={"command": ["true"]}).json()[
             "session_id"
         ]
         child_auth = {"Authorization": "Bearer " + docker.tokens[child]}

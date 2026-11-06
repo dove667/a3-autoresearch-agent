@@ -1,6 +1,6 @@
 # 独立 episode 执行器
 
-远程作业通过只读挂载的 `/run/a3/episode_executor.py` 组织采集与评估中的独立 episode。Agent 判断任务能否并行，并定义每个 episode 的命令、科研参数、种子、协议和输出。执行器在作业既有资源限制内调节并发；采集和评估默认使用此入口。
+远程作业通过只读挂载的 `/run/a3/episode_executor.py` 组织采集与评估中的独立 episode。Agent 判断任务能否并行，并定义每个 episode 的命令、科研参数、种子、协议和输出。执行器在作业既有资源限制内调节并发；采集和评估统一使用此入口。
 
 ## 提交 batch
 

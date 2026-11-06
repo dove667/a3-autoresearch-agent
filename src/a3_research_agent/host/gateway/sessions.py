@@ -23,17 +23,20 @@ class SessionRoutes:
     def create_session(
         self, body: SessionRequest, authorization: Annotated[str | None, Header()] = None
     ):
+        with self.session_lock:
+            self.accepting_resources()
+            self.owner(authorization)
+            raise HTTPException(
+                403, "Research runs have no workers; use one linear evolution trial"
+            )
+
+    def _create_session(self, body: SessionRequest, authorization):
+        """Create only Host-selected initial sessions or the pending linear successor."""
         if self.sandbox is None:
             raise HTTPException(503, "Candidate execution is not configured")
         with self.session_lock:
             self.accepting_resources()
             parent = self.owner(authorization)
-            if body.purpose == "candidate_validation":
-                if self.evolution is None:
-                    raise HTTPException(
-                        403, "Candidate validation assignment requires the current main"
-                    )
-                self.deployment_call(self.evolution.require_main, parent)
             scope = "candidate-" + secrets.token_hex(16)
             token = secrets.token_urlsafe(32)
             self.sessions[token] = scope
@@ -72,10 +75,7 @@ class SessionRoutes:
                     if self.evolution is None:
                         raise HTTPException(403, "Only the current main Agent can share exports")
                     self.deployment_call(self.evolution.require_main, parent)
-                    self.remote(
-                        "exports-check",
-                        {"experiment_id": parent, "export_ids": body.read_only_exports},
-                    )
+                    self.validate_exports(parent, body.read_only_exports)
                     for identifier in body.read_only_exports:
                         self.remote(
                             "export-grant",
@@ -171,12 +171,15 @@ class SessionRoutes:
                 raise HTTPException(403, "Local Harness imports require the Host root identity")
             if self.versions is None or self.sandbox is None:
                 raise HTTPException(503, "Candidate execution is not configured")
-            request = SessionRequest(command=command, read_only_exports=read_only_exports or [])
+            request = SessionRequest(command=command)
+            # Local retained manifests can select more assets than one bounded HTTP request.
+            # Every reference is still checked before any candidate is started.
+            request.read_only_exports = read_only_exports or []
             if hasattr(self.sandbox, "check_capacity"):
                 self.deployment_call(self.sandbox.check_capacity)
             version = self.versions.create_local(parent, files)
             request.version_id = version["version_id"]
-            return self.create_session(request, authorization)
+            return self._create_session(request, authorization)
 
     def evolution_state(self):
         if self.evolution is None or self.versions is None:
@@ -212,7 +215,7 @@ class SessionRoutes:
                 raise HTTPException(409, "Decide the current candidate before starting another")
             self.deployment_call(self.versions.owned, actor, body.baseline_version)
             request = SessionRequest(**body.model_dump(exclude={"baseline_version", "checklist"}))
-            result = self.create_session(request, authorization)
+            result = self._create_session(request, authorization)
             state.register(
                 result["session_id"], body.baseline_version, result["version_id"], body.checklist
             )
@@ -253,18 +256,16 @@ class SessionRoutes:
         authorization: Annotated[str | None, Header()] = None,
         include_status: bool = False,
     ):
-        experiment = self.owner(authorization)
+        self.owner(authorization)
         with self.session_lock:
             result = []
             for candidate, record in self.children.items():
-                if not self.manages(experiment, record):
-                    continue
                 item = {
                     "session_id": candidate,
                     "parent": record["parent"],
                     "closed": record["closed"],
-                    "version_id": record["version_id"],
-                    "purpose": record.get("purpose", "worker"),
+                    "version_id": record.get("version_id"),
+                    "purpose": record.get("purpose", "successor"),
                 }
                 if include_status:
                     state = (
@@ -292,7 +293,13 @@ class SessionRoutes:
         experiment = self.owner(authorization)
         if self.versions is None:
             raise HTTPException(503, "Candidate versions are not configured")
-        return {"versions": self.versions.list(experiment)}
+        with self.session_lock:
+            versions = {}
+            for scope in self.research_read_scopes(experiment):
+                for version in self.versions.list(scope):
+                    self.versions.grant(scope, experiment, version["version_id"])
+                    versions[version["version_id"]] = version
+            return {"versions": list(versions.values())}
 
     def comparison(
         self, body: ComparisonRequest, authorization: Annotated[str | None, Header()] = None
@@ -336,11 +343,7 @@ class SessionRoutes:
     def session_status(
         self, session_id: str, authorization: Annotated[str | None, Header()] = None
     ):
-        record = (
-            self.own_session(authorization)
-            if session_id == self.owner(authorization)
-            else self.child(authorization, session_id)
-        )
+        record = self.readable_session(authorization, session_id)
         return self.deployment_call(self.sandbox.status, record["owner"], session_id)
 
     def cancel_session(
@@ -370,7 +373,7 @@ class SessionRoutes:
         offset: Annotated[int, Query(ge=0)] = 0,
         limit: Annotated[int | None, Query(ge=1, le=MAX_ARTIFACT_BYTES)] = None,
     ):
-        record = self.child(authorization, session_id)
+        record = self.readable_session(authorization, session_id)
         if limit is not None or offset:
             return self.deployment_call(
                 self.sandbox.artifact, record["owner"], session_id, path, offset, limit
@@ -380,7 +383,7 @@ class SessionRoutes:
     def descendant_versions(
         self, session_id: str, authorization: Annotated[str | None, Header()] = None
     ):
-        record = self.child(authorization, session_id)
+        record = self.readable_session(authorization, session_id)
         if self.versions is None:
             raise HTTPException(503, "Candidate versions are not configured")
         experiment = self.owner(authorization)

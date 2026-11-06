@@ -228,7 +228,7 @@ def test_receipt_failure_cannot_hide_successful_job_result(tmp_path, monkeypatch
     def fail(*args):
         raise OSError("receipt failed")
 
-    from a3_research_agent.harness.orchestration import assignments as work_assignments
+    from a3_research_agent.harness import lifecycle
 
     def request(method, path, data=None):
         if path == "/sessions/self":
@@ -238,7 +238,7 @@ def test_receipt_failure_cannot_hide_successful_job_result(tmp_path, monkeypatch
         return result
 
     namespace = {
-        "work_assignments": work_assignments,
+        "lifecycle": lifecycle,
         "web_tools": SimpleNamespace(ROUTES={}),
         "skill_tools": SimpleNamespace(ROUTES={}),
         "memory_state": SimpleNamespace(record_gateway=fail),

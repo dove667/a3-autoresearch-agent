@@ -2,6 +2,7 @@ import json
 
 import pytest
 from fastapi.testclient import TestClient
+from host_fixtures import host_create_session
 
 from a3_research_agent.host.gateway.app import create_app
 from a3_research_agent.host.runs.state import RunStateStore
@@ -47,7 +48,7 @@ def setup(tmp_path):
     )
     client = TestClient(app)
     root = {"Authorization": "Bearer root-token"}
-    session = client.post("/sessions", headers=root, json={"command": ["true"]}).json()[
+    session = host_create_session(client, headers=root, json={"command": ["true"]}).json()[
         "session_id"
     ]
     own = {"Authorization": "Bearer " + backend.tokens[session]}
@@ -65,7 +66,9 @@ def test_self_status_is_readable_without_granting_ancestor_access(tmp_path):
 
 def test_self_stop_preserves_descendants_jobs_and_parent_access(tmp_path):
     client, backend, _, remote_calls, root, session, own = setup(tmp_path)
-    child = client.post("/sessions", headers=own, json={"command": ["true"]}).json()["session_id"]
+    child = host_create_session(client, headers=own, json={"command": ["true"]}).json()[
+        "session_id"
+    ]
     child_auth = {"Authorization": "Bearer " + backend.tokens[child]}
     client.post("/jobs", headers=own, json={"command": ["true"]})
     response = client.post("/sessions/self/stop", headers=own, json={"reason": "work saved"})
@@ -237,7 +240,7 @@ def test_cancelled_worker_stop_request_does_not_block_main_recovery(tmp_path):
 
 def test_self_role_flags_do_not_expose_other_identities_and_follow_saved_handoff(tmp_path):
     client, backend, store, _, root, old, own = setup(tmp_path)
-    new = client.post("/sessions", headers=root, json={"command": ["true"]}).json()["session_id"]
+    new = host_create_session(client, headers=root, json={"command": ["true"]}).json()["session_id"]
     saved = store.load()["gateway"]
     saved["evolution"]["main_owner"] = new
     saved["evolution"]["transitions"] = [{"from": old, "to": new, "version_id": "tested"}]

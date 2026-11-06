@@ -36,7 +36,6 @@ def prepare_fresh_task(start: HarnessStart, task: str) -> tuple[HarnessStart, di
     reset = {
         "compaction-result.json": None,
         "compaction-epoch.json": {"version": 1, "id": None},
-        "orchestration/assignments.json": {"version": 1, "assignments": {}},
         "operational-state.json": {
             "version": 1,
             "revision": 0,
@@ -118,11 +117,13 @@ def import_retained_exports(start: HarnessStart | None, recipient: str, remote_c
         return []
     if not start.source_owner:
         raise ValueError("Retained exports have no source owner")
-    verified = remote_call(
-        "exports-check", {"experiment_id": start.source_owner, "export_ids": identifiers}
-    )
-    if verified.get("status") == "error":
-        raise ValueError("Retained exports are not accessible or ready")
+    for offset in range(0, len(identifiers), 64):
+        verified = remote_call(
+            "exports-check",
+            {"experiment_id": start.source_owner, "export_ids": identifiers[offset : offset + 64]},
+        )
+        if verified.get("status") == "error":
+            raise ValueError("Retained exports are not accessible or ready")
     granted = []
     try:
         for identifier in identifiers:

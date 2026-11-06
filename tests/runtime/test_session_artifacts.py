@@ -2,6 +2,7 @@ import base64
 
 import pytest
 from fastapi.testclient import TestClient
+from host_fixtures import host_create_session
 
 from a3_research_agent.host.gateway.app import create_app
 from a3_research_agent.host.sessions.containers import CandidateRuntime
@@ -28,7 +29,7 @@ def artifact_session(tmp_path, monkeypatch):
         )
     )
     headers = {"Authorization": "Bearer root-token"}
-    response = client.post("/sessions", headers=headers, json={"command": ["true"]})
+    response = host_create_session(client, headers=headers, json={"command": ["true"]})
     response.raise_for_status()
     session_id = response.json()["session_id"]
     yield (
@@ -102,7 +103,7 @@ def test_invalid_page_bounds_are_rejected(artifact_session, query):
     assert response.status_code == 422
 
 
-def test_pagination_preserves_owner_and_file_boundaries(artifact_session, tmp_path):
+def test_pagination_shares_same_run_reads_and_preserves_file_boundaries(artifact_session, tmp_path):
     client, headers, url, workspace = artifact_session
     (workspace / "small.txt").write_text("hello")
     (tmp_path / "private.txt").write_text("private")
@@ -110,7 +111,7 @@ def test_pagination_preserves_owner_and_file_boundaries(artifact_session, tmp_pa
     query = {"path": "small.txt", "limit": 2}
     assert (
         client.get(url, headers={"Authorization": "Bearer peer-token"}, params=query).status_code
-        == 403
+        == 200
     )
     for name in ("../private.txt", "/private.txt", "link.txt"):
         assert client.get(url, headers=headers, params={**query, "path": name}).status_code == 422

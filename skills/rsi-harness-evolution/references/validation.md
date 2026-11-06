@@ -1,4 +1,8 @@
-# Validation scope
+# Version 0.2.7 maintenance scope
+
+Current guidance uses one research Agent, parallel independent remote jobs and one linear trial candidate. Ordinary worker delegation and branch-search recipes were removed. Same-run research reads and analyzer advice are shared; owner/adopted-lineage mutation and cross-run isolation remain enforced. Skill/catalog versions, changed Markdown link targets and whitespace were checked; no Policy or Harness performance experiment was run for this documentation change. Earlier records below describe their original snapshots.
+
+# Historical validation scope
 
 Version 0.2.0, prepared 2026-11-02. This is reference guidance and an optional experiment-record template, not a runtime implementation or a measured improvement.
 

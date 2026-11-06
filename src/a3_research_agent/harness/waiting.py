@@ -1,11 +1,9 @@
-"""Worker coordination: waiting."""
+"""Wait for owned jobs, linear trial state and operator notifications."""
 
 import json
 import pathlib
 import re
 import time
-
-from a3_research_agent.harness.orchestration.store import load
 
 
 def wait_cursor(messages):
@@ -97,18 +95,7 @@ def wait_for_change(
             )
         return None
 
-    assignments = load()["assignments"]
-    if any(x.get("status") == "awaiting_decision" for x in assignments.values()):
-        return result("decision_pending")
     paths = []
-    for item in assignments.values():
-        session = item.get("session_id")
-        if (
-            item.get("status") == "assigned"
-            and isinstance(session, str)
-            and re.fullmatch(r"[A-Za-z0-9_-]{1,100}", session)
-        ):
-            paths.append("/sessions/" + session)
     operational = pathlib.Path("operational-state.json")
     if operational.exists():
         for job, item in json.loads(operational.read_text()).get("jobs", {}).items():

@@ -1,5 +1,7 @@
 # 第一阶段 F：可复用研究 Skills 能力补充设计
 
+> 历史方案；当前执行约定以 [单研究 Agent 工作流](../research-orchestration.md) 和 [执行接口](../../agent-inputs/shared/execution.md) 为准，旧 worker、分叉和派发描述不作为当前操作指引。
+
 状态：待评审设计；不是已加载的 Agent Prompt，也不是当前可启动的 task profile。
 
 ## 1. 目标与本次授权边界

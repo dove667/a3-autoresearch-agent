@@ -84,7 +84,7 @@ printf '{}' | python3 "$CONTROLLER" \
 
 ## 执行限制与 GPU 租约
 
-每个作业挂载自己可写的 `/workspace`；有 run_id 时还挂载同一 worker 身份持久可写的 `/outputs`。固定 A3 基线位于 `/opt/a3`，整个容器根文件系统只读。容器关闭网络，移除 capabilities，启用 `no-new-privileges`，不提供 Docker socket、SSH 或模型凭据。
+每个作业挂载自己可写的 `/workspace`；有 run_id 时还挂载同一研究身份持久可写的 `/outputs`。固定 A3 基线位于 `/opt/a3`，整个容器根文件系统只读。容器关闭网络，移除 capabilities，启用 `no-new-privileges`，不提供 Docker socket、SSH 或模型凭据。
 
 默认限制为 16 CPU、64 GiB 内存、禁用额外 swap、1024 个进程与线程、256 MiB 共享内存、2 个并发作业和 900 秒作业时限。部署方通过 `--cpus`、`--memory`、`--pids-limit`、`--max-jobs`、`--timeout` 调整（--max-jobs 0 不设作业数量上限，--timeout 0 不限时）；`--gpu-ids` 可限定 GPU 索引或 UUID。这些参数由 Host配置提供。
 
@@ -147,7 +147,7 @@ python3 src/a3_research_agent/execution/images/verify.py \
 | export-grant / export-revoke | export_id、recipient | 增加或撤回明确身份的只读权限 |
 | export-delete | export_id | 原始所有者删除快照，不删除源文件 |
 
-submit 的 input_exports 最多 64 个且不能重复；只挂载本身份获授权且 ready 的数据，每个引用对应 `/inputs/<export_id>/` 的只读目录。读取权不扩展为原 worker 目录的访问权；同一快照可在不同身份和后续 run 使用。源文件改变不影响已封存数据。
+submit 的 input_exports 最多 64 个且不能重复；只挂载本身份获授权且 ready 的数据，每个引用对应 `/inputs/<export_id>/` 的只读目录。作业挂载只包含选定快照，不直接挂载原身份的可写目录；同 run 登记研究身份另可通过 Host 研究接口读取彼此产物。跨 run 使用仍须明确授权。源文件改变不影响已封存数据。
 
 元数据和授权保存在 `readonly-exports/`，复制的数据、manifest 保存在 `runs/<来源run>/readonly-exports/<export_id>/`。独立 sealer 按块复制并计算摘要，原子发布 ready。复制失败清理未发布数据；状态查询发现 sealer 已退出会记录失败，不把它一直显示为 preparing。源文件应在封存期间保持稳定。符号链接和特殊文件被拒绝。
 

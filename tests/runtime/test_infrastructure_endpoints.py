@@ -3,6 +3,7 @@ import json
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
+from host_fixtures import host_create_session
 
 from a3_research_agent.host.gateway.app import create_app
 from a3_research_agent.host.sessions.containers import CandidateCapacityError
@@ -36,8 +37,8 @@ def test_host_starts_large_local_package_while_agent_uploads_remain_bounded(tmp_
     )
     files = {f"file_{index}.txt": "fixture" for index in range(129)}
     with TestClient(app) as client:
-        upload = client.post(
-            "/sessions",
+        upload = host_create_session(
+            client,
             headers={"Authorization": "Bearer root-token"},
             json={"command": ["true"], "files": files},
         )
@@ -57,7 +58,7 @@ def test_host_starts_large_local_package_while_agent_uploads_remain_bounded(tmp_
         assert error.value.status_code == 403
 
 
-def test_saved_version_runs_under_new_identity_and_siblings_cannot_read_it(tmp_path):
+def test_saved_version_has_distinct_execution_identity_and_shared_readers(tmp_path):
     versions = CandidateVersions(tmp_path / "versions")
     backend = VersionSandbox(versions)
     client = TestClient(
@@ -73,8 +74,8 @@ def test_saved_version_runs_under_new_identity_and_siblings_cannot_read_it(tmp_p
     )
     parent = {"Authorization": "Bearer parent-token"}
     item = client.post("/versions", headers=parent, json={"files": {"entry.py": "pass"}}).json()
-    response = client.post(
-        "/sessions",
+    response = host_create_session(
+        client,
         headers=parent,
         json={
             "command": ["python", "entry.py"],
@@ -89,7 +90,7 @@ def test_saved_version_runs_under_new_identity_and_siblings_cannot_read_it(tmp_p
     child_auth = {"Authorization": "Bearer " + token}
     assert client.get("/versions", headers=child_auth).json()["versions"] == [item]
     other = {"Authorization": "Bearer other-token"}
-    assert client.get("/versions", headers=other).json()["versions"] == []
+    assert client.get("/versions", headers=other).json()["versions"] == [item]
     assert (
         client.post(
             "/sessions",
@@ -139,7 +140,7 @@ def test_diagnostic_log_correlates_errors_without_saving_payload_or_exception(tm
     )
 
 
-def test_busy_candidate_returns_actionable_retry_and_logged_reason(tmp_path):
+def test_busy_host_session_returns_actionable_retry(tmp_path):
     class BusySandbox:
         def create(self, *args):
             raise CandidateCapacityError("private detail")
@@ -154,13 +155,12 @@ def test_busy_candidate_returns_actionable_retry_and_logged_reason(tmp_path):
             sandbox=BusySandbox(),
         )
     )
-    response = client.post(
-        "/sessions", headers={"Authorization": "Bearer token"}, json={"command": ["true"]}
+    response = host_create_session(
+        client, headers={"Authorization": "Bearer token"}, json={"command": ["true"]}
     )
     assert response.status_code == 409
-    assert response.json()["detail"]["max_active"] == 5
+    assert response.json()["detail"]["max_active"] == 2
     assert response.json()["detail"]["retry_after_seconds"] == 2
-    assert "candidate_capacity" in (tmp_path / "gateway-events.jsonl").read_text()
 
 
 def test_comparison_check_requires_identity_and_returns_condition_differences(tmp_path):
@@ -200,8 +200,8 @@ def test_descendant_can_save_and_ancestor_can_collect_new_versions(tmp_path):
         )
     )
     parent = {"Authorization": "Bearer token"}
-    first = client.post(
-        "/sessions",
+    first = host_create_session(
+        client,
         headers=parent,
         json={
             "command": ["true"],
@@ -218,11 +218,11 @@ def test_descendant_can_save_and_ancestor_can_collect_new_versions(tmp_path):
             "files": {"entry.py": "print('next')"},
         },
     ).json()
-    assert saved["version_id"] not in str(client.get("/versions", headers=parent).json())
+    assert saved["version_id"] in str(client.get("/versions", headers=parent).json())
     collected = client.get("/sessions/" + child + "/versions", headers=parent)
     assert saved in collected.json()["versions"]
-    next_session = client.post(
-        "/sessions",
+    next_session = host_create_session(
+        client,
         headers=parent,
         json={
             "command": ["true"],
@@ -247,8 +247,8 @@ def test_session_without_explicit_parent_inherits_callers_starting_version(tmp_p
             sandbox=backend,
         )
     )
-    first = client.post(
-        "/sessions",
+    first = host_create_session(
+        client,
         headers={"Authorization": "Bearer token"},
         json={
             "command": ["true"],
@@ -256,8 +256,8 @@ def test_session_without_explicit_parent_inherits_callers_starting_version(tmp_p
         },
     ).json()
     child = {"Authorization": "Bearer " + backend.launched[0][1]}
-    second = client.post(
-        "/sessions",
+    second = host_create_session(
+        client,
         headers=child,
         json={
             "command": ["true"],
@@ -293,10 +293,10 @@ def test_only_initial_root_session_receives_private_previous_run_inputs(tmp_path
         )
     )
     parent = {"Authorization": "Bearer token"}
-    initial = client.post(
-        "/sessions", headers=parent, json={"command": ["true"], "files": {}}
+    initial = host_create_session(
+        client, headers=parent, json={"command": ["true"], "files": {}}
     ).json()
     child = {"Authorization": "Bearer " + backend.launched[0][1]}
-    client.post("/sessions", headers=child, json={"command": ["true"], "files": {}})
-    client.post("/sessions", headers=parent, json={"command": ["true"], "files": {}})
+    host_create_session(client, headers=child, json={"command": ["true"], "files": {}})
+    host_create_session(client, headers=parent, json={"command": ["true"], "files": {}})
     assert backend.private_receivers == [initial["session_id"]]

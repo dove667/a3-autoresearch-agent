@@ -14,11 +14,16 @@ class AnalysisRoutes:
     def read_telemetry(
         self,
         authorization: Annotated[str | None, Header()] = None,
-        scope: Literal["self", "descendants"] = "self",
+        scope: Literal["self", "descendants", "run"] = "self",
     ):
         with self.session_lock:
             actor = self.owner(authorization)
-            return self.telemetry.snapshot(self.telemetry_scope(actor, scope == "descendants"))
+            allowed = (
+                set(self.research_read_scopes(actor)).__contains__
+                if scope == "run"
+                else self.telemetry_scope(actor, scope == "descendants")
+            )
+            return self.telemetry.snapshot(allowed)
 
     def record_observations(
         self,
@@ -61,7 +66,8 @@ class AnalysisRoutes:
 
     def read_analysis(self, authorization: Annotated[str | None, Header()] = None):
         with self.session_lock:
-            return self.analyzer.latest(self.analyzer_owner(authorization))
+            self.owner(authorization)
+            return self.analyzer.latest(None)
 
     def read_analysis_report(
         self,
@@ -69,7 +75,8 @@ class AnalysisRoutes:
         authorization: Annotated[str | None, Header()] = None,
     ):
         with self.session_lock:
-            return self.analyzer.get(self.analyzer_owner(authorization), analysis_id)
+            self.owner(authorization)
+            return self.analyzer.get(None, analysis_id)
 
     def request_analysis(
         self,
@@ -81,7 +88,7 @@ class AnalysisRoutes:
             actor = self.analyzer_owner(authorization)
             if body and body.enqueue_only:
                 return self.analyzer.enqueue(body.trigger)
-            snapshot = self.telemetry.snapshot(self.telemetry_scope(actor, True))
+            snapshot = self.telemetry.snapshot(set(self.research_read_scopes(actor)).__contains__)
         from fastapi.responses import JSONResponse
 
         report = self.analyzer.analyze(actor, snapshot, body.trigger if body else "manual")

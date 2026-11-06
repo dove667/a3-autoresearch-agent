@@ -39,11 +39,11 @@ bash scripts/start-rsi.sh
 
 启动通用 mini-SWE-agent，在独立 Docker 工作区中依据 `agent-inputs/phase-one/goal.md` 与 `agent-inputs/phase-one/acceptance.md` 构建并演化 auto research Harness。运行无需逐轮人工确认；Agent 可以自行创建候选、测试和继续迭代。
 
-初始 SWE 只启动一次。每代主 Agent 为改动写下验收清单，启动一个新 Harness 候选；拒绝则回收候选，保留则由同一个候选接任主 Agent，原主 Agent 退出。Policy 优化可穿插进行。Host 保活 worker，不重新派发任务。全部 worker 停止后再复核结果，详见[使用教程](docs/tutorial.md)。
+初始 SWE 只启动一次。每代主 Agent 为改动写下验收清单，启动一个新 Harness 候选；拒绝则回收候选，保留则由同一个候选接任主 Agent，原主 Agent 退出。Policy 优化可穿插进行。前任等待候选自测，候选交权前不独立研究。当前 Agent 自行实现、训练、评估与修复脚本；独立远程作业先并行提交，采集与评估统一使用 episode 执行器。Host 保活研究进程，不重新派发任务，全部进程停止后再复核结果，详见[使用教程](docs/tutorial.md)。
 
 文档按读者职责分工，见 [职责表与输入装载链](docs/agent-inputs.md#文档职责与读者)。用户和父助手的低频监督、每次热加载或中断前的明确批准及操作核对统一见 [操作者监督](docs/operator-supervision.md)。这些文档不加入 Agent 输入。
 
-部署方给 Agent 的输入统一维护于 [agent-inputs/](agent-inputs/README.md)。第一阶段保留专项 [instructions](agent-inputs/phase-one/instructions.md)；第二阶段直接组合 SOUL 与 [目标与验收](agent-inputs/phase-two/)及 [protocol](agent-inputs/shared/protocol.md)，无独立 instructions 文件。Host 每次只向主 Agent 和接任候选提供所选阶段的 Prompt；测试 Agent 的提示词由主 Agent 编写。第二阶段从保留版本接续的输入选择见[使用教程](docs/tutorial.md#选择阶段)，正式运行前的准备见[第二阶段方案](docs/plans/2026-10-31-phase-two.md)。
+部署方给 Agent 的输入统一维护于 [agent-inputs/](agent-inputs/README.md)。第一阶段保留专项 [instructions](agent-inputs/phase-one/instructions.md)；第二阶段直接组合 SOUL 与 [目标与验收](agent-inputs/phase-two/)及 [protocol](agent-inputs/shared/protocol.md)，无独立 instructions 文件。Host 每次只向主 Agent 和接任候选提供所选阶段的 Prompt；普通 `/sessions` worker 被禁止。第二阶段从保留版本接续的输入选择见[使用教程](docs/tutorial.md#选择阶段)，正式运行前的准备见[第二阶段方案](docs/plans/2026-10-31-phase-two.md)。
 
 运行目录使用 Host 本地时间命名，例如 `artifacts/rsi/run-20261031-110415-123456/`，可直接看出启动日期和时间；末段为微秒。
 
@@ -59,7 +59,7 @@ $$
 bash scripts/start-rsi.sh --resume-from "artifacts/rsi/<run-id>"
 ```
 
-`--resume-from` 也可由操作者明确恢复因有效外部 blocked 而主动停止的当前主 Agent：保持同 run、身份、工作区、模型与完整上下文，归档旧终态后继续；不恢复已完成 run、已交权旧主或已关闭 worker。不是自动重试；失败留下 pending 时先核查，不直接重启。详见[恢复协议](agent-inputs/shared/execution.md#上下文-checkpoint-与-resume)。
+`--resume-from` 也可由操作者明确恢复因有效外部 blocked 而主动停止的当前主 Agent：保持同 run、身份、工作区、模型与完整上下文，归档旧终态后继续；不恢复已完成 run、已交权旧主或已关闭会话。不是自动重试；失败留下 pending 时先核查，不直接重启。详见[恢复协议](agent-inputs/shared/execution.md#上下文-checkpoint-与-resume)。
 
 将 `<run-id>` 替换为要恢复的运行标识。恢复保留模型对话、工具结果和生成的 Harness，通过原 checkpoint 继续；目标、验收和部署方 Prompt 加载启动时的当前版本。缺少恢复入口、会话已主动提交或存在结果不明的工具调用时会明确报错。
 
@@ -77,7 +77,7 @@ $$
 H_1 \xrightarrow{\text{next run}} H_2 \xrightarrow{\text{next run}} H_3.
 $$
 
-必须显式指定来源目录，不需要人工整理接续包。多个分支都可以保留可用结果，下一轮从哪个分支开始由调用者明确选择；`latest-run.txt` 只记录最近启动的运行，不参与版本选择。Agent 在结束前声明保留哪些文件和启动命令；Host 保存快照，后续按这份结果加载，具体协议见[教程](docs/tutorial.md#让本轮结果能够直接用于下一轮)。
+必须显式指定来源目录，不需要人工整理接续包。单次运行按线性版本推进，下一轮从哪个保留结果开始由调用者明确选择；`latest-run.txt` 只记录最近启动的运行，不参与版本选择。Agent 在结束前声明保留哪些文件和启动命令；Host 保存快照，后续按这份结果加载，具体协议见[教程](docs/tutorial.md#让本轮结果能够直接用于下一轮)。
 
 这条命令用于人在运行之间主动发起下一轮。单次无人交互运行中，主 Agent 通过 `/evolution/trials` 试运行候选并决定是否交接；两种入口都使用同一套候选版本、Docker 执行、权限与资源管理。Agent 可以自行推进多代，用户无需为每一代重新执行命令。
 

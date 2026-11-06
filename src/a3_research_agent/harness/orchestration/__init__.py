@@ -1,1 +1,0 @@
-"""Research Harness orchestration components."""

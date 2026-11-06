@@ -153,6 +153,7 @@ class Gateway(
             self.usage_log.parent / ".host" / "web", WebConfig()
         )
         self.app.state.start_local_harness = self.start_local_harness
+        self.app.state.validate_exports = self.validate_exports
         self.vision_slots = threading.BoundedSemaphore(2)
         self.app.add_api_route("/telemetry", self.read_telemetry, methods=["GET"])
         self.app.add_api_route(

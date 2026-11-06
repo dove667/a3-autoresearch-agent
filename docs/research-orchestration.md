@@ -1,131 +1,17 @@
-# Research coordination and bounded workers
+# 单研究 Agent 的工作流
 
-Worker evidence paths are relative to the worker workspace. Collection preserves
-the original report bytes and returns `evidence_paths` plus
-`evidence_source_session`: use those coordinator-relative paths after collection.
-Reports may cite a worker-local archive which is now under
-`orchestration/results/<assignment>/context-history/`; a bare citation is not a
-file in the coordinator's `context-history/` directory. Recovery accepts a legacy
-bare summary citation only when exactly one collection receipt identifies its
-full SHA256 and the collected bytes verify. Missing own tool-output previews,
-corrupt files, symlinks and ambiguous citations still require explicit recovery;
-no other session or filesystem is searched or granted by this compatibility rule.
+当前研究 Agent 自己实现 Policy 与 Harness、采集数据、训练评估、修复脚本并判断验收。局部检查使用本身份工具与远程作业，普通 `POST /sessions` worker 创建被拒绝。完整 Harness 使用唯一 `/evolution/trials` 候选：前任等待候选自测，候选交权前只自测并等待；拒绝回收或由原候选接任，旧主交权后退出。单次运行不分叉并行研究 Agent。
 
-The main Agent owns research direction and judgment, assigns Policy and Harness work including
-acceptance tests, coordinates dependencies, reviews results and decides adoption, rejection and
-succession. Concrete implementation, data collection, test execution, training and evaluation
-belong to workers. Main-identity dispatch, validation coordination and trial/handoff operations
-remain main responsibilities through existing authorized interfaces. Delegating a test does not
-transfer acceptance responsibility or prohibit its required main-identity dispatch. It grants no
-new worker authority and does not lower validation requirements. Simple coordination needs no
-additional worker. The [orchestrator skill](../skills/research-orchestrator/SKILL.md) is an
-optional toolbox: choose, adjust, skip or combine methods; it is not a fixed workflow.
+独立且输入就绪的远程作业先在授权资源内并行提交，再统一查询与收集；有依赖的作业按依赖推进。采集与评估中的独立 episode 统一通过 `/run/a3/episode_executor.py` 执行，固定科学参数、seed、快照和输出，复用已完成结果。
 
-## Existing authority and optional Harness support
+普通脚本、参数与结果解析问题由当前 Agent 在当前任务中修复并验证；需要 Host 权限、凭据、服务或资源配置变更时，保留错误证据，向操作者报告所缺条件和具体操作。
 
-The Host still has ordinary `purpose=worker` sessions, separate workspaces, the worker model
-route and unchanged resource limits. Policy/Harness are assignment roles, not new Host
-capabilities. Raw API availability does not authorize the main Agent to perform worker work.
-The optional recovery Harness supplies `delegate` operations; existing gateway calls remain
-usable inside the same responsibilities and permissions:
+研究方向与下一步由 Agent 依据真实轨迹、科学问题、成本和信息价值选择；Policy 与 Harness 改进均保留。各项实验关联版本、协议、记忆、原始结果和保留或拒绝决定，代际交接保留已确认结论、未完成事项、在途作业、技能与授权资产。既有科学比较要求和固定权限继续生效。
 
-- `assign`: id, role (`policy` or `harness`), objective, deliverables, stop_condition,
-  selected context_files and read_only_exports. It constructs a complete bounded source
-  package, fresh checkpoint and explicit worker-task.json; it never clones the main dialogue.
-- `collect`: retrieve a stopped worker's report and exact referenced artifacts through the
-  authorized session interface, verify hashes and accessible ready exports, then save evidence. An explicitly stopped invalid delivery may be rejected
-  with reasons without pretending its scientific outcome is known.
-- `decide`: record adopt, reject or follow_up with a reason after evidence collection. This
-  does not mark scientific acceptance, choose a Host trial winner or execute integration.
-- `list`: bounded operational assignment state, retained outside rolling model summaries.
-- `reconcile`: inspect accessible sessions for a matching assignment and source hashes after
-  an uncertain creation response. It never automatically resubmits an uncertain request.
+改进完整 Harness 前固定改动、自测清单及基线快照。前任读取真实结果后作出决定，候选不能自晋升或创建下一个候选；采用时同一个进程继续研究。局部修复可在当前身份直接检查，不为每次源码修改强制换代。
 
-For a fixed candidate's pure package-builder comparison, optional `assign_prepared` accepts
-hash-pinned, already collected preparation data and source provenance. It uses the same
-reservation, ordinary worker identity, collection and reconciliation path without importing
-submitted code in the coordinator. See [prepared validation](prepared-worker-validation.md)
-for the explicit contract and evidence limits.
+固定接口见 [执行说明](../agent-inputs/shared/execution.md#主身份与候选试运行)，科学比较见当前阶段 goal、acceptance 与 protocol。历史多 Agent 分工材料仅留在原 run 和历史 plans 中，不再作为当前工具或执行建议。
 
-These are independent operations, not a required sequence for every coordination action.
-A worker runs `python -m a3_research_agent.harness.agent --resume --worker-task worker-task.json`. Its own completion
-contract is worker-result.json, not the entire run's acceptance. Resume/continuation preserves
-that entry command; reports remain claims for the main Agent to evaluate. Reports accept only the declared fields,
-with a text summary of at most 4000 characters; detailed logs belong in hashed evidence files.
-Evidence paths name local worker-workspace files. Remote `/outputs` paths are provenance,
-not local evidence: transfer through an authorized artifact interface or seal/grant exports.
-A worker receives a bounded `worker_delivery` status in its operational frame, including
-validation failures; invalid local delivery does not silently become scientific failure
-or a successful terminal result. Reports and evidence remain unchanged by validation. A worker cannot
-promote itself or inherit another identity's credentials. Test helpers and candidate-validation
-sessions retain their distinct model-purpose contract.
+同一 run 内全部已登记研究身份可通过 Host 接口读取彼此的源码、记忆、可见轨迹、日志、实验产物、作业状态和本轮已授权的只读 exports。按当前问题读取并保留来源与版本；这些研究内容可供主 Agent 和唯一候选共享。工作区写入仍限本身份，取消作业、封存或其他管理操作仍限本身份或已采用的线性交接权限。Host 凭据与私有控制状态、其他 run 及外部用户数据不在共享范围；跨 run 只能使用部署方明确导入或授权的材料。
 
-The standard Harness adapter rejects direct main POST/jobs, including equivalent query and
-trailing-slash URLs; it keeps result inspection and coordination available. This is an
-execution contract of that loaded Harness, not a new security boundary in Host. The main
-must also follow its role when designing work and using other tools.
-
-## Context, references and assets
-
-Only explicitly selected research or collected-result files accompany an assignment. Core
-source hashes and the bounded task are recorded before creating the session. Research
-reference skills are materialized from active frozen input hashes and copied with their
-catalog/provenance for on-demand discovery. Whole reference texts are not automatically
-injected into every decision. Existing Agent-improved skill entries and old reference
-versions are preserved; publication is not evidence of performance improvement.
-
-Workers must explicitly receive the relevant frozen goal/protocol/conditions, authorized data
-and stop conditions. The task records `coordinator_session_id` from the dispatching Host identity, not from
-model-supplied arguments. Workers use it as the explicit `session_id` in the existing
-export grant API; `to_main` is not an alias. The ID grants no new authority. If succession
-has changed the recipient, report that boundary instead of guessing.
-
-A remote job ID alone is not a returned asset: the worker seals a ready
-export and grants it to current main before returning it. Main can then pass an accessible
-export via read_only_exports. No source_owner is forged and no token is shared.
-
-The ledger reserves creation before POST. A missing response remains uncertain; inspect and
-reconcile instead of replaying. Completed decisions are archived when the active ledger fills,
-not used as a lifetime research limit. Each assignment has a fresh nonce and full
-task hash, so an archived ID cannot bind a new question to an old worker. Failed or unavailable delivery is not scientific
-failure or success and cannot be adopted as a verified result; rejection does not cancel
-uninspected remote jobs.
-
-## Integration, handoff and remaining boundary
-
-When a Harness worker returns tested work, main promptly decides at a safe Policy boundary,
-then arranges required version-specific validation by workers and judges the evidence before
-integration or handoff. It must not orphan active workers: a successor normally cannot manage the predecessor's other
-children. The adapter checks the authorized descendant status snapshot before retaining a
-candidate and refuses while other workers are active or unknown; it never cancels them to
-force handoff. Settle work and explicitly transfer accessible evidence and sealed exports.
-Self-status returns only is_main/has_been_main role flags, not other identities. A former
-coordinator saves its checkpoint and exits instead of continuing research after handoff.
-
-A worker that exits before sealing/granting remote assets can leave results its main cannot
-read directly. This implementation honestly records incomplete delivery; it does not add an
-implicit remote-owner bypass or generic worker restart permission. Full autonomous recovery
-of that case would need a separately reviewed, bounded Host lifecycle operation preserving
-the same stopped worker identity, scope, checkpoint and job references. Existing external
-operator recovery remains a distinct intervention and must be recorded as such.
-
-Tests use real local worker processes and Host routing with a fake provider/remote backend,
-plus a test-only workspace mount emulation. They establish task isolation, routing, report
-verification and coordination contracts, not Docker security, real training quality or a
-long-duration reliability claim. Source synchronization does not hotload a running Agent.
-
-
-Report prose is not a recovery control header. Only program-written summary/fallback
-provenance and explicit tool-preview/spill dependencies are mandatory control
-sources; a missing narrative citation remains an evidence gap for the coordinator.
-Malformed control headers still fail closed. Collection can retrieve hash-addressed
-`context-history/tool-output-<SHA256>.json` citations from the same worker through
-its existing artifact interface. It preserves original reports, verifies bytes and
-records `reference_hashes`/`reference_delivery` with coordinator-relative paths.
-It does not fetch conversation snapshots, arbitrary paths or other sessions.
-Optional references are limited to eight artifact requests (each retains the
-existing 1 MiB admitted-file bound), 1 MiB total verified copies, and one aggregate
-omitted-count record. This is not a shared 1 MiB transport quota. Unavailable or
-unverified optional citations do not certify scientific evidence or become a
-requirement to recreate closed experiments. Explicitly declared evidence keeps
-its existing strict hash and delivery contract.
+采用候选后，Host 沿已保留的线性交接记录继承前任作业的管理权限；远程作业保留原归属，不重复执行。尚未采用的候选可读本轮研究内容，但不能据此取消或管理前任作业。

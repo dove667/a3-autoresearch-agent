@@ -13,7 +13,7 @@ from pathlib import Path, PurePosixPath
 from a3_research_agent.workspace.paths import workspace_path
 
 ACTIVE_STATES = {"created", "running", "restarting", "paused"}
-MAX_ACTIVE_CANDIDATES = 5
+MAX_ACTIVE_CANDIDATES = 2
 MAX_INPUT_FILES = 128
 MAX_INPUT_BYTES = 20 * 1024 * 1024
 MAX_ARTIFACT_BYTES = 32 * 1024 * 1024

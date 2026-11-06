@@ -8,6 +8,9 @@ HARNESS_MODULES = (
     "__init__.py",
     "agent.py",
     "skill_registry.py",
+    "input_skills.py",
+    "lifecycle.py",
+    "waiting.py",
     "analysis/__init__.py",
     "analysis/client.py",
     "context/__init__.py",
@@ -17,15 +20,6 @@ HARNESS_MODULES = (
     "memory/__init__.py",
     "memory/recall.py",
     "memory/state.py",
-    "orchestration/__init__.py",
-    "orchestration/assignments.py",
-    "orchestration/common.py",
-    "orchestration/contracts.py",
-    "orchestration/store.py",
-    "orchestration/waiting.py",
-    "orchestration/packages.py",
-    "orchestration/collection.py",
-    "orchestration/dispatch.py",
 )
 EXTENSION_NAMES = frozenset({"skill_tools.py", "web_tools.py"})
 

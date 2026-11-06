@@ -1,6 +1,7 @@
 """Launch a cold start, resume a run, or continue a retained Harness."""
 
 import argparse
+import hashlib
 import json
 import os
 import secrets
@@ -320,10 +321,12 @@ def launch_run(args, run: Path, a3: Path, image: str, start) -> None:
         time.sleep(0.05)
     if not server.started:
         raise RuntimeError("Gateway failed to start")
+    previous_deployment = (inputs / "deployment.json").read_bytes() if resuming else None
     if not resuming:
         (inputs / "deployment.json").write_text(
             json.dumps(
                 {
+                    "version": "0.2.1",
                     "gateway": endpoint,
                     "web": web_gateway.status(),
                     "workspace": "/workspace",
@@ -343,13 +346,15 @@ def launch_run(args, run: Path, a3: Path, image: str, start) -> None:
                     "model_api_key": "$A3_GATEWAY_TOKEN",
                     "remote_a3": "/opt/a3",
                     "remote_workspace": "/workspace",
-                    "remote_outputs": "/outputs (persistent within the same worker identity)",
+                    "remote_outputs": "/outputs (persistent within a research identity; adopted main inherits predecessor job access)",
                     "remote_models": "/models (read-only, when configured)",
                     "remote_model_cache": "/model-cache (read-only, when configured)",
                     "remote_datasets": "/datasets (read-only, when configured)",
                     "sessions": {
-                        "create": "POST /sessions {command: [...], files: {...}} or {command: [...], version_id: ...}",
-                        "list": "GET /sessions (managed descendants and parent relationships)",
+                        "create": "No worker creation; POST /sessions is disabled for Agent credentials",
+                        "trial": "POST /evolution/trials {baseline_version, checklist, command: [...], files: {...}}; one pending successor; predecessor waits for self-tests then retains or rejects",
+                        "list": "GET /sessions (all registered research identities in this run)",
+                        "read_scope": "Same-run research source, memory, logs, versions, job state, artifacts and authorized readonly exports are shared; mutations retain owner/adopted-lineage checks",
                         "status": "GET /sessions/{session_id}",
                         "self_status": "GET /sessions/self",
                         "self_stop": "POST /sessions/self/stop {reason: ...}; save checkpoint and evidence first; descendants remain running",
@@ -389,10 +394,41 @@ def launch_run(args, run: Path, a3: Path, image: str, start) -> None:
         )
     else:
         deployment = json.loads((inputs / "deployment.json").read_text())
+        deployment["version"] = "0.2.1"
+        deployment["sessions"]["create"] = (
+            "No worker creation; POST /sessions is disabled for Agent credentials"
+        )
+        deployment["sessions"]["list"] = (
+            "GET /sessions (all registered research identities in this run)"
+        )
+        deployment["sessions"]["read_scope"] = (
+            "Same-run research source, memory, logs, versions, job state, artifacts and authorized readonly exports are shared; mutations retain owner/adopted-lineage checks"
+        )
         deployment["sessions"]["max_active"] = MAX_ACTIVE_CANDIDATES
         deployment["remote_limits"] = remote_limits()
         deployment["web"] = web_gateway.status()
         (inputs / "deployment.json").write_text(json.dumps(deployment, indent=2))
+    current_deployment = (inputs / "deployment.json").read_bytes()
+    if previous_deployment is not None and previous_deployment != current_deployment:
+        previous_hash = hashlib.sha256(previous_deployment).hexdigest()
+        archive = run / ".host/deployment-revisions" / (previous_hash + ".json")
+        archive.parent.mkdir(parents=True, exist_ok=True)
+        if not archive.exists():
+            archive.write_bytes(previous_deployment)
+        with (run / ".host/deployment-events.jsonl").open("a") as stream:
+            stream.write(
+                json.dumps(
+                    {
+                        "version": "0.2.1",
+                        "previous_sha256": previous_hash,
+                        "sha256": hashlib.sha256(current_deployment).hexdigest(),
+                        "time": time.time(),
+                    }
+                )
+                + "\n"
+            )
+    if private_inputs:
+        (private_inputs / "deployment.json").write_bytes(current_deployment)
     config = yaml.safe_load((inputs / "bootstrap.yaml").read_text())
     if args.verify_deployment:
         config["agent"].update(
@@ -563,15 +599,7 @@ def launch_run(args, run: Path, a3: Path, image: str, start) -> None:
             actor, parent_version = app.state.result_location()
 
             def validate_exports(identifiers):
-                result = remote_for_run(
-                    "exports-check",
-                    {
-                        "experiment_id": actor or run_id,
-                        "export_ids": identifiers,
-                    },
-                )
-                if result.get("status") == "error":
-                    raise ValueError("Retained exports must be readable and sealed")
+                app.state.validate_exports(actor or run_id, identifiers)
 
             selected = publish_run_result(
                 run,

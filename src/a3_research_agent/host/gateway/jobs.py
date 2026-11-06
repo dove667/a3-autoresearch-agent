@@ -14,10 +14,76 @@ from .schemas import (
 
 
 class JobRoutes:
+    def research_scopes(self, actor):
+        """Only the adopted main inherits the recorded, retained predecessor line."""
+        scopes = [actor]
+        if self.evolution and actor == self.evolution.main_owner:
+            for transition in reversed(self.evolution.transitions):
+                if transition["to"] == scopes[-1] and transition["from"] not in scopes:
+                    scopes.append(transition["from"])
+        return scopes
+
+    def research_read_scopes(self, actor):
+        with self.session_lock:
+            scopes = self.research_scopes(actor)
+            if actor in self.root_owners or actor in self.children:
+                scopes.extend(sorted((self.root_owners | self.children.keys()) - set(scopes)))
+            return scopes
+
+    def job_owner(self, actor, job_id, *, shared_read=False):
+        with self.session_lock:
+            scopes = (
+                self.research_read_scopes(actor) if shared_read else self.research_scopes(actor)
+            )
+            for scope in scopes:
+                if job_id in self.jobs.get(scope, set()):
+                    return scope
+        return actor
+
+    def accessible_export(self, actor, export_id):
+        """Materialize same-run read access before mounting shared research assets."""
+        for scope in self.research_read_scopes(actor):
+            try:
+                record = self.remote(
+                    "export-status", {"experiment_id": scope, "export_id": export_id}
+                )
+            except HTTPException as error:
+                if error.status_code != 403:
+                    raise
+                continue
+            if scope != actor and record.get("status") == "ready":
+                self.remote(
+                    "export-grant",
+                    {"experiment_id": scope, "export_id": export_id, "recipient": actor},
+                )
+            return scope, record
+        raise HTTPException(403, "Export is not accessible")
+
+    def validate_exports(self, actor, identifiers):
+        """Validate retained/local selections with the same bounded controller requests."""
+        for offset in range(0, len(identifiers), 64):
+            batch = identifiers[offset : offset + 64]
+            try:
+                self.remote("exports-check", {"experiment_id": actor, "export_ids": batch})
+            except HTTPException as error:
+                if error.status_code != 403 or len(self.research_read_scopes(actor)) == 1:
+                    raise
+                for identifier in batch:
+                    self.accessible_export(actor, identifier)
+                self.remote("exports-check", {"experiment_id": actor, "export_ids": batch})
+
     def submit(self, body: JobRequest, authorization: Annotated[str | None, Header()] = None):
         with self.session_lock:
             self.accepting_resources()
             experiment = self.owner(authorization)
+            if self.evolution:
+                if experiment == self.evolution.main_owner and self.evolution.pending():
+                    raise HTTPException(
+                        409, "Predecessor waits for the single successor trial before new research"
+                    )
+                retired = any(item["from"] == experiment for item in self.evolution.transitions)
+                if retired:
+                    raise HTTPException(403, "Retired main cannot submit new research")
             request = body.model_dump(exclude_none=True, exclude={"workspace_files"})
             source_files = []
             if body.workspace_files:
@@ -60,6 +126,8 @@ class JobRoutes:
                 request["files"] = files
             if not body.input_exports:
                 request.pop("input_exports")
+            elif len(self.research_read_scopes(experiment)) > 1:
+                self.validate_exports(experiment, body.input_exports)
             result = self.remote("submit", request | {"experiment_id": experiment})
             if result.get("job_id"):
                 self.jobs.setdefault(experiment, set()).add(result["job_id"])
@@ -79,7 +147,12 @@ class JobRoutes:
             return result
 
     def list_exports(self, authorization: Annotated[str | None, Header()] = None):
-        return self.remote("exports-list", {"experiment_id": self.owner(authorization)})
+        actor = self.owner(authorization)
+        exports = {}
+        for scope in reversed(self.research_read_scopes(actor)):
+            result = self.remote("exports-list", {"experiment_id": scope})
+            exports.update({entry["export_id"]: entry for entry in result.get("exports", [])})
+        return {"exports": list(exports.values())}
 
     def publish_export(
         self,
@@ -88,33 +161,38 @@ class JobRoutes:
         authorization: Annotated[str | None, Header()] = None,
     ):
         self.accepting_resources()
+        actor = self.owner(authorization)
         return self.remote(
             "export-create",
-            {**body.model_dump(), "experiment_id": self.owner(authorization), "job_id": job_id},
+            {
+                **body.model_dump(),
+                "experiment_id": self.job_owner(actor, job_id, shared_read=True),
+                "job_id": job_id,
+            },
         )
 
     def export_status(self, export_id: str, authorization: Annotated[str | None, Header()] = None):
-        return self.remote(
-            "export-status", {"experiment_id": self.owner(authorization), "export_id": export_id}
-        )
+        return self.accessible_export(self.owner(authorization), export_id)[1]
 
     def export_manifest(
         self, export_id: str, authorization: Annotated[str | None, Header()] = None
     ):
-        return self.remote(
-            "export-manifest", {"experiment_id": self.owner(authorization), "export_id": export_id}
-        )
+        scope, _ = self.accessible_export(self.owner(authorization), export_id)
+        return self.remote("export-manifest", {"experiment_id": scope, "export_id": export_id})
 
     def require_export_recipient(self, actor, session_id):
         if self.evolution is None:
             raise HTTPException(403, "Only the current main Agent can share exports")
-        # Workers can deliver results to the current main without gaining sibling access.
-        if actor in self.children and session_id == self.evolution.main_owner:
+        # A trial can return its bounded validation assets to the predecessor.
+        if (
+            self.evolution.trials.get(actor, {}).get("status") == "testing"
+            and session_id == self.evolution.main_owner
+        ):
             return
         self.deployment_call(self.evolution.require_main, actor)
         record = self.children.get(session_id)
         if not record or record["parent"] != actor or record["closed"]:
-            raise HTTPException(403, "Export recipient must be an active direct worker")
+            raise HTTPException(403, "Export recipient must be the active linear successor")
 
     def grant_export(
         self,
@@ -126,6 +204,7 @@ class JobRoutes:
             self.accepting_resources()
             actor = self.owner(authorization)
             self.require_export_recipient(actor, body.session_id)
+            self.accessible_export(actor, export_id)
             return self.remote(
                 "export-grant",
                 {"experiment_id": actor, "export_id": export_id, "recipient": body.session_id},
@@ -140,6 +219,7 @@ class JobRoutes:
                 raise HTTPException(403, "Only the current main Agent revokes worker access")
             self.deployment_call(self.evolution.require_main, actor)
             self.require_export_recipient(actor, session_id)
+            self.accessible_export(actor, export_id)
             return self.remote(
                 "export-revoke",
                 {"experiment_id": actor, "export_id": export_id, "recipient": session_id},
@@ -150,10 +230,17 @@ class JobRoutes:
         return self.remote("export-delete", {"experiment_id": actor, "export_id": export_id})
 
     def status(self, job_id: str, authorization: Annotated[str | None, Header()] = None):
-        return self.remote("status", {"experiment_id": self.owner(authorization), "job_id": job_id})
+        actor = self.owner(authorization)
+        return self.remote(
+            "status",
+            {"experiment_id": self.job_owner(actor, job_id, shared_read=True), "job_id": job_id},
+        )
 
     def cancel(self, job_id: str, authorization: Annotated[str | None, Header()] = None):
-        return self.remote("cancel", {"experiment_id": self.owner(authorization), "job_id": job_id})
+        actor = self.owner(authorization)
+        return self.remote(
+            "cancel", {"experiment_id": self.job_owner(actor, job_id), "job_id": job_id}
+        )
 
     def artifact(
         self,
@@ -162,7 +249,12 @@ class JobRoutes:
         authorization: Annotated[str | None, Header()] = None,
         area: Literal["workspace", "outputs"] = "workspace",
     ):
-        payload = {"experiment_id": self.owner(authorization), "job_id": job_id, "path": path}
+        actor = self.owner(authorization)
+        payload = {
+            "experiment_id": self.job_owner(actor, job_id, shared_read=True),
+            "job_id": job_id,
+            "path": path,
+        }
         if area != "workspace":
             payload["area"] = area
         try:

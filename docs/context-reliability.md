@@ -1,7 +1,7 @@
 # Context recovery and model roles
 
 The optional overlay is maintained in `src/a3_research_agent/harness/`, with
-context, memory, analysis and orchestration components.
+context, memory and analysis components, with linear candidate evolution.
 
 Build a new explicitly derived package using
 `a3_research_agent.packaging.harness_payload.build_harness_payload(extension_sources)`.
@@ -9,8 +9,7 @@ The optional mapping accepts only explicitly selected UTF-8 `skill_tools.py` and
 `web_tools.py` source. Copy **every** returned path/content pair into the package,
 preserve its compatible memory and evidence, and record source/version hashes and
 the intervention. The output includes package modules and the token estimator. Start it with
-`python -m a3_research_agent.harness.agent --resume`; worker orchestration lives
-under `a3_research_agent/harness/orchestration/`.
+`python -m a3_research_agent.harness.agent --resume`; research stays in the current Agent, with one formal trial candidate.
 
 Export never executes candidate code or selects a live workspace. It does not create
 a retained manifest or authorize dispatch: callers must explicitly include the returned
@@ -126,15 +125,11 @@ arbitrary role-model mappings. The supported service-tier override remains
 | --- | --- |
 | Current main, root builder | Primary model |
 | Formal candidate-main trial | Primary model and current phase contract |
-| Ordinary helper/test assistant | Worker override, otherwise primary |
-| Main-assigned `purpose: candidate_validation` session | Primary model and phase contract, without adoption authority |
 | `POST /v1/summary` | Summary override, otherwise primary; data transformation only |
 
 A test assistant and a model under test are different roles. Testing a future main's
 behavior with a helper model would not establish behavior of the deployed main.
-Only the current main may assign the ordinary-session `candidate_validation`
-purpose. It changes neither artifact/data permissions nor the existing formal
-trial/decision mechanism. Role and requested/actual model options are audited.
+Only the one formal `/evolution/trials` candidate can test a future main. Ordinary `/sessions` creation and `candidate_validation` helpers are denied to Agent tokens. Role and requested/actual model options are audited.
 
 `POST /v1/summary` accepts the full `transcript` and a relative
 `context-history/snapshot-<SHA256>.json` source reference. It cannot receive client

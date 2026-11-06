@@ -7,7 +7,7 @@
 ├── src/a3_research_agent/  可安装的固定实现与显式派生 Harness overlay
 │   ├── host/              Gateway、会话、run、输入、模型、网络与轨迹
 │   ├── execution/         Controller、调度、导出与镜像准备
-│   ├── harness/           上下文、记忆、分析与 worker 编排
+│   ├── harness/           上下文、记忆、分析与线性演化
 │   ├── packaging/         完整 Harness 源码载荷导出
 │   ├── workspace/         工作区路径校验
 │   └── cli/               启动及操作者命令
@@ -21,7 +21,7 @@
 │   └── phase-two/          联合优化 goal、acceptance；protocol 位于 shared/
 ├── tests/runtime/          本地和远程基础设施的回归测试
 ├── scripts/                薄启动入口
-├── skills/                 Agent 按需读取的研究与协作方法包
+├── skills/                 Agent 按需读取的研究与线性演化方法包
 ├── .env.example            统一部署配置模板
 ├── .env                    本机部署配置，不纳入 Git
 ├── third_party/            固定版本的 mini-SWE-agent submodule
@@ -39,7 +39,7 @@
 | `src/a3_research_agent/harness/` | 显式派生包使用的 overlay；不自动替换历史生成代码 | 是 |
 | `src/a3_research_agent/packaging/` | 按显式清单交付完整包源码 | 是 |
 | `agent-inputs/` | 全部部署方 Agent 输入（README 仅作维护者导航）；每次运行另存版本化副本 | 是 |
-| `skills/` | 供 Agent 发现与按需读取的研究方法和协作参考 | 是 |
+| `skills/` | 供 Agent 发现与按需读取的研究方法和版本交接参考 | 是 |
 | `.env.example`、`.env` | 部署参数的公共模板与本机实际值 | 仅模板 |
 | `tests/runtime/` | 验证固定部署逻辑，不承担 A3 自身的开发测试 | 是 |
 | `reports/` | 可选的本地报告工程，保存展示用正文、数据与图像 | 否 |
@@ -127,7 +127,7 @@ artifacts/rsi/run-*/
 
 启动流程与参数见[使用教程](tutorial.md)，执行单元和调用关系见[系统架构](architecture.md)。`continuation.py` 负责跨轮结果的机械保存与读取；`retained.json` 是运行结果，Agent 的记忆实现仍归属其生成的 Harness。
 
-第一阶段的 `agent-inputs/phase-one/instructions.md`（或专项目录）映射到 `inputs/phase-instructions.md`；新第二阶段没有这层，直接注入 SOUL、goal、acceptance 及仅第二阶段选择的 `agent-inputs/shared/protocol.md`。execution 保持挂载可读。目标与验收仍从 `agent-inputs/<phase>/` 读取，不存在额外 common Prompt。普通 worker 不自动加载主 Agent 核心输入，其任务由主 Agent 编写。旧自定义输入快照可保留显式的阶段层，恢复不改写历史。
+第一阶段的 `agent-inputs/phase-one/instructions.md`（或专项目录）映射到 `inputs/phase-instructions.md`；新第二阶段没有这层，直接注入 SOUL、goal、acceptance 及仅第二阶段选择的 `agent-inputs/shared/protocol.md`。execution 保持挂载可读。目标与验收仍从 `agent-inputs/<phase>/` 读取，不存在额外 common Prompt。普通 worker 创建被拒绝；当前 Agent 自行完成局部实现和验证。旧自定义输入快照可保留显式的阶段层，恢复不改写历史。
 
 每轮 `.host/` 由 Host 私有维护，保存恢复所需身份与注册表、进程锁；不挂载给 Agent，不作为可分享产物。`resume-events.jsonl` 记录原 run 内的恢复事件。
 

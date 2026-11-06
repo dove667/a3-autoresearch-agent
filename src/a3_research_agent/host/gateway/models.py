@@ -55,11 +55,7 @@ class ModelRoutes:
                 purpose == "decision"
                 and (self.phase_instructions or self.input_versions)
                 and self.evolution
-                and (
-                    experiment == self.evolution.main_owner
-                    or trial.get("status") == "testing"
-                    or self.children.get(experiment, {}).get("purpose") == "candidate_validation"
-                )
+                and (experiment == self.evolution.main_owner or trial.get("status") == "testing")
             )
         role = (
             "summary"
@@ -68,7 +64,6 @@ class ModelRoutes:
             if purpose == "vision"
             else "candidate"
             if trial.get("status") == "testing"
-            or self.children.get(experiment, {}).get("purpose") == "candidate_validation"
             else "main"
             if self.evolution is None
             or experiment == self.evolution.main_owner
@@ -212,11 +207,7 @@ class ModelRoutes:
             trial = self.evolution.trials.get(experiment, {}) if self.evolution else {}
             receives_phase = bool(
                 self.evolution
-                and (
-                    experiment == self.evolution.main_owner
-                    or trial.get("status") == "testing"
-                    or self.children.get(experiment, {}).get("purpose") == "candidate_validation"
-                )
+                and (experiment == self.evolution.main_owner or trial.get("status") == "testing")
             )
         phase = (
             self.input_versions.model_instructions()[1]
@@ -238,7 +229,6 @@ class ModelRoutes:
             or experiment == self.evolution.main_owner
             or experiment in self.root_owners
             or trial.get("status") == "testing"
-            or self.children.get(experiment, {}).get("purpose") == "candidate_validation"
         )
         window = (
             self.token_budget.main_context_tokens
@@ -335,7 +325,7 @@ class ModelRoutes:
                 return self.remote(
                     "artifact",
                     {
-                        "experiment_id": frame_owner,
+                        "experiment_id": self.job_owner(frame_owner, job_id, shared_read=True),
                         "job_id": job_id,
                         "path": path,
                         "max_bytes": 512 * 1024,

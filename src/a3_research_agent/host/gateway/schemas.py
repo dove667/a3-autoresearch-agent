@@ -62,7 +62,7 @@ class SessionRequest(BaseModel):
     version_id: str | None = None
     parent_version: str | None = None
     read_only_exports: list[str] = Field(default_factory=list, max_length=64)
-    purpose: Literal["worker", "candidate_validation"] = "worker"
+    purpose: Literal["successor"] = "successor"
     workspace_files: list[WorkspaceFileReference] = Field(default_factory=list, max_length=16)
 
 

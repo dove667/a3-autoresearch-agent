@@ -254,6 +254,14 @@ class GatewayState:
             raise HTTPException(403, "This identity has no candidate session")
         return record
 
+    def readable_session(self, authorization, session_id):
+        """Allow registered identities to read this run's research workspaces."""
+        self.owner(authorization)
+        record = self.children.get(session_id)
+        if record is None:
+            raise HTTPException(403, "Session is not registered in this run")
+        return record
+
     def remote(self, operation: str, payload: dict) -> dict:
         try:
             result = self.remote_call(operation, payload)

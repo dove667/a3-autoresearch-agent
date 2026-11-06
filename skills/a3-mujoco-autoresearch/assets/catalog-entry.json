@@ -1,6 +1,6 @@
 {
   "id": "a3-mujoco-autoresearch",
-  "version": "0.1.7",
+  "version": "0.1.10",
   "status": "reference",
   "comparison_status": "compare-not-proven",
   "description": "A3 MuJoCo autoresearch and model training: ACT, Diffusion/Flow, VLA, world models, diagnostics and paired evaluation.",
@@ -62,6 +62,18 @@
     {
       "version": "0.1.7",
       "change": "Route independent collection and evaluation episodes through the quota-aware unified executor; preserve protocol parameters and completed results."
+    },
+    {
+      "version": "0.1.8",
+      "change": "Use one research Agent, parallel independent remote jobs and one linear Harness trial; remove worker delegation without changing scientific evaluation requirements."
+    },
+    {
+      "version": "0.1.9",
+      "change": "Share research reads and analyzer reports among registered identities in one run; retain owner/adopted-lineage mutation authority and explicit cross-run grants."
+    },
+    {
+      "version": "0.1.10",
+      "change": "Preserve evidence-backed behavioral policy progress beyond aggregate score and broaden exploration across supported trainable model families."
     }
   ]
 }

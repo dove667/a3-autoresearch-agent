@@ -2,6 +2,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 
 from fastapi.testclient import TestClient
+from host_fixtures import host_create_session
 
 from a3_research_agent.host.gateway.app import create_app
 
@@ -37,14 +38,14 @@ def test_status_snapshot_cannot_miss_a_concurrently_created_successor(tmp_path):
         )
     )
     root_headers = {"Authorization": "Bearer root-token"}
-    parent = client.post("/sessions", headers=root_headers, json={"command": ["true"]}).json()[
+    parent = host_create_session(client, headers=root_headers, json={"command": ["true"]}).json()[
         "session_id"
     ]
 
     def create_successor():
         assert inspecting.wait(3)
-        response = client.post(
-            "/sessions",
+        response = host_create_session(
+            client,
             headers={"Authorization": "Bearer " + backend.tokens[parent]},
             json={"command": ["true"]},
         )

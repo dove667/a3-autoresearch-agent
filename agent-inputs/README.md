@@ -35,7 +35,7 @@ agent-inputs/
 
 Host 根据 phase 与 task_profile 选择一个阶段目录，并使用 SOUL 与共享接口文件。shared/protocol.md 只是存放位置共享，仍仅第二阶段加载，不加入第一阶段/G。容器内仍使用 `/run/input/{SOUL.md,goal.md,acceptance.md,phase-instructions.md,protocol.md,bootstrap.yaml,execution.md,readiness-task.md,workspace-instructions.md}`（phase-instructions 仅第一阶段必需，protocol 仅第二阶段必需；旧自定义快照可保留显式 phase-instructions）。完整映射和版本规则见 [输入加载说明](../docs/agent-inputs.md)，实现清单在 `src/a3_research_agent/host/inputs/versions.py`。
 
-SOUL、goal、acceptance，以及第一阶段 instructions 或第二阶段 protocol 正文进入主 Agent／接任候选模型请求；其余文件保持只读可访问。普通 worker 的任务仍由主 Agent 编写。`shared/workspace.md` 也用于构建工作区的 `harness/AGENTS.md`。目录整理不改变身份、权限、目标、验收或研究协议。
+SOUL、goal、acceptance，以及第一阶段 instructions 或第二阶段 protocol 正文进入主 Agent／接任候选模型请求；其余文件保持只读可访问。普通 `/sessions` worker 被禁止，具体研究由当前 Agent 自己完成。`shared/workspace.md` 也用于构建工作区的 `harness/AGENTS.md`。目录整理不改变身份、权限、目标、验收或研究协议。
 
 文件名 SOUL.md 保留，仓库根不再维护重复副本。execution 统一维护于 `shared/execution.md`。各输入按实际内容独立维护版本。新 manifest 记录新源路径并产生新 revision，旧 run 的历史 manifest 与输入快照保留原样。
 

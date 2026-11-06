@@ -278,7 +278,9 @@ class EpisodeExecutor:
                 elif row["status"] != "pending":
                     raise ValueError("Reconcile unresolved episode before reuse: " + identifier)
                 elif report.exists():
-                    raise ValueError("Untracked report exists; reconcile before running: " + identifier)
+                    raise ValueError(
+                        "Untracked report exists; reconcile before running: " + identifier
+                    )
             else:
                 if report.exists():
                     raise ValueError(
@@ -291,7 +293,9 @@ class EpisodeExecutor:
         identifier = item["id"]
         row = self.rows[identifier]
         if Path(item["report"]).exists():
-            row.update(status="failed", error="Report appeared before launch; retained without overwrite")
+            row.update(
+                status="failed", error="Report appeared before launch; retained without overwrite"
+            )
             self.save()
             return
         row.update(status="launching", started_at=time.time())

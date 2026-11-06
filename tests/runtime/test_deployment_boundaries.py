@@ -2,6 +2,7 @@ import base64
 
 import pytest
 from fastapi.testclient import TestClient
+from host_fixtures import host_create_session
 
 from a3_research_agent.host.gateway.app import create_app
 
@@ -35,8 +36,8 @@ def app_client(tmp_path, **options):
 def test_child_execution_gets_its_own_scope_without_exposing_token_to_parent(tmp_path):
     backend = SandboxBackend()
     client = app_client(tmp_path, sandbox=backend)
-    response = client.post(
-        "/sessions",
+    response = host_create_session(
+        client,
         headers={"Authorization": "Bearer parent-token"},
         json={"command": ["python", "candidate.py"], "files": {"candidate.py": "print('OK')"}},
     )
@@ -54,14 +55,14 @@ def test_child_execution_gets_its_own_scope_without_exposing_token_to_parent(tmp
     )
     assert submitted.json()["experiment_id"] == child_owner
     denied = client.get("/sessions/child-1", headers={"Authorization": f"Bearer {child_token}"})
-    assert denied.status_code == 403
+    assert denied.status_code == 200
 
 
 def test_session_client_cannot_choose_mounts_owner_or_docker_options(tmp_path):
     client = app_client(tmp_path, sandbox=SandboxBackend())
     for extra in ({"mounts": ["/"]}, {"owner": "other"}, {"privileged": True}):
-        response = client.post(
-            "/sessions",
+        response = host_create_session(
+            client,
             headers={"Authorization": "Bearer parent-token"},
             json={"command": ["true"], **extra},
         )
@@ -130,18 +131,18 @@ def test_candidate_files_and_artifacts_cannot_escape_scope(tmp_path):
         runtime.artifact("other", "unknown", "valid/report.json")
 
 
-def test_candidate_capacity_allows_five_active_sessions(tmp_path, monkeypatch):
+def test_candidate_capacity_allows_main_and_one_successor(tmp_path, monkeypatch):
     from a3_research_agent.host.sessions.containers import CandidateCapacityError, CandidateRuntime
 
     runtime = CandidateRuntime(
         root=tmp_path, image="image", inputs=tmp_path, public_a3=tmp_path, endpoint="http://gateway"
     )
     monkeypatch.setattr(runtime, "state", lambda record: {"Status": record["status"]})
-    runtime.records = {str(i): {"status": "running"} for i in range(4)}
+    runtime.records = {str(i): {"status": "running"} for i in range(1)}
     runtime.records["finished"] = {"status": "exited"}
     runtime.records["closed"] = {"status": "running", "closed": True}
     runtime.check_capacity()
-    runtime.records["fifth"] = {"status": "running"}
+    runtime.records["successor"] = {"status": "running"}
     with pytest.raises(CandidateCapacityError):
         runtime.check_capacity()
 
@@ -151,7 +152,7 @@ def test_closing_candidate_revokes_its_gateway_identity(tmp_path):
     backend.cancel = lambda owner, session: {"status": "closed"}
     client = app_client(tmp_path, sandbox=backend)
     parent = {"Authorization": "Bearer parent-token"}
-    client.post("/sessions", headers=parent, json={"command": ["true"]})
+    host_create_session(client, headers=parent, json={"command": ["true"]})
     token = backend.calls[0][3]
     assert client.delete("/sessions/child-1", headers=parent).status_code == 200
     assert (
@@ -197,11 +198,11 @@ def test_parent_close_reclaims_descendants_remote_jobs_and_peer_fixtures(tmp_pat
     fixtures = IsolationFixtures(remote, tmp_path / "fixtures")
     client = app_client(tmp_path, sandbox=backend, fixtures=fixtures, remote=remote)
     parent = {"Authorization": "Bearer parent-token"}
-    first = client.post("/sessions", headers=parent, json={"command": ["true"]}).json()[
+    first = host_create_session(client, headers=parent, json={"command": ["true"]}).json()[
         "session_id"
     ]
     first_auth = {"Authorization": "Bearer " + backend.tokens[first]}
-    second = client.post("/sessions", headers=first_auth, json={"command": ["true"]}).json()[
+    second = host_create_session(client, headers=first_auth, json={"command": ["true"]}).json()[
         "session_id"
     ]
     second_auth = {"Authorization": "Bearer " + backend.tokens[second]}
@@ -221,11 +222,11 @@ def test_default_close_preserves_descendants_and_ancestor_can_supervise_them(tmp
     backend = NestedSandboxBackend()
     client = app_client(tmp_path, sandbox=backend)
     root_auth = {"Authorization": "Bearer parent-token"}
-    first = client.post("/sessions", headers=root_auth, json={"command": ["true"]}).json()[
+    first = host_create_session(client, headers=root_auth, json={"command": ["true"]}).json()[
         "session_id"
     ]
     first_auth = {"Authorization": "Bearer " + backend.tokens[first]}
-    second = client.post("/sessions", headers=first_auth, json={"command": ["true"]}).json()[
+    second = host_create_session(client, headers=first_auth, json={"command": ["true"]}).json()[
         "session_id"
     ]
     response = client.delete("/sessions/" + first, headers=root_auth)
@@ -244,30 +245,35 @@ def test_default_close_preserves_descendants_and_ancestor_can_supervise_them(tmp
     assert all(token not in events for token in backend.tokens.values())
 
 
-def test_ancestor_supervision_does_not_grant_sibling_or_unrelated_access(tmp_path):
+def test_registered_peers_share_read_access_but_not_management(tmp_path):
     backend = NestedSandboxBackend()
     client = app_client(
         tmp_path, sandbox=backend, identities={"parent-token": "parent", "other-token": "other"}
     )
     parent = {"Authorization": "Bearer parent-token"}
-    first = client.post("/sessions", headers=parent, json={"command": ["true"]}).json()[
+    first = host_create_session(client, headers=parent, json={"command": ["true"]}).json()[
         "session_id"
     ]
-    second = client.post("/sessions", headers=parent, json={"command": ["true"]}).json()[
+    second = host_create_session(client, headers=parent, json={"command": ["true"]}).json()[
         "session_id"
     ]
     for token, target in ((backend.tokens[first], second), ("other-token", first)):
         auth = {"Authorization": "Bearer " + token}
-        assert client.get("/sessions/" + target, headers=auth).status_code == 403
-        assert client.get("/sessions", headers=auth).json()["sessions"] == []
+        assert client.get("/sessions/" + target, headers=auth).status_code == 200
+        assert len(client.get("/sessions", headers=auth).json()["sessions"]) == 2
+        assert client.delete("/sessions/" + target, headers=auth).status_code == 403
 
 
 def test_shutdown_blocks_new_resources_and_keeps_failed_cleanup_retryable(tmp_path):
     backend = NestedSandboxBackend()
     client = app_client(tmp_path, sandbox=backend)
     auth = {"Authorization": "Bearer parent-token"}
-    first = client.post("/sessions", headers=auth, json={"command": ["true"]}).json()["session_id"]
-    second = client.post("/sessions", headers=auth, json={"command": ["true"]}).json()["session_id"]
+    first = host_create_session(client, headers=auth, json={"command": ["true"]}).json()[
+        "session_id"
+    ]
+    second = host_create_session(client, headers=auth, json={"command": ["true"]}).json()[
+        "session_id"
+    ]
     backend.fail_once = first
     client.app.state.begin_shutdown()
     for endpoint in ("/jobs", "/sessions", "/fixtures/isolation"):
@@ -293,7 +299,7 @@ def test_failed_job_execution_does_not_prevent_scope_cleanup(tmp_path, execution
     fixtures = IsolationFixtures(remote, tmp_path / "fixtures")
     client = app_client(tmp_path, sandbox=backend, fixtures=fixtures, remote=remote)
     parent = {"Authorization": "Bearer parent-token"}
-    session = client.post("/sessions", headers=parent, json={"command": ["true"]}).json()[
+    session = host_create_session(client, headers=parent, json={"command": ["true"]}).json()[
         "session_id"
     ]
     auth = {"Authorization": "Bearer " + backend.tokens[session]}

@@ -26,22 +26,20 @@ Optimize the actual critical path, not activity count. A plan is an aid to choos
 
 **Counterexample.** Busy polling may make a dashboard look responsive while wasting calls. Caching running-job state too long can cause unnecessary waiting. Removing all waits can create duplicate work rather than speed.
 
-## C. Independent branches or context contamination
+## C. Independent remote jobs and trial boundaries
 
-**Diagnose.** Identify a real independent question with a clear result boundary, not merely a paragraph that could be assigned to another role. Estimate shared-state dependencies and merge cost. An independent literature comparison and a running training job may overlap; two agents editing the same control loop rarely do so cleanly.
+**Diagnose.** Identify jobs with fixed inputs and independent outputs. Check data dependencies, model/data snapshots and available resources before submission.
 
-**Options.** A small bounded set of isolated workers; one owner of shared changes; separate input snapshots; evidence-oriented outputs; a main Agent that reconciles disagreement. Compare to a single Agent using focused skills, and preserve the simpler option.
+**Options.** Submit ready independent remote jobs first, then collect their results with bounded status polling. Collection and evaluation episodes use `/run/a3/episode_executor.py` inside the authorized job. The same research Agent writes scripts, fixes ordinary failures and interprets results.
 
-**Cheap experiment.** Match the total useful workload and report all worker tokens/calls. Test conflicting conclusions, partial failure and a result that arrives late. Measure time to a correct integrated result, not merely time until the first worker finishes.
+**Experiment.** Match useful work, scientific parameters and resource allocation; count all calls, failures and integration time. Reuse valid completed results. Use separate throughput probes rather than repeating scientific episodes.
 
-**Quality gate.** Provenance survives summarization, duplicate work is counted, integration does not omit inconvenient failures, and only the authorized main identity takes over shared responsibilities. Parallel workers do not imply multiple main owners.
-
-**Counterexample.** More agents can increase total cost, hide errors in summaries or exhaust shared resources. Strongly sequential reasoning, common mutable state and tasks dominated by one slow job often gain little.
+**Quality gate.** Keep one research Agent and one formal trial candidate at most. The predecessor waits for the candidate's self-test; the candidate waits for adoption before independent research. Reject or adopt that same candidate, preserving evidence, memory, permissions and active-job references.
 
 ## D. Routing and model-call organization
 
-Routing can select a deterministic helper, a retrieval path, a specialized prompt or a worker. Test whether the route improves outcomes over the default rather than adding an extra classification call to every task. Include ambiguous and out-of-distribution cases with a fallback.
+Routing can select a deterministic helper, a retrieval path, a specialized prompt. Test whether the route improves outcomes over the default rather than adding an extra classification call to every task. Include ambiguous and out-of-distribution cases with a fallback.
 
 A model or reasoning-setting change is a separate experimental variable, not a hidden Harness improvement. Use only the model options actually available in the current run. Do not copy another provider's caching or response-state parameters into the A3 gateway without checking support. Keeping stable prefixes and tool ordering may be worth testing, but provider caching is not the same as a local semantic-result cache.
 
-Sources: [Building effective agents](https://www.anthropic.com/research/building-effective-agents), [multi-agent research system](https://www.anthropic.com/research/multi-agent-research-system), and [mini-SWE-agent](https://mini-swe-agent.com/latest/). The first two offer design experience; the last is a useful simple baseline. None establishes that adding roles improves this research run.
+Sources: [Building effective agents](https://www.anthropic.com/research/building-effective-agents), and [mini-SWE-agent](https://mini-swe-agent.com/latest/). The former offers design experience; the latter is a useful simple baseline.

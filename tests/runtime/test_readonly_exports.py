@@ -297,3 +297,21 @@ def test_new_run_imports_explicit_retained_exports_and_rolls_back_partial_failur
     with pytest.raises(PermissionError):
         exports.data_path("failed-run", identifier)
     assert calls[-1] == "export-revoke"
+
+
+def test_many_retained_assets_use_bounded_checks_before_any_grant():
+    from a3_research_agent.host.runs.continuation import HarnessStart, import_retained_exports
+
+    identifiers = ["export-" + f"{i:032x}" for i in range(130)]
+    calls = []
+
+    def remote(operation, request):
+        calls.append((operation, request))
+        return {"status": "ready"}
+
+    start = HarnessStart(["true"], {}, source_owner="old-main", remote_exports=identifiers)
+    assert import_retained_exports(start, "new-main", remote) == identifiers
+    assert [
+        len(payload["export_ids"]) for operation, payload in calls if operation == "exports-check"
+    ] == [64, 64, 2]
+    assert [operation for operation, _ in calls[:3]] == ["exports-check"] * 3

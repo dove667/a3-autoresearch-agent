@@ -92,7 +92,7 @@ class TrajectoryAnalyzer:
 
     def latest(self, actor):
         with self.lock:
-            records = [r for r in self.state["records"] if r["owner"] == actor]
+            records = [r for r in self.state["records"] if actor is None or r["owner"] == actor]
             result = (
                 self._public(records[-1])
                 if records
@@ -132,7 +132,7 @@ class TrajectoryAnalyzer:
             (
                 r
                 for r in self.state["records"]
-                if r["owner"] == actor and r["analysis_id"] == analysis_id
+                if (actor is None or r["owner"] == actor) and r["analysis_id"] == analysis_id
             ),
             None,
         )

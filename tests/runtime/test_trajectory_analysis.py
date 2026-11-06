@@ -179,7 +179,7 @@ def test_descendant_scope_excludes_siblings_and_ancestors(tmp_path):
         == 2
     )
     assert (
-        client.get("/analysis", headers={"Authorization": "Bearer child-token"}).status_code == 403
+        client.get("/analysis", headers={"Authorization": "Bearer child-token"}).status_code == 200
     )
 
 
@@ -367,7 +367,7 @@ def test_current_main_transition_changes_analyzer_authority(tmp_path):
     state["evolution"]["main_owner"] = "other"
     client = client_for(tmp_path, state_store=store, restored_state=state)
     assert client.post("/analysis", headers=HEADERS).status_code == 403
-    assert client.get("/analysis", headers=HEADERS).status_code == 403
+    assert client.get("/analysis", headers=HEADERS).status_code == 200
     assert client.post("/analysis", headers={"Authorization": "Bearer token-b"}).status_code == 202
 
 
@@ -538,7 +538,7 @@ def test_pending_reports_remain_scoped_retrievable_and_explicitly_bounded(tmp_pa
     assert client.get("/analysis/" + ids[0]).status_code == 401
     assert (
         client.get("/analysis/" + ids[0], headers={"Authorization": "Bearer token-b"}).status_code
-        == 403
+        == 200
     )
     assert client.get("/analysis/" + "0" * 32, headers=HEADERS).status_code == 404
     response = {"analysis_id": ids[0], "decision": "reject", "reason": CANARY}
@@ -549,14 +549,17 @@ def test_pending_reports_remain_scoped_retrievable_and_explicitly_bounded(tmp_pa
     assert latest["omitted_pending_reports"] == 1
     assert CANARY not in json.dumps(latest)
     assert CANARY not in json.dumps(client.get("/telemetry", headers=HEADERS).json())
-    # The new current main cannot access the previous main's retained reports.
+    # The new current main can read the previous main's retained reports.
     client.app.state.save_checkpoint()
     gateway = store.load()["gateway"]
     gateway["evolution"]["main_owner"] = "other"
     changed = client_for(tmp_path, state_store=store, restored_state=gateway)
     other_headers = {"Authorization": "Bearer token-b"}
-    assert changed.get("/analysis/" + ids[0], headers=other_headers).status_code == 404
-    assert changed.get("/analysis", headers=other_headers).json()["pending_reports"] == []
+    assert changed.get("/analysis/" + ids[0], headers=other_headers).status_code == 200
+    assert (
+        changed.get("/analysis", headers=other_headers).json()["pending_reports"]
+        == latest["pending_reports"]
+    )
 
 
 def test_recent_events_are_scoped_bounded_numeric_and_independent_copies():

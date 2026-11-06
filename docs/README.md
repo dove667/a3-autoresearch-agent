@@ -1,6 +1,6 @@
 # 项目文档
 
-冷启动的目标是让通用 SWE Agent 自行形成面向 A3 的 auto research Harness，并验证 Policy 优化、Harness 反思、实验隔离与持久记忆。
+冷启动的目标是让通用 SWE Agent 自行形成面向 A3 的 auto research Harness，并验证 Policy 优化、Harness 反思、跨 run 隔离、受限写入和持久记忆。同 run 登记研究身份共享研究内容的读取，作业取消与管理仍按本身份或已采用的线性交接权限执行。
 
 - [环境配置](setup.md)：依赖、模型服务与 A3 执行环境。
 - [使用教程](tutorial.md)：安装准备、全部启动参数、初始运行、中断恢复、版本迭代、轨迹与故障定位。
@@ -12,7 +12,7 @@
 - [研究网页网关原方案](plans/2026-11-02-research-web-gateway.md)：历史设计与验证记录；当前采用 [Tavily 搜索／正文提取、专用本地代理与结果缓存](plans/2026-11-02-tavily-proxy-extract.md)，配置入口见环境配置。
 - [Agent 输入版本与热加载](agent-inputs.md)：版本号维护、恢复加载规则和警告确认。
 - [上下文恢复补丁与模型配置](context-reliability.md)：可选派生包、持久调用预算、状态保存及推理参数。
-- [主从研究协作](research-orchestration.md)：协调职责、独立任务上下文、资产回传、交权和未封存资产恢复边界。
+- [单研究 Agent 工作流](research-orchestration.md)：自行实现与评估、独立作业并行、唯一线性候选及显式交权。
 - [安全运行视图与独立分析](trajectory-analysis.md)：脱敏耗时／事件、自动周期与事件触发、建议回应和故障边界。
 - [视觉过程诊断](visual-diagnostics.md)：已有视频与轨迹优先、原生诊断保存范围、按问题选帧及只读视觉问诊边界。
 - [Host 执行接口](../agent-inputs/shared/execution.md)：给生成后的 Harness 使用的固定部署能力。

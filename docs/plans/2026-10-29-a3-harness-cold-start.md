@@ -1,13 +1,15 @@
 # A3 Harness 冷启动方向
 
+> 历史方案；当前执行约定以 [单研究 Agent 工作流](../research-orchestration.md) 和 [执行接口](../../agent-inputs/shared/execution.md) 为准，旧 worker、分叉和派发描述不作为当前操作指引。
+
 第一阶段从通用 mini-SWE-agent 出发，让它在真实 A3 任务和预设评估反馈下自主形成领域研究能力，再根据自身轨迹改善研究过程。
 
 本阶段为第二阶段的两种优化目标做适配验证：至少一轮 Policy 优化和一轮 Agent 执行轨迹反思、Harness 改动与复测；同时验收固定权限工具和跨实验隔离。优化收益不设幅度门槛。A3 是已有研究环境，其开发测试由维护者负责。
 
 ## 当前执行依据
 
-- [目标](../../evals/phase-one/goal.md)：研究能力、自我改进与自主推进。
-- [验收](../../evals/phase-one/acceptance.md)：实际 A3 接口、研究闭环、新版本使用、过程改进及可复核证据。
+- [目标](../../agent-inputs/phase-one/goal.md)：研究能力、自我改进与自主推进。
+- [验收](../../agent-inputs/phase-one/acceptance.md)：实际 A3 接口、研究闭环、新版本使用、过程改进及可复核证据。
 - [启动说明](../tutorial.md)：无人交互配置、工作区、版本和轨迹。
 
 环境准备助手负责安装、认证、运行条件与评估准备；专项 Harness 由运行中的 mini 构建和改进。

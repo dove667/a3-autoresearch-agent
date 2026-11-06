@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 import yaml
 from fastapi.testclient import TestClient
+from host_fixtures import host_create_session
 from jinja2 import StrictUndefined, Template
 
 from a3_research_agent.host.gateway.app import create_app
@@ -67,8 +68,8 @@ def test_phase_rules_follow_main_and_trial_roles_without_affecting_workers(tmp_p
             "files": {"entry.py": "pass # candidate"},
         },
     ).json()["session_id"]
-    worker = client.post(
-        "/sessions", headers=root, json={"command": ["true"], "files": {"probe.py": "pass"}}
+    worker = host_create_session(
+        client, headers=root, json={"command": ["true"], "files": {"probe.py": "pass"}}
     ).json()["session_id"]
     context = [{"role": "system", "content": "Own system"}, {"role": "user", "content": "Own task"}]
     tools = [{"type": "function", "name": "files"}]

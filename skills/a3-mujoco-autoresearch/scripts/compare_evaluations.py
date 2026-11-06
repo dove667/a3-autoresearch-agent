@@ -1,4 +1,4 @@
-"""Offline paired A3 phase-two 0.3.0/0.3.1 comparison; see references/evaluation-helper.md."""
+"""Offline paired A3 phase-two 0.3.0–0.3.2 comparison; see references/evaluation-helper.md."""
 from __future__ import annotations
 
 import argparse
@@ -32,8 +32,8 @@ def validate(report):
     """Validate explicit normalized input. Does not authenticate referenced files."""
     if not isinstance(report, dict) or report.get("schema") != "a3-paired-evaluation-v1":
         raise ValueError("expected explicit a3-paired-evaluation-v1 input; raw reports need adaptation")
-    if report.get("protocol_version") not in ("0.3.0", "0.3.1"):
-        raise ValueError("this helper implements phase-two protocol 0.3.0 and reference-only revision 0.3.1 only")
+    if report.get("protocol_version") not in ("0.3.0", "0.3.1", "0.3.2"):
+        raise ValueError("this helper implements phase-two protocol revisions 0.3.0 through 0.3.2")
     digest(report.get("protocol_sha256"), "protocol_sha256")
     digest(report.get("conditions_sha256"), "conditions_sha256")
     digest(report.get("policy_snapshot_sha256"), "policy_snapshot_sha256")

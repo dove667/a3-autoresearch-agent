@@ -1,9 +1,10 @@
-"""Only a main Agent can delegate sealed data to its explicitly created worker."""
+"""Explicit sealed assets and linear successor validation stay identity-scoped."""
 
 from argparse import Namespace
 
 import pytest
 from fastapi.testclient import TestClient
+from host_fixtures import host_create_session
 
 from a3_research_agent.execution.controller import store as job_store
 from a3_research_agent.execution.exports import operations as job_exports
@@ -91,7 +92,7 @@ def test_direct_candidate_receives_only_requested_export_and_can_forward_after_p
         client.get("/jobs/exports", headers=child_auth).json()["exports"][0]["export_id"]
         == identifier
     )
-    assert client.get(f"/jobs/exports/{identifier}", headers=auth("other-token")).status_code == 403
+    assert client.get(f"/jobs/exports/{identifier}", headers=auth("other-token")).status_code == 200
     assert (
         client.post(
             f"/jobs/exports/{identifier}/grants", headers=main, json={"session_id": "other"}
@@ -110,8 +111,8 @@ def test_direct_candidate_receives_only_requested_export_and_can_forward_after_p
         json={"retain": True, "reason": "fixture", "evidence": ["result.json"]},
     )
     assert retained.status_code == 200
-    next_child = client.post(
-        "/sessions",
+    next_child = host_create_session(
+        client,
         headers=child_auth,
         json={
             "command": ["true"],
@@ -140,8 +141,8 @@ def test_direct_candidate_receives_only_requested_export_and_can_forward_after_p
 def test_failed_candidate_launch_rolls_back_its_export_access(tmp_path):
     client, backend, exports, identifier = setup(tmp_path)
     backend.fail = True
-    response = client.post(
-        "/sessions",
+    response = host_create_session(
+        client,
         headers=auth("main-token"),
         json={
             "command": ["true"],
@@ -153,12 +154,17 @@ def test_failed_candidate_launch_rolls_back_its_export_access(tmp_path):
     assert exports.load(identifier)["readers"] == ["main"]
 
 
-def test_worker_can_explicitly_deliver_and_delete_its_own_binary_result(tmp_path, monkeypatch):
+def test_trial_can_explicitly_deliver_and_delete_its_own_binary_result(tmp_path, monkeypatch):
     client, backend, exports, identifier = setup(tmp_path)
+    baseline = client.post(
+        "/versions", headers=auth("main-token"), json={"files": {"entry.py": "pass"}}
+    ).json()["version_id"]
     response = client.post(
-        "/sessions",
+        "/evolution/trials",
         headers=auth("main-token"),
         json={
+            "baseline_version": baseline,
+            "checklist": "Return fixture evidence",
             "command": ["true"],
             "files": {"entry.py": "pass"},
             "read_only_exports": [identifier],
@@ -171,7 +177,7 @@ def test_worker_can_explicitly_deliver_and_delete_its_own_binary_result(tmp_path
     exports.seal(record["export_id"])
     assert (
         client.get(f"/jobs/exports/{record['export_id']}", headers=auth("main-token")).status_code
-        == 403
+        == 200
     )
     delivery = client.post(
         f"/jobs/exports/{record['export_id']}/grants",
