@@ -147,10 +147,6 @@ def test_new_task_archives_operational_state_but_keeps_source_immutable(tmp_path
             "operational-state.json": json.dumps(
                 {"version": 1, "items": {"old": {"status": "closed"}}}
             ),
-            "analysis-client/schedule.handoff.json": json.dumps({"id": "a" * 32}),
-            "analysis-client/schedule.json": json.dumps(
-                {"version": 1, "last_attempt": 123, "latest": {"analysis_id": "old"}}
-            ),
         },
         source_version="version-old",
     )
@@ -162,8 +158,6 @@ def test_new_task_archives_operational_state_but_keeps_source_immutable(tmp_path
         == __import__("hashlib").sha256(before["checkpoint.json"].encode()).hexdigest()
     )
     assert json.loads(fresh.files["operational-state.json"])["items"] == {}
-    assert json.loads(fresh.files["analysis-client/schedule.json"])["last_attempt"] is None
-    assert json.loads(fresh.files["analysis-client/schedule.handoff.json"])["id"] is None
     for name, archive in context["operational_task_archives"].items():
         assert fresh.files[archive] == before[name]
 
@@ -183,37 +177,9 @@ def test_identical_operational_claim_is_not_new_progress(tmp_path, monkeypatch):
     m = load(tmp_path, monkeypatch)
     item = {"action": "update", "id": "x", "status": "waiting", "evidence": []}
     m.progress(item)
-    before = m.signals()["progress_updates"]
+    before = m.load()["revision"]
     m.progress(item)
-    assert m.signals()["progress_updates"] == before
-
-
-def test_identical_decision_write_is_not_new_progress(tmp_path, monkeypatch):
-    m = load(tmp_path, monkeypatch)
-    p = tmp_path / "decision.json"
-    p.write_text("same")
-    m.record_write(p)
-    before = m.signals()["progress_updates"]
-    m.record_write(p)
-    assert m.signals()["progress_updates"] == before
-    p.write_text("changed")
-    m.record_write(p)
-    assert m.signals()["progress_updates"] == before + 1
-
-
-def test_fresh_job_wait_is_explicit_and_expires(tmp_path, monkeypatch):
-    m = load(tmp_path, monkeypatch)
-    clock = [1000]
-    monkeypatch.setattr(m.time, "time", lambda: clock[0])
-    job = "a" * 32
-    m.record_gateway("POST", "/jobs", {"job_id": job, "status": "running"})
-    assert m.signals()["waiting"]
-    clock[0] += 601
-    assert not m.signals()["waiting"]
-    m.record_gateway("GET", "/jobs/" + job, {"job_id": job, "status": "completed"})
-    assert m.signals()["progress_updates"] == 1
-    m.record_gateway("GET", "/jobs/" + job, {"job_id": job, "status": "completed"})
-    assert m.signals()["progress_updates"] == 1
+    assert m.load()["revision"] == before
 
 
 @pytest.mark.parametrize("diagnostic_fails", [False, True])
@@ -249,33 +215,6 @@ def test_receipt_failure_cannot_hide_successful_job_result(tmp_path, monkeypatch
     assert namespace["tool"]("gateway", {"method": "POST", "path": "/jobs", "body": {}}) == result
 
 
-@pytest.mark.parametrize("diagnostic_fails", [False, True])
-def test_receipt_failure_cannot_hide_successful_file_write(tmp_path, diagnostic_fails):
-    import ast
-    from types import SimpleNamespace
-
-    tree = ast.parse((ROOT / "agent.py").read_text())
-    nodes = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "tool"]
-    p = tmp_path / "written"
-
-    def fail(*args):
-        raise OSError("receipt failed")
-
-    namespace = {
-        "web_tools": SimpleNamespace(ROUTES={}),
-        "skill_tools": SimpleNamespace(ROUTES={}),
-        "memory_state": SimpleNamespace(record_write=fail),
-        "pathlib": SimpleNamespace(Path=lambda name: p),
-        "log": fail if diagnostic_fails else lambda value: None,
-    }
-    exec(compile(ast.Module(body=nodes, type_ignores=[]), "tool-fixture", "exec"), namespace)  # noqa: S102 - selected trusted local function only
-    assert (
-        namespace["tool"]("write", {"path": "/workspace/written", "content": "actual result"})
-        == "written"
-    )
-    assert p.read_text() == "actual result"
-
-
 def test_repetition_includes_skill_documents_after_other_sources(tmp_path, monkeypatch):
     m = load(tmp_path, monkeypatch)
     first = tmp_path / "first"
@@ -284,7 +223,7 @@ def test_repetition_includes_skill_documents_after_other_sources(tmp_path, monke
     skill.write_text("doc")
     for i, p in enumerate([first, first] + [skill] * 11):
         m.record_page(str(i), m.read_page(p))
-    assert m.signals()["repeated_static_reads"] == 11
+    assert m.counters()["repeated_reads"] == 11
 
 
 def test_large_json_selection_returns_explicit_bounded_not_delivered(tmp_path, monkeypatch):
@@ -309,6 +248,7 @@ def test_fresh_task_archives_fork_sidecars_and_old_history_without_loading_them(
 
     old = {
         "checkpoint.json": '[{"role":"user","content":"old goal"}]',
+        "pending-calls.json": '{"base_hash":"old","output":[{"type":"function_call"}]}',
         "compaction-result.json": '{"checkpoint":[{"role":"user","content":"old summary"}]}',
         "compaction-epoch.json": '{"version":1,"id":"old-task"}',
         "history.jsonl": '{"role":"user","content":"old raw goal"}\n',
@@ -324,6 +264,7 @@ def test_fresh_task_archives_fork_sidecars_and_old_history_without_loading_them(
     fresh, context = prepare_fresh_task(start, "new goal")
     assert start.files == old
     assert json.loads(fresh.files["checkpoint.json"])[0]["content"] == "new goal"
+    assert json.loads(fresh.files["pending-calls.json"]) is None
     assert json.loads(fresh.files["compaction-result.json"]) is None
     assert json.loads(fresh.files["compaction-epoch.json"])["id"] is None
     assert fresh.files["history.jsonl"] == ""
@@ -336,3 +277,15 @@ def test_fresh_task_archives_fork_sidecars_and_old_history_without_loading_them(
         assert all(path in fresh.files for path in declared)
     for name, archive in context["operational_task_archives"].items():
         assert fresh.files[archive] == old[name]
+
+
+def test_identical_page_reference_requires_visible_content(tmp_path, monkeypatch):
+    m = load(tmp_path, monkeypatch)
+    path = tmp_path / "data"
+    path.write_text("example")
+    page = m.read_page(path)
+    messages = [m.context_manager.output_message({**page, "receipt_id": "first"}, "first")]
+    assert m.visible_page_reference(page, messages)["previous_call_id"] == "first"
+    assert m.visible_page_reference(page, []) is None
+    path.write_text("updated")
+    assert m.visible_page_reference(m.read_page(path), messages) is None

@@ -1,6 +1,6 @@
 # Host提供的执行与验收入口
 
-Version: 0.18.0
+Version: 0.18.6
 
 部署方运行 gateway、容器引擎、模型认证与远程资源调度。候选 Harness 在独立容器内运行，
 通过 HTTP 请求这些固定能力。工具名称、研究逻辑、反思方法和版本选择由 Agent 设计。
@@ -12,19 +12,9 @@ Version: 0.18.0
 
 ## 执行主体与证据归属
 
-初始构建者是启动器在隔离构建工作区运行的 mini-SWE-agent。它通过 Bash 编写候选入口，
-再用唯一的 `POST /evolution/trials` 启动完整候选进程。该入口就是 Agent 生成的候选 Harness；其中的模型经
-自己声明的工具调用 A3、读取结果和选择下一步时，产生的是生成后 Agent 的执行证据。
-按实际入口、模型消息、工具调用、权限和结果判断证据归属；候选在报告中自称 builder
-不会改变这些调用的来源。验收不要求候选再嵌套生成另一层模型进程。
+研究 Agent 负责 Policy、数据采集、训练、评估、研究脚本和结果判断。Harness 的模型调用、工具注册、上下文、记忆机制、调度与恢复由人类和 Codex 在运行暂停期间维护。遇到这类问题时保留轨迹位置、实际影响和复现条件，交给维护者。夜间只使用部署方提供的 Harness，不修改运行框架、启动 Harness 候选或切换主身份。
 
-远程 `/jobs` 是执行仿真、相机和评测代码的受控作业。模型调用位于候选进程，通过 Host
-转发；远程作业不获得 Host 模型凭据；Docker 后端关闭网络，受信任的 process 后端使用执行账号的文件系统与网络权限。候选实际调用受限工具并读取作业结果，
-就是这条执行链，不需要在远程作业中再次运行模型。
-
-候选由模型驱动只说明执行主体成立。普通第一阶段 A/B/C/D 仍分别需要版本化标准要求的真实能力、
-版本、比较与选择、权限边界和跨会话记忆复用证据；创建会话、命名工具或保存报告均不能单独验收。
-web-extension profile 仅验证当前 E 项真实工具链路；历史 A–D 结论带来源继承，不重新认证，也不因 E 通过修复旧历史缺口。
+冷启动的初始 mini 只负责引导首个研究进程。研究证据以当前研究进程的真实调用、结果与版本为准。
 
 ## 启动与恢复状态
 
@@ -42,13 +32,13 @@ gateway 地址和本身份的令牌由 `A3_GATEWAY_URL`、`A3_GATEWAY_TOKEN` 环
 
 ## 本轮研究数据共享
 
-同一 run 内全部已登记研究身份可通过 Host 接口读取彼此的源码、记忆、可见轨迹、日志、实验产物、作业状态和本轮已授权的只读 exports。按当前问题读取并保留来源与版本；这些研究内容可供主 Agent 和唯一候选共享。工作区写入仍限本身份，取消作业、封存或其他管理操作仍限本身份或已采用的线性交接权限。Host 凭据与私有控制状态、其他 run 及外部用户数据不在共享范围；跨 run 只能使用部署方明确导入或授权的材料。
+同一 run 内已登记的研究身份可共享源码、记忆、可见轨迹和研究产物。第二阶段的作业接口按项目共享：已登记的研究身份可以读取本项目历史作业的状态、日志及产物，并把历史数据或权重封存成只读快照供新作业使用。Host 按已登记的作业归属核验，封存保留来源与哈希，新作业使用自己的令牌和输出目录。工作区写入、作业取消和历史快照删除仍分别检查归属。Host 凭据、私有控制状态及其他项目的数据保持隔离。
 
-`GET /sessions` 与会话状态／产物接口用于本轮研究读取；已知 job 的状态及 artifacts 接口也按同 run 共享读取。读取共享内容仍使用自己的令牌，不获取或复用其他身份认证。研究内容共享不增加普通 worker 创建权限，也不改变唯一候选、等待自测和显式交权协议。
+`GET /sessions` 与会话状态／产物接口用于本轮研究读取；已知 job 可直接按 ID 读取。第二阶段的 `GET /jobs` 返回 `historical_scopes` 时，用 `GET /jobs?scope=<owner>` 分页查对应历史作业。读取共享内容仍使用自己的令牌，不获取或复用其他身份认证。研究内容共享不改变身份和管理权限。
 
 ## 研究网页网关
 
-以下接口沿用 `A3_GATEWAY_URL`、本身份 Bearer 令牌和现有 owner 认证；不另发 Tavily key。Host 默认关闭，只有部署方配置启用与凭据后可用。Host 不向模型自动注册 function tools；Harness 自行实现适配、工具 schema、注册与执行分派，使用当前工作区/会话开发能力进行局部测试。不能假设原 H1 的工具 allowlist 已允许 `/web/*`。
+以下接口沿用 `A3_GATEWAY_URL` 与本身份令牌。Host 默认关闭网页网关，部署方启用并接入工具后使用。缺失注册或后端故障交给维护者。
 
 ### 能力与参数
 
@@ -112,9 +102,7 @@ fetch 的 `provider` 同样为 `tavily`，返回单一提取来源；search 返�
 `GET /vision/status` 返回关键帧传输能力及限制，不代表模型已经看过本轮画面。
 `POST /vision/inspect` 接受 `question` 与 1–6 个 `frames`，每帧包含
 `job_id`、`path`、`episode_id`、`step`、`sim_time_s`、`camera`。
-只读取本轮登记研究身份可读作业的 `/workspace` 相对 PNG/JPEG 路径；例如作业内
-`/workspace/frames/front_0180.png` 对应 `path: "frames/front_0180.png"`。
-不能提供外部 URL、任意 base64、未授权其他 run 的作业或 `/outputs` 绝对路径；旧素材按作业读取与只读快照接口提供给抽帧作业。
+图片路径相对有权读取的作业目录，`area` 可选 `workspace`（默认）或 `outputs`。例如输出帧可用 `area: "outputs", path: "eval/episode-trace/frames/0010-front.png"`。Host 沿用作业读取权限和图片大小限制。输入使用 PNG/JPEG 路径，外部 URL、base64 和绝对路径均不接受。
 
 同一 episode 的帧连续成组，步数与模拟时间不得倒退；标签由调用者按原录像／轨迹核对，
 语法校验不认证时间真实性。单图最多 512 KiB、宽高各不超过 1024 像素，总图片最多 3 MiB。
@@ -129,11 +117,11 @@ Host 验证并去除图像 metadata 后，向配置的视觉辅助模型发送�
 
 ## 单研究 Agent 的执行契约
 
-当前研究 Agent 自己完成 Policy 与 Harness 的实现、数据采集、训练、评估、脚本修复和验收判断。局部检查在本身份工具与远程作业中执行，不创建普通 `/sessions` worker，不采用 orchestrator/worker 分工。完整 Harness 版本只通过 `/evolution/trials` 启动一个线性候选；前任等待候选自测并读取结果，候选交权前仅完成清单并等待，不开展独立研究。拒绝则回收候选并继续原版本；采用则由同一候选接任，旧主保存交接后退出。禁止分叉并行研究 Agent。
+研究 Agent 负责 Policy、数据采集、训练、评估、研究脚本和结果判断。Harness 的模型调用、工具注册、上下文、记忆机制、调度与恢复由人类和 Codex 在运行暂停期间维护。遇到这类问题时保留轨迹位置、实际影响和复现条件，交给维护者。夜间只使用部署方提供的 Harness，不修改运行框架、启动 Harness 候选或切换主身份。
 
 互相独立且输入已就绪的远程作业，先在权限与资源额度内并行提交，再统一查询与收集结果；有数据依赖的作业按依赖推进。采集和评估中的独立 episode 统一使用 `/run/a3/episode_executor.py`，由 Agent 固定科学参数、seed、协议与输出；不另写固定两个并发的循环，不重复已完成的科学 episode 测吞吐。
 
-普通脚本、参数、依赖适配和结果解析问题由当前 Agent 在当前任务中定位、修复并验证到底，保留失败与修复证据；需要 Host 凭据、权限、服务或资源配置变更时，保存具体错误、所缺条件和所需操作，明确报告操作者。正常作业等待按状态继续推进。
+普通脚本、参数、依赖适配和结果解析问题由当前 Agent 在当前任务中定位、修复并验证到底，保留失败与修复证据；需要 Host 凭据、权限、服务或资源配置变更时，保存具体错误、所缺条件和所需操作，暂停受阻研究线并明确报告操作者，保留该线进度，避免重跑已有采集、训练或评估来绕过权限问题。正常作业等待按状态继续推进。
 
 ## 工作区技能的读取与沉淀
 
@@ -147,11 +135,11 @@ Host 验证并去除图像 metadata 后，向配置的视觉辅助模型发送�
 
 工具只管理文本，不执行 skill 代码或扩大权限。旧 `skill_discover` 与 `skill_read` 仍可读取同一JSON目录中的信息；旧 skill_read 只返回元数据，优先用新 skills/read 读取正文。没有新工具的旧 Harness 可用普通 read/write；普通文件修改不会自动维护索引和版本，另建 LOCAL-INDEX.md 也不会自动被JSON目录搜索。
 
-把具体经历、证据与待办写长期记忆，把通用方法写 skill。技能不会分发给 worker；当前 Agent 按需读取并核对来源。保存不自动复制到部署方只读输入或公共仓库 skills/。正式保留与后继交接须核对文件清单包含所需 skill、目录和引用；Python 工具模块的变更仍须验证实际重载。
+把具体经历、证据与待办写长期记忆，把通用方法写 skill。技能不会分发给 worker；当前 Agent 按需读取并核对来源。保存不自动复制到部署方只读输入或公共仓库 skills/。正式保留与后继交接须核对文件清单包含所需 skill、目录和引用；工具模块由维护者验证和部署。
 
 ## 独立候选执行
 
-Agent 令牌不能通过 `POST /sessions` 创建普通 worker；请求被拒绝。Host 启动器可建立初始主会话；完整下一代 Harness 仅通过 `/evolution/trials` 启动，保持一个当前研究 Agent 和一个待定候选。容器使用独立身份与 `/workspace`，只读输入位于 `/run/input`，公共 A3 位于 `/opt/a3`；不挂载 Host 凭据、Docker socket 或其他身份工作区。候选固定使用 2 CPU、2 GiB 内存、256 个进程、512 MiB 临时目录。模型客户端位于本地镜像，A3 依赖位于远程作业镜像。
+Agent 令牌不能通过 `POST /sessions` 创建普通 worker；请求被拒绝。Host 启动器可建立初始主会话；冷启动的初始 mini 可引导一次首个研究进程。容器使用独立身份与 `/workspace`，只读输入位于 `/run/input`，公共 A3 位于 `/opt/a3`；不挂载 Host 凭据、Docker socket 或其他身份工作区。候选固定使用 2 CPU、2 GiB 内存、256 个进程、512 MiB 临时目录。模型客户端位于本地镜像，A3 依赖位于远程作业镜像。
 
 `GET /sessions/{session_id}` 返回状态、退出码和近期输出，Docker 完成状态为 `exited`。
 `GET /sessions/{session_id}/artifacts?path=relative_path` 返回最多 32 MiB 文件的 Base64 内容。
@@ -196,16 +184,16 @@ Host 先记录停止意图，再停止进程；若中断留下未确认的停止
 再单独调用，不与其他写入并行。Docker 先收到正常终止信号，五秒内未退出则强制终止；
 调用进程可能在收到 HTTP 响应或保存该工具结果之前结束。Host 的 session-events.jsonl
 记录 self_stop_requested 和成功时的 self_stopped；两者分别表示请求与实际停止。
-需要完整保存最后一次工具结果时，应让生成的 Harness 自行实现正常 return/break。
+优先使用部署的正常退出路径保存最后一次工具结果。
 
 `DELETE /sessions/{session_id}` 关闭当前候选；若还有未回收后代，返回 HTTP 409 和后代标识，保持分支不变。
 明确放弃整条分支时，使用 `DELETE /sessions/{session_id}?cascade=true`。
 分支取消回收该候选及后继候选、相关远程作业和隔离 fixture，保存控制台输出、移除容器并撤销身份，工作区保留。
 如果部分资源暂时无法回收，返回错误；父调用方仍可用原 session ID 重试清理。
 运行Host始终保留后代管理关系，父进程退出后后代仍可由上级身份管理。
-`session-events.jsonl` 保存创建与关闭关系，不保存令牌；候选版本、分数和搜索父节点由研究 Harness 自行记录。
+`session-events.jsonl` 保存创建与关闭关系，不保存令牌。
 研究 Agent 可以使用自己的固定权限工具和候选代码；工具后端仍经这些部署边界执行。
-唯一候选可通过正式 trial 加载已固定修改；实际使用、反思与比较证据由 Agent 保存。
+研究轨迹及实验结果由 Agent 保存。
 
 ## 远程 A3 作业
 
@@ -268,14 +256,18 @@ process 后端使用 `A3_A3`、`A3_PYTHON` 和真实数据盘工作目录。以�
 {"command": ["python", "-m", "a3_dual_arm_sim.workflows.benchmark_cookie_batch_cli", "--help"], "gpu": false, "files": {}}
 ```
 
-等效示例入口为 `["python", "/opt/a3/examples/benchmark_cookie_batch.py", "--help"]`。不要假设存在 `python -m a3` 或包根目录的 `__main__`；参考文档与这些示例随同一 A3 源码准备进镜像。生成后的 Harness 自行组织文档访问和接口知识交接。
+等效示例入口为 `["python", "/opt/a3/examples/benchmark_cookie_batch.py", "--help"]`。不要假设存在 `python -m a3` 或包根目录的 `__main__`；参考文档与这些示例随同一 A3 源码准备进镜像。按当前研究需要阅读示例与接口文档。
 作业根文件系统只读、无网络，只挂载自己的工作区，无 SSH、Docker socket 或 gateway 令牌。
-正常远程训练、采集和评估由 Controller 管理生命周期、资源和已支持的可恢复失败。提交独立作业后继续处理其他研究工作；等待依赖结果时使用 `POST /jobs/wait`，正文如 `{"job_ids":["<job-id>"],"seconds":25}`，每次最多 64 个作业，seconds 为 0–300。Host 一次读取一组作业的精简记录，活动快照最多缓存 30 秒，终态最多缓存 5 分钟；不读取 Docker 日志或扫描显卡。返回 `reason:terminal`、`notification` 或 `timeout` 和简短的 jobs 状态，不返回服务器 CPU、显存或训练日志。任一所选作业完成、失败或取消即返回 terminal；已有终态也会立即返回，后续等待列表移除已处理项。Controller 自动重试中的 restarting 属于非终态。通知覆盖新反馈、输入或分析信号。
+正常远程训练、采集和评估由 Controller 管理生命周期、资源和已支持的可恢复失败。提交独立作业后继续处理其他研究工作；等待依赖结果时调用 `wait` 工具。Harness 内部调用 `POST /jobs/wait`，正文如 `{"job_ids":["<job-id>"],"seconds":25}`，每次最多 64 个作业，seconds 为 0–300。Host 一次读取一组作业的精简记录，活动快照最多缓存 30 秒，终态最多缓存 5 分钟；不读取 Docker 日志或扫描显卡。返回 `reason:terminal`、`notification` 或 `timeout` 和简短的 jobs 状态，不返回服务器 CPU、显存或训练日志。任一所选作业完成、失败或取消即返回 terminal；已有终态也会返回，后续等待列表移除已处理项。声明了配对评估的成功作业会先在后台整理诊断材料，完成后随终态送达。Controller 自动重试中的 restarting 属于非终态。通知覆盖新反馈、输入变化或主身份变化。
 
 Harness 在程序内部续接 timeout，不为正常运行、排队或等待超时发起模型调用；HTTP 超时须覆盖 seconds 加远程连接余量（建议至少 seconds+65 秒）。将完成或中途停止的结果交给模型；如果有预先计划的 checkpoint 评估，由作业程序按计划安排。托管作业的 queued、pending、created、running、restarting 都属于等待状态，资源紧张与可恢复基础设施问题由 Controller 处理。作业确实停止后按真实状态返回失败，不推断成功或重放未知进度。非托管 process 作业的 observation_error 由操作者核查。等待不会持有会话锁，其他任务仍可提交。新反馈和输入更新仍作为明确授权的通知投递。
 
+配对评估在 `POST /jobs` 中声明 `evaluation: {baseline_job_id, baseline_manifest, candidate_manifest}`。两个 manifest 均为各自 `outputs` 下的相对路径，使用 episode executor 的 `episodes[].report` 指向同目录的原生 JSON 报告，每批最多 120 回合。同步轨迹位于与报告同名的 `<report-stem>-trace/trace.jsonl`，其中 `frames` 记录各相机图片路径。Host 按 seed、任务与难度配对并核对评估条件。缺失报告、未配对条件与条件不一致分别返回，均不填零分。
+
+等待通知的 `changes["/jobs/<id>"].evaluation` 包含配对差值和代表性失败回合。把每个回合的 `vision_request` 直接提交到 `POST /vision/inspect`，对齐 `action_samples` 与 `trace_sources`，先定位最早可观察的失败环节，再决定后续实验。每个请求最多六帧，初选画面覆盖相同步数下的早、中、晚阶段，可以沿原始轨迹进一步定位。已完成但未登记的评估可用相同的比较对象调用 `POST /jobs/<candidate-id>/evaluation`，只读取既有产物。
+
 需要诊断时通过 `GET /jobs/{job_id}` 读取详细状态与日志尾部；重复请求使用同一快照缓存（活动 30 秒、终态 5 分钟），取消后失效。缓存不跨 Host 重启，显式产物读取保持实时。通过
-`GET /jobs/{job_id}/artifacts?path=relative_path` 默认只读取该作业 `/workspace` 下的产物。若程序写入 `/outputs`，显式加 `area=outputs`，path 仍为相对于该目录的路径，不带 `/outputs/` 前缀。outputs 成功响应必须带 `area:"outputs"`；缺少标记不能当作读取了 outputs，新 Host 对未确认的旧 controller 响应拒绝返回成功。Host/controller/输入应同步部署。outputs 在同一 run 内按 owner 共享，不保证文件只由所选 job 写入；结合原始日志、哈希和作业记录验证来源。接口先核验 job 属于本轮已登记研究身份，按该作业实际 owner 读取，不隐式切换目录；取消和其他管理操作仍核验本身份或已采用 lineage 权限。旧无 run 记录的作业不支持 outputs。找不到文件时返回所选 area 的固定诊断，不表示作业未执行，不自动重跑。取消为 `DELETE /jobs/{job_id}`。
+`GET /jobs/{job_id}/artifacts?path=relative_path` 默认只读取该作业 `/workspace` 下的产物。若程序写入 `/outputs`，显式加 `area=outputs`，path 仍为相对于该目录的路径，不带 `/outputs/` 前缀。outputs 成功响应必须带 `area:"outputs"`；缺少标记不能当作读取了 outputs，新 Host 对未确认的旧 controller 响应拒绝返回成功。Host/controller/输入应同步部署。outputs 在同一 run 内按 owner 共享，不保证文件只由所选 job 写入；结合原始日志、哈希和作业记录验证来源。接口先核验 job 属于可读取的已登记研究身份，按该作业实际 owner 读取，不隐式切换目录；取消和其他管理操作仍核验本身份或已采用 lineage 权限。旧无 run 记录的作业不支持 outputs。找不到文件时返回所选 area 的固定诊断，不表示作业未执行，不自动重跑。取消为 `DELETE /jobs/{job_id}`。
 资源忙时稍后重试。长任务先提交再查询，避免单条本地命令超时。
 
 实际限制以 deployment.json 的 remote_limits 为准；process 的 CPU、memory、pids_limit 为 null，表示无单作业硬上限。作业可共享同一张 GPU；Host 按实际显存与预留量准入，物理 GPU 数和作业数量分别配置。max_jobs=0 不设作业数量上限，timeout_seconds=0 不设时限。
@@ -327,20 +319,11 @@ Harness 在程序内部续接 timeout，不为正常运行、排队或等待超�
 
 确需人工处理的外部阻塞使用 `status: blocked` 与 `external_blocker`，字段为 `kind`、`requires_human: true`、`reason`、`required_action`、`evidence`。允许的类别是 `authentication`、`permission`、`unavailable_service` 和 `missing_resource`；同样需要可达证据。候选名额、作业等待、无收益候选和待完成验收都应继续处理。
 
-run-outcome.json 声明结果，Host 等待进程实际停止后再读取它。生成的 Harness 应在自己的循环中实现终态退出，或保存状态后调用自身停止接口；写入终态文件不会触发 Host 自动中断或再次派发任务。
+run-outcome.json 声明结果，Host 等待进程实际停止后再读取它。使用已有的终态退出路径，或保存状态后调用自身停止接口；写入终态文件不会触发 Host 自动中断或再次派发任务。
 
-## 候选源码版本
+## 研究源码版本
 
-Host 保存候选的 Git commit 和独立 worktree，Docker 只挂载 worktree 中的 `source/`，看不到 `.git` 或其他候选。
-源码快照先保存为固定版本，再交给唯一正式 trial；不创建普通测试会话。
-
-- `POST /versions {"files": {"entry.py": "..."}, "parent_version": "可选版本标识"}` 保存完整源码快照，返回 `version_id`、`commit` 与父版本。文件清单完整替换，未列出的旧文件不会保留。
-- `GET /versions` 列出本轮研究读取范围内的版本；来源、代码摘要和采用状态分别核对。
-- `POST /evolution/trials` 使用 `command` 与 `files` 或已获授权的 `version_id`，同时固定基线和自测清单，详见下文。
-- 版本装配与远程作业源码传递见 `docs/workspace-snapshot-assembly.md`。普通 `/sessions` 创建请求不对 Agent 开放。
-
-Git 记录进入本轮 `versions/`。工作区内的即时修改不会自动成为 commit，Agent 应将选定源码显式提交到 `/versions`，并把评测与准确的版本标识、协议和结果关联。日志、记忆和任务材料按需显式交接；不要提交认证文件。
-候选包的默认文件清单由 `run.json` 指定，Host 不自动扫描历史私有工作区。版本来源与会话身份分别记录；单次运行按线性版本推进，不分叉研究 Agent。
+用实际作业源码、摘要和快照标识关联 Policy 实验。已登记版本可通过 `GET /versions` 核对。版本装配与远程作业源码传递见 `docs/workspace-snapshot-assembly.md`。
 
 ## 比较条件检查
 
@@ -365,19 +348,11 @@ Git 记录进入本轮 `versions/`。工作区内的即时修改不会自动成�
 
 接口是按需参考，不是每次决策前的通读清单。`input-manifest.json` 的 `execution_index` 给出本文件章节的字符 `offset/end`、完整 SHA256 和索引是否省略后续章节；用 `read fields:["execution_index"]` 查询后只读取需要的页，保持原文完整。索引有界，`truncated:true` 时从 `next_offset` 按页继续找，不表示正文被截断。当前请求已携带输入 revision/generation/status；同一已核验版本的已读规则不需每轮重读。跨文件读取仍应核验前后活动版本一致，版本变化、缺失证据或具体接口错误时再定点回查。
 
-部署方维护的恢复 Harness 中，`wait(seconds)` 接受 0–600 秒。单次工具调用内，每约 2 秒调用 `GET /wait/signals`，检测本身份 human feedback、新的 analyzer 完成/失败通知、主身份和输入版本变化；每约 10 秒只读观察已登记候选和已知 job。状态变化、已交付待决结果、输入更新或观察错误都会提前返回；没有变化只在期限结束后返回模型，不自动提交/收集/采用任何工作。其他生成入口是否支持此行为，以其实际工具实现为准。
+部署方维护的 Harness 对已登记的活动作业执行持续等待。正常排队、运行、自动重试和等待超时均在程序内处理；完成、失败、取消或新的操作者通知才返回给模型。短暂的状态传输失败按间隔退避。终态回执和游标随工具日志和 checkpoint 保存，后续等待自动跳过已观察的终态。等待保留作业编号，不重交作业，不确认研究结论。
 
-`/wait/signals` 使用既有本身份鉴权，只返回 ID、计数、状态、版本与稳定游标，不返回反馈/分析正文、凭据或其他身份记录。信号请求超时最多 1 秒，单次候选/job 状态请求最多 2 秒；健康 Host 下通常在约 2 秒检测到新通知，加上在途短请求的耗时，不是硬实时保证。错误立即返回供正常决策判断，不靠无限静默重试。通知查询不确认消费，不启动 analyzer，不调用模型。
+无活动作业时，`wait(seconds)` 最多等待 600 秒。信号只返回本身份通知 ID、计数、输入版本和稳定游标。信号读取不会消费通知。Harness 进程关闭时保留远程作业，恢复后按已有台账继续观察。
 
-游标随 wait 的实际结果进入现有 journal/checkpoint；同一模型响应批次使用决策前的游标，避免第一个 wait 看到通知后，第二个 wait 又长期等待。崩溃或超时边界的事件保留，下一轮仍可读取；如果旧游标已被摘要移出而仍有待回应的分析建议，保守重送一次，不伪称恰好一次通知。此机制保持进程存活，不是 Host 退出后事件唤醒。恢复只观察现有工作，不重放创建作业；等待期限在重启后重新计时。不要将等待结果当作实验结果或采用决定。
-
-每个 Gateway 请求返回 `X-Request-ID`，Host 在 `gateway-events.jsonl` 写开始与结束事件，记录身份、路由模板、状态码、持续时间、错误发生层和异常类别。
-模型请求在等待期间也有开始记录；记录不包含请求正文、令牌或异常原文。`attempt: 1` 表示 Gateway 不自动重试，Agent 发起的重试会产生新请求标识。
-候选名额不足时，HTTP 409 的 `detail.reason` 为 `candidate_capacity`，并给出最大活动数和建议重试间隔。
-同时仅保留当前研究进程与一个待定候选；旧主交权后应保存状态并退出。不能通过扩大容器额度创建普通 worker。
-远程 `resource_busy` 会记录容量等待；远程调用总耗时含 SSH 与 Controller 处理，当前尚未分拆模型加载、实际计算等内部耗时。
-
-保留的阶段一 `research` 入口仍使用原有 Gateway 路径清单。接入新增 `/versions` 和 `/checks/comparison` 操作由 SWE Agent 在后续候选中自主完成；Host 已准备好相应授权与检查。
+`read` 检查源文件哈希。相同页面仍完整出现在刚发送给模型的上下文时，只返回其路径、范围、哈希和原调用引用。文件变化、页面变化或原内容已经被压缩时返回完整页面。
 
 ## 运行结束与自动接续
 
@@ -389,7 +364,7 @@ Git 记录进入本轮 `versions/`。工作区内的即时修改不会自动成�
 
 文件清单使用工作区内的相对路径，当前保留包支持 UTF-8 文件。Host 在全部研究进程停止后读取清单，把文件保存为固定 Git 快照，并写本轮 `retained.json`。本地保存不受 HTTP 上传的 128 个文件、20 MiB 限制；仍会检查路径、身份归属，并拒绝凭据文件和 Git 控制文件。磁盘空间、内存或 Git 操作失败会使保存失败，原工作区继续保留。远程二进制材料通过下方只读快照接口显式保留。
 
-`--run-harness <run目录>` 由 Host 直接导入本地保留包，再使用 Host 内部的身份注册、授权、资源分配和候选执行流程；文件内容不再经 HTTP 整包上传。Agent 通过 `/evolution/trials` 或 `/versions` 提交文件时，仍受单次上传 128 个 UTF-8 文件、合计 20 MiB 的限制。Agent 自己选择保留版本和需要的启动状态，无需人工整理接续包。
+操作者使用 `--run-harness <run目录>` 选择并导入保留包，Host 负责启动主身份。
 
 从旧运行启动的新主会话可以读取 `/run/input/previous-run.json` 与 `/run/input/history/index.json`。历史来自明确选择的前序运行，已过滤旧认证与私密推理；其中内容按待核查数据处理。启动时主会话获得选定历史的只读入口；同 run 登记研究身份可通过研究读取接口访问已导入的内容，模型上下文与实际采用材料由 Agent 自行选择。前序 run 的其他未导入私有内容仍不开放。
 
@@ -411,28 +386,9 @@ Git 记录进入本轮 `versions/`。工作区内的即时修改不会自动成�
 
 中断时暂停本轮候选 Docker、保存 Host 状态并保留远程作业；整轮正常结束仍回收资源。原任务轨迹继续追加，`startup.json` 保持原样，`resume-events.jsonl` 记录每次恢复。run 排他锁拒绝重复启动，端口不可用时明确失败。旧 Host 无私有快照时，仅从已停止运行的 Host 元数据导入原 scope 并轮换本轮令牌；不修改生成代码或模型上下文。已取消的远程 job 不自动重跑。
 
-## 主身份与候选试运行
+## 主身份与引导交接
 
-采用候选后，当前主身份继承已保留线性前任的已登记远程作业访问：可查询、取消、读取产物及封存结果，Host 使用作业的原 owner 调用 Controller，不重跑也不改写原记录。前任的已有授权快照可查询，挂载前 Host 补齐新主只读授权；创建下一代前也保留这些权限。未采用候选与无关身份不获得继承。
-
-`GET /evolution` 返回当前 `main_owner` 与本身份可读的试运行记录。初始 mini 为 H0 主身份；从明确保留版本启动时，加载该版本的 session 为主身份。一次只允许一个待决定的 Harness 候选。
-
-当前研究 Agent 自己完成 Policy 与 Harness 的实现、数据采集、训练、评估、脚本修复和验收判断。局部检查在本身份工具与远程作业中执行，不创建普通 `/sessions` worker，不采用 orchestrator/worker 分工。完整 Harness 版本只通过 `/evolution/trials` 启动一个线性候选；前任等待候选自测并读取结果，候选交权前仅完成清单并等待，不开展独立研究。拒绝则回收候选并继续原版本；采用则由同一候选接任，旧主保存交接后退出。禁止分叉并行研究 Agent。
-
-主 Agent 交权前完成自己负责的实验闭环核查，交接已确认结论、适用条件、版本、证据引用与明确未完成任务。后继无需逐条重验前任，未完成或未知不得写成已确认；接手未完事项只承担后续执行责任。候选在接任前无需完成整个 run，先验证本次改动及接任能力，接任后开展自身研究。
-
-主 Agent 先安排验证局部假设，再依据证据安排将有效改动整合进完整 Harness。测试脚本按其局部任务判断；接任候选须具备完整继续执行能力。启动前核对自己提供的源码、工具、文件与任务能够支持验收。模型调用必须实际带上所需 tools；只发空 tools 的连通请求不能覆盖工具执行。主 Agent 向下一代交接自测清单与实际结果。
-
-当前主 Agent 自行提出改动、固定验收清单并执行以下协议：
-
-1. `POST /evolution/trials`：包含 command 与 files 或 version_id，另加 `baseline_version`（已保存且有权使用的 H0 版本）和 `checklist`（改动的验收清单）。Host 将清单、摘要与两版代码标识固定记录，启动候选 H1；主身份仍属于 H0。主 Agent 负责通过显式文件交接让候选读到清单、任务、记忆和必要状态。
-2. 候选执行清单并保存结果，等待主身份交接；前任等待自测，不另开研究任务，候选交权前不开展独立研究。它可查询 `/evolution` 判断自己是否已成为 main；测试完成后须保持进程可交接。候选不能自行保留或拒绝版本，也不能创建下一代主候选。
-3. H0 读取实际结果并自行判断，确认自己负责的实验闭环与接任清单实际满足交接条件。调用 `POST /evolution/trials/{session_id}/decision`，提供 `retain`、`reason`、`evidence`（候选 workspace 内结果路径）。保留时 Host 检查结果路径可读、候选仍在运行，原子转移主身份，不再启动另一份 H1。清单是否达标、是否值得保留由 H0 决定。
-4. 拒绝时 Host 回收该候选分支，主身份和 H0 版本不变。保留时 H0 保存交接并退出；H1 的同一进程成为新主 Agent，使用已交接的任务状态继续执行。旧主身份不能再次发起试运行或决定。
-
-候选代码在启动时已保存为不可变 Git commit/worktree。保留决定引用这份实际测试版本；未加载的新修改须作为新的试运行，不把文件的即时编辑当成已测试版本。`evolution.json` 保存主身份变化与逐次决定。Host 不生成改动、记忆或专项验收，也不根据收益自动选择版本。
-
-H0 的已保存执行结果可作为基线证据，无需为了每次改动再启动旧版 Agent；主 Agent 须说明清单与已有能力、过程指标的关系，不能只以候选自称成功决定保留。当前研究 Agent 在没有待定 trial 时可交叉推进 Policy 与 Harness。普通 `/sessions` worker 被禁止。主身份是唯一的决策权限，试运行期间允许 H0 与候选两个进程共存；H0 交接后应自行退出，Host 不在模型调用中途强制杀掉它。最终主 Agent 核查自身工作，引用各代已确认结论与证据汇总进展，不重新执行或审计前任原实验；未覆盖项保持未完成。它在自己的 workspace 保存最终 run-outcome.json 与 continuation.json；全部研究进程停止后从最终主身份归档。
+`GET /evolution` 可核对当前主身份和历史试运行。冷启动的初始 mini 使用既有引导接口建立首个研究会话；该引导只执行一次。历史身份与恢复信息继续可读。日常研究由部署方启动或恢复的主 Agent 执行。
 
 ## 固定核心提示词
 
@@ -460,7 +416,7 @@ Host 只加载所选阶段的输入，不叠加 common 或另一阶段 Prompt。
 
 ## 远程资产、输出与额度
 
-部署方可配置只读 `/models`、`/datasets`；Agent 根据目录中的实际文件选择模型和数据。远程作业自己的 `/workspace` 与同一研究身份持久可写的 `/outputs` 保存在服务器项目的数据目录中。其他身份的可写输出不直接挂载；同 run 研究身份可通过作业产物接口读取，已授权的只读 exports 可供本轮身份复用。需要在新作业内使用大文件时，仍通过 input_exports 只读挂载。写入和作业管理沿本身份或已采用 lineage 权限执行。
+部署方可配置只读 `/models`、`/datasets`；Agent 根据目录中的实际文件选择模型和数据。远程作业自己的 `/workspace` 与同一研究身份持久可写的 `/outputs` 保存在服务器项目的数据目录中。其他身份的可写输出不直接挂载；第二阶段通过作业产物接口读取项目历史产物，已封存的项目快照可供后续 run 复用。需要在新作业内使用大文件时，仍通过 input_exports 只读挂载。写入和作业管理沿本身份或已采用 lineage 权限执行。
 
 部署信息 remote_limits 保存实际并发、单作业超时和本地 run 文件与新增远程数据的合计额度。timeout_seconds 为 0 表示不限时，run_storage_bytes 为 0 表示不启用这项额度；只读公共模型与数据不计入新增额度。本轮各代身份的新增远程数据合并计入同一 run；Host 每五秒报告本地 run 文件占用，远程 watcher 使用最近报告与远程占用之和。
 
@@ -509,9 +465,9 @@ backbone、tokenizer 及相关预训练资源由人类提前准备、校验后�
 
 1. 先让写入选定文件的作业完成或停止写入，再 `POST /jobs/{job_id}/exports`，例如 `{"location":"outputs","path":"checkpoints/best"}`。location 可用 outputs 或 workspace，path 是本身份作业内的相对路径。只接受普通文件和目录，拒绝符号链接与特殊文件。
 2. 返回 export_id 和 preparing。用 `GET /jobs/exports/{export_id}` 等待 ready；失败返回 failed 与 error。封存使用独立进程，不占 GPU。每个文件复制并计算 SHA256，源文件在封存期间改变则失败；ready 后源文件再改变不影响快照。`GET /jobs/exports/{export_id}/manifest` 返回相对路径、字节数与逐文件 SHA256。`GET /jobs/exports` 列出本轮研究身份已获授权的只读快照。
-3. 创建唯一完整接任候选时，在 `/evolution/trials` 请求中加入 `"read_only_exports":["export-..."]`。Host 验证引用在本轮可读，并为远程作业挂载落实相应只读授权。也可用 `POST /jobs/exports/{export_id}/grants {"session_id":"candidate-..."}` 为本轮身份落实所需的只读挂载授权；该操作不开放跨 run 访问。
+3. 本轮已登记研究身份按授权使用只读快照；缺少挂载授权时记录快照标识和所需范围，由操作者处理。
 4. 本轮可读该快照的 Agent 提交 `/jobs` 时加入 `"input_exports":["export-..."]`。Docker 执行端把每份快照挂载为只读 `/inputs/<export_id>/`；process 通过 `A3_INPUT_EXPORTS_JSON` 提供封存目录，按只读约定使用；两者均保留选定目录的相对结构；选单个文件时路径为 `/inputs/<export_id>/<文件名>`。本地 Agent Docker 不挂载这些执行端二进制文件，需要通过远程作业使用。本轮不可读或未 ready 的引用拒绝提交，不分配作业资源。每个请求最多 64 个引用。
-5. 接任主身份后可继续把已获授权的引用交给下一代唯一候选。退出、container 回收和同 run 恢复保留快照及授权。跨轮使用时，把选定 ID 写入自己的 continuation.json 顶层 remote_exports 数组；Host 保存前验证 ready 与可读性。之后显式 `--run-harness <该run>` 会把引用授权给新 run 的主身份及初始 Harness，无需人工复制大文件；新的模型上下文仍按阶段初始化。
+5. 同 run 恢复保留已授权快照。第二阶段项目内跨 run 复用时，在提交作业的 `input_exports` 中引用已有快照，Host 自动核验并授予只读访问。保留版本也可在 continuation.json 的 `remote_exports` 中声明选定 ID。
 
 例如保留声明：
 
@@ -548,13 +504,11 @@ Host使用精简摘要指令，附人工反馈ID/哈希引用；完整反馈仍�
 工具输出先归档并重新判定是否还需摘要；已经低于预算则保存可回查引用，避免不必要模型调用。
 
 
-### 安全运行视图与独立分析
+### 安全运行视图
 
 `GET /telemetry` 返回白名单计数、实际模型耗时及可得 token 数；默认 self 读取自身，`scope=descendants` 在当前单 run Host 中汇总本轮全部已登记研究身份。不返回原始轨迹、文件路径、请求正文、错误文本或凭据。计数窗口有限，缺失指标不能当零成本或性能证据。
 
-支持该能力的 Harness 自动低频请求独立分析：30 分钟周期，重复读取、长期无已记录进展与交接前事件可提前触发；共享冷却、去重、单次调用预算和故障回退。冷却或在途期间合并保留触发，周期以成功完成（含有效同快照缓存）计时，失败按有界退避重试；交接不等待分析器完成。`POST /analysis` 的 `enqueue_only: true` 只登记待处理信号，`GET /analysis` 的 `deferred_triggers` 供当前主 Agent 接续处理。信号用于提醒分析，不自动断言卡死或取消作业。仅当前主 Agent 可用 `POST /analysis` 发起分析或登记信号。analyzer 是异步、无工具的统计分析服务，读取本轮汇总统计；本轮全部登记研究身份可用 `GET /analysis` 或 `GET /analysis/{analysis_id}` 读取建议。仅当前主 Agent 核对证据并用 `POST /analysis/response {analysis_id,decision,reason}` 明确采纳、拒绝或推迟及理由。该建议不是 human feedback、验收结论或权限，不自动执行。
-
-部署方提供的可选修复 Harness 包含带 source hash/长度/EOF 的有界分页读取和操作进度记录。工具结果取回、成功提交给模型、语义理解和科研决定是不同状态；保存或压缩不能自动宣布实验通过。操作进度仅记录 Agent 的声明和证据引用，摘要不能替它重新打开或关闭项目。接口和触发参数见仓库 `docs/trajectory-analysis.md`；实际能力仍以本轮已加载 Harness 和 Host 为准。
+部署方提供的可选修复 Harness 包含带 source hash/长度/EOF 的有界分页读取和操作进度记录。工具结果取回、成功提交给模型、语义理解和科研决定是不同状态；保存或压缩不能自动宣布实验通过。操作进度仅记录 Agent 的声明和证据引用，摘要不能替它重新打开或关闭项目。
 
 
 预期的本地参数校验错误可返回 `validation_failed`、固定 `code/hint`，只解释现有边界，不扩大权限；未知异常和权限错误继续返回受限诊断，不暴露任意异常正文。工具 schema 的长度/数量上限用于减少无效调用，不能替代实际执行校验；按 action 填写必需字段。

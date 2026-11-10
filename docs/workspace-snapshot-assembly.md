@@ -1,6 +1,6 @@
 # 源码快照与作业文件传递
 
-当前 Agent 用 `POST /versions` 保存完整源码快照，再以 `version_id` 创建唯一 `/evolution/trials` 候选；正式 trial 不接收 `workspace_files`。先核对源码、依赖、完整文件清单与摘要，再固定版本和自测清单。
+Agent 用下文的 `workspace_files` 提交研究脚本。Harness 版本由维护者选择和部署。历史试运行的 `version_id` 仍可用于追溯完整源码，文件传递回执用于核对实际作业输入。
 
 普通 `POST /sessions` 不对 Agent 开放。Host 内部启动可复用版本装配能力；该内部路径不构成研究 Agent 的新会话入口。旧 worker 准备与分发流程已移除。快照与回执记录实际字节和来源，研究完成须由真实执行结果判断。
 

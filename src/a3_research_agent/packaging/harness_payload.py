@@ -13,8 +13,6 @@ HARNESS_MODULES = (
     "waiting.py",
     "planning.py",
     "job_preflight.py",
-    "analysis/__init__.py",
-    "analysis/client.py",
     "context/__init__.py",
     "context/compaction.py",
     "context/manager.py",

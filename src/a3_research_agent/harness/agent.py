@@ -11,7 +11,6 @@ import urllib.request
 os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
 
 from a3_research_agent.harness import job_preflight, planning, skill_registry
-from a3_research_agent.harness.analysis import client as analyzer_client
 from a3_research_agent.harness.context import compaction
 from a3_research_agent.harness.context import manager as context_manager
 from a3_research_agent.harness.memory import recall as recall_tools
@@ -144,14 +143,11 @@ def tool(name, a):
                 "/fixtures/isolation",
                 "/evolution",
                 "/telemetry",
-                "/analysis",
                 "/vision",
             ]
         ):
             return "path not allowed"
         lifecycle.guard_gateway(req, a["method"], path, a.get("body"))
-        if a["method"] == "POST" and path == "/evolution/trials":
-            analyzer.trigger("before_handoff")
         result = req(a["method"], path, a.get("body"))
         try:
             memory_state.record_gateway(a["method"], path, result)
@@ -179,13 +175,6 @@ def tool(name, a):
                 return {"error": "use_preflight_tool"}
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_text(a["content"])
-            try:
-                memory_state.record_write(p)
-            except Exception:  # noqa: BLE001 — the file write already succeeded
-                try:
-                    log({"operational_receipt": "write_update_failed"})
-                except OSError:
-                    pass  # Optional diagnostics cannot hide an executed operation.
             return "written"
         if name == "list":
             return [str(x) for x in p.iterdir()][:300]
@@ -274,7 +263,7 @@ class ToolResultPersistenceError(RuntimeError):
         self.phase = phase
 
 
-def save_tool_result(call, result, journal, messages):
+def save_tool_result(call, result, journal, messages, visible_count):
     """Persist the executed outcome before optional receipts or presentation work."""
     phase = "raw_result_journal"
     try:
@@ -283,6 +272,7 @@ def save_tool_result(call, result, journal, messages):
         phase = "result_receipt"
         if call["name"] == "read":
             memory_state.record_page(call["call_id"], result)
+            result = memory_state.visible_page_reference(result, messages[:visible_count]) or result
         if call["name"] == "wait":
             memory_state.record_wait(result)
         phase = "result_archival"
@@ -468,7 +458,6 @@ tools = (
 
 INSTRUCTIONS = ""
 compactor = None
-analyzer = None
 WAIT_CURSOR = None
 
 
@@ -566,13 +555,12 @@ def recover_journal(messages):
         )
     checkpoint(restored)
     context_manager.atomic(p, "null")
-    save_manifest()
     return restored
 
 
 def main() -> None:
     """Initialize one explicit execution; importing this module never starts it."""
-    global BASE, TOKEN, INSTRUCTIONS, compactor, analyzer, WAIT_CURSOR
+    global BASE, TOKEN, INSTRUCTIONS, compactor, WAIT_CURSOR
     BASE = os.environ["A3_GATEWAY_URL"]
     TOKEN = os.environ["A3_GATEWAY_TOKEN"]
     if "--worker-task" in sys.argv:
@@ -593,12 +581,13 @@ def main() -> None:
         context_manager.restore_artifact_views(messages)
         recall_tools.ensure_history(messages)
         input_skills.install_input_skills()
+        checkpoint(messages)
     except Exception as e:  # noqa: BLE001 - preserve recoverable state on unexpected failures
         log({"recovery_error": str(e)})
         sys.exit(1)
     WAIT_CURSOR = waiting.wait_cursor(messages)
-    analyzer = analyzer_client.start(req, memory_state.signals)
     empty = 0
+    log({"model_request_tools": tools})
     loop_phase = "decision_prepare"
     while True:
         try:
@@ -623,28 +612,24 @@ def main() -> None:
                 save_manifest()
                 break
             operational = operational_message()
-            operational_data = json.loads(operational["content"])
-            operational_data["independent_analysis"] = analyzer.view()
-            operational["content"] = json.dumps(operational_data, ensure_ascii=False)
             state_reference = context_manager.archive(operational, "operational-view")
             # Asynchronous fork: this decision keeps the full history; a finished
             # compaction result is applied before a later decision, never mid-flight.
             # The operational view rides outside history, so only its size is budgeted.
-            messages, compaction_record = compactor.before_request(
+            prepared_messages, compaction_record = compactor.before_request(
                 messages, extra_messages=[operational]
             )
             if compaction_record:
                 log({"context_compaction": compaction_record})
-                if compaction_record.get("kind") == "applied":
-                    checkpoint(messages)
-            checkpoint(messages)
+            if prepared_messages is not messages:
+                messages = prepared_messages
+                checkpoint(messages)
             request = {
                 "model": "openai/sandbox-model",
                 "instructions": INSTRUCTIONS,
                 "input": messages + [operational],
                 "tools": tools,
             }
-            log({"model_request_tools": tools})
             try:
                 req("POST", "/telemetry/observations", memory_state.counters(), timeout=2)
             except Exception:  # noqa: BLE001 — optional telemetry never blocks research
@@ -654,7 +639,6 @@ def main() -> None:
             resp = request_model(request)
             if resp.get("status") == "completed":
                 memory_state.mark_delivered(messages)
-                memory_state.decision_completed()
             log({"response": resp})
             out = resp.get("output", [])
             if not out:
@@ -669,21 +653,20 @@ def main() -> None:
             calls = [x for x in out if x.get("type") == "function_call"]
             journal = {"base_hash": checkpoint_hash(), "output": out, "results": {}}
             context_manager.atomic("pending-calls.json", json.dumps(journal, ensure_ascii=False))
-            save_manifest()
             # All waits in this response use the pre-decision cursor: a tool result
             # is not yet a normal model decision observing the notification.
             WAIT_CURSOR = waiting.wait_cursor(messages)
+            visible_messages = len(messages)
             messages.extend(out)
             recall_tools.append_history_many(out)
             for c in calls:
                 loop_phase = "tool_execution"
                 result = dispatch_tool_call(c)
                 loop_phase = "result_persistence"
-                save_tool_result(c, result, journal, messages)
+                save_tool_result(c, result, journal, messages, visible_messages)
             loop_phase = "checkpoint_publication"
             checkpoint(messages)
             context_manager.atomic("pending-calls.json", "null")
-            save_manifest()
             if "--test" in sys.argv and calls:
                 break
             if not calls:
@@ -697,10 +680,11 @@ def main() -> None:
                         "content": (
                             "Continue the research yourself: implement, submit independent jobs in "
                             "parallel, inspect results and repair ordinary script errors in this task. "
-                            "Preserve evidence and use only a single linear successor for Harness handoff."
+                            "Preserve experiment evidence and act on the most informative next research step."
                         ),
                     }
                 )
+                checkpoint(messages)
         except Exception as e:  # noqa: BLE001 - preserve recoverable state on unexpected failures
             failure = {
                 "loop_error": type(e).__name__,

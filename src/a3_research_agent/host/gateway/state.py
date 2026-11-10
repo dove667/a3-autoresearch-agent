@@ -62,6 +62,7 @@ class GatewayState:
             yield
         finally:
             stopped.set()
+            self.evaluation_workers.shutdown(wait=False, cancel_futures=True)
             if reaper is not None:
                 reaper.join()
             if budget_monitor is not None:
@@ -78,6 +79,7 @@ class GatewayState:
                         "children": self.children,
                         "scope_parents": self.scope_parents,
                         "jobs": {key: sorted(value) for key, value in self.jobs.items()},
+                        "job_evaluations": self.job_evaluations,
                         "evolution": self.evolution.snapshot() if self.evolution else None,
                         "fixtures": self.fixtures.records if self.fixtures is not None else {},
                     }

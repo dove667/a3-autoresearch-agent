@@ -1,5 +1,7 @@
 # Tavily API 专用本地代理与提供商正文提取
 
+> 历史设计记录。当前职责与操作见[夜间研究与白天维护](../operator-supervision.md#夜间研究与白天维护)。
+
 Version: 0.1.0
 
 ## 范围

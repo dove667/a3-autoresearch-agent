@@ -1,8 +1,34 @@
 # 外界监督与运行干预
 
-Version: 0.2.2
+Version: 0.2.7
 
 本文件面向用户、父助手与 Host 操作者，不是研究 Agent 的输入，不加入 input manifest。Agent 的反馈处理规则在阶段 Prompt，接口与状态技术事实在 execution；文档职责与装载链见 [Agent 输入管理](agent-inputs.md)。
+
+## 夜间研究与白天维护
+
+夜间由单个 Agent 自主研究 Policy、采集、训练、评估与分析结果。白天由人类和 Codex 依据原始执行轨迹维护 Harness，包括模型调用、工具、上下文、记忆机制、调度与恢复。Agent 负责报告过程问题及证据，并继续修改研究代码和管理研究知识。
+
+维护者从执行轨迹、Gateway 请求记录、模型用量和 Controller 作业记录定位问题，保留当时输入和版本。先用相同输入复现，再修改、回归并记录版本。保留原 run 的 checkpoint、工作区和在途远程作业；恢复后核对实际加载的版本和首个相关调用。按下文审批流程发布输入或恢复。常规窗口见[夜间运行窗口](#夜间运行窗口)。
+
+日间复核从同一研究身份的 `trajectory.jsonl`、`model-usage.jsonl`、`gateway-events.jsonl` 和 Controller 作业终态入手。按症状选择可重复的失败序列，用受控状态验证修复，再用正式夜间日志核对真实调用次数、耗时和研究产出。输入 token 与缓存命中分别统计。工具等待产生的 Host 请求属于基础设施流量，模型唤醒次数由 Responses 请求记录核对。
+
+### 发布新版 Harness 时使用新上下文
+
+白天完成验证后，准备一个待发布目录及 `run.json`。其中 `command` 是新 Harness 的启动命令，`files` 显式列出所需 Python 源码。交接 Markdown 只写 `## 已核对结论` 和 `## 待办`，每节至少一项。为结论附实验报告与版本，为待办附原作业 ID、checkpoint 或已经授权的资产引用。
+
+用最初绑定定时启动器的 run 作为锚点。先预览，再用返回的摘要确认发布：
+
+```bash
+uv run python -m a3_research_agent.cli.night_release "artifacts/rsi/<锚点run>" \
+  --package <新版Harness目录> --handoff <交接.md>
+
+uv run python -m a3_research_agent.cli.night_release "artifacts/rsi/<锚点run>" \
+  --package <新版Harness目录> --handoff <交接.md> --confirm <发布摘要>
+```
+
+确认固定启动命令、源码、当前第二阶段输入和交接正文。21:00 有待发布版本时，定时器用 `--run-harness` 建立新 run，模型上下文从当前目标和审核后的交接开始。源码清单不接收旧 checkpoint、轨迹、工具调用日志、记忆或技能目录。未发布新版时，定时器恢复上一次选定的 run。发布内容损坏或新 run 启动不完整时停止并保留现场，便于排查。
+
+旧 run 的轨迹、作业归属和产物留在原处，远程在途作业继续执行。第二阶段的新 run 可用交接引用查找本项目历史作业和产物，在新作业里用只读快照复用历史资产。遇到仍不可读的依赖时，Agent 停止受阻研究线并向操作者报告。若 Mac 重启，用原锚点重新启动定时器；它从锚点记录继续选择已发布版本及当前 run。
 
 ## 低频弱监督与批准边界
 
@@ -99,3 +125,22 @@ Phase 2 goal/acceptance 0.4.0 将 A–D 定义为研究里程碑：完整科学�
 运行中顶层 outcome 使用 continue，已通过的阶段项保留其快照和证据。RunSupervisor 只等现有活跃会话，并在全部停止后读取 outcome；不会因 A–D passed 退出，也不会看到 continue 就启动下一轮。全体退出仍记 incomplete。持续运行须由现有主 Harness/交接链维持；没有新增守护进程、自动修复或恢复权限。正常等待不冒充外部 blocked。操作者停止、真实阻塞或预算/权限边界触发如实收尾，是否完整通过与收益分开报告。
 
 此语义仅适用于新的第二阶段输入；G 等第一阶段任务仍须交付并正常退出。冻结的历史 run 不改写，运行中输入或反馈更新仍遵循上述明确批准和留档规则。
+
+## 夜间运行窗口
+
+暂停过的 run 可用 `bash scripts/start-rsi.sh --night-window --resume-from artifacts/rsi/<run-id>`
+继续运行。窗口固定为北京时间 21:00（含）到次日 09:00（不含）。到点后启动器向 Host
+发送正常中断信号，保存 checkpoint 并关闭本地 Agent。远端 Controller 继续执行已提交的
+作业。21:00 按发布记录选择新 run 或恢复当前 run。白天只保留等待窗口的启动器。启动器退出或机器重启后，
+需要重新运行该命令。Host 自行退出时，启动器不会自动重试。可在本地 `.env` 设置
+`A3_NIGHT_WINDOW_RUN_ID` 为对应 run 目录名，要求该 run 使用夜间入口恢复。
+
+可在本地 `.env` 设置 `A3_UPSTREAM_RESPONSES_BASE_URL`、
+`A3_UPSTREAM_RESPONSES_MODEL` 和 `A3_UPSTREAM_RESPONSES_API_KEY`，让 Host
+使用指定的 OpenAI 兼容 Responses 服务。该配置统一应用于 Gateway 的各角色调用，恢复仍
+沿用 run 原有的模型身份和适配器标识。模型用量记录的 `response_model` 保存供应商返回
+的实际模型。API key 仅供 Host 使用。切换前用最小请求验证端点、模型与凭据。
+
+`A3_UPSTREAM_RESPONSES_READ_TIMEOUT_SECONDS` 设置 Host 等待该服务响应数据的超时，默认
+120 秒，连接超时为 10 秒。处理长上下文时可在 `.env` 调高读取超时，并核对 Harness
+对应接口的等待时间。恢复 run 后加载新配置。

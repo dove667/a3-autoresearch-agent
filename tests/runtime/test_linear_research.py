@@ -129,6 +129,8 @@ def test_real_single_agent_submits_two_jobs_before_waiting(tmp_path):
         decisions.append(request)
         assert {"plan", "memory"} <= {tool["name"] for tool in request["tools"]}
         assert "delegate" not in {tool["name"] for tool in request["tools"]}
+        assert "as one Agent" in request["instructions"]
+        assert "Harness successor" not in request["instructions"]
         plan = json.loads(request["input"][-1]["content"])["research_plan"]
         if len(decisions) == 1:
             output = [

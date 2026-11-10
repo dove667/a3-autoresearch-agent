@@ -1,6 +1,6 @@
 # A3 Research Agent 使用教程
 
-本教程从第一次启动开始，说明怎样让 SWE Agent 构建 Harness、怎样恢复中断的任务，以及怎样让上一轮的保留版本继续演化。所有命令在本仓库根目录执行。运行系统各部分如何配合，见[系统架构](architecture.md)。
+本教程说明首次引导、从保留版本启动和恢复同一 run。所有命令在仓库根目录执行。
 
 ## 先理解一次运行
 
@@ -8,7 +8,7 @@
 
 一次 **session** 是在独立 Docker 中执行一个 Harness 或检查程序。它有自己的身份、工作区和日志，可以通过受控接口请求模型或计算资源。一次 **job** 是交给执行端的仿真、渲染或计算任务；Agent 提交后查询状态，再取回产物。
 
-例如，Agent 可以先运行基线 Policy，再提出一个修改并提交三个种子的对照实验。它读到结果后决定拒绝候选，随后回看自己的工具调用轨迹，修改 Harness，再创建一个 session 实际测试修改。整个过程可以在同一个 run 内完成。
+例如，Agent 提出一个 Policy 假设并提交配对实验，结合分项、视频和轨迹判断结果。工具或运行问题保留具体证据，交给白天的维护者。
 
 ## 第一次启动前准备什么
 
@@ -82,7 +82,7 @@ bash scripts/start-rsi.sh --phase phase-two --run-harness "artifacts/rsi/<run-id
 
 ## 初始运行：从通用 SWE Agent 构建 Harness
 
-先阅读或调整 `agent-inputs/phase-one/goal.md` 和 `agent-inputs/phase-one/acceptance.md`。当前阶段一包含四项：一次 Policy 优化尝试、一次轨迹反思驱动的 Harness 优化、受限执行与跨实验隔离、持久记忆的跨会话检索与实际复用。专项实现由 SWE Agent 决定。
+先阅读第一阶段目标和验收。阶段一验证 Policy 实验、轨迹留存、权限与隔离、研究记忆复用。
 
 ```bash
 bash scripts/start-rsi.sh
@@ -104,7 +104,7 @@ $$
 
 run ID 使用 Host 系统本地时间，格式为 `run-YYYYMMDD-HHMMSS-ffffff`，最后六位是微秒。例如 `run-20261031-110415-123456` 表示 2026 年 10 月 31 日 11:04:15.123456 启动。创建目录时若仍重名，会追加 `-2`、`-3` 等序号，分别保存并发运行。
 
-初始 SWE 只启动一次，自主组织实现、迭代与验收；需要交接时，由 SWE 自己创建后继并传递状态。Host 保留正在运行的后继和 Gateway，不定时重建 Agent，不因未完成而重派任务。全部研究进程停止后记录结果；未完成如实记录，不自动重新开始。结果字段见 [Host 执行接口](../agent-inputs/shared/execution.md#整轮结束与未完成交接)。
+初始 mini 只引导一次，首个研究进程随后独立开展实验。Host 保存运行状态及证据。
 
 ## 中断恢复：保留原任务继续推进
 
@@ -162,7 +162,7 @@ $$
 
 从上一轮的 $H_1$ 开始，并不会重新执行 $H_0$ 的通用构建流程。历史材料通过只读索引按需访问；检索、摘要、经验选择和记忆模块由 Agent 自己实现。
 
-已有运行只完成 A/B/C、当前目标新增 D 时，使用这条版本迭代路径：保留旧 Harness 与授权历史，采用当前 A/B/C/D 目标。Agent 自行核对已有证据、补充必要验证，并实现和验收持久记忆。具体职责见[历史归档与 Agent 记忆](architecture.md#历史归档与-agent-记忆的职责)。
+已有运行只完成 A/B/C、当前目标新增 D 时，使用这条版本迭代路径：保留旧 Harness 与授权历史，采用当前 A/B/C/D 目标。Agent 自行核对已有证据、补充必要验证，并使用已有记忆工具完成验证。具体职责见[历史归档与 Agent 记忆](architecture.md#历史归档与-agent-记忆的职责)。
 
 `--run-harness` 也接受带 `run.json` 的源码目录，例如归档快照。这适用于首次导入一个可运行版本；自动跨轮接续通常直接使用 run 目录。导入源码目录时不会凭空附带某次历史运行。
 
@@ -177,9 +177,9 @@ bash scripts/start-rsi.sh --phase phase-one --task-profile web-extension \
 
 这是新 run，不是 resume 旧 self-stop 会话，也不重新冷启动 mini。代码、持久记忆和原恢复／身份能力沿用；新工作副本初始化新模型上下文与 checkpoint，源快照不改。旧记录经只读索引按需检索，不预加载全量历史。A–D 已记录结论带来源继承，标为 historical-not-recertified，不重跑、不重新认证；原 Host 归档缺口和 retained readiness 不等于本轮独立 A–D 审计。
 
-新副本中已知旧任务状态先归档到 `inherited-task-state/` 并记录摘要：task.txt 使用 E 目标，trajectory 从空文件继续追加，旧 progress 完成状态转为继承记录，旧 run-outcome 改为 continue。仅处理新副本，源快照和长期记忆不改；普通同 run resume 保留本轮状态；显式外部 blocked 恢复只归档并解除旧 terminal 声明，不做新任务初始化。Harness 自己更新 resume／continuation 的保存逻辑，确保新工具模块、记忆及必要源码／来源引用不会被旧固定清单遗漏或覆盖。
+新副本中已知旧任务状态先归档到 `inherited-task-state/` 并记录摘要：task.txt 使用 E 目标，trajectory 从空文件继续追加，旧 progress 完成状态转为继承记录，旧 run-outcome 改为 continue。仅处理新副本，源快照和长期记忆不改；普通同 run resume 保留本轮状态；显式外部 blocked 恢复只归档并解除旧 terminal 声明，不做新任务初始化。维护者检查 resume／continuation 的保存逻辑，确保新工具模块、记忆及必要源码／来源引用不会被旧固定清单遗漏或覆盖。
 
-只加载 [E 目标](../agent-inputs/phase-one-web/goal.md)、[E 验收](../agent-inputs/phase-one-web/acceptance.md)和[专用协议](../agent-inputs/phase-one-web/instructions.md)。保留 Harness 自己实现工具并让实际模型成功 search、fetch 公开正文，完成来源引用和离线错误 fixture；不训练、下载模型／PDF、运行 A3 或 GPU 实验。只做必要局部检查，不强制完整 H0/H1 或 A–D 循环。完成 E、结果包与 continuation 后退出；配置、key、额度或网络阻断时保存 blocked 后停止，不能把离线测试当真实通过。
+E 只验证维护者已接入的联网研究工具。具体检查见 [E 验收](../agent-inputs/phase-one-web/acceptance.md)。
 
 此 profile 仅适用于第一阶段 retained 来源，不接受冷启动或第二阶段。普通第一阶段仍按原 A–D 目标运行。恢复本轮中断用 `--resume-from <本轮目录>`，自动保持 web-extension profile 与本轮上下文；显式冲突 profile 被拒绝。E 完成的新保留结果可作为 `--phase phase-two --run-harness <E轮目录>` 的来源，但 E 完成不认证前轮整个历史。配置沿用项目根目录私有 `.env`，无需分享 key。启动、发布反馈、热加载或中断须遵守[操作者授权规则](operator-supervision.md)。
 
@@ -197,7 +197,7 @@ bash scripts/start-rsi.sh --phase phase-one --task-profile skills-extension \
 
 初始反馈可省略；它说明选定来源、当前 F 目标、人工准备及范围，不代表验收通过。提供时须非空 UTF-8、最多 64 KiB，加入 fresh checkpoint 的目标消息之后。旧 E 反馈只作历史，不自动注入新任务。不要用 `--resume-from` 给完成的 E 更换任务，也不要恢复旧第二阶段。
 
-F 只加载 [goal](../agent-inputs/phase-one-skills/goal.md)、[acceptance](../agent-inputs/phase-one-skills/acceptance.md)、[instructions](../agent-inputs/phase-one-skills/instructions.md)与共享 SOUL/执行输入。Agent 自己实现技能发现、按需读取、实际执行和复用、证据状态更新、持久清单与重载；Host 不代写工具。A–E 按历史继承，不重跑、不重新认证。仅轻量隔离验证，不训练、下载或占用 GPU，不追求性能收益。
+F 只验证维护者提供的技能工具及持久复用。具体检查见 [F 验收](../agent-inputs/phase-one-skills/acceptance.md)。
 
 F 新副本保持源码和持久记忆，用新上下文与 F 任务状态；旧任务材料归档保留，不覆盖 E 源。中断后的同轮恢复保持 skills-extension 和完整上下文，任何人工干预按操作者规则通过 human feedback 说明。F 完成后保存可复用 retained 并退出，不自动开始第二阶段。目录和 profile 已准备，不等于 F 已执行或 skills 已实现。
 
@@ -228,17 +228,13 @@ $$
 
 这里 $E$ 表示一次演化过程，$G_{\mathrm{current}}$ 是本轮目标。时间上最后启动的运行不决定 $H_p$。外部命令中的 run 目录明确定位父运行，其 `retained.json` 再定位固定的 `version_id` 与 commit。
 
-目前每轮发布一个对外保留结果。候选按线性版本逐次试运行，不并行推进研究分支；外部启动器不会扫描候选并代选优胜者。自动提供历史是文件传递机制，父版本选择是实验决策。
+每轮可发布一个对外保留结果。后续运行起点由操作者明确选择。
 
-### Agent 可以在同一轮内继续迭代
+### 夜间研究与白天维护
 
-`--run-harness` 是运行之间的外部启动入口。正在执行的 Agent 也可以通过自己的工具请求 `POST /evolution/trials`，加载候选版本并继续执行：
+夜间由单个 Agent 自主研究 Policy、采集、训练、评估与分析结果。白天由人类和 Codex 依据原始执行轨迹维护 Harness，包括模型调用、工具、上下文、记忆机制、调度与恢复。Agent 负责报告过程问题及证据，并继续修改研究代码和管理研究知识。
 
-$$
-H_k \xrightarrow{\text{evaluate and select}} H_{k+1}.
-$$
-
-外部启动与内部后继都调用同一个 Host 候选执行服务，使用相同的版本保存、Docker、身份、资源与回收规则。目标、版本选择和上下文交接由 Harness 组织，因此第二阶段可以在一次长运行内自主推进很多代。
+按[夜间运行窗口](operator-supervision.md#夜间运行窗口)配置暂停和接续。
 
 ## 参数表
 
@@ -298,23 +294,12 @@ Docker 只挂载自己的源码目录，Git 对象库和其他 worktree 留在 H
 
 ## 本轮研究内容的读取
 
-同一 run 的已登记研究身份使用自己的令牌，通过会话与作业接口读取本轮源码、记忆、可见轨迹、日志、产物、作业状态及已授权只读 exports。按问题取必要片段并保留版本和来源，不必为了让候选读前任资料建立额外 worker。可写工作区仍独立；取消、封存和管理权限沿本身份或已采用 lineage 检查。其他 run、Host 凭据和外部用户数据不因本轮共享而开放。
+同一 run 的已登记研究身份使用自己的令牌，通过会话与作业接口读取本轮源码、记忆、可见轨迹、日志、产物、作业状态及已授权只读 exports。按问题取必要片段并保留版本和来源，不必为了让候选读前任资料建立额外 worker。可写工作区仍独立；取消、封存和管理权限沿本身份或已采用 lineage 检查。第二阶段可读取本项目的历史远程作业及产物，并将快照作为新作业的只读输入。Host 凭据、其他项目和外部用户数据保持隔离。
 
-analyzer 读取本轮汇总统计并返回建议，全部本轮身份均可读取；仅当前主 Agent 发起分析并记录采纳、拒绝或推迟。接口与限额见[轨迹分析](trajectory-analysis.md)。
 
-## Harness 试运行与主身份交接
+## Harness 维护与版本发布
 
-独立且输入就绪的远程作业先在授权资源内并行提交，再统一查询与收集；有依赖的作业按依赖推进。采集与评估中的独立 episode 统一通过 `/run/a3/episode_executor.py` 执行，固定科学参数、seed、快照和输出，复用已完成结果。
-
-普通脚本、参数与结果解析问题由当前 Agent 在当前任务中修复并验证；需要 Host 权限、凭据、服务或资源配置变更时，保留错误证据，向操作者报告所缺条件和具体操作。
-
-每代主 Agent 只核查自己负责的实验闭环：先记录假设、实际执行，再依据结果决定保留、拒绝或证据不足，满足本次交接条件才交权。交接已确认结论、适用条件、版本、证据引用及明确未完成任务；后继可将前任已确认结论作为已知结论，无需读全历史消息或逐条重验。遇到明确矛盾可针对性核查，不能默认全历史审计；未完成或未知不能当作通过。接手未完事项是新的执行责任，不接管前任过去的合规责任。候选先完成本次改动与接任能力验证，接任后执行自身研究，不要求在接任前完成整个 run。最终主身份汇总可引用各代结论，不重新执行或审计前任实验；各阶段科学门槛不变，不因交接而重复最终网格或已完成的配对比较。
-
-当前研究 Agent 自己实现 Policy 与 Harness、采集数据、训练评估、修复脚本并判断验收。局部检查使用本身份工具与远程作业，普通 `POST /sessions` worker 创建被拒绝。完整 Harness 使用唯一 `/evolution/trials` 候选：前任等待候选自测，候选交权前只自测并等待；拒绝回收或由原候选接任，旧主交权后退出。单次运行不分叉并行研究 Agent。
-
-常规演化中，主 Agent 先提出 Harness 改动和验收清单，启动一个完整候选进行实际执行；检查结果后决定保留或拒绝。拒绝回到当前版本，保留则让同一候选进程成为下一代主 Agent，原主 Agent 保存交接后退出。无需人工提供下一轮任务。前任在 trial 期间等待自测结果，候选交权前不开展独立研究；Policy 优化在这些迭代之间进行。E-only profile 只做实现与实际加载所需的局部验证；需要主身份更替时遵守此协议，不无条件追加完整演化或 Policy 实验。
-
-`evolution.json` 记录主身份、版本化清单、候选版本和选择理由。原始轨迹与各 session 代码仍保留在 run 中。主身份交接不等同于故障 resume：新一代的消息和记忆如何承接由 SWE 实现；网络故障恢复则要求显式 checkpoint。详见 [执行协议](../agent-inputs/shared/execution.md#主身份与候选试运行)。
+操作者在暂停期间复盘执行证据，验证 Harness 修改后选择部署版本。运行、权限和来源继续由 Host 保存。Policy 和研究脚本由 Agent 自主维护；独立远程作业继续并行。
 
 ## 调整核心提示词
 

@@ -1,5 +1,7 @@
 # A3 Harness 冷启动方向
 
+> 历史设计记录。当前职责与操作见[夜间研究与白天维护](../operator-supervision.md#夜间研究与白天维护)。
+
 > 历史方案；当前执行约定以 [单研究 Agent 工作流](../research-orchestration.md) 和 [执行接口](../../agent-inputs/shared/execution.md) 为准，旧 worker、分叉和派发描述不作为当前操作指引。
 
 第一阶段从通用 mini-SWE-agent 出发，让它在真实 A3 任务和预设评估反馈下自主形成领域研究能力，再根据自身轨迹改善研究过程。

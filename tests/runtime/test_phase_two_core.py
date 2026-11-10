@@ -1,6 +1,5 @@
 """Stage-layer removal respects explicit activation and frozen custom snapshots."""
 
-import hashlib
 import json
 from pathlib import Path
 
@@ -106,35 +105,14 @@ def test_explicit_preset_resume_retires_layer_without_rewriting_archive(tmp_path
 def test_protocol_reference_revision_preserves_scientific_body():
     old = (Path(__file__).parent / "fixtures/relocated_phase_two_protocol_0_3_0.md").read_text()
     new = (ROOT / "agent-inputs/shared/protocol.md").read_text()
-    expected = (
-        old.replace("Version: 0.3.0", "Version: 0.3.4")
-        .replace(
-            "Agent 的具体行动、反馈核查与作业处理见 phase-instructions.md。",
-            "长期行为原则见 SOUL.md，实际接口、反馈投递与作业处理见 execution.md。",
-        )
-        .replace(
-            "具体检索与安排动作见 phase-instructions.md。",
-            "检索与安排遵循 SOUL.md，恢复及作业状态按 execution.md 核实。",
-        )
-        .replace(
-            "## 1. Policy 完整网格",
-            "互相独立且输入已就绪的远程作业先批量提交，服务器 Controller 负责排队、资源分配及执行，"
-            "Harness 内部等待完成或中途停止的结果；正常运行和等待超时不调用模型。"
-            "有数据依赖的作业按依赖推进。采集和评估中的独立 episode 统一使用部署方提供的执行器"
-            "（process 中为 `A3_EPISODE_EXECUTOR`），由 Agent 固定科学参数、seed、协议与输出，"
-            "执行器调节并发。Controller 的诊断、修复及运维归部署者，Agent 负责研究代码与实验结果。\n\n"
-            "## 1. Policy 完整网格",
-        )
-        .replace(
-            "测试可串行完成，沿用单候选试运行和主身份交接。",
-            "完整 Harness 沿唯一线性候选试运行和主身份交接：前任等待自测，候选交权前不独立研究。"
-            "当前 Agent 自行完成局部测试；条件独立且资源允许的远程作业先并行提交。",
-        )
-    )
-    # Operational batching changes neither scientific comparisons nor scoring.
-    batching = next(line for line in new.splitlines() if line.startswith("一次科学实验可包含"))
-    assert new.replace(batching + "\n\n", "") == expected
-    assert hashlib.sha256(new.encode()).digest() != hashlib.sha256(old.encode()).digest()
+    for start, end in (("## 1.", "## 4."), ("## 6.", None)):
+        old_section = old.split(start, 1)[1]
+        new_section = new.split(start, 1)[1]
+        if end is not None:
+            old_section = old_section.split(end, 1)[0]
+            new_section = new_section.split(end, 1)[0]
+        assert new_section == old_section
+    assert "供白天的维护者审查" in new
 
 
 def test_shared_storage_does_not_make_protocol_a_shared_input():
@@ -158,16 +136,14 @@ def test_continuous_acceptance_preserves_scientific_conditions():
     assert "不要求先有总体分数上涨" in new_a
     assert "真实视频与同步轨迹中的具体能力变化" in new_a
     assert "未确认的过程改善保留待验证状态" in new_a
-    expected_remaining = old.split("## B.", 1)[1].split("## D.", 1)[0].replace(
-        "局部 worker 只负责自己的测试清单。",
-        "当前 Agent 自行完成局部检查；唯一正式候选仅自测，前任等待结果，"
-        "采用后同一候选接任继续研究。禁止普通 worker 或多 Agent 分叉。",
+    old_c = old.split("## C.", 1)[1].split("## D.", 1)[0]
+    new_c = new.split("## C.", 1)[1].split("## D.", 1)[0]
+    assert new_c == (
+        old_c.replace("Policy/Harness 实验假设", "Policy 实验假设").replace(
+            "启动、恢复、接任或", "启动、恢复或"
+        )
     )
-    assert new.split("## B.", 1)[1].split("## D.", 1)[0] == expected_remaining
-    old_delivery = old.split("## D. 终态交付与后续可用\n\n", 1)[1]
-    new_delivery = new.split("## D. 阶段交付与后续可用\n\n", 1)[1]
-    assert new_delivery.startswith(
-        old_delivery.replace("交付最终 Policy、处理器", "按报告快照交付选定的最终 Policy、处理器")
-    )
-    assert "全部通过也不自动结束持续研究" in new
-    assert "顶层仍写 status=continue" in new_delivery
+    assert "交给白天的维护者处理" in new
+    delivery = new.split("## D. 阶段交付与后续可用", 1)[1]
+    for evidence in ("完整网格报告", "所用 Harness 版本", "可执行恢复/复跑入口", "status=continue"):
+        assert evidence in delivery

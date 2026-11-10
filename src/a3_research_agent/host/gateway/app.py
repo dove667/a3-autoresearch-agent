@@ -2,6 +2,7 @@
 
 import threading
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -14,24 +15,24 @@ from a3_research_agent.host.models.settings import (
 )
 from a3_research_agent.host.runs.evolution import EvolutionState
 from a3_research_agent.host.runs.state import RunStateStore
-from a3_research_agent.host.telemetry.analysis import TrajectoryAnalyzer
 from a3_research_agent.host.telemetry.diagnostics import GatewayDiagnostics
 from a3_research_agent.host.telemetry.trajectory import TrajectoryTelemetry
 from a3_research_agent.host.web.gateway import WebConfig, WebGateway
 
-from .analysis import AnalysisRoutes
 from .control import ControlRoutes
 from .job_observation import JobStatusCache
 from .jobs import JobRoutes
 from .models import ModelRoutes
+from .project_history import project_job_index
 from .schemas import ObservationRequest
 from .sessions import SessionRoutes
 from .state import GatewayState
+from .telemetry import TelemetryRoutes
 from .web import WebRoutes
 
 
 class Gateway(
-    GatewayState, SessionRoutes, AnalysisRoutes, WebRoutes, ControlRoutes, ModelRoutes, JobRoutes
+    GatewayState, SessionRoutes, TelemetryRoutes, WebRoutes, ControlRoutes, ModelRoutes, JobRoutes
 ):
     def __init__(
         self,
@@ -58,7 +59,7 @@ class Gateway(
         model_request_options: dict | None = None,
         role_models: dict | None = None,
         context_budget: dict | None = None,
-        analyzer_enabled: bool = True,
+        project_history_run: Path | None = None,
     ) -> None:
         self.model_name = model_name
         self.sessions = sessions
@@ -96,15 +97,6 @@ class Gateway(
         )
         self.app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None, lifespan=self.lifespan)
         self.telemetry = TrajectoryTelemetry()
-        self.analyzer = TrajectoryAnalyzer(
-            self.forward_model,
-            self.fixed_roles.get(
-                "worker",
-                {"model_name": self.model_name, "request_options": self.fixed_model_options},
-            ),
-            self.state_store,
-            enabled=analyzer_enabled,
-        )
         self.diagnostics = GatewayDiagnostics(
             self.usage_log.with_name("gateway-events.jsonl"), self.telemetry.record
         )
@@ -114,7 +106,11 @@ class Gateway(
         self.children: dict[str, dict] = {}
         self.scope_parents: dict[str, str] = {}
         self.jobs: dict[str, set[str]] = {}
+        self.job_evaluations = {}
+        self.evaluation_workers = ThreadPoolExecutor(max_workers=2)
+        self.evaluation_receipts = {}
         self.job_status_cache = JobStatusCache()
+        self.project_scope_runs, self.project_job_scopes = project_job_index(project_history_run)
         self.root_owners = set(self.sessions.values())
         self.app.state.closing = False
         self.evolution = (
@@ -135,6 +131,7 @@ class Gateway(
                     record["self_stopped"] = True
                     self.sessions.pop(record["token"], None)
             self.scope_parents.update(self.restored_state["scope_parents"])
+            self.job_evaluations.update(self.restored_state.get("job_evaluations", {}))
             self.jobs.update(
                 {key: set(value) for key, value in self.restored_state["jobs"].items()}
             )
@@ -164,12 +161,6 @@ class Gateway(
             "/telemetry/observations", self.record_observations, methods=["POST"]
         )
         self.app.add_api_route("/wait/signals", self.wait_signals, methods=["GET"])
-        self.app.add_api_route("/analysis", self.read_analysis, methods=["GET"])
-        self.app.add_api_route(
-            "/analysis/{analysis_id}", self.read_analysis_report, methods=["GET"]
-        )
-        self.app.add_api_route("/analysis", self.request_analysis, methods=["POST"])
-        self.app.add_api_route("/analysis/response", self.respond_to_analysis, methods=["POST"])
         self.app.add_api_route("/web/status", self.web_status, methods=["GET"])
         self.app.add_api_route("/web/search", self.web_search, methods=["POST"])
         self.app.add_api_route("/web/fetch", self.web_fetch, methods=["POST"])
@@ -226,6 +217,9 @@ class Gateway(
             "/jobs/exports/{export_id}/grants/{session_id}", self.revoke_export, methods=["DELETE"]
         )
         self.app.add_api_route("/jobs/exports/{export_id}", self.delete_export, methods=["DELETE"])
+        self.app.add_api_route(
+            "/jobs/{job_id}/evaluation", self.replay_evaluation, methods=["POST"]
+        )
         self.app.add_api_route("/jobs/{job_id}", self.status, methods=["GET"])
         self.app.add_api_route("/jobs/{job_id}", self.cancel, methods=["DELETE"])
         self.app.add_api_route("/jobs/{job_id}/artifacts", self.artifact, methods=["GET"])
@@ -255,7 +249,7 @@ def create_app(
     model_request_options: dict | None = None,
     role_models: dict | None = None,
     context_budget: dict | None = None,
-    analyzer_enabled: bool = True,
+    project_history_run: Path | None = None,
 ) -> FastAPI:
     return Gateway(
         model_name=model_name,
@@ -280,14 +274,12 @@ def create_app(
         model_request_options=model_request_options,
         role_models=role_models,
         context_budget=context_budget,
-        analyzer_enabled=analyzer_enabled,
+        project_history_run=project_history_run,
     ).app
 
 
 # Preserve public request types from the original Gateway module.
 from .schemas import (
-    AnalysisRequest,
-    AnalysisResponseRequest,
     ComparisonRequest,
     ExportGrantRequest,
     ExportRequest,
@@ -305,8 +297,6 @@ from .schemas import (
 )
 
 __all__ = [
-    "AnalysisRequest",
-    "AnalysisResponseRequest",
     "ComparisonRequest",
     "ExportGrantRequest",
     "ExportRequest",

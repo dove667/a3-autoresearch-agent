@@ -129,9 +129,6 @@ def supervised_sessions(client: httpx.Client) -> list[dict]:
 
 def launch_run(args, run: Path, a3: Path, image: str, start) -> None:
     model_request_options = read_model_request_options(os.environ)
-    analyzer_setting = os.environ.get("A3_TRAJECTORY_ANALYZER_ENABLED", "1")
-    if analyzer_setting not in {"0", "1"}:
-        raise ValueError("A3_TRAJECTORY_ANALYZER_ENABLED must be 0 or 1")
     role_models = read_role_models(os.environ)
     context_budget = read_context_budget(os.environ)
     package = (start.command, start.files) if start else None
@@ -265,7 +262,7 @@ def launch_run(args, run: Path, a3: Path, image: str, start) -> None:
         phase_instructions = ""  # Readiness checks are test sessions, not main Agents.
 
     def remote_for_run(operation, payload):
-        if operation in {"submit", "jobs-list"}:
+        if operation == "submit" or (operation == "jobs-list" and "run_id" not in payload):
             payload = {**payload, "run_id": run_id}
         return remote_call(operation, payload)
 
@@ -300,7 +297,6 @@ def launch_run(args, run: Path, a3: Path, image: str, start) -> None:
         forward_model=forward_model,
         model_request_options=model_request_options,
         role_models=role_models,
-        analyzer_enabled=analyzer_setting == "1",
         context_budget=context_budget,
         remote_call=remote_for_run,
         usage_log=run / "model-usage.jsonl",
@@ -313,6 +309,9 @@ def launch_run(args, run: Path, a3: Path, image: str, start) -> None:
         phase_instructions=phase_instructions,
         human_feedback=human_feedback,
         state_store=store,
+        project_history_run=run
+        if input_versions.phase == "phase-two" and not args.verify_deployment
+        else None,
         restored_state=saved["gateway"] if saved else None,
         input_versions=None if args.verify_deployment else input_versions,
         operator_token=store.load()["operator_token"],
@@ -359,7 +358,7 @@ def launch_run(args, run: Path, a3: Path, image: str, start) -> None:
                     **remote_path_hints(),
                     "sessions": {
                         "create": "No worker creation; POST /sessions is disabled for Agent credentials",
-                        "trial": "POST /evolution/trials {baseline_version, checklist, command: [...], files: {...}}; one pending successor; predecessor waits for self-tests then retains or rejects",
+                        "trial": "Cold-start bootstrap only: POST /evolution/trials {baseline_version, checklist, command: [...], files: {...}} for the first research session",
                         "list": "GET /sessions (all registered research identities in this run)",
                         "read_scope": "Same-run research source, memory, logs, versions, job state, artifacts and authorized readonly exports are shared; mutations retain owner/adopted-lineage checks",
                         "status": "GET /sessions/{session_id}",

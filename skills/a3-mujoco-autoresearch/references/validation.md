@@ -1,6 +1,6 @@
 # Version 0.1.9 maintenance checks
 
-The current reference uses one research Agent, parallel independent remote jobs and one linear Harness trial. Same-run research reads and analyzer reports are shared while writes and management remain restricted. Scientific comparison values are unchanged; the helper accepts protocol 0.3.2 with matched version and digest requirements. Skill/catalog versions, changed Markdown link targets and whitespace were checked. Runtime and helper regression results belong to the current repository validation record; the older results below retain their original scope.
+The current reference uses one research Agent and parallel independent remote jobs. Same-run research reads are shared while writes and management remain restricted. Scientific comparison values are unchanged; the helper accepts protocol 0.3.0–0.3.6 with matched version and digest requirements. Skill/catalog versions, changed Markdown link targets and whitespace were checked. Runtime and helper regression results belong to the current repository validation record; the older results below retain their original scope.
 
 # Historical validation: version 0.1.4
 

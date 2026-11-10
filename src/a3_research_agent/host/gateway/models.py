@@ -318,7 +318,7 @@ class ModelRoutes:
             "max_total_bytes": 3 * 1024 * 1024,
             "max_side_pixels": 1024,
             "model_role": "worker",
-            "source": "authorized own-job PNG/JPEG artifacts; not arbitrary URLs",
+            "source": "authorized job workspace or outputs PNG/JPEG artifacts",
             "note": "Transport available; actual provider vision requires a successful image response",
         }
 
@@ -329,16 +329,20 @@ class ModelRoutes:
             raise HTTPException(429, "Visual inspection busy; no model request was dispatched")
         try:
 
-            def read_frame(frame_owner, job_id, path):
-                return self.remote(
+            def read_frame(frame_owner, job_id, path, *, area="workspace"):
+                artifact = self.remote(
                     "artifact",
                     {
                         "experiment_id": self.job_owner(frame_owner, job_id, shared_read=True),
                         "job_id": job_id,
                         "path": path,
                         "max_bytes": 512 * 1024,
+                        **({"area": area} if area == "outputs" else {}),
                     },
                 )
+                if area == "outputs" and artifact.get("area") != area:
+                    raise ValueError("Controller did not confirm the outputs area")
+                return artifact
 
             try:
                 arguments, metadata, reserve = prepare_vision_request(body, actor, read_frame)

@@ -1,6 +1,6 @@
 # 项目文档
 
-冷启动的目标是让通用 SWE Agent 自行形成面向 A3 的 auto research Harness，并验证 Policy 优化、Harness 反思、跨 run 隔离、受限写入和持久记忆。同 run 登记研究身份共享研究内容的读取，作业取消与管理仍按本身份或已采用的线性交接权限执行。
+夜间由单个 Agent 自主研究 Policy、采集、训练、评估与分析结果。白天由人类和 Codex 依据原始执行轨迹维护 Harness，包括模型调用、工具、上下文、记忆机制、调度与恢复。Agent 负责报告过程问题及证据，并继续修改研究代码和管理研究知识。
 
 - [环境配置](setup.md)：依赖、模型服务与 A3 执行环境。
 - [使用教程](tutorial.md)：安装准备、全部启动参数、初始运行、中断恢复、版本迭代、轨迹与故障定位。
@@ -8,12 +8,12 @@
 - [目录职责](project-structure.md)：源码、候选、报告和运行产物的存放位置。
 - 第一阶段[能力目标](../agent-inputs/phase-one/goal.md)与[验收标准](../agent-inputs/phase-one/acceptance.md)：默认启动输入，记录当前版本与内容。
 - [第一阶段联网补充任务](plans/2026-11-02-phase-one-web-extension.md)：从保留 Harness 新建 E-only run；[目标](../agent-inputs/phase-one-web/goal.md)、[验收](../agent-inputs/phase-one-web/acceptance.md)与[执行协议](../agent-inputs/phase-one-web/instructions.md)独立版本化，历史 A–D 不重跑或重新认证。
-- [第二阶段方案](plans/2026-10-31-phase-two.md)：完整网格下的 Policy 与 Harness 联合优化；独立目标、评估与完整 Prompt 已接入阶段选择；离线环境、预算配置与只读大文件交接入口已提供，真实训练和评测由 Agent 执行。
+- [第二阶段研究目标](../agent-inputs/phase-two/goal.md)：六格 Policy 研究和交付标准。
 - [研究网页网关原方案](plans/2026-11-02-research-web-gateway.md)：历史设计与验证记录；当前采用 [Tavily 搜索／正文提取、专用本地代理与结果缓存](plans/2026-11-02-tavily-proxy-extract.md)，配置入口见环境配置。
 - [Agent 输入版本与热加载](agent-inputs.md)：版本号维护、恢复加载规则和警告确认。
 - [上下文恢复补丁与模型配置](context-reliability.md)：可选派生包、持久调用预算、状态保存及推理参数。
-- [单研究 Agent 工作流](research-orchestration.md)：自行实现与评估、独立作业并行、唯一线性候选及显式交权。
-- [安全运行视图与独立分析](trajectory-analysis.md)：脱敏耗时／事件、自动周期与事件触发、建议回应和故障边界。
+- [单研究 Agent 工作流](research-orchestration.md)：研究职责、独立作业并行与人工维护。
+- [运行遥测](operational-telemetry.md)：脱敏请求、耗时、token 与操作计数。
 - [视觉过程诊断](visual-diagnostics.md)：已有视频与轨迹优先、原生诊断保存范围、按问题选帧及只读视觉问诊边界。
 - [Host 执行接口](../agent-inputs/shared/execution.md)：给生成后的 Harness 使用的固定部署能力。
 

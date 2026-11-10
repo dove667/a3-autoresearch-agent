@@ -20,7 +20,6 @@ def api(tmp_path, remote):
             remote_call=remote,
             forward_model=lambda **kw: pytest.fail("Waiting must not call a model"),
             usage_log=tmp_path / "usage.jsonl",
-            analyzer_enabled=False,
         )
     )
 
@@ -185,3 +184,18 @@ def test_wait_does_not_hold_the_session_lock(tmp_path):
         response = client.get("/sessions", headers=HEADERS)
         assert response.status_code == 200
         assert waiting.result().json()["reason"] == "timeout"
+
+
+def test_wait_delivers_new_feedback_before_contacting_unavailable_controller(tmp_path):
+    def remote(*args):
+        pytest.fail("Known notification should not wait on SSH")
+
+    client = api(tmp_path, remote)
+    response = client.post(
+        "/jobs/wait",
+        headers=HEADERS,
+        json={"job_ids": ["first"], "seconds": 25, "cursor": "a" * 64},
+    )
+    assert response.status_code == 200
+    assert response.json()["reason"] == "notification"
+    assert response.json()["signals"]["cursor"] != "a" * 64

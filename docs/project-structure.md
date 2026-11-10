@@ -7,7 +7,7 @@
 ├── src/a3_research_agent/  可安装的固定实现与显式派生 Harness overlay
 │   ├── host/              Gateway、会话、run、输入、模型、网络与轨迹
 │   ├── execution/         Controller、调度、导出与镜像准备
-│   ├── harness/           上下文、记忆、分析与线性演化
+│   ├── harness/           上下文、记忆、分析与运行控制
 │   ├── packaging/         完整 Harness 源码载荷导出
 │   ├── workspace/         工作区路径校验
 │   └── cli/               启动及操作者命令
@@ -45,7 +45,7 @@
 | `reports/` | 可选的本地报告工程，保存展示用正文、数据与图像 | 否 |
 | `third_party/` | 第三方原始源码与独立 Git 历史 | submodule |
 
-人类提前准备固定基础设施和评估条件。专项 auto research Harness、Policy 候选、记忆、反思与选择由 SWE Agent 产生，保存在对应运行中；改进候选形成新版本，原始运行材料持续保留。项目的主实现位于 `src/a3_research_agent/`，`pyproject.toml` 管理包发现、依赖与命令入口。源码 checkout 通过 `scripts/start-rsi.sh` 调用 `a3_research_agent.cli.launch`；安装 wheel 后通过显式 `--project-root` 选择完整基础设施项目目录。该目录与 `A3_PROJECT_ROOT` 指向的独立仿真项目不同。版本化输入、skills 和运行数据继续由部署目录提供，不随 wheel 携带个人配置或实验数据。
+人类和 Codex 维护 Harness 与基础设施。Policy、研究脚本、知识与实验结果保存在对应运行中。
 
 部署参数统一由根 `.env.example` 提供模板，Host 加载项目根 `.env`，或通过 `A3_RSI_ENV_FILE` 指定另一份完整配置；加载规则见[环境配置](setup.md#本地配置与运行产物)。
 

@@ -4,18 +4,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
-
-class AnalysisRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    trigger: Literal["manual", "repetition", "no_progress", "before_handoff", "periodic"] = "manual"
-    enqueue_only: bool = False
-
-
-class AnalysisResponseRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    analysis_id: str = Field(pattern="^[0-9a-f]{32}$")
-    decision: Literal["adopt", "reject", "defer"]
-    reason: str = Field(min_length=1, max_length=500)
+from .evaluation import EvaluationComparison
 
 
 class ObservationRequest(BaseModel):
@@ -53,6 +42,7 @@ class JobRequest(BaseModel):
     gpu_memory_mb: int | None = Field(default=None, ge=1, strict=True)
     files: dict[str, str] = Field(default_factory=dict)
     input_exports: list[str] = Field(default_factory=list, max_length=64)
+    evaluation: EvaluationComparison | None = None
     workspace_files: list[JobWorkspaceFileReference] = Field(default_factory=list, max_length=16)
 
 
@@ -60,6 +50,7 @@ class JobWaitRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     job_ids: list[str] = Field(min_length=1, max_length=64)
     seconds: int = Field(default=25, ge=0, le=300, strict=True)
+    cursor: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
 
 
 class SessionRequest(BaseModel):

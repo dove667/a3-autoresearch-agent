@@ -213,7 +213,7 @@ def test_unchanged_notifications_do_not_return_to_model(tmp_path, monkeypatch):
     assert len(checks) <= 11
 
 
-def test_pending_analyzer_without_previous_cursor_wakes_immediately(tmp_path, monkeypatch):
+def test_pending_feedback_without_previous_cursor_wakes_immediately(tmp_path, monkeypatch):
     m, clock = setup_wait(tmp_path, monkeypatch)
     result = m.wait_for_change(
         lambda *a, **k: {"status": "running"},
@@ -407,3 +407,65 @@ def test_two_waits_in_one_model_batch_keep_prebatch_cursor(tmp_path, monkeypatch
     second = namespace["tool"]("wait", {"seconds": 600})
     assert second["reason"] == "notification"
     assert clock.now == 0
+
+
+def test_managed_wait_stays_inside_harness_across_timeouts_and_retries(tmp_path, monkeypatch):
+    m, clock = setup_wait(tmp_path, monkeypatch)
+    results = iter(
+        [
+            {"http_error": 502},
+            {"reason": "timeout", "jobs": [{"job_id": "job-1", "status": "queued"}]},
+            {"reason": "timeout", "jobs": [{"job_id": "job-1", "status": "running"}]},
+            {
+                "reason": "terminal",
+                "jobs": [{"job_id": "job-1", "status": "completed", "exit_code": 0}],
+            },
+        ]
+    )
+    calls = []
+
+    def req(method, path, body, **kwargs):
+        calls.append((method, path, body))
+        clock.sleep(body["seconds"])
+        return next(results)
+
+    result = m.wait_for_jobs(req, ["job-1"], cursor="a" * 64, clock=clock.time, sleep=clock.sleep)
+    assert result["reason"] == "state_changed"
+    assert result["changes"] == {"/jobs/job-1": {"status": "completed", "exit_code": 0}}
+    assert len(calls) == 4
+    assert all(method == "POST" and path == "/jobs/wait" for method, path, _ in calls)
+
+
+def test_wait_receipt_closes_only_terminal_targets(tmp_path, monkeypatch):
+    from a3_research_agent.harness.memory import state
+
+    monkeypatch.chdir(tmp_path)
+    a, b = "a" * 32, "b" * 32
+    for job in (a, b):
+        state.record_gateway("POST", "/jobs", {"job_id": job, "status": "queued"})
+    result = {
+        "reason": "state_changed",
+        "changes": {f"/jobs/{a}": {"status": "completed"}, f"/jobs/{b}": {"status": "running"}},
+    }
+    state.record_wait(result)
+    revision = state.load()["revision"]
+    state.record_wait(result)
+    assert waiting.active_jobs() == [b]
+    assert state.load()["revision"] == revision
+
+
+def test_managed_wait_observes_jobs_beyond_first_batch():
+    clock = Clock()
+    jobs = [f"job-{i}" for i in range(65)]
+    batches = []
+
+    def req(method, path, body, **kwargs):
+        batches.append(body["job_ids"])
+        if len(batches) == 1:
+            clock.sleep(body["seconds"])
+            return {"reason": "timeout", "jobs": []}
+        return {"reason": "terminal", "jobs": [{"job_id": jobs[-1], "status": "failed"}]}
+
+    result = waiting.wait_for_jobs(req, jobs, clock=clock.time, sleep=clock.sleep)
+    assert batches == [jobs[:64], jobs[64:]]
+    assert result["changes"] == {"/jobs/job-64": {"status": "failed"}}

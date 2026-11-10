@@ -175,20 +175,11 @@ def wait_for_change(
         if changed:
             return result(
                 "notification",
-                notifications={
-                    key: value.get(key) for key in ("feedback", "analysis", "inputs", "is_main")
-                },
+                notifications={key: value.get(key) for key in ("feedback", "inputs", "is_main")},
             )
         return None
 
-    paths = []
-    operational = pathlib.Path("operational-state.json")
-    if operational.exists():
-        for job, item in json.loads(operational.read_text()).get("jobs", {}).items():
-            if item.get("status") not in {"completed", "cancelled", "failed"} and re.fullmatch(
-                r"[A-Za-z0-9_-]{1,100}", job
-            ):
-                paths.append("/jobs/" + job)
+    paths = ["/jobs/" + job for job in active_jobs()]
 
     def inputs():
         if not manifest_path.exists():

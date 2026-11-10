@@ -106,6 +106,34 @@ def read_page(path, offset=0, limit=4000):
     return page
 
 
+def visible_page_reference(page, messages):
+    """Reuse an identical page only while the full original is in this model input."""
+    if not isinstance(page, dict) or "content" not in page or "sha256" not in page:
+        return None
+    keys = ("path", "sha256", "offset", "end", "content")
+    for message in reversed(messages):
+        if message.get("type") != "function_call_output":
+            continue
+        raw = message.get("output")
+        if not isinstance(raw, str) or len(raw) > 12000 or '"receipt_id"' not in raw:
+            continue
+        try:
+            previous = json.loads(raw)
+        except ValueError:
+            continue
+        if (
+            isinstance(previous, dict)
+            and previous.get("receipt_id") == message.get("call_id")
+            and all(previous.get(key) == page[key] for key in keys)
+        ):
+            return {
+                "status": "already_in_context",
+                "previous_call_id": message["call_id"],
+                **{key: page[key] for key in ("path", "sha256", "offset", "end", "total", "eof")},
+            }
+    return None
+
+
 def record_page(call_id, page):
     if (
         not isinstance(page, dict)
@@ -139,7 +167,6 @@ def record_page(call_id, page):
     counters["read_calls"] = counters.get("read_calls", 0) + 1
     if any(a <= page["offset"] and b >= page["end"] for a, b in entry["retrieved"]):
         counters["repeated_reads"] = counters.get("repeated_reads", 0) + 1
-        counters["repeated_static_reads"] = counters.get("repeated_static_reads", 0) + 1
     counters["retrieved_characters"] = counters.get("retrieved_characters", 0) + len(
         page["content"]
     )
@@ -268,7 +295,6 @@ def progress(arguments):
         return {"id": key, **previous}
     if previous:
         context_manager.archive({"id": key, "previous": previous}, "progress-item")
-    state["counters"]["progress_updates"] = state["counters"].get("progress_updates", 0) + 1
     state["items"][key] = {**proposed, "updated": state["revision"] + 1}
     save(state)
     return {"id": key, **state["items"][key]}
@@ -329,36 +355,6 @@ def counters():
         }
     )
     return result
-
-
-def decision_completed():
-    state = load()
-    state["counters"]["decisions"] = state["counters"].get("decisions", 0) + 1
-    save(state)
-
-
-def record_write(path):
-    state = load()
-    state["counters"]["write_calls"] = state["counters"].get("write_calls", 0) + 1
-    if str(path).endswith(("decision.json", "run-outcome.json")):
-        digest = hashlib.sha256(pathlib.Path(path).read_bytes()).hexdigest()
-        writes = state.setdefault("decision_writes", {})
-        if writes.get(str(path)) != digest:
-            state["counters"]["progress_updates"] = state["counters"].get("progress_updates", 0) + 1
-        writes[str(path)] = digest
-        while len(writes) > 64:
-            del writes[next(iter(writes))]
-    save(state)
-
-
-def signals():
-    state = load()
-    waiting = any(
-        e["status"] in {"created", "pending", "queued", "running"}
-        and 0 <= time.time() - e["observed_at"] < 600
-        for e in state.get("jobs", {}).values()
-    )
-    return {**state["counters"], "waiting": waiting}
 
 
 def record_gateway(method, path, result):

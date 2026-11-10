@@ -116,7 +116,8 @@ print(json.dumps(dict(package=a3_research_agent.__file__, root=checkout_root(), 
     assert not any(
         name.startswith("runtime/") or name.endswith("_compat.py") for name in record["files"]
     )
-    assert "a3_research_agent/harness/orchestration/dispatch.py" in record["files"]
+    assert "a3_research_agent/harness/waiting.py" in record["files"]
+    assert not any("/orchestration/" in name for name in record["files"])
 
     host_script = "import sys; sys.path.insert(0, sys.argv.pop(1)); from a3_research_agent.cli.launch import main; main()"
     for flags, expected in ((["--help"], 0), ([], 2)):

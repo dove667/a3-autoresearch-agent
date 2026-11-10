@@ -7,7 +7,7 @@ Run `python skills/a3-mujoco-autoresearch/scripts/compare_evaluations.py baselin
 Each input has:
 
 - `schema`: `a3-paired-evaluation-v1`
-- `protocol_version`: `0.3.0`, `0.3.1` or linear-execution revision `0.3.2`; baseline and candidate must use the same version and protocol digest
+- `protocol_version`: `0.3.0` through `0.3.6`; baseline and candidate must use the same version and protocol digest
 - `protocol_sha256`: digest of the actual saved scientific protocol.
 - `conditions_sha256`: digest of a canonical, independently checked manifest of A3 version, physics/randomization/success config, observation/control interface, task prompts, scene/source settings, dataset split, seed plan and external evaluation conditions. Exclude the policy treatment itself; preserve it separately. Same digest is necessary but does not prove the manifest truthful.
 - `policy_snapshot_sha256`: digest of the full policy snapshot manifest (weights, processor, code, inference settings and declared task routing), not only a weights filename.
@@ -28,7 +28,7 @@ The supplied helper intentionally does **not** infer missing inference seed, con
 
 ## Output and limitations
 
-Cell results include paired means/counts, complete-success counts and conditional bootstrap intervals. Formal `G` is emitted only for all six cells sharing exactly 20 scenario seeds (120 episodes) at protocol 0.3.0/0.3.1/0.3.2 conditions. Partial runs emit cell results but no formal G. For full G, each bootstrap draw resamples a seed with both tasks/all difficulties together, preserving within-scenario correlation. It is a percentile interval, not a claim of BCa accuracy.
+Cell results include paired means/counts, complete-success counts and conditional bootstrap intervals. Formal `G` is emitted only for all six cells sharing exactly 20 scenario seeds (120 episodes) at these protocol revisions. Partial runs emit cell results but no formal G. For full G, each bootstrap draw resamples a seed with both tasks/all difficulties together, preserving within-scenario correlation. It is a percentile interval, not a claim of BCa accuracy.
 
 With fewer than two scenarios, cell interval is null. Constant samples can produce zero-width empirical bootstrap intervals; that does not demonstrate zero population uncertainty. Any interval is conditional on these scenarios and one trained snapshot; it cannot establish training-seed robustness or undo adaptive test leakage. Multiple-training-run hierarchical analysis is outside this helper. An interval excluding zero can indicate decline; check sign and practical effect, not just exclusion. No adoption decision or acceptance pass is generated.
 

@@ -66,17 +66,17 @@ python -m a3_research_agent.host.bootstrap \
   --agent-inputs-dir "$inputs"
 ```
 
-本轮只有 `acceptance.G`；不传 E/F 专项 profile，不加载 phase-two protocol。初始反馈通过目录里的文件注入，不另传 `--initial-feedback-file`。若需要随新任务提供研究 skill，可把已检查的 `skills/a3-mujoco-autoresearch/` 与 `skills/rsi-harness-evolution/` 纯文本文件树复制到该输入目录同名子路径。复制时排除运行生成的缓存，例如 `mkdir -p "$inputs/skills"` 后运行 `rsync -a --exclude='__pycache__/' --exclude='*.pyc' --exclude='*.tmp' skills/a3-mujoco-autoresearch skills/rsi-harness-evolution "$inputs/skills/"`；仍须核对输入只含 UTF-8 普通文件。两者只读挂载，不自动注入正文或自动登记为 Agent 的活动 skill。正文读取、未来工作区复制及目录合并见 skill 自带集成说明，这不是 G 的新增验收项目。
+本轮只有 G 验收，不加载第二阶段 protocol。初始反馈来自输入目录。选用已提供上下文管理的 Harness，按 G 标准记录真实验证证据。
 
 ### 本轮研究读取与单 Agent 执行
 
-同 run 已登记研究身份可读彼此的源码、记忆、可见轨迹、日志、产物、作业状态和本轮已授权只读 exports。工作区写入限本身份，作业取消和管理限本身份或已采用 lineage；Host 凭据、私有控制状态、其他 run 和外部用户数据保持隔离。analyzer 使用本轮汇总统计，不执行工具；本轮身份可读建议，发起分析和记录采用决定仍由当前主 Agent 完成。
+同 run 已登记研究身份可读彼此的源码、记忆、可见轨迹、日志、产物、作业状态和本轮已授权只读 exports。工作区写入限本身份，作业取消和管理限本身份或已采用 lineage；Host 凭据、私有控制状态、其他 run 和外部用户数据保持隔离。
 
 ### 单研究 Agent 的职责与装载
 
-当前研究 Agent 自己实现 Policy 与 Harness、采集数据、训练评估、修复脚本并判断验收。局部检查使用本身份工具与远程作业，普通 `POST /sessions` worker 创建被拒绝。完整 Harness 使用唯一 `/evolution/trials` 候选：前任等待候选自测，候选交权前只自测并等待；拒绝回收或由原候选接任，旧主交权后退出。单次运行不分叉并行研究 Agent。
+夜间由单个 Agent 自主研究 Policy、采集、训练、评估与分析结果。白天由人类和 Codex 依据原始执行轨迹维护 Harness，包括模型调用、工具、上下文、记忆机制、调度与恢复。Agent 负责报告过程问题及证据，并继续修改研究代码和管理研究知识。
 
-研究 skill 提供可选方法与经验，RSI skill 提供线性候选与版本交接参考。按需读取正文并显式保留目录、引用和索引；技能不会创建 worker 或扩大工具权限。
+研究 skill 提供可选方法与经验。按需读取正文并显式保留目录、引用和索引；技能不会创建 worker 或扩大工具权限。
 
 启动后应核实实际 input manifest、`acceptance_checks=["G"]`、新任务状态及初始反馈消息，不能只看仓库文件。自定义 run 的恢复使用其冻结输入；每次人工恢复的说明继续走已有 feedback 流程。G 通过保存退出，不自动开始第二阶段。准备输入或发布源码本身不证明 Agent 已实现上下文管理。
 
@@ -137,7 +137,7 @@ SOUL 指导采集与评估默认使用统一执行器，execution 提供作业�
 
 Markdown 在标题之后写 `Version: 0.1.0`；YAML 顶层写 `version: 0.1.0`。这些版本独立维护。任何内容修改都需要递增：兼容性文字修正递增 patch，例如 `0.1.0 → 0.1.1`；能力、协议或验收变化通常递增 minor；不兼容重构递增 major。版本号与 SHA256 同时记录。同一 run 见过的同名同版本文件若内容变化，加载会被拒绝，须先修正版本号。
 
-新增直接发给 Agent 的文件时，添加明确版本，并将其加入 `src/a3_research_agent/host/inputs/versions.py` 的输入清单。专项 Harness 自己生成的任务、记忆和提示词由 Agent 管理，本规则约束部署方发布的输入。
+新增直接发给 Agent 的文件时，添加明确版本，并将其加入 `src/a3_research_agent/host/inputs/versions.py` 的输入清单。研究计划、记忆内容与研究技能由 Agent 管理；运行提示词和通用能力由维护者负责，本规则约束部署方发布的输入。
 
 ## 启动与恢复记录
 
@@ -158,6 +158,10 @@ web-extension 的新副本将已知旧任务状态归档至 `inherited-task-stat
 普通挂载与主会话的私有输入挂载同步发布。主 Agent 与接任候选每次模型请求都获得 SOUL、目标和验收正文；第一阶段另提供专项 Prompt，第二阶段另提供 protocol.md；普通 worker 创建被拒绝。用量日志记录请求采用的 input_revision、各文件版本与摘要。初始 mini 刷新部署方 system 消息，保留已有用户消息、模型回复和工具结果。
 
 全部研究进程停止后，Host 先关闭更新入口，再按最终生效的验收版本作结构检查，并把该版本清单写入 outcome。历史结果保留各自产生时的版本；变更验收后仅按影响范围判断相关已有结论是否适用，不将其扩为全历史重审。各代交权前核查自己的实验闭环，后继继承已确认结论及证据引用，不承担前任过去的验收责任；最终汇总仍须如实保留未完成与未知。
+
+## 专项能力的历史与现行职责
+
+历史 E、F、G 实验由当时的 Agent 分别实现并验证联网工具、技能工具和上下文管理。原 run 的输入快照、实现代码、调用证据和验收归属按当时版本保存。当前 E、F、G 模板用于验证已部署能力。此后的 Harness 实现和维护由人类和 Codex 负责。
 
 ## 第一阶段 F 的独立输入
 
@@ -181,7 +185,7 @@ F 输入接入不是技能工具实现；实际模型发现、读取、执行、
 
 ## 第二阶段核心输入与历史兼容
 
-新 preset 第二阶段只直接注入 SOUL、goal、acceptance、protocol；execution 等按 manifest 挂载可读。第一阶段（包括 G 的完整自定义输入）仍要求 phase-instructions。当前研究 Agent 与唯一候选按线性自测、决定和交权协议推进。
+新 preset 第二阶段只直接注入 SOUL、goal、acceptance、protocol；execution 等按 manifest 挂载可读。第一阶段（包括 G 的完整自定义输入）仍要求 phase-instructions。当前研究由部署方恢复的单个 Agent 推进。
 
 显式恢复旧 preset 时沿用原有“当前仓库输入＋原历史”语义：旧 phase-instructions 保存在历史 revision/legacy，活动挂载和后续模型核心输入不再包含已删除层；不会仅因更新仓库就改动未恢复或正在运行的 run。旧 custom 无论是否含该可选层，都按原冻结清单校验和恢复，不从仓库补入或删除文件。
 
@@ -197,7 +201,7 @@ F 输入接入不是技能工具实现；实际模型发现、读取、执行、
 
 ## 等待中的只读通知
 
-`GET /wait/signals` 使用已有候选身份鉴权，按 owner 返回稳定游标、该身份反馈的数量/最新 ID、自己的终态 analyzer 通知 ID、输入 revision/generation/status 和是否仍为主身份。不返回正文、私有路径或凭据；读取不确认消费，不触发模型或分析。反馈已转发、分析已回应等确认变化不单独改变游标，避免自行制造唤醒；新终态通知仍会改变它。
+`GET /wait/signals` 使用已有候选身份鉴权，按 owner 返回稳定游标、该身份反馈的数量/最新 ID、输入 revision/generation/status 和是否仍为主身份。不返回正文、私有路径或凭据；读取不确认消费，不触发模型。反馈已转发等确认变化不单独改变游标，避免自行制造唤醒；新反馈或输入变化仍会改变它。
 
 恢复 Harness 的等待工具每约 2 秒检查信号，候选/job 每约 10 秒检查状态。每个等待进程最多约 1800 次信号 GET/小时，每个受监控目标约 360 次状态 GET/小时，另有短请求与日志成本，无模型 token 成本。1/2 秒的信号/状态请求超时使通知不会被一轮多个慢作业饿死；延迟仍包括在途请求、OS 调度和 Host 可用性。请求失败返回观察错误，不能当作没有事件。
 

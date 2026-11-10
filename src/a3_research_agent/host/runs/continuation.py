@@ -31,9 +31,10 @@ def prepare_fresh_task(start: HarnessStart, task: str) -> tuple[HarnessStart, di
         raise ValueError("Unsupported checkpoint format; Harness needs an explicit new-task entry")
     files = dict(start.files)
     files["checkpoint.json"] = json.dumps([{"role": "user", "content": task}], ensure_ascii=False)
-    # Operational progress and analyzer cadence belong to this task, not to the
+    # Operational progress belongs to this task, not to the
     # inherited research capabilities. Preserve them as history in the new copy.
     reset = {
+        "pending-calls.json": None,
         "compaction-result.json": None,
         "compaction-epoch.json": {"version": 1, "id": None},
         "operational-state.json": {
@@ -49,15 +50,6 @@ def prepare_fresh_task(start: HarnessStart, task: str) -> tuple[HarnessStart, di
             "reads": {},
             "items": {},
             "counters": {},
-        },
-        "analysis-client/schedule.handoff.json": {"id": None},
-        "analysis-client/schedule.json": {
-            "version": 1,
-            "last_poll": None,
-            "last_attempt": None,
-            "last_periodic": None,
-            "samples": [],
-            "latest": None,
         },
     }
     replacements = {name: json.dumps(value) for name, value in reset.items()}

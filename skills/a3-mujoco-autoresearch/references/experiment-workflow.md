@@ -24,13 +24,9 @@ The complete phase-two metric is six-cell equal-weight normalized final count; o
 
 Inspect real video/frames together with synchronized actions and states to compare grasp, transport, placement, stability and recovery. Anchor observations to steps and matched conditions; quantify the relevant behavior when feasible. Preserve a candidate with supported improvement in any useful capability, its weights/configuration and evidence, even when final aggregate score is unchanged. Keep uncertain visual signs as pending verification. Maintain several capability-specific candidates; aggregate-score improvement is not a prerequisite for retention. Report native benchmark results and behavioral improvements at their respective scopes, including tradeoffs.
 
-## Research and Harness can improve together
+## Research execution evidence
 
-Freeze `(policy, processor, data, harness, protocol, config, training seed)` per run. Work in parallel when it resolves independent questions without exhausting shared resources. No need to invent a Harness task merely to fill concurrency.
-
-For behavior-neutral tool changes, compare fixed fixtures/output quality and process costs. If numerics or training semantics change, treat that as a scientific intervention rather than neutral plumbing. When attribution matters, rerun an incumbent under the new harness or use a small bridge comparison; don't mandate a costly factorial for every edit.
-
-Policy inference compute, simulation time, language-model token cost, tool overhead and external waiting are separate. Skipping necessary evaluations or dropping errors is not an efficiency gain. Phase-two Harness acceptance has its own actual paired-workload requirement; don't replace it with a synthetic helper unit test.
+Freeze the Policy, processor, data, deployed Harness version, protocol, configuration and training seed. Run independent experiments in parallel. Report Harness failures to maintainers with trace locations, actual impact and reproduction details. Policy inference compute, simulation time, model token cost, tool overhead and external waiting are separate measurements.
 
 ## Memory into skills
 

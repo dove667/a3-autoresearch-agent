@@ -1,7 +1,7 @@
 # Context recovery and model roles
 
 The optional overlay is maintained in `src/a3_research_agent/harness/`, with
-context, memory and analysis components, with linear candidate evolution.
+context, research planning and memory components.
 
 Build a new explicitly derived package using
 `a3_research_agent.packaging.harness_payload.build_harness_payload(extension_sources)`.
@@ -9,7 +9,7 @@ The optional mapping accepts only explicitly selected UTF-8 `skill_tools.py` and
 `web_tools.py` source. Copy **every** returned path/content pair into the package,
 preserve its compatible memory and evidence, and record source/version hashes and
 the intervention. The output includes package modules and the token estimator. Start it with
-`python -m a3_research_agent.harness.agent --resume`; research stays in the current Agent, with one formal trial candidate.
+`python -m a3_research_agent.harness.agent --resume` to run the single research Agent.
 
 Export never executes candidate code or selects a live workspace. It does not create
 a retained manifest or authorize dispatch: callers must explicitly include the returned
@@ -206,7 +206,7 @@ arbitrary role-model mappings. The supported service-tier override remains
 
 A test assistant and a model under test are different roles. Testing a future main's
 behavior with a helper model would not establish behavior of the deployed main.
-Only the one formal `/evolution/trials` candidate can test a future main. Ordinary `/sessions` creation and `candidate_validation` helpers are denied to Agent tokens. Role and requested/actual model options are audited.
+Maintainers validate changes to the main Harness during a maintenance window. Ordinary `/sessions` creation and `candidate_validation` helpers are denied to Agent tokens. Role and requested/actual model options are audited.
 
 `POST /v1/summary` accepts the full `transcript` and a relative
 `context-history/snapshot-<SHA256>.json` source reference. It cannot receive client
@@ -224,6 +224,11 @@ are per-run records; a new task needs its own approved initial intervention noti
 Token control defaults to a 500k deployment cap. Set `A3_MODEL_CONTEXT_TOKENS` and, for alternate
 models, `A3_WORKER_CONTEXT_TOKENS` / `A3_SUMMARY_CONTEXT_TOKENS`. Optional
 `A3_CONTEXT_TRIGGER_TOKENS` and `A3_CONTEXT_TARGET_TOKENS` tune the working policy.
+The configured target budgets compacted working context, including tools.
+Host instructions and operator feedback use a separate reserve. The context
+endpoint adds that reserve to the target it sends to the Harness and caps the
+combined target below the trigger. The complete decision request still has to
+fit the model input budget.
 `A3_SUMMARY_INPUT_TOKENS` was removed and is rejected if present; remove it before
 starting an updated Host. Model identifiers and windows are
 deployment choices; no particular provider, account or model is a public default.
@@ -296,9 +301,6 @@ new modules enter ordinary resume/continuation manifests, and a corrupt sidecar
 fails closed rather than silently resetting it. One previous sidecar and separate
 progress-item archives bound redundant storage while preserving task changes.
 
-Same-task resume and handoff preserve this ledger and analyzer cadence. A genuinely
-new task archives and resets task-specific operational state and analysis schedule
-in the new copy only; skills, lessons, source packages and old archives remain.
-The analyzer contract, automatic schedule and limits are described in
-[trajectory analysis](trajectory-analysis.md). This is an implemented opt-in overlay,
-not evidence of production loading or long-run research improvement.
+Same-task resume and handoff preserve this ledger. A new task archives and
+resets task-specific operational state in the new copy. Skills, lessons, source
+packages and old archives remain available according to the launch configuration.

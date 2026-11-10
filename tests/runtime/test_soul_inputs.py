@@ -118,20 +118,15 @@ def test_repository_phase_two_layers_remain_selected_and_versioned(tmp_path):
     inputs = InputVersions(root, tmp_path / "run", phase="phase-two")
     manifest = inputs.activate(inputs.prepare(), "start")
     _, instructions = inputs.model_instructions()
-    assert manifest["files"]["SOUL.md"]["version"] == "0.2.22"
+    assert manifest["files"]["SOUL.md"]["version"] == "0.2.23"
     assert "phase-instructions.md" not in manifest["files"]
     for name in ("SOUL.md", "goal.md", "acceptance.md", "protocol.md"):
         assert inputs.contents[name] in instructions
     assert inputs.contents["execution.md"] not in instructions
-    assert (
-        "自己完成 Policy 与 Harness 的实现、数据采集、训练、评估、脚本修复和验收判断"
-        in instructions
-    )
-    assert "不创建普通 `/sessions` worker，不采用 orchestrator/worker 分工" in instructions
-    assert "前任等待候选自测并读取结果" in instructions
-    assert "候选交权前仅完成清单并等待，不开展独立研究" in instructions
-    assert "采用则由同一候选接任" in instructions
-    assert "禁止分叉并行研究 Agent" in instructions
+    assert "研究 Agent 负责 Policy、数据采集、训练、评估、研究脚本和结果判断" in instructions
+    assert "调度与恢复由人类和 Codex 在运行暂停期间维护" in instructions
+    assert "启动 Harness 候选或切换主身份" in instructions
+    assert "按本轮职责处理" in instructions
     assert not (root / "agent-inputs/phase-two/instructions.md").exists()
     # Optional method references and maintainer review notes are not injected inputs.
     assert not any(

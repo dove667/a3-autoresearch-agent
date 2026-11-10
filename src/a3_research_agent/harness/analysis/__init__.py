@@ -1,1 +1,0 @@
-"""Research Harness analysis components."""

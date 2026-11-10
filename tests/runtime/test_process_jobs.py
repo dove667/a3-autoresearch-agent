@@ -205,6 +205,7 @@ def test_process_deployment_advertises_real_paths_instead_of_container_aliases(m
 def test_process_limits_ignore_legacy_container_hard_caps(monkeypatch):
     from a3_research_agent.host.transport import remote_limits
 
+    monkeypatch.setenv("A3_REMOTE_MANAGED_JOBS", "0")
     monkeypatch.setenv("A3_REMOTE_BACKEND", "process")
     monkeypatch.setenv("A3_REMOTE_CPUS", "16")
     monkeypatch.setenv("A3_REMOTE_MEMORY", "64g")

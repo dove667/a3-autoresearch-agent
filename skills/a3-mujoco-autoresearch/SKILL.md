@@ -2,7 +2,7 @@
 name: a3-mujoco-autoresearch
 description: Develop and improve learned policies for the A3 dual-arm MuJoCo cookie-packing project. Use for method selection, ACT/Diffusion/Flow/VLA/world-model experiments, data and training diagnostics, paired closed-loop evaluation, and reusable research experience. Applies to research planning or authorized execution, not permission to start training or change the benchmark.
 metadata:
-  version: 0.1.11
+  version: 0.1.14
 ---
 
 # A3 MuJoCo autoresearch
@@ -13,7 +13,7 @@ Turn robot-learning knowledge into **testable A3 experiments and reusable capabi
 
 Read the current run's goal, acceptance, protocol and feedback, then [project contract](references/project-contract.md). Verify the deployed A3 revision and model/data interfaces before applying a recipe. Repository templates and paper results are not the run's execution state. This skill neither replaces those inputs nor expands permissions.
 
-For each next action, identify the limiting uncertainty: a broken adapter, insufficient data coverage, open-loop drift, underfitting, inference latency, or research-process overhead. Choose an experiment that can distinguish explanations. Autonomously compare training, data improvement, deployment changes and Harness work by their expected performance or information benefit, total time/compute and validation cost, risk and dependencies. A cheap interface test or deployment ablation is useful when it resolves a consequential uncertainty; cheapness alone does not justify repeating it instead of a more valuable training or data experiment. No direction or section order is a default optimum. Training need not be the expensive stage: if collection or closed-loop simulation dominates, optimize the measured pipeline bottleneck and reuse valid data/results rather than repeatedly recollecting or reevaluating.
+For each next action, identify the limiting uncertainty: a broken adapter, insufficient data coverage, open-loop drift, underfitting, inference latency, or data-pipeline overhead. Choose an experiment that can distinguish explanations. Autonomously compare training, data improvement, and Policy deployment changes by their expected performance or information benefit, total time/compute and validation cost, risk and dependencies. A cheap interface test or deployment ablation is useful when it resolves a consequential uncertainty; cheapness alone does not justify repeating it instead of a more valuable training or data experiment. No direction or section order is a default optimum. Training need not be the expensive stage: if collection or closed-loop simulation dominates, optimize the measured pipeline bottleneck and reuse valid data/results rather than repeatedly recollecting or reevaluating.
 
 **A3 traps to check first:** absolute joint targets rather than deltas; 16D dual-arm versus published 8D left-arm action; inactive arm held at reset pose, not zero; observation state may include more than action channels; 20 Hz control; consistent camera preprocessing; commanded versus applied-action labels; chunk queues and reset; final count rather than transient peak. See the contract for source-qualified details.
 
@@ -27,7 +27,7 @@ Verify the actual training forward and deployed runner-to-adapter-to-model path.
 
 ## Execute research in one Agent
 
-The current Agent implements, trains, evaluates and fixes its own scripts. Do not create ordinary `/sessions` workers or delegate research to an orchestrator. A full Harness replacement uses one `/evolution/trials` candidate: the predecessor waits for self-test results; the candidate self-tests and waits without independent research until adoption. Reject and return to the predecessor, or retain the same candidate and retire the predecessor. Preserve scientific evidence, memory, resource limits and explicit cross-run asset grants.
+The current Agent implements, trains, evaluates and fixes its own scripts. Do not create ordinary `/sessions` workers or delegate research to an orchestrator. Use the deployed Harness. Save reproduction details for tool, context, scheduling or recovery failures for the maintainers. Preserve scientific evidence, memory, resource limits and explicit cross-run asset grants.
 
 Fix ordinary script and adapter failures within the current task and verify the repair. Report specific missing infrastructure permissions, services or resources to the operator.
 
@@ -78,7 +78,7 @@ Inventory the actually trainable policy families, prior attempts and missing pre
 5. Compare matched closed-loop results. Training loss is a diagnostic, not the policy-selection objective. Report execution failures separately from genuine task failure.
 6. Preserve useful behavioral improvements and mark uncertain candidates for targeted verification using the recorded conditions; keep aggregate benchmark conclusions scoped to their evidence. State coverage, remaining uncertainty, and the next discriminating action. A null result can still produce a valuable reusable diagnostic.
 
-Policy and Harness improvements may proceed in parallel when dependencies and resources permit. Attribute gains separately: a cheaper policy, fewer evaluation episodes or omitted evidence is not a Harness efficiency improvement. A later generation inherits confirmed conclusions and their boundaries; it need not re-audit all predecessors.
+Run independent Policy experiments in parallel when resources permit. Record the deployed Harness version and keep scientific conditions comparable.
 
 ## Evaluate without moving the target
 
@@ -94,4 +94,4 @@ When retained or handed off, include this entrypoint, referenced files and helpe
 
 ## Research access within one run
 
-Registered research identities in the same run may read each other's code, memory, visible traces, logs, artifacts, job status and read-only exports already authorized to that run. Use the Host interfaces with your own token and keep provenance. Workspace writes remain owner-only; job cancellation and other management require ownership or adopted linear lineage. Other runs, external users and Host credentials remain protected. Analyzer reports are readable within the run; only the current main initiates analysis and records adoption decisions. The analyzer uses run-level aggregate statistics and has no execution tools.
+Registered research identities in the same run may read each other's code, memory, visible traces, logs, artifacts, job status and read-only exports already authorized to that run. Use the Host interfaces with your own token and keep provenance. Workspace writes remain owner-only; job cancellation and other management require ownership or adopted linear lineage. Other runs, external users and Host credentials remain protected.

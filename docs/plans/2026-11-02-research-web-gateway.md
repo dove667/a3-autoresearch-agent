@@ -1,5 +1,7 @@
 # 第二阶段研究网页网关
 
+> 历史设计记录。当前职责与操作见[夜间研究与白天维护](../operator-supervision.md#夜间研究与白天维护)。
+
 Version: 0.1.0
 
 > 历史方案：下文保留当时的直接 HTTP 抓取、次数上限与无 Host 结果缓存设计及其验证记录。当前次数语义见[取消 run 总次数上限](2026-11-02-web-usage-without-run-cap.md)；正文读取已由 [Tavily Basic Extract 与专用代理](2026-11-02-tavily-proxy-extract.md)替代，不再由 Host 直接抓取目标网站。以下 DNS／重定向／固定 IP 保护描述不适用于新的提供商提取路线。

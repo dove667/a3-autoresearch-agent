@@ -228,7 +228,7 @@ def test_archive_failure_leaves_executed_raw_result_in_journal(tmp_path, monkeyp
     journal = {"results": {}}
     messages = []
     with pytest.raises(ns["ToolResultPersistenceError"]):
-        ns["save_tool_result"]({"call_id": "c", "name": "gateway"}, raw, journal, messages)
+        ns["save_tool_result"]({"call_id": "c", "name": "gateway"}, raw, journal, messages, 0)
     assert json.loads(pathlib.Path("pending-calls.json").read_text())["results"]["c"] == raw
     assert not messages
 

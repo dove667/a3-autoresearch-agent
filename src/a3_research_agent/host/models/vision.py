@@ -9,6 +9,7 @@ import math
 import warnings
 from collections.abc import Callable
 from pathlib import PurePosixPath
+from typing import Literal
 
 from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -36,6 +37,7 @@ class VisionFrame(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     job_id: str = Field(pattern=r"^[a-f0-9]{32}$")
     path: str = Field(min_length=1, max_length=4096)
+    area: Literal["workspace", "outputs"] = "workspace"
     episode_id: str = Field(min_length=1, max_length=100)
     step: int = Field(ge=0)
     sim_time_s: int | float
@@ -168,7 +170,7 @@ def _normalize_image(raw):
 def prepare_vision_request(
     body: dict,
     owner: str,
-    read_artifact: Callable[[str, str, str], dict],
+    read_artifact: Callable[..., dict],
 ) -> tuple[dict, list[dict], int]:
     """Read only validated owned sources; return normalized request and audit data.
 
@@ -193,7 +195,13 @@ def prepare_vision_request(
     content = [{"type": "input_text", "text": "Diagnostic question: " + request.question}]
     metadata, total_bytes = [], 0
     for frame, label, text in zip(request.frames, labels, label_text, strict=True):
-        raw = _artifact_bytes(read_artifact(owner, frame.job_id, frame.path))
+        source = (owner, frame.job_id, frame.path)
+        artifact = (
+            read_artifact(*source, area=frame.area)
+            if frame.area == "outputs"
+            else read_artifact(*source)
+        )
+        raw = _artifact_bytes(artifact)
         total_bytes += len(raw)
         if total_bytes > MAX_TOTAL_BYTES:
             raise ValueError("Image artifacts exceed total byte limit")
@@ -203,6 +211,7 @@ def prepare_vision_request(
                 **label,
                 "source_job": frame.job_id,
                 "path": frame.path,
+                **({"area": frame.area} if frame.area == "outputs" else {}),
                 "original_sha256": hashlib.sha256(raw).hexdigest(),
                 "normalized_sha256": hashlib.sha256(normalized).hexdigest(),
                 "width": width,

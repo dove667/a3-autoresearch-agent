@@ -165,8 +165,6 @@ class PromptResponsibilitiesTests(unittest.TestCase):
             "不得与参与训练或数据选择的场景重复",
             "配对 bootstrap",
             "95%",
-            "至少完成三个配对",
-            "先判交付质量",
             "无需先完成开发集 120 回合",
             "中间候选不得用最终测试结果调参",
         ):
@@ -175,17 +173,16 @@ class PromptResponsibilitiesTests(unittest.TestCase):
         self.assertIn("最终测试集对初始基线和已选定的最终 Policy 各完成 120 回合", acceptance)
         self.assertIn("同一快照和协议的结果可复用", acceptance)
         self.assertIn("无候选胜过基线", acceptance)
-        self.assertIn("被拒绝的完整候选不要求接任", acceptance)
+        self.assertIn("交给白天的维护者处理", acceptance)
         prompt = read("agent-inputs/phase-two/goal.md")
         self.assertIn("优先适配、微调", prompt)
         self.assertIn("不自行下载", prompt)
         soul = read("agent-inputs/SOUL.md")
         self.assertIn("避免重复提交", soul)
         self.assertNotIn("在等待其结果的时间里优先", prompt)
-        allocation = read("skills/rsi-harness-evolution/references/policy-harness-allocation.md")
-        self.assertIn("validation", allocation)
-        self.assertIn("remaining budget", allocation)
-        self.assertIn("Do not rewrite Host-owned SOUL", allocation)
+        self.assertNotIn("Harness 优化目标", prompt)
+        self.assertNotIn("Harness 比较", text)
+        self.assertFalse((ROOT / "skills/rsi-harness-evolution/SKILL.md").exists())
 
 
 if __name__ == "__main__":

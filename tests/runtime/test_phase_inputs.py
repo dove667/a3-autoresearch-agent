@@ -135,12 +135,15 @@ def test_continuous_phase_two_contract_is_loaded_without_new_runtime_profile(tmp
     _, instructions = versions.model_instructions()
     assert manifest["acceptance_checks"] == list("ABCD")
     assert manifest["task_profile"] == "standard"
-    assert manifest["files"]["goal.md"]["version"] == "0.4.3"
-    assert manifest["files"]["acceptance.md"]["version"] == "0.4.2"
-    assert manifest["files"]["protocol.md"]["version"] == "0.3.4"
+    assert manifest["files"]["goal.md"]["version"] == "0.4.4"
+    assert manifest["files"]["acceptance.md"]["version"] == "0.4.4"
+    assert manifest["files"]["protocol.md"]["version"] == "0.3.6"
     assert "phase-instructions.md" not in manifest["files"]
     for name in ("goal.md", "acceptance.md"):
         assert proposal["contents"][name] in instructions
     assert "顶层 run-outcome.json 保持 status=continue" in instructions
-    assert "全部通过也不自动结束持续研究" in instructions
+    assert "不因此退出" in instructions
+    assert "由人类和 Codex 在运行暂停期间维护" in instructions
+    assert "不修改运行框架、启动 Harness 候选或切换主身份" in instructions
+    assert "## Harness 优化目标" not in instructions
     assert "全体退出仍记 incomplete" not in instructions  # Operator docs are not inputs.

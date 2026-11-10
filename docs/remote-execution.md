@@ -1,6 +1,6 @@
 # 远程容器作业
 
-Host控制器负责独立作业的执行和资源分配。模型服务、凭据、SSH 和作业归属映射留在容器外；实验策略和 Harness 演化由 Agent 完成。
+Host控制器负责独立作业的执行和资源分配。模型服务、凭据、SSH 和作业归属映射留在容器外；实验策略由 Agent 决定，Harness 由部署方维护。
 
 ## 部署
 
@@ -147,7 +147,7 @@ python3 src/a3_research_agent/execution/images/verify.py \
 | export-grant / export-revoke | export_id、recipient | 增加或撤回明确身份的只读权限 |
 | export-delete | export_id | 原始所有者删除快照，不删除源文件 |
 
-submit 的 input_exports 最多 64 个且不能重复；只挂载本身份获授权且 ready 的数据，每个引用对应 `/inputs/<export_id>/` 的只读目录。作业挂载只包含选定快照，不直接挂载原身份的可写目录；同 run 登记研究身份另可通过 Host 研究接口读取彼此产物。跨 run 使用仍须明确授权。源文件改变不影响已封存数据。
+submit 的 input_exports 最多 64 个且不能重复；只挂载本身份获授权且 ready 的数据，每个引用对应 `/inputs/<export_id>/` 的只读目录。作业挂载只包含选定快照，不直接挂载原身份的可写目录；同 run 登记研究身份另可通过 Host 研究接口读取彼此产物。第二阶段的 Host 核验项目归属，并在提交时自动授予历史快照的只读挂载权限。源文件改变不影响已封存数据。
 
 元数据和授权保存在 `readonly-exports/`，复制的数据、manifest 保存在 `runs/<来源run>/readonly-exports/<export_id>/`。独立 sealer 按块复制并计算摘要，原子发布 ready。复制失败清理未发布数据；状态查询发现 sealer 已退出会记录失败，不把它一直显示为 preparing。源文件应在封存期间保持稳定。符号链接和特殊文件被拒绝。
 

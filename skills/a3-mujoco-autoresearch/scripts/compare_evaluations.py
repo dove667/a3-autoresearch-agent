@@ -1,4 +1,5 @@
-"""Offline paired A3 phase-two 0.3.0–0.3.2 comparison; see references/evaluation-helper.md."""
+"""Offline paired A3 phase-two 0.3.0–0.3.6 comparison; see references/evaluation-helper.md."""
+
 from __future__ import annotations
 
 import argparse
@@ -10,8 +11,7 @@ import re
 from collections import defaultdict
 from pathlib import Path
 
-CELLS = {(task, level) for task in ("2x5", "2x10")
-         for level in ("basic", "medium", "advanced")}
+CELLS = {(task, level) for task in ("2x5", "2x10") for level in ("basic", "medium", "advanced")}
 CAPACITY = {"2x5": 10, "2x10": 20}
 STEPS = {"2x5": 500, "2x10": 3200}
 
@@ -31,9 +31,19 @@ def digest(value, label):
 def validate(report):
     """Validate explicit normalized input. Does not authenticate referenced files."""
     if not isinstance(report, dict) or report.get("schema") != "a3-paired-evaluation-v1":
-        raise ValueError("expected explicit a3-paired-evaluation-v1 input; raw reports need adaptation")
-    if report.get("protocol_version") not in ("0.3.0", "0.3.1", "0.3.2"):
-        raise ValueError("this helper implements phase-two protocol revisions 0.3.0 through 0.3.2")
+        raise ValueError(
+            "expected explicit a3-paired-evaluation-v1 input; raw reports need adaptation"
+        )
+    if report.get("protocol_version") not in (
+        "0.3.0",
+        "0.3.1",
+        "0.3.2",
+        "0.3.3",
+        "0.3.4",
+        "0.3.5",
+        "0.3.6",
+    ):
+        raise ValueError("this helper implements phase-two protocol revisions 0.3.0 through 0.3.6")
     digest(report.get("protocol_sha256"), "protocol_sha256")
     digest(report.get("conditions_sha256"), "conditions_sha256")
     digest(report.get("policy_snapshot_sha256"), "policy_snapshot_sha256")
@@ -85,7 +95,7 @@ def interval(values, repeats, rng):
     if len(values) < 2:
         return None
     draws = sorted(mean(rng.choices(values, k=len(values))) for _ in range(repeats))
-    return [percentile(draws, .025), percentile(draws, .975)]
+    return [percentile(draws, 0.025), percentile(draws, 0.975)]
 
 
 def compare(baseline, candidate, repeats=10000, bootstrap_seed=0):
@@ -108,8 +118,12 @@ def compare(baseline, candidate, repeats=10000, bootstrap_seed=0):
         "paired_episodes": len(left),
         "baseline_snapshot": baseline["policy_snapshot_sha256"],
         "candidate_snapshot": candidate["policy_snapshot_sha256"],
-        "bootstrap": {"unit": "paired scenario seed", "repeats": repeats,
-                      "random_seed": bootstrap_seed, "confidence": .95},
+        "bootstrap": {
+            "unit": "paired scenario seed",
+            "repeats": repeats,
+            "random_seed": bootstrap_seed,
+            "confidence": 0.95,
+        },
         "cells": [],
         "provenance_verified": False,
         "adoption_decision": "not made by this helper",
@@ -121,39 +135,57 @@ def compare(baseline, candidate, repeats=10000, bootstrap_seed=0):
         b = [right[k]["cookies_in_target"] for k in keys]
         differences = [y - x for x, y in zip(a, b)]
         seed_sets.append({k[2] for k in keys})
-        output["cells"].append({
-            "task": cell[0], "difficulty": cell[1], "n": len(keys),
-            "seeds": [k[2] for k in keys],
-            "baseline_mean_count": mean(a), "candidate_mean_count": mean(b),
-            "baseline_total_count": sum(a), "candidate_total_count": sum(b),
-            "baseline_counts": a, "candidate_counts": b,
-            "baseline_successes": sum(left[k]["success"] for k in keys),
-            "candidate_successes": sum(right[k]["success"] for k in keys),
-            "paired_count_difference": mean(differences),
-            "paired_count_difference_ci95": interval(differences, repeats, rng),
-            "paired_normalized_difference": mean(differences) / cap,
-        })
+        output["cells"].append(
+            {
+                "task": cell[0],
+                "difficulty": cell[1],
+                "n": len(keys),
+                "seeds": [k[2] for k in keys],
+                "baseline_mean_count": mean(a),
+                "candidate_mean_count": mean(b),
+                "baseline_total_count": sum(a),
+                "candidate_total_count": sum(b),
+                "baseline_counts": a,
+                "candidate_counts": b,
+                "baseline_successes": sum(left[k]["success"] for k in keys),
+                "candidate_successes": sum(right[k]["success"] for k in keys),
+                "paired_count_difference": mean(differences),
+                "paired_count_difference_ci95": interval(differences, repeats, rng),
+                "paired_normalized_difference": mean(differences) / cap,
+            }
+        )
     full = set(grouped) == CELLS and all(len(s) == 20 for s in seed_sets)
     full = full and all(s == seed_sets[0] for s in seed_sets)
     output["complete_grid"] = full
     if full:
         seeds = sorted(seed_sets[0])
         # One draw is a scenario seed, carrying both tasks and all three levels together.
-        differences = [mean([
-            (right[(t, d, s)]["cookies_in_target"] - left[(t, d, s)]["cookies_in_target"])
-            / CAPACITY[t] for t, d in sorted(CELLS)
-        ]) for s in seeds]
+        differences = [
+            mean(
+                [
+                    (right[(t, d, s)]["cookies_in_target"] - left[(t, d, s)]["cookies_in_target"])
+                    / CAPACITY[t]
+                    for t, d in sorted(CELLS)
+                ]
+            )
+            for s in seeds
+        ]
         ci = interval(differences, repeats, rng)
         output["G"] = {
-            "baseline": mean([c["baseline_mean_count"] / CAPACITY[c["task"]]
-                              for c in output["cells"]]),
-            "candidate": mean([c["candidate_mean_count"] / CAPACITY[c["task"]]
-                               for c in output["cells"]]),
-            "paired_difference": mean(differences), "paired_difference_ci95": ci,
-            "interpretation": ("observed difference; evidence of improvement is insufficient"
-                               if ci[0] <= 0 <= ci[1] else
-                               "interval excludes zero for these evaluation scenarios; "
-                               "does not establish robustness across training seeds"),
+            "baseline": mean(
+                [c["baseline_mean_count"] / CAPACITY[c["task"]] for c in output["cells"]]
+            ),
+            "candidate": mean(
+                [c["candidate_mean_count"] / CAPACITY[c["task"]] for c in output["cells"]]
+            ),
+            "paired_difference": mean(differences),
+            "paired_difference_ci95": ci,
+            "interpretation": (
+                "observed difference; evidence of improvement is insufficient"
+                if ci[0] <= 0 <= ci[1]
+                else "interval excludes zero for these evaluation scenarios; "
+                "does not establish robustness across training seeds"
+            ),
         }
     else:
         output["coverage_note"] = (
@@ -172,8 +204,11 @@ def main():
     args = parser.parse_args()
     try:
         raw = [p.read_bytes() for p in (args.baseline, args.candidate)]
-        result = compare(*(json.loads(value) for value in raw),
-                         repeats=args.bootstrap_repeats, bootstrap_seed=args.bootstrap_seed)
+        result = compare(
+            *(json.loads(value) for value in raw),
+            repeats=args.bootstrap_repeats,
+            bootstrap_seed=args.bootstrap_seed,
+        )
         result["normalized_input_sha256"] = [hashlib.sha256(value).hexdigest() for value in raw]
     except (OSError, ValueError, KeyError, TypeError) as exc:
         parser.exit(2, f"Invalid comparison: {exc}\n")

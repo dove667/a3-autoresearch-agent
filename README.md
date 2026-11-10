@@ -1,8 +1,8 @@
 # A3 Research Agent
 
-面向 A3 MuJoCo 的 auto research Agent。从通用 mini-SWE-agent 出发，让 Agent 自己形成调用 A3、运行实验、比较 Policy 和改进自身 Harness 的工作方式。
+面向 A3 MuJoCo 的自主机器人 Policy 研究 Agent。
 
-**Policy** 决定机械臂怎样运动；**Harness** 组织模型调用、工具执行、实验记录、记忆和后继运行。人类提前准备目标、验收与受控执行环境，SWE Agent 自己编写并迭代专项实现。阶段一验证 Policy 优化、Harness 轨迹反思、实验隔离与持久记忆；第二阶段面向持续的 Policy 与 Harness 联合优化。
+夜间由单个 Agent 自主研究 Policy、采集、训练、评估与分析结果。白天由人类和 Codex 依据原始执行轨迹维护 Harness，包括模型调用、工具、上下文、记忆机制、调度与恢复。Agent 负责报告过程问题及证据，并继续修改研究代码和管理研究知识。
 
 模型接入复用 mini-SWE-agent 的多提供商支持。当前执行方案是在本地运行 Agent，通过 SSH 把仿真、渲染和计算任务交给远程执行端（Docker 或受信任的 Linux 进程后端）；A3 仿真项目在独立的 `a3_dual_arm_sim` 仓库中维护。
 
@@ -37,13 +37,13 @@ macOS 上启动脚本会自动使用 `caffeinate -is` 包裹 Agent runtime，在
 bash scripts/start-rsi.sh
 ```
 
-启动通用 mini-SWE-agent，在独立 Docker 工作区中依据 `agent-inputs/phase-one/goal.md` 与 `agent-inputs/phase-one/acceptance.md` 构建并演化 auto research Harness。运行无需逐轮人工确认；Agent 可以自行创建候选、测试和继续迭代。
+启动通用 mini-SWE-agent，在隔离工作区完成一次性引导。常规实验使用维护者选定的保留 Harness。
 
-初始 SWE 只启动一次。每代主 Agent 为改动写下验收清单，启动一个新 Harness 候选；拒绝则回收候选，保留则由同一个候选接任主 Agent，原主 Agent 退出。Policy 优化可穿插进行。前任等待候选自测，候选交权前不独立研究。当前 Agent 自行实现、训练、评估与修复脚本；独立远程作业先并行提交，采集与评估统一使用 episode 执行器。Host 保活研究进程，不重新派发任务，全部进程停止后再复核结果，详见[使用教程](docs/tutorial.md)。
+首个研究进程建立后，由同一个 Agent 推进实验。独立作业并行提交，采集与评估统一使用 episode 执行器。
 
 文档按读者职责分工，见 [职责表与输入装载链](docs/agent-inputs.md#文档职责与读者)。用户和父助手的低频监督、每次热加载或中断前的明确批准及操作核对统一见 [操作者监督](docs/operator-supervision.md)。这些文档不加入 Agent 输入。
 
-部署方给 Agent 的输入统一维护于 [agent-inputs/](agent-inputs/README.md)。第一阶段保留专项 [instructions](agent-inputs/phase-one/instructions.md)；第二阶段直接组合 SOUL 与 [目标与验收](agent-inputs/phase-two/)及 [protocol](agent-inputs/shared/protocol.md)，无独立 instructions 文件。Host 每次只向主 Agent 和接任候选提供所选阶段的 Prompt；普通 `/sessions` worker 被禁止。第二阶段从保留版本接续的输入选择见[使用教程](docs/tutorial.md#选择阶段)，正式运行前的准备见[第二阶段方案](docs/plans/2026-10-31-phase-two.md)。
+部署方给 Agent 的输入统一维护于 [agent-inputs/](agent-inputs/README.md)。第一阶段保留专项 [instructions](agent-inputs/phase-one/instructions.md)；第二阶段直接组合 SOUL 与 [目标与验收](agent-inputs/phase-two/)及 [protocol](agent-inputs/shared/protocol.md)，无独立 instructions 文件。Host 每次只向主 Agent 和接任候选提供所选阶段的 Prompt；普通 `/sessions` worker 被禁止。第二阶段从保留版本接续的输入选择见[使用教程](docs/tutorial.md#选择阶段)，研究范围见[第二阶段目标](agent-inputs/phase-two/goal.md)。
 
 运行目录使用 Host 本地时间命名，例如 `artifacts/rsi/run-20261031-110415-123456/`，可直接看出启动日期和时间；末段为微秒。
 
@@ -77,9 +77,9 @@ $$
 H_1 \xrightarrow{\text{next run}} H_2 \xrightarrow{\text{next run}} H_3.
 $$
 
-必须显式指定来源目录，不需要人工整理接续包。单次运行按线性版本推进，下一轮从哪个保留结果开始由调用者明确选择；`latest-run.txt` 只记录最近启动的运行，不参与版本选择。Agent 在结束前声明保留哪些文件和启动命令；Host 保存快照，后续按这份结果加载，具体协议见[教程](docs/tutorial.md#让本轮结果能够直接用于下一轮)。
+必须显式指定来源目录，不需要人工整理接续包。下一轮从哪个保留结果开始由调用者明确选择；`latest-run.txt` 只记录最近启动的运行，不参与版本选择。Agent 在结束前声明保留哪些文件和启动命令；Host 保存快照，后续按这份结果加载，具体协议见[教程](docs/tutorial.md#让本轮结果能够直接用于下一轮)。
 
-这条命令用于人在运行之间主动发起下一轮。单次无人交互运行中，主 Agent 通过 `/evolution/trials` 试运行候选并决定是否交接；两种入口都使用同一套候选版本、Docker 执行、权限与资源管理。Agent 可以自行推进多代，用户无需为每一代重新执行命令。
+这条命令由操作者明确选择新任务的起点。常规昼夜接续见[操作者监督](docs/operator-supervision.md#夜间运行窗口)。
 
 只给第一阶段保留 Harness 补充联网工具 E 时，使用版本迭代的专用 profile：
 
@@ -88,11 +88,11 @@ bash scripts/start-rsi.sh --phase phase-one --task-profile web-extension \
   --run-harness "artifacts/rsi/<第一阶段保留run-id>"
 ```
 
-新 run 保留代码与持久记忆，使用新上下文；历史 A–D 结论带来源继承，不重跑、不重新认证。Harness 自己实现并实际验证工具，E 完成与产物保存后停止，不训练、下载模型或运行 A3／GPU 实验。E 通过不代表旧整轮历史通过；新保留版本可用于第二阶段。普通冷启动和同 run resume 语义不变，详见[补充任务](docs/plans/2026-11-02-phase-one-web-extension.md)与[教程](docs/tutorial.md#只补-e联网工具新-run)。
+新 run 验证维护者已接入的联网工具。继承既有代码和知识，并使用新上下文。
 
 ### 第一阶段 F：Skills 工具补充（需单独批准启动）
 
-已准备 [F 目标](agent-inputs/phase-one-skills/goal.md)、[验收](agent-inputs/phase-one-skills/acceptance.md)与[执行协议](agent-inputs/phase-one-skills/instructions.md)。使用 `--phase phase-one --task-profile skills-extension --run-harness <已完成 E 的 run>` 从 ready E 保留包新建 F，只补 skills 工具与持久复用，不重验 A–E、不启动第二阶段。可追加本轮明确批准的 `--initial-feedback-file`。入口准备不代表 F 已运行或工具已实现，详见[教程](docs/tutorial.md#只补-fskills-工具新-run)。
+已准备 [F 目标](agent-inputs/phase-one-skills/goal.md)、[验收](agent-inputs/phase-one-skills/acceptance.md)与[执行协议](agent-inputs/phase-one-skills/instructions.md)。使用 `--phase phase-one --task-profile skills-extension --run-harness <已完成 E 的 run>` 从 ready E 保留包新建 F，验证现有技能工具与持久复用，不重验 A–E、不启动第二阶段。可追加本轮明确批准的 `--initial-feedback-file`。入口准备不代表 F 已运行或工具已实现，详见[教程](docs/tutorial.md#只补-fskills-工具新-run)。
 
 ## 项目文档
 

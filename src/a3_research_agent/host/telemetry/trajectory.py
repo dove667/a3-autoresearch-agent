@@ -19,7 +19,7 @@ KINDS = frozenset(
         "isolation_fixture",
     }
 )
-ROLES = frozenset({"main", "worker", "candidate", "summary", "analyzer"})
+ROLES = frozenset({"main", "worker", "candidate", "summary"})
 OBSERVATIONS = frozenset(
     {
         "read_calls",

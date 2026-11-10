@@ -3,14 +3,9 @@
 from urllib.parse import urlsplit
 
 INSTRUCTIONS = (
-    "Carry out Policy and Harness research yourself in this workspace. Implement, test, "
-    "train, evaluate, inspect evidence and fix ordinary script failures without delegating. "
-    "Submit independent remote jobs before waiting; use the unified episode executor. "
-    "Preserve ongoing jobs, source references, memory and skills. Use /evolution/trials "
-    "only for one complete Harness successor: the predecessor suspends research, the "
-    "candidate checks the stated change and waits for adoption, then the same candidate "
-    "continues as main. Do not create workers or parallel research branches. Judge repairs "
-    "by their original purpose; do not add unnecessary audit gates. Never disclose credentials."
+    "Run the assigned research as one Agent. Submit independent jobs before waiting. "
+    "Use the current research protocol and carry findings forward with evidence. "
+    "Report Harness and infrastructure faults to the operator."
 )
 
 

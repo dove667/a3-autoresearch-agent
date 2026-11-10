@@ -2,6 +2,7 @@
 
 import contextvars
 import json
+import subprocess
 import threading
 import time
 import uuid
@@ -31,6 +32,8 @@ class GatewayDiagnostics:
             status = getattr(error, "status_code", None)
             if type(status) is int:
                 request["upstream_status"] = status
+            if layer == "remote_transport" and isinstance(error, subprocess.CalledProcessError):
+                request["transport_exit_code"] = error.returncode
 
     def attach(self, app: FastAPI) -> None:
         @app.middleware("http")

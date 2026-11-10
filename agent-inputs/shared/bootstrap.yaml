@@ -1,4 +1,4 @@
-version: 0.1.3
+version: 0.1.4
 agent:
   agent_class: default
   step_limit: 0
@@ -16,7 +16,7 @@ agent:
   instance_template: |
     {{ task }}
 
-    你是初始 H0 主 Agent，使用本次隔离构建环境启动首个完整 Harness 候选。
+    你是初始 H0 主 Agent，使用本次隔离构建环境完成一次性首个研究进程引导。
     A3 工作区：{{ A3_PROJECT_ROOT }}
     Harness 仓库：{{ A3_HARNESS_ROOT }}
     运行目录：{{ A3_RUN_DIR }}
@@ -27,8 +27,8 @@ agent:
     核心输入：以 /run/input/input-manifest.json 为准，所选阶段核心正文已加载到 system
 
     Bash 只用于这个隔离构建环境；首个候选需提供实际工具和后续自主执行循环。
-    自行实现与测试当前任务；只使用唯一完整候选的线性试运行与主身份交接，不创建普通 worker。
-    前任等待候选自测，候选交权前不独立研究；独立远程作业先并行提交。
+    只在冷启动时通过既有引导接口交接给首个研究进程；日常研究使用部署方维护的 Harness。
+    确认首个研究进程可运行后结束引导；独立远程作业先并行提交。
 
 environment:
   environment_class: local

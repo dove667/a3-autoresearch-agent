@@ -1,5 +1,7 @@
 # 第一阶段保留 Harness 的 E-only 联网扩展
 
+> 历史设计记录。当前职责与操作见[夜间研究与白天维护](../operator-supervision.md#夜间研究与白天维护)。
+
 Version: 0.1.0
 
 本文记录 E 扩展的原始方案与当时路径。现行输入位于 `agent-inputs/phase-one-web/`，文件映射与加载规则见[输入管理](../agent-inputs.md)。

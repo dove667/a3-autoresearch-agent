@@ -183,7 +183,7 @@ def test_cli_invalid_report_does_not_emit_score(tmp_path):
     assert "not completed" in result.stderr
 
 
-@pytest.mark.parametrize("version", ["0.3.0", "0.3.1"])
+@pytest.mark.parametrize("version", ["0.3.0", "0.3.1", "0.3.2", "0.3.3", "0.3.4", "0.3.5", "0.3.6"])
 def test_reference_revision_has_identical_scientific_computation(version):
     left, right = report(True), report(True, 1)
     original = module.compare(left, right, repeats=100)
@@ -196,7 +196,7 @@ def test_reference_revision_has_identical_scientific_computation(version):
 
 
 def test_protocol_versions_must_be_supported_and_paired():
-    for version in ("0.3.2", "0.4.0", "unknown"):
+    for version in ("0.3.7", "0.4.0", "unknown"):
         bad = report()
         bad["protocol_version"] = version
         with pytest.raises(ValueError, match="implements phase-two"):
