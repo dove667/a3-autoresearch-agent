@@ -15,6 +15,23 @@ def client_for(tmp_path, forward=None, remote=None):
     )
 
 
+def test_gpu_snapshot_is_authenticated_read_only_and_cached(tmp_path):
+    calls = []
+    snapshot = {"status": "ok", "observed_at": 123, "gpus": []}
+
+    def remote(operation, payload):
+        calls.append((operation, payload))
+        return snapshot
+
+    client = client_for(tmp_path, remote=remote)
+    assert client.get("/resources/gpus").status_code == 401
+    headers = {"Authorization": "Bearer token-a"}
+    assert client.get("/resources/gpus", headers=headers).json() == snapshot
+    assert client.get("/resources/gpus", headers=headers).json() == snapshot
+    assert client.delete("/resources/gpus", headers=headers).status_code == 405
+    assert calls == [("gpu-snapshot", {})]
+
+
 def test_model_credentials_and_selection_stay_on_host(tmp_path):
     requests = []
     client = client_for(tmp_path, forward=lambda **kw: requests.append(kw) or {"output": []})

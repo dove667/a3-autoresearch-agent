@@ -1,11 +1,15 @@
+import io
+import json
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from remote_test_support import patch_controller
 
 from a3_research_agent.execution.controller import artifacts as job_artifacts
+from a3_research_agent.execution.controller import cli as controller_cli
 from a3_research_agent.execution.controller import docker as job_docker
 from a3_research_agent.execution.controller import files as job_files
 from a3_research_agent.execution.controller import lifecycle as job_lifecycle
@@ -16,6 +20,30 @@ from a3_research_agent.execution.scheduling import gpu as job_gpu
 MODULE_PATH = (
     Path(__file__).resolve().parents[2] / "src/a3_research_agent/execution/controller/__main__.py"
 )
+
+
+def test_gpu_snapshot_returns_aggregate_device_metrics(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(sys, "argv", ["controller", "gpu-snapshot", "--root", str(tmp_path)])
+    monkeypatch.setattr(sys, "stdin", SimpleNamespace(buffer=io.BytesIO(b"{}")))
+    monkeypatch.setattr(
+        job_gpu,
+        "gpu_devices",
+        lambda: [
+            {
+                "index": "2",
+                "uuid": "internal-device-id",
+                "total_mb": 24564,
+                "used_mb": 5000,
+                "utilization": 14,
+            }
+        ],
+    )
+    controller_cli.main()
+    snapshot = json.loads(capsys.readouterr().out)
+    assert snapshot["observed_at"] > 0
+    assert snapshot["gpus"] == [
+        {"index": "2", "total_mb": 24564, "used_mb": 5000, "free_mb": 19564, "utilization": 14}
+    ]
 
 
 def test_workspace_files_reject_escape_and_symlinks(tmp_path):

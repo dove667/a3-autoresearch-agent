@@ -233,6 +233,11 @@ class JobRoutes:
             result["historical_scopes"] = self.project_scope_runs
         return result | {"scope": scope, "status_source": "controller_metadata"}
 
+    def gpu_snapshot(self, authorization: Annotated[str | None, Header()] = None):
+        self.owner(authorization)
+        key = "gpu-snapshot"
+        return self.gpu_snapshot_cache.read_many([key], lambda _: {key: self.remote(key, {})})[key]
+
     def list_exports(self, authorization: Annotated[str | None, Header()] = None):
         actor = self.owner(authorization)
         exports = {}

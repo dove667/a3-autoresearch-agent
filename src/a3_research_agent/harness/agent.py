@@ -137,6 +137,7 @@ def tool(name, a):
             path == p or path.startswith((p + "/", p + "?"))
             for p in [
                 "/jobs",
+                "/resources/gpus",
                 "/sessions",
                 "/versions",
                 "/checks/comparison",
@@ -299,7 +300,16 @@ def spec(name, props, required):
         "type": "function",
         "name": name,
         "description": {
-            "gateway": 'Call Host APIs. For remote job creation POST /jobs body {command:["python","-m","module","--help"],gpu:false,files:{}}; command MUST be an array. GET /jobs/{id} reads a registered job in this run; research workspaces, versions and artifacts are shared for reading. Attach local scripts with workspace_files and existing datasets or model assets with input_exports. Use wait after independent submissions. Jobs execute isolated code, not local host commands.',
+            "gateway": (
+                "Call Host APIs. For remote job creation POST /jobs body "
+                '{command:["python","-m","module","--help"],gpu:false,files:{}}; command MUST '
+                "be an array. GET /jobs/{id} reads an accessible job's status and log tail. "
+                "GET /resources/gpus reads aggregate GPU memory and utilization on demand. "
+                "Research workspaces, versions and artifacts are shared for reading. Attach "
+                "local scripts with workspace_files and existing datasets or model assets "
+                "with input_exports. Use wait after independent submissions. Jobs execute "
+                "isolated code, not local host commands."
+            ),
             "read": "Read a bounded character page with content, whole-file SHA256, offset/end/total and EOF. limit is 1..8000, default 4000. An identical page still in context returns a reference. Optional fields selects top-level JSON keys instead.",
             "write": "Write text in workspace.",
             "list": "List accessible directory.",

@@ -123,6 +123,8 @@ python3 src/a3_research_agent/execution/images/verify.py \
 
 每次共享 GPU 选择产生 `gpu_allocation`，包含请求显存、活动卡数、逐卡观测与判断。逐卡 `reason` 包括 `selected`、`eligible`、`device_not_allowed`、`exclusive_project_job`、`physical_device_limit`、`exclusive_lease_locked` 与 `insufficient_memory`；经过显存计算的条目同时包含 `capacity_mb`（本项目预留容量）、`physical_capacity_mb`（物理显存减缓冲）、`reserved_mb`、`pending_mb` 和 `available_mb`。返回给调用者的报告保存在 GPU 作业元数据中；选择或拒绝还追加到共享根目录 `scheduler-events.jsonl`，不记录命令、上传内容或凭据。诊断写入发生在创建 GPU 容器前，失败时不启动作业。报告对应本次提交时刻，不代表之后仍有相同资源；控制器不自动把 CPU 作业迁移到 GPU。
 
+认证后的 Agent 可按需调用 `GET /resources/gpus`，读取远程 Controller 的整卡显存和利用率快照。Controller 只返回聚合设备指标，Host 缓存 30 秒。作业状态继续走已授权的作业接口，正常等待不会触发显卡查询。
+
 预留用于准入控制，不是 CUDA 硬显存配额。峰值估计应覆盖模型加载、训练与渲染需要；同卡并发会影响耗时，结果记录应保留共享条件。NVIDIA 指标字段见[官方 nvidia-smi 文档](https://docs.nvidia.com/deploy/nvidia-smi/index.html)。
 
 ## 离线训练环境

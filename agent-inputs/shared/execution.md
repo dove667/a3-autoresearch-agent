@@ -1,12 +1,12 @@
 # Host提供的执行与验收入口
 
-Version: 0.18.6
+Version: 0.18.7
 
 部署方运行 gateway、容器引擎、模型认证与远程资源调度。候选 Harness 在独立容器内运行，
 通过 HTTP 请求这些固定能力。工具名称、研究逻辑、反思方法和版本选择由 Agent 设计。
 目标和验收以本次只读的 `goal.md`、`acceptance.md` 为准。
 
-`deployment.json.remote_limits.managed_jobs=true` 表示服务器托管执行：Agent 只提交命令、输入、科研参数和是否需要 GPU，Controller 持久保存队列、选择设备、分配显存预算、等待资源及管理安全重试。普通返回不包含服务器 CPU、内存或显卡分配明细。Controller 的诊断、修复与运维由人类操作者负责；基础设施问题不转成 Agent 的研究任务。
+`deployment.json.remote_limits.managed_jobs=true` 表示服务器托管执行：Agent 只提交命令、输入、科研参数和是否需要 GPU，Controller 持久保存队列、选择设备、分配显存预算、等待资源及管理安全重试。普通返回不包含服务器 CPU、内存或显卡分配明细。有具体需要时可按需查询只读显卡快照。Controller 的诊断、修复与运维由人类操作者负责；基础设施问题不转成 Agent 的研究任务。
 
 摘要返回超过硬字节上限时，客户端可在同一原文分段的有界重试中发送 `compact_retry: true`；Host 仅选择固定的更紧凑提示，不接受自定义指令或模型。纠正状态与累计调用数持久保存，不截断原文、不放宽 6000 UTF-8 字节限制；当前 run 的冻结输入不因部署修复而自动更新。
 
@@ -244,7 +244,7 @@ Docker 执行器使用 cgroup v2 的 CPU、内存和 PID 额度；process 执行
 
 真实的学习型 Policy／模型训练、微调，以及学习型 Policy 推理和大模型推理，必须通过 GPU 作业执行（`gpu: true`），启动计算前确认获配 GPU 在作业内可见、CUDA 可用，模型与张量确实位于 GPU。不得因租约暂不可用、CUDA 不可见或初始化失败，静默回退到 CPU；不要使用 `torch.device("cuda" if torch.cuda.is_available() else "cpu")` 掩盖资源或部署问题。
 
-若 controller 报无可用 GPU，保留返回的等待／拒绝原因与作业状态，区分正常排队和分配／可见性故障。只通过已授权接口核对租约、设备可见性与实际资源证据；不能仅凭瞬时利用率为零认定空卡。普通资源等待应退避查询并继续其他可做的工作；有证据表明需要部署方修复时，报告具体阻塞及缺失条件，而不是改跑 CPU。无权查看 Host 现场时明确这一限制，不假称已核实。不得绕过 controller、抢卡、取消他人作业或移除他人租约。
+若 controller 报无可用 GPU，保留返回的等待／拒绝原因与作业状态，区分正常排队和分配／可见性故障。只通过已授权接口核对租约、设备可见性与实际资源证据；不能仅凭瞬时利用率为零认定空卡。普通资源等待使用 `wait` 或继续其他可做的工作；有证据表明需要部署方修复时，报告具体阻塞及缺失条件，而不是改跑 CPU。无权查看 Host 现场时明确这一限制，不假称已核实。不得绕过 controller、抢卡、取消他人作业或移除他人租约。
 
 CPU 仍可用于轻量元数据检查、预处理、日志分析、命令帮助与合成单元测试 fixture；这些不是训练／推理的替代执行通路，也不能当作真实模型能力证据。上文 gateway `/v1/responses` 的远端模型调用保持原接口，不要求调用方申请本地 GPU；提供商执行不属于本地 CPU 回退。
 
@@ -266,7 +266,10 @@ Harness 在程序内部续接 timeout，不为正常运行、排队或等待超�
 
 等待通知的 `changes["/jobs/<id>"].evaluation` 包含配对差值和代表性失败回合。把每个回合的 `vision_request` 直接提交到 `POST /vision/inspect`，对齐 `action_samples` 与 `trace_sources`，先定位最早可观察的失败环节，再决定后续实验。每个请求最多六帧，初选画面覆盖相同步数下的早、中、晚阶段，可以沿原始轨迹进一步定位。已完成但未登记的评估可用相同的比较对象调用 `POST /jobs/<candidate-id>/evaluation`，只读取既有产物。
 
-需要诊断时通过 `GET /jobs/{job_id}` 读取详细状态与日志尾部；重复请求使用同一快照缓存（活动 30 秒、终态 5 分钟），取消后失效。缓存不跨 Host 重启，显式产物读取保持实时。通过
+需要核实某个作业是否运行时，通过 `GET /jobs/{job_id}` 读取详细状态与日志尾部；重复请求使用同一快照缓存（活动 30 秒、终态 5 分钟），取消后失效。缓存不跨 Host 重启，显式产物读取保持实时。
+
+需要了解显卡现场时，用 gateway 工具调用 `GET /resources/gpus`。它返回采样时间 `observed_at`（Unix 秒）及各卡编号、显存总量、已用量、空余量（MiB）和瞬时 GPU 利用率（百分比）。Host 缓存快照 30 秒。显存空余量是硬件观测值，作业是否能启动仍由 Controller 按实际预留和资源限制决定。正常排队与运行继续使用 `wait`，无需定期查卡。
+
 `GET /jobs/{job_id}/artifacts?path=relative_path` 默认只读取该作业 `/workspace` 下的产物。若程序写入 `/outputs`，显式加 `area=outputs`，path 仍为相对于该目录的路径，不带 `/outputs/` 前缀。outputs 成功响应必须带 `area:"outputs"`；缺少标记不能当作读取了 outputs，新 Host 对未确认的旧 controller 响应拒绝返回成功。Host/controller/输入应同步部署。outputs 在同一 run 内按 owner 共享，不保证文件只由所选 job 写入；结合原始日志、哈希和作业记录验证来源。接口先核验 job 属于可读取的已登记研究身份，按该作业实际 owner 读取，不隐式切换目录；取消和其他管理操作仍核验本身份或已采用 lineage 权限。旧无 run 记录的作业不支持 outputs。找不到文件时返回所选 area 的固定诊断，不表示作业未执行，不自动重跑。取消为 `DELETE /jobs/{job_id}`。
 资源忙时稍后重试。长任务先提交再查询，避免单条本地命令超时。
 
@@ -438,7 +441,7 @@ web-extension 新任务可携带部署方显式提供的已批准初始反馈：
 
 ## 同卡多作业与显存预留
 
-托管 process 部署由 Controller 维护队列、共享 GPU 租约及整机准入。Agent 在命令和依赖就绪后提交作业，不指定卡号、不读取服务器资源快照、不计算并发或显存预算。暂时无资源时保持 queued，已有 GPU 作业继续执行；Controller 获得余量后启动同一 job ID。独立 episode 在固定执行器内根据内部遥测调整并发。
+托管 process 部署由 Controller 维护队列、共享 GPU 租约及整机准入。Agent 在命令和依赖就绪后提交作业，由 Controller 指定卡号和显存预算，按需查看只读快照。暂时无资源时保持 queued，已有 GPU 作业继续执行；Controller 获得余量后启动同一 job ID。独立 episode 在固定执行器内根据内部遥测调整并发。
 
 常规部署说明和托管作业结果省略服务器 CPU、内存、显卡 UUID 和分配报告。部署者从服务器 Controller 记录诊断资源与基础设施；这些内容不需要进入研究模型上下文。科研报告使用实际作业提供的耗时和训练指标，不为补服务器字段周期查询。数据盘容量及权限问题交由操作者处理。
 

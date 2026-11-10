@@ -5,6 +5,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from a3_research_agent.execution.exports.operations import export_operation
@@ -55,6 +56,7 @@ def main() -> None:
             "submit",
             "jobs-list",
             "jobs-status",
+            "gpu-snapshot",
             "status",
             "cancel",
             "artifact",
@@ -96,10 +98,35 @@ def main() -> None:
         request = json.loads(raw)
         if not isinstance(request, dict):
             raise TypeError("request must be an object")
+        if args.operation == "gpu-snapshot":
+            from a3_research_agent.execution.scheduling.gpu import gpu_devices
+
+            devices = gpu_devices()
+            print(
+                json.dumps(
+                    {
+                        "status": "ok",
+                        "observed_at": time.time(),
+                        "gpus": [
+                            {
+                                "index": device["index"],
+                                "total_mb": device["total_mb"],
+                                "used_mb": device["used_mb"],
+                                "free_mb": device["total_mb"] - device["used_mb"],
+                                "utilization": device["utilization"],
+                            }
+                            for device in devices
+                        ],
+                    }
+                )
+            )
+            return
         if args.backend == "process":
             from .processes import validate_data_paths
 
-            validate_data_paths(args.data_root, [args.root, args.tmp_root or args.root / "temporary"])
+            validate_data_paths(
+                args.data_root, [args.root, args.tmp_root or args.root / "temporary"]
+            )
         store = JobStore(args.root)
         if args.operation == "jobs-list":
             print(json.dumps(store.list_jobs(request)))
