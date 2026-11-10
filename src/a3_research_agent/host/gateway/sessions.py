@@ -204,6 +204,9 @@ class SessionRoutes:
         self, body: TrialRequest, authorization: Annotated[str | None, Header()] = None
     ):
         with self.session_lock:
+            if getattr(self.sandbox, "published_source", None) is not None:
+                self.owner(authorization)
+                raise HTTPException(403, "Published Harness changes require a maintainer release")
             state = self.evolution_state()
             actor = self.owner(authorization)
             self.deployment_call(state.require_main, actor)

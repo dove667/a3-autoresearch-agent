@@ -152,3 +152,61 @@ def test_pending_tool_call_is_not_replayed_after_container_loss(tmp_path, monkey
     )
     with pytest.raises(ValueError, match="Unresolved tool"):
         runtime.resume_sessions({"same-token": "main"}, "main")
+
+
+def test_published_resume_uses_project_workspace_and_read_only_source(tmp_path, monkeypatch):
+    from a3_research_agent.host.published_harness import COMMAND, pin_run, research_workspace
+
+    run = tmp_path / "artifacts/rsi/run-current"
+    pin_run(run, "a" * 40)
+    source = tmp_path / "published"
+    workspace = research_workspace(run, "main")
+    workspace.mkdir(parents=True)
+    (workspace / "checkpoint.json").write_text('[{"role":"user","content":"saved"}]')
+    runtime = CandidateRuntime(
+        root=run / "candidates",
+        image="image",
+        inputs=run / "inputs",
+        public_a3=run / "public/a3",
+        endpoint="http://original",
+        published_source=source,
+    )
+    directory = runtime.root / "main"
+    directory.mkdir()
+    (directory / "workspace").symlink_to(workspace, target_is_directory=True)
+    runtime.records["main"] = {"owner": "main", "container_id": "old", "closed": False}
+    monkeypatch.setattr(runtime, "collect_exit", lambda _: {"Status": "exited"})
+    commands = []
+    monkeypatch.setattr(runtime, "docker", lambda *args: commands.append(args) or "new")
+    runtime.resume_sessions({"same-token": "main"}, "main")
+    create, start = commands
+    assert f"type=bind,src={workspace},dst=/workspace" in create
+    assert f"type=bind,src={source},dst=/opt/research-harness,readonly" in create
+    assert tuple(COMMAND) == create[-len(COMMAND) :]
+    assert start == ("start", "new")
+    assert (workspace / "checkpoint.json").read_text() == '[{"role":"user","content":"saved"}]'
+
+
+def test_published_initial_session_has_no_source_checkout(tmp_path, monkeypatch):
+    from a3_research_agent.host.published_harness import COMMAND, pin_run, research_workspace
+    from a3_research_agent.host.sessions.versions import CandidateVersions
+
+    run = tmp_path / "artifacts/rsi/run-next"
+    pin_run(run, "a" * 40)
+    versions = CandidateVersions(run / "versions")
+    snapshot = versions.create_local("main", {"checkpoint.json": "[]"})
+    runtime = CandidateRuntime(
+        root=run / "candidates",
+        image="image",
+        inputs=run / "inputs",
+        public_a3=run / "public/a3",
+        endpoint="http://original",
+        versions=versions,
+        published_source=tmp_path / "published",
+    )
+    monkeypatch.setattr(runtime, "docker", lambda *args: "container")
+    runtime.create_initial("main", COMMAND, "token", snapshot["version_id"], runtime.inputs)
+    workspace = research_workspace(run, "main")
+    assert (workspace / "checkpoint.json").read_text() == "[]"
+    assert not (workspace / "a3_research_agent").exists()
+    assert not list(versions.worktrees.iterdir())

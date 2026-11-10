@@ -14,21 +14,21 @@ Version: 0.2.7
 
 ### 发布新版 Harness 时使用新上下文
 
-白天完成验证后，准备一个待发布目录及 `run.json`。其中 `command` 是新 Harness 的启动命令，`files` 显式列出所需 Python 源码。交接 Markdown 只写 `## 已核对结论` 和 `## 待办`，每节至少一项。为结论附实验报告与版本，为待办附原作业 ID、checkpoint 或已经授权的资产引用。
+白天完成验证后，选择已推送到 `origin/main` 的完整 Git 提交 SHA。交接 Markdown 只写 `## 已核对结论` 和 `## 待办`，每节至少一项。为结论附实验报告与版本，为待办附原作业 ID、checkpoint 或已经授权的资产引用。
 
 用最初绑定定时启动器的 run 作为锚点。先预览，再用返回的摘要确认发布：
 
 ```bash
 uv run python -m a3_research_agent.cli.night_release "artifacts/rsi/<锚点run>" \
-  --package <新版Harness目录> --handoff <交接.md>
+  --commit <已发布提交SHA> --handoff <交接.md>
 
 uv run python -m a3_research_agent.cli.night_release "artifacts/rsi/<锚点run>" \
-  --package <新版Harness目录> --handoff <交接.md> --confirm <发布摘要>
+  --commit <已发布提交SHA> --handoff <交接.md> --confirm <发布摘要>
 ```
 
-确认固定启动命令、源码、当前第二阶段输入和交接正文。21:00 有待发布版本时，定时器用 `--run-harness` 建立新 run，模型上下文从当前目标和审核后的交接开始。源码清单不接收旧 checkpoint、轨迹、工具调用日志、记忆或技能目录。未发布新版时，定时器恢复上一次选定的 run。发布内容损坏或新 run 启动不完整时停止并保留现场，便于排查。
+确认固定启动命令、Git 提交、当前第二阶段输入和交接正文。21:00 有待发布版本时，定时器用 `--run-harness` 建立新 run，模型上下文从当前目标和审核后的交接开始。Git 发布从固定提交只读加载 Harness，每个新 run 在项目根目录的 `workspace/` 下建立独立研究目录。新上下文只接收审核后的输入与交接。未发布新版时，定时器恢复上一次选定的 run。发布内容损坏或新 run 启动不完整时停止并保留现场，便于排查。
 
-旧 run 的轨迹、作业归属和产物留在原处，远程在途作业继续执行。第二阶段的新 run 可用交接引用查找本项目历史作业和产物，在新作业里用只读快照复用历史资产。遇到仍不可读的依赖时，Agent 停止受阻研究线并向操作者报告。若 Mac 重启，用原锚点重新启动定时器；它从锚点记录继续选择已发布版本及当前 run。
+旧 run 的轨迹、作业归属和产物留在原处，远程在途作业继续执行。第二阶段的新 run 可用交接引用查找本项目历史作业和产物，在新作业里用只读快照复用历史资产。遇到仍不可读的依赖时，Agent 停止受阻研究线并向操作者报告。若 Mac 重启，用原锚点重新启动定时器；它按锚点选择已发布版本及当前 run。迁移后的发布记录位于 `artifacts/night-window/<锚点run>/`。
 
 ## 低频弱监督与批准边界
 

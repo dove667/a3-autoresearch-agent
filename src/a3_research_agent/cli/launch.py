@@ -149,10 +149,12 @@ def launch_main(runtime) -> None:
     night_child = os.environ.get("A3_NIGHT_WINDOW_CHILD") == "1"
     reserved_target = os.environ.get("A3_NIGHT_WINDOW_TARGET")
     if scheduled_run and args.resume_from and not args.check and not args.night_window:
-        from a3_research_agent.cli.night_release import read_json
+        from a3_research_agent.cli.night_release import night_state_directory, read_json
 
         schedule = read_json(
-            runtime.ROOT / "artifacts/rsi" / scheduled_run / ".host/night-schedule.json", {}
+            night_state_directory(runtime.ROOT / "artifacts/rsi" / scheduled_run)
+            / "night-schedule.json",
+            {},
         )
         protected = {scheduled_run, schedule.get("current"), schedule.get("target")}
         if args.resume_from.resolve().name in protected and not night_child:
@@ -174,9 +176,6 @@ def launch_main(runtime) -> None:
         from a3_research_agent.host.runs.state import RunStateStore
 
         anchor = args.resume_from.resolve()
-        state = RunStateStore(anchor)
-        if not state.path.is_file() or state.load().get("status") != "suspended":
-            parser.error("--night-window requires a suspended run")
         command = [
             sys.executable,
             "-m",
@@ -188,8 +187,12 @@ def launch_main(runtime) -> None:
         ]
         if args.feedback_file:
             command.extend(["--feedback-file", str(args.feedback_file.resolve())])
-        with runtime.RunLease(anchor / ".host/night-launcher"):
-            raise SystemExit(run_nightly(command, state, schedule=NightSchedule(anchor, command)))
+        schedule = NightSchedule(anchor, command)
+        with runtime.RunLease(schedule.directory / "night-launcher"):
+            state = RunStateStore(schedule.current_run())
+            if not state.path.is_file() or state.load().get("status") != "suspended":
+                parser.error("--night-window requires a suspended run")
+            raise SystemExit(run_nightly(command, state, schedule=schedule))
     required = (
         "MODEL_NAME",
         "MODEL_CLASS",

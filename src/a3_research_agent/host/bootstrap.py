@@ -96,6 +96,7 @@ from a3_research_agent.host.inputs.task_preparation import (
     prepare_task_start,
     validate_skills_source,
 )
+from a3_research_agent.host.published_harness import pin_run, published_source, run_commit
 from a3_research_agent.host.runs.directories import create_run_directory, local_storage_bytes
 from a3_research_agent.host.transport import (
     remote_call,
@@ -131,6 +132,8 @@ def launch_run(args, run: Path, a3: Path, image: str, start) -> None:
     model_request_options = read_model_request_options(os.environ)
     role_models = read_role_models(os.environ)
     context_budget = read_context_budget(os.environ)
+    commit = run_commit(run) if args.resume_from else start.harness_commit if start else None
+    pinned_source = published_source(ROOT, commit) if commit is not None else None
     package = (start.command, start.files) if start else None
     kind = (
         "deployment-checks" if args.verify_deployment else "retained-harness" if package else "rsi"
@@ -178,11 +181,15 @@ def launch_run(args, run: Path, a3: Path, image: str, start) -> None:
         inputs.mkdir(parents=True, mode=0o700)
         workspace.mkdir()
         parent = None
-        prepare_workspace(
-            workspace,
-            parent / "workspace/a3" if parent and not package else a3,
-            bootstrap_source(parent),
-        )
+        if pinned_source is not None:
+            pin_run(run, commit)
+            (workspace / "run").mkdir()
+        else:
+            prepare_workspace(
+                workspace,
+                parent / "workspace/a3" if parent and not package else a3,
+                bootstrap_source(parent),
+            )
         if parent and not package:
             shutil.copytree(parent / "workspace/run", workspace / "run", dirs_exist_ok=True)
         private_inputs = None
@@ -214,7 +221,7 @@ def launch_run(args, run: Path, a3: Path, image: str, start) -> None:
             input_versions.contents["goal.md"],
             initial_feedback=getattr(args, "initial_feedback", None),
             initial_feedback_source=getattr(args, "initial_feedback_file", None),
-            custom_inputs=input_versions.input_mode == "custom",
+            custom_inputs=input_versions.input_mode == "custom" or pinned_source is not None,
         )
         package = (start.command, start.files)
     public_a3 = run / "public/a3"
@@ -247,6 +254,7 @@ def launch_run(args, run: Path, a3: Path, image: str, start) -> None:
         public_a3=public_a3,
         endpoint=endpoint,
         versions=versions,
+        published_source=pinned_source,
     )
     if resuming:
         sandbox.load_records()
@@ -303,7 +311,7 @@ def launch_run(args, run: Path, a3: Path, image: str, start) -> None:
         sandbox=sandbox,
         fixtures=fixtures,
         versions=versions,
-        initial_inputs=private_inputs,
+        initial_inputs=inputs if pinned_source is not None else private_inputs,
         main_owner=saved["gateway"]["evolution"]["main_owner"] if saved else run_id,
         start_main_session=bool(package),
         phase_instructions=phase_instructions,
@@ -479,6 +487,7 @@ def launch_run(args, run: Path, a3: Path, image: str, start) -> None:
                         "package": str(args.run_harness or args.resume_from),
                         "parent_run": start.previous_run.name if start.previous_run else None,
                         "source_version": start.source_version,
+                        "harness_commit": commit,
                         "task_context": task_context,
                         "remote_exports": initial_exports,
                         "session_id": session["session_id"],

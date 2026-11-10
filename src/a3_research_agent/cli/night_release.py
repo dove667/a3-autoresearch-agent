@@ -8,6 +8,7 @@ from pathlib import Path
 
 from a3_research_agent.host.inputs.feedback import HumanFeedback
 from a3_research_agent.host.inputs.versions import input_sources, write_atomic
+from a3_research_agent.host.published_harness import COMMAND, published_source
 from a3_research_agent.host.runs.directories import create_run_directory
 from a3_research_agent.host.runs.state import RunStateStore
 from a3_research_agent.host.sessions.packages import load_harness_package
@@ -18,25 +19,30 @@ def encoded(data):
     return json.dumps(data, ensure_ascii=False, sort_keys=True).encode()
 
 
-def prepare_release(root: Path, package: Path, handoff: Path) -> dict:
+def prepare_release(
+    root: Path, package: Path | None, handoff: Path, *, commit: str | None = None
+) -> dict:
     """Materialize the exact Python source and reviewed research note for approval."""
-    command, files = load_harness_package(package)
-    if not files or any(Path(name).suffix != ".py" for name in files):
-        raise ValueError("Release manifests may contain only Python source")
-    for name, source in files.items():
-        if Path(name).as_posix() != name or any(part.startswith(".") for part in Path(name).parts):
-            raise ValueError(f"Invalid release source path: {name}")
-        compile(source, name, "exec")
+    if commit is not None:
+        published_source(root, commit)
+        command, files = COMMAND, {}
+    else:
+        command, files = load_harness_package(package)
+        if not files or any(Path(name).suffix != ".py" for name in files):
+            raise ValueError("Release manifests may contain only Python source")
+        for name, source in files.items():
+            if Path(name).as_posix() != name or any(
+                part.startswith(".") for part in Path(name).parts
+            ):
+                raise ValueError(f"Invalid release source path: {name}")
+            compile(source, name, "exec")
     note = HumanFeedback.validate_content(handoff.read_bytes())
     if not re.fullmatch(r"\s*## 已核对结论\n\s*\S[\s\S]*?\n## 待办\n\s*\S[\s\S]*", note):
         raise ValueError("Handoff must contain nonempty 已核对结论 and 待办 sections")
-    package_files = {
-        **files,
-        "checkpoint.json": "[]",
-        "run.json": encoded(
-            {"command": command, "files": sorted([*files, "checkpoint.json"])}
-        ).decode(),
-    }
+    manifest = {"command": command, "files": sorted([*files, "checkpoint.json"])}
+    if commit is not None:
+        manifest["harness_commit"] = commit
+    package_files = {**files, "checkpoint.json": "[]", "run.json": encoded(manifest).decode()}
     inputs = {
         name: (root / source).read_text() for name, source in input_sources("phase-two").items()
     }
@@ -48,10 +54,20 @@ def prepare_release(root: Path, package: Path, handoff: Path) -> dict:
     return {**contents, "digest": hashlib.sha256(encoded(contents)).hexdigest()}
 
 
+def night_state_directory(anchor: Path) -> Path:
+    """Keep migrated scheduler state independent of the anchor's old workspace."""
+    if anchor.parent.name == "rsi" and anchor.parent.parent.name == "artifacts":
+        shared = workspace_path(anchor.parent.parent, f"night-window/{anchor.name}")
+        if shared.is_dir():
+            return shared
+    return anchor / ".host"
+
+
 def publish_release(anchor: Path, proposal: dict, confirm: str) -> None:
     if confirm != proposal["digest"]:
         raise ValueError("Release digest changed; preview again")
-    directory = anchor / ".host/night-releases" / confirm
+    state = night_state_directory(anchor)
+    directory = state / "night-releases" / confirm
     contents = {name: proposal[name] for name in ("package", "inputs")}
     for kind, files in contents.items():
         for name, text in files.items():
@@ -67,7 +83,7 @@ def publish_release(anchor: Path, proposal: dict, confirm: str) -> None:
             }
         ),
     )
-    write_atomic(anchor / ".host/night-release.json", encoded({"digest": confirm}))
+    write_atomic(state / "night-release.json", encoded({"digest": confirm}))
 
 
 def read_json(path: Path, default: dict) -> dict:
@@ -83,15 +99,20 @@ class NightSchedule:
     def __init__(self, anchor: Path, resume_command: list[str]):
         self.anchor = anchor
         self.command = resume_command
-        self.state = anchor / ".host/night-schedule.json"
+        self.directory = night_state_directory(anchor)
+        self.state = self.directory / "night-schedule.json"
         self.resume_index = resume_command.index("--resume-from")
+
+    def current_run(self) -> Path:
+        state = read_json(self.state, {"current": self.anchor.name})
+        return workspace_path(self.anchor.parent, state["current"])
 
     def select(self) -> tuple[list[str], Path, dict[str, str]]:
         state = read_json(self.state, {"current": self.anchor.name})
-        current = self.anchor.parent / state["current"]
+        current = workspace_path(self.anchor.parent, state["current"])
         target_name = state.get("target")
         if target_name:
-            target = self.anchor.parent / target_name
+            target = workspace_path(self.anchor.parent, target_name)
             if (target / "startup.json").is_file():
                 if RunStateStore(target).load().get("status") != "suspended":
                     raise RuntimeError(f"Released run requires recovery: {target}")
@@ -102,7 +123,7 @@ class NightSchedule:
             elif not target.is_dir() or any(target.iterdir()):
                 raise RuntimeError(f"Interrupted release requires inspection: {target}")
 
-        release = read_json(self.anchor / ".host/night-release.json", {}).get("digest")
+        release = read_json(self.directory / "night-release.json", {}).get("digest")
         if not target_name and (not release or release == state.get("release")):
             command = (
                 self.command[: self.resume_index + 2]
@@ -113,7 +134,7 @@ class NightSchedule:
             return command, current, {}
 
         digest = state["target_release"] if target_name else release
-        directory = self.anchor / ".host/night-releases" / digest
+        directory = self.directory / "night-releases" / digest
         self.verify(directory, digest)
         if not target_name:
             if RunStateStore(current).load().get("status") != "suspended":
@@ -160,16 +181,21 @@ def main() -> None:
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("anchor", type=Path)
-    parser.add_argument("--package", type=Path, required=True)
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--package", type=Path)
+    source.add_argument("--commit")
     parser.add_argument("--handoff", type=Path, required=True)
     parser.add_argument("--confirm")
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[3]
     anchor = args.anchor.resolve()
-    if anchor.parent != root / "artifacts/rsi" or not (anchor / "startup.json").is_file():
+    if anchor.parent != root / "artifacts/rsi" or not (
+        (anchor / "startup.json").is_file()
+        or (night_state_directory(anchor) / "night-schedule.json").is_file()
+    ):
         parser.error("Select an existing night-window anchor under artifacts/rsi")
     try:
-        proposal = prepare_release(root, args.package, args.handoff)
+        proposal = prepare_release(root, args.package, args.handoff, commit=args.commit)
     except (OSError, ValueError, SyntaxError) as error:
         parser.error(str(error))
     print("Command:", json.loads(proposal["package"]["run.json"])["command"])

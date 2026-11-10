@@ -6,6 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
+from a3_research_agent.host.published_harness import COMMAND, pinned_resume, run_commit
 from a3_research_agent.host.sessions.containers import candidate_workspace
 from a3_research_agent.host.sessions.packages import load_harness_package
 from a3_research_agent.host.sessions.versions import CandidateVersions
@@ -19,6 +20,7 @@ class HarnessStart:
     source_version: str | None = None
     remote_exports: list[str] = field(default_factory=list)
     source_owner: str | None = None
+    harness_commit: str | None = None
 
 
 def prepare_fresh_task(start: HarnessStart, task: str) -> tuple[HarnessStart, dict]:
@@ -157,6 +159,19 @@ def load_run_result(run: Path) -> HarnessStart:
             raise ValueError(
                 "Previous run has no retained result; Agent must save continuation.json"
             )
+        commit = run_commit(run)
+        if commit:
+            if record.get("harness_commit") != commit:
+                raise ValueError("Retained result disagrees with the pinned Harness")
+            return HarnessStart(
+                COMMAND.copy(),
+                {"checkpoint.json": "[]"},
+                run,
+                record.get("version_id"),
+                record.get("remote_exports", []),
+                record.get("selected_by"),
+                commit,
+            )
         files = CandidateVersions.read_snapshot(run / "versions", record["version_id"])
         command = record["command"]
         if (
@@ -182,7 +197,12 @@ def resolve_harness_start(target: str | Path) -> HarnessStart:
     if (source / "startup.json").is_file() or (source / "retained.json").is_file():
         return load_run_result(source)
     command, files = load_harness_package(source)
-    return HarnessStart(command, files)
+    commit = json.loads((source / "run.json").read_text()).get("harness_commit")
+    if commit is not None and (
+        set(files) != {"checkpoint.json"} or files["checkpoint.json"] != "[]"
+    ):
+        raise ValueError("Published Harness packages can only seed an empty checkpoint")
+    return HarnessStart(command, files, harness_commit=commit)
 
 
 def resolve_resume_start(run: Path) -> HarnessStart | None:
@@ -198,6 +218,10 @@ def resolve_resume_start(run: Path) -> HarnessStart | None:
     else:
         return None
     workspace = candidate_workspace(run / "candidates", session_id)
+    commit = run_commit(run)
+    if commit:
+        command, files = pinned_resume(workspace)
+        return HarnessStart(command, files, run, startup.get("version_id"), harness_commit=commit)
     if not (workspace / "resume.json").is_file():
         raise ValueError(
             "Harness has no resume.json checkpoint entry; refusing a fresh-context restart"
@@ -218,7 +242,11 @@ def publish_run_result(
     """Persist the Agent's explicit selection; never rank candidate versions here."""
     declaration = workspace / "continuation.json"
     if declaration.is_file():
-        command, files = load_harness_package(workspace, "continuation.json")
+        commit = run_commit(run)
+        if commit:
+            command = COMMAND.copy()
+        else:
+            command, files = load_harness_package(workspace, "continuation.json")
         remote_exports = json.loads(declaration.read_text()).get("remote_exports", [])
         if not isinstance(remote_exports, list) or any(
             not isinstance(x, str) for x in remote_exports
@@ -228,15 +256,17 @@ def publish_run_result(
             if validate_exports is None:
                 raise ValueError("Remote exports require Host access validation")
             validate_exports(remote_exports)
-        version = versions.create_local(owner, files, parent_version)
         result = {
             "status": "ready",
             "command": command,
-            "version_id": version["version_id"],
-            "commit": version["commit"],
             "selected_by": owner,
             "remote_exports": remote_exports,
         }
+        if commit:
+            result.update(harness_commit=commit, version_id=parent_version)
+        else:
+            version = versions.create_local(owner, files, parent_version)
+            result.update(version_id=version["version_id"], commit=version["commit"])
     else:
         result = {"status": "missing", "reason": "Agent did not save continuation.json"}
     temporary = run / "retained.tmp"

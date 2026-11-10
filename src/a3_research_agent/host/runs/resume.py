@@ -9,6 +9,7 @@ import time
 from copy import deepcopy
 from pathlib import Path
 
+from a3_research_agent.host.published_harness import pinned_resume, run_commit
 from a3_research_agent.host.runs.state import RunStateStore
 from a3_research_agent.host.sessions.containers import workspace_path
 
@@ -165,16 +166,20 @@ def preflight_blocked_resume(
         prior_attempt = _feedback_retry(run, workspace, actor, feedback, host_outcome, supervision)
         if prior_attempt != child.get("restart_attempt"):
             raise ValueError("Workspace terminal does not match the Host restart attempt")
-    command, files = load_harness_package(workspace, "resume.json")
-    if (
-        len(command) != 3
-        or command[0] not in {"python", "python3"}
-        or command[2] != "--resume"
-        or command[1] not in files
-        or not command[1].endswith(".py")
-        or "checkpoint.json" not in files
-    ):
-        raise ValueError("Blocked resume requires an explicit Python checkpoint resume command")
+    commit = run_commit(run)
+    if commit:
+        command, files = pinned_resume(workspace)
+    else:
+        command, files = load_harness_package(workspace, "resume.json")
+        if (
+            len(command) != 3
+            or command[0] not in {"python", "python3"}
+            or command[2] != "--resume"
+            or command[1] not in files
+            or not command[1].endswith(".py")
+            or "checkpoint.json" not in files
+        ):
+            raise ValueError("Blocked resume requires an explicit Python checkpoint resume command")
     checkpoint = json.loads(files["checkpoint.json"])
     messages = checkpoint.get("messages") if isinstance(checkpoint, dict) else checkpoint
     if (
@@ -201,7 +206,7 @@ def preflight_blocked_resume(
         "record_text": record_text,
         "snapshots": snapshots,
         "resume_sha256": hashlib.sha256(
-            workspace_path(workspace, "resume.json").read_bytes()
+            commit.encode() if commit else workspace_path(workspace, "resume.json").read_bytes()
         ).hexdigest(),
         "source_sha256": {
             name: hashlib.sha256(text.encode()).hexdigest() for name, text in files.items()

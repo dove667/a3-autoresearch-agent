@@ -103,3 +103,51 @@ def test_tampering_or_partial_start_cannot_launch_another_run(release):
     with pytest.raises(RuntimeError, match="inspection"):
         schedule.select()
     assert len(list(anchor.parent.glob("run-*"))) == 2
+
+
+def test_published_git_source_excludes_live_checkout_and_unpublished_commits(tmp_path):
+    import subprocess
+
+    from a3_research_agent.host.published_harness import published_source
+
+    def git(*args):
+        return subprocess.check_output(
+            [
+                "git",
+                "-C",
+                str(tmp_path),
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.invalid",
+                "-c",
+                "commit.gpgsign=false",
+                *args,
+            ],
+            text=True,
+        ).strip()
+
+    git("init", "--quiet")
+    package = tmp_path / "src/a3_research_agent"
+    (package / "harness").mkdir(parents=True)
+    (package / "__init__.py").write_text("")
+    agent = package / "harness/agent.py"
+    agent.write_text("print('published')\n")
+    git("add", "src")
+    git("commit", "--quiet", "-m", "publish")
+    commit = git("rev-parse", "HEAD")
+    git("update-ref", "refs/remotes/origin/main", commit)
+    agent.write_text("print('unpublished')\n")
+    git("commit", "--quiet", "-am", "local changes")
+    unpublished = git("rev-parse", "HEAD")
+    (tmp_path / ".env").write_text("PRIVATE=private")
+    source = published_source(tmp_path, commit)
+    pinned_agent = source / "a3_research_agent/harness/agent.py"
+    assert pinned_agent.read_text() == "print('published')\n"
+    assert not (source / ".git").exists()
+    assert not (source / ".env").exists()
+    with pytest.raises(ValueError, match="origin/main"):
+        published_source(tmp_path, unpublished)
+    pinned_agent.write_text("tampered")
+    with pytest.raises(ValueError, match="differs"):
+        published_source(tmp_path, commit)

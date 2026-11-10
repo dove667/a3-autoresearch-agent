@@ -10,6 +10,12 @@ import threading
 import time
 from pathlib import Path, PurePosixPath
 
+from a3_research_agent.host.published_harness import (
+    COMMAND,
+    pinned_resume,
+    research_workspace,
+    run_commit,
+)
 from a3_research_agent.workspace.paths import workspace_path
 
 ACTIVE_STATES = {"created", "running", "restarting", "paused"}
@@ -40,7 +46,11 @@ def candidate_workspace(root: Path, session: str) -> Path:
     directory = workspace_path(root, session)
     workspace = directory / "workspace"
     if workspace.is_symlink():
-        expected = workspace_path(root.parent, f"versions/worktrees/{session}/source")
+        expected = (
+            research_workspace(root.parent, session)
+            if run_commit(root.parent)
+            else workspace_path(root.parent, f"versions/worktrees/{session}/source")
+        )
         if workspace.resolve(strict=True) != expected.resolve(strict=True):
             raise ValueError("Resume workspace must reference its own Host-managed worktree")
         return expected
@@ -69,10 +79,12 @@ class CandidateRuntime:
         public_a3: Path,
         endpoint: str,
         versions=None,
+        published_source: Path | None = None,
     ):
         self.root, self.image, self.inputs = root, image, inputs
         self.public_a3, self.endpoint = public_a3, endpoint
         self.versions = versions
+        self.published_source = published_source
         self.records: dict[str, dict] = {}
         self.lock = threading.RLock()
         self.root.mkdir(parents=True, exist_ok=True)
@@ -250,7 +262,17 @@ class CandidateRuntime:
     def create_initial(
         self, owner: str, command: list[str], token: str, version_id: str, inputs: Path
     ) -> dict:
-        return self.create_version(owner, command, token, version_id, inputs=inputs)
+        if self.published_source is None:
+            return self.create_version(owner, command, token, version_id, inputs=inputs)
+        from a3_research_agent.host.sessions.versions import CandidateVersions
+
+        self.versions.owned(owner, version_id)
+        files = CandidateVersions.read_snapshot(self.versions.root, version_id)
+        workspace = research_workspace(self.root.parent, owner)
+        workspace.mkdir(parents=True, exist_ok=False)
+        return self.create(
+            owner, COMMAND, files, token, workspace=workspace, version_id=version_id, inputs=inputs
+        )
 
     def create_version(
         self,
@@ -261,6 +283,8 @@ class CandidateRuntime:
         *,
         inputs: Path | None = None,
     ) -> dict:
+        if self.published_source is not None:
+            raise ValueError("Published Harness runs have one research workspace")
         workspace = self.versions.checkout(owner, version_id, owner)
         try:
             return self.create(
@@ -336,7 +360,10 @@ class CandidateRuntime:
                 command = None
                 if status in {"exited", "dead", "missing"} and session == main_owner:
                     workspace = candidate_workspace(self.root, session)
-                    command, files = load_harness_package(workspace, "resume.json")
+                    if self.published_source is None:
+                        command, files = load_harness_package(workspace, "resume.json")
+                    else:
+                        command, files = pinned_resume(workspace)
                     if "checkpoint.json" in files:
                         checkpoint = json.loads(files["checkpoint.json"])
                         messages = (
@@ -346,6 +373,14 @@ class CandidateRuntime:
                                 checkpoint.get("messages") if isinstance(checkpoint, dict) else None
                             )
                         )
+                        if self.published_source is not None and (
+                            not isinstance(checkpoint, list)
+                            or not checkpoint
+                            or not all(isinstance(item, dict) for item in checkpoint)
+                        ):
+                            raise ValueError(
+                                "Published Harness requires a nonempty message checkpoint"
+                            )
                         if isinstance(messages, list) and all(
                             isinstance(item, dict) for item in messages
                         ):
@@ -443,6 +478,18 @@ class CandidateRuntime:
                 f"type=bind,src={self.public_a3},dst=/opt/a3,readonly",
                 "--workdir=/workspace",
             ]
+            if self.published_source is not None:
+                environment.update(
+                    A3_HARNESS_ROOT="/opt/research-harness",
+                    PYTHONPATH="/opt/research-harness",
+                    PYTHONDONTWRITEBYTECODE="1",
+                )
+                arguments.extend(
+                    [
+                        "--mount",
+                        f"type=bind,src={self.published_source},dst=/opt/research-harness,readonly",
+                    ]
+                )
             for key, value in environment.items():
                 arguments.extend(["--env", f"{key}={value}"])
             container = self.docker(*arguments, self.image, *command).strip()
