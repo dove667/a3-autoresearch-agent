@@ -32,6 +32,7 @@ from a3_research_agent.host.inputs.versions import (
 )
 from a3_research_agent.host.models.context import read_context_budget
 from a3_research_agent.host.models.settings import read_model_request_options, read_role_models
+from a3_research_agent.host.models.upstream import configured_upstream
 from a3_research_agent.host.runs.context import ContextAgent, load_context
 from a3_research_agent.host.runs.continuation import (
     import_retained_exports,
@@ -171,6 +172,7 @@ def launch_run(args, run: Path, a3: Path, image: str, start) -> None:
             checkpoint = json.loads((run / "trajectory.json").read_text())
             if checkpoint.get("info", {}).get("exit_status") != "Submitted":
                 resume_context = load_context(run / "trajectory.json")
+    forward_model = configured_upstream(litellm.responses)
     run_id = run.name
     inputs, workspace = run / "inputs", run / "workspace"
     private_inputs = run / "private-inputs" if (run / "private-inputs").is_dir() else None
@@ -295,7 +297,7 @@ def launch_run(args, run: Path, a3: Path, image: str, start) -> None:
         web_gateway=web_gateway,
         model_name=os.environ["MODEL_NAME"],
         sessions={token: run_id},
-        forward_model=litellm.responses,
+        forward_model=forward_model,
         model_request_options=model_request_options,
         role_models=role_models,
         analyzer_enabled=analyzer_setting == "1",

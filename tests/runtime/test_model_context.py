@@ -2,16 +2,22 @@ import pytest
 from fastapi.testclient import TestClient
 
 from a3_research_agent.host.gateway.app import create_app
+from a3_research_agent.host.inputs.feedback import HumanFeedback
 
 
 def test_context_configuration_counts_injected_input_without_model_call(tmp_path):
     calls = []
+    source = tmp_path / "feedback.md"
+    source.write_text("Check the actual saved episodes. " * 1900)
+    feedback = HumanFeedback(tmp_path / "run")
+    feedback.register(source, "main")
     client = TestClient(
         create_app(
             model_name="fixed/main",
             sessions={"token": "main"},
             main_owner="main",
-            phase_instructions="host phase rules " * 200,
+            phase_instructions="host phase rules " * 6000,
+            human_feedback=feedback,
             usage_log=tmp_path / "usage.jsonl",
             remote_call=lambda *args: {},
             forward_model=lambda **kw: calls.append(kw) or {"output": []},
@@ -19,7 +25,7 @@ def test_context_configuration_counts_injected_input_without_model_call(tmp_path
                 "main_context_tokens": 500000,
                 "worker_context_tokens": 500000,
                 "summary_context_tokens": 500000,
-                "trigger_tokens": 64000,
+                "trigger_tokens": 200000,
                 "target_tokens": 32000,
             },
         )
@@ -28,8 +34,9 @@ def test_context_configuration_counts_injected_input_without_model_call(tmp_path
     assert result.status_code == 200
     config = result.json()
     assert config["unit"] == "estimated_tokens" and config["tokenizer"] == "o200k_base"
-    assert config["injected_reserve_tokens"] > 4096
-    assert config["trigger_tokens"] == 64000 and config["target_tokens"] == 32000
+    assert config["injected_reserve_tokens"] > 32000
+    assert config["trigger_tokens"] == 200000
+    assert config["target_tokens"] - config["injected_reserve_tokens"] == 32000
     assert calls == []
     assert client.get("/context/config").status_code == 401
 

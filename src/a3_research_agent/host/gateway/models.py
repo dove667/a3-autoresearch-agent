@@ -235,6 +235,17 @@ class ModelRoutes:
             if main_route
             else self.token_budget.worker_context_tokens
         )
+        injected_reserve = (
+            count_tokens(injected)
+            + self.token_budget.provider_reserve_tokens
+            + 512
+            + 16 * len(notes)
+        )
+        # The Harness subtracts this reserve from the target on the wire.
+        request_target = min(
+            self.token_budget.target_tokens + injected_reserve,
+            self.token_budget.trigger_tokens - 1,
+        )
         return {
             "enabled": True,
             "summary_operation": "/v1/summary",
@@ -242,12 +253,9 @@ class ModelRoutes:
             "tokenizer": "o200k_base",
             "trigger_tokens": self.token_budget.trigger_tokens,
             "decision_input_tokens": window * 9 // 10 - self.token_budget.output_reserve_tokens,
-            "target_tokens": self.token_budget.target_tokens,
+            "target_tokens": request_target,
             "summary_input_tokens": self.token_budget.summary_input_tokens,
-            "injected_reserve_tokens": count_tokens(injected)
-            + self.token_budget.provider_reserve_tokens
-            + 512
-            + 16 * len(notes),
+            "injected_reserve_tokens": injected_reserve,
             "summary_reserve_tokens": count_tokens(SUMMARY_INSTRUCTIONS)
             + count_tokens(refs)
             + self.token_budget.provider_reserve_tokens
