@@ -105,7 +105,7 @@ artifacts/rsi/run-*/
 
 旧版候选工作区实际位于 `versions/worktrees/<session_id>/source/`，`candidates/<session_id>/workspace` 是 Host 便捷链接。Docker 只挂载 source/；Git 元数据留在其父目录，不在挂载范围内。即刻修改要由 Agent 显式提交才能形成新版本。
 
-从 Git 发布的研究 run 使用根目录下的 `workspace/<run-id>/<session-id>/` 存放研究代码、checkpoint、记忆与轨迹。容器继续使用 `/workspace`，Harness 从 `artifacts/published-harness/<commit>/` 只读加载，同一提交只缓存一份。Host 元数据和审计记录仍在 `artifacts/rsi/`。迁移后的夜间记录位于 `artifacts/night-window/`，项目级历史作业索引位于 `artifacts/project-job-index.json`。清理旧源码或工作树前需验证可恢复性，并保留研究文件、作业归属及原始证据。
+从 Git 发布的研究 run 使用根目录下的 `workspace/<run-id>/<session-id>/` 存放研究代码、checkpoint、记忆与轨迹。容器继续使用 `/workspace`，Harness 从 `artifacts/published-harness/v2/<commit>/` 只读加载，同一提交只缓存一份。Host 元数据和审计记录仍在 `artifacts/rsi/`。迁移后的夜间记录位于 `artifacts/night-window/`，项目级历史作业索引位于 `artifacts/project-job-index.json`。清理旧源码或工作树前需验证可恢复性，并保留研究文件、作业归属及原始证据。
 
 历史 `run-*` 内的文件用于复核，保持原样。运行结束后，由候选维护流程提取有价值的源码、说明和来源记录，原始日志仍留在原目录。恢复入口继续读取原路径。
 

@@ -69,10 +69,12 @@ def published_source(root: Path, commit: str) -> Path:
             commit,
             "src/a3_research_agent/harness",
             "src/a3_research_agent/__init__.py",
+            "src/a3_research_agent/token_count.py",
         ],
         timeout=30,
     )
-    source = workspace_path(root, f"artifacts/published-harness/{commit}")
+    # Earlier cache entries omitted the shared tokenizer module.
+    source = workspace_path(root, f"artifacts/published-harness/v2/{commit}")
     source.parent.mkdir(parents=True, exist_ok=True)
     with tarfile.open(fileobj=io.BytesIO(archive)) as tree:
         files = {}
