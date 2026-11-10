@@ -4,11 +4,15 @@ import argparse
 import json
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 
 def launch_main(runtime) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--night-window", action="store_true", help="Resume only from 21:00 to 09:00 Beijing time"
+    )
     parser.add_argument(
         "--check", action="store_true", help="Validate deployment without starting an Agent"
     )
@@ -141,6 +145,51 @@ def launch_main(runtime) -> None:
     except (ValueError, OSError) as error:
         parser.error(str(error))
     runtime.load_dotenv(os.environ.get("A3_RSI_ENV_FILE", runtime.ROOT / ".env"), override=True)
+    scheduled_run = os.environ.get("A3_NIGHT_WINDOW_RUN_ID")
+    night_child = os.environ.get("A3_NIGHT_WINDOW_CHILD") == "1"
+    reserved_target = os.environ.get("A3_NIGHT_WINDOW_TARGET")
+    if scheduled_run and args.resume_from and not args.check and not args.night_window:
+        from a3_research_agent.cli.night_release import read_json
+
+        schedule = read_json(
+            runtime.ROOT / "artifacts/rsi" / scheduled_run / ".host/night-schedule.json", {}
+        )
+        protected = {scheduled_run, schedule.get("current"), schedule.get("target")}
+        if args.resume_from.resolve().name in protected and not night_child:
+            parser.error("This run must be resumed with --night-window")
+    if night_child:
+        from datetime import datetime
+
+        from a3_research_agent.cli.night_window import BEIJING, window_boundary
+
+        if not window_boundary(datetime.now(BEIJING))[0]:
+            parser.error("This run can only start from 21:00 to 09:00 Beijing time")
+    if reserved_target and not (night_child and args.run_harness and args.custom_input_proposal):
+        parser.error("A reserved night target requires a scheduled Harness release")
+    if args.night_window:
+        if not args.resume_from or args.check or args.verify_deployment:
+            parser.error("--night-window requires an existing --resume-from run")
+        from a3_research_agent.cli.night_release import NightSchedule
+        from a3_research_agent.cli.night_window import run_nightly
+        from a3_research_agent.host.runs.state import RunStateStore
+
+        anchor = args.resume_from.resolve()
+        state = RunStateStore(anchor)
+        if not state.path.is_file() or state.load().get("status") != "suspended":
+            parser.error("--night-window requires a suspended run")
+        command = [
+            sys.executable,
+            "-m",
+            "a3_research_agent.cli.launch",
+            "--project-root",
+            str(runtime.ROOT),
+            "--resume-from",
+            str(anchor),
+        ]
+        if args.feedback_file:
+            command.extend(["--feedback-file", str(args.feedback_file.resolve())])
+        with runtime.RunLease(anchor / ".host/night-launcher"):
+            raise SystemExit(run_nightly(command, state, schedule=NightSchedule(anchor, command)))
     required = (
         "MODEL_NAME",
         "MODEL_CLASS",
@@ -176,7 +225,16 @@ def launch_main(runtime) -> None:
         return
     run_root = runtime.ROOT / "artifacts"
     run_root /= "validation/deployment" if args.verify_deployment else "rsi"
-    run = args.resume_from.resolve() if args.resume_from else runtime.create_run_directory(run_root)
+    if reserved_target:
+        run = Path(reserved_target).resolve()
+        if run.parent != run_root.resolve() or not run.is_dir() or any(run.iterdir()):
+            parser.error("Reserved night target must be an empty run directory")
+    else:
+        run = (
+            args.resume_from.resolve()
+            if args.resume_from
+            else runtime.create_run_directory(run_root)
+        )
     with runtime.RunLease(run):
         runtime.launch_run(args, run, a3, image, start)
 
