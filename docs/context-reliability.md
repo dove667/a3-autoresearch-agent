@@ -73,6 +73,27 @@ snippets and excludes tool arguments and prior retrieval responses. Use
 `mode="raw"` for historical tool traffic. Both modes point to the original round,
 and the complete source history remains on disk.
 
+## Preflight for long GPU jobs
+
+Call `preflight(action="check", job=...)` with the complete production
+`POST /jobs` request, including `gpu: true`. The Harness sends the same command,
+inline source, hashed workspace references and read-only exports to a CPU job
+with `A3_RESEARCH_PREFLIGHT=1`. Implement this mode in the real entry point.
+Load and check the checkpoint, import the adapter and its dependencies, and
+exercise a minimal forward pass or a real dataset read as applicable. Before
+exiting zero, write `a3-preflight.json` in the job workspace with
+`{"schema":1,"status":"passed"}`. Keep this branch out of the production output
+and preserve the error when loading fails.
+
+After completion, call `preflight(action="submit", preflight_id=..., job=...)`
+with the same production request. This tool requires a successful Controller
+exit and a readable report. Any request change requires a new check. Pin assets
+to immutable exports or verify the expected content digests in the entry point.
+The CPU check can surface import, load, and input errors. CUDA-specific behavior
+still requires a GPU pilot. Existing ordinary job submissions keep their API.
+Same-run resume preserves receipts. If production submission is uncertain, use
+the registered job ID or check the job list before another attempt.
+
 ## Token budgets and full-transcript summaries
 
 The overlay asks authenticated `GET /context/config` for current nonsecret reserves

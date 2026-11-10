@@ -58,4 +58,4 @@ print(json.dumps({"files": build_harness_payload(extensions), "tools": [x["name"
     assert result.returncode == 0, result.stderr
     exported = json.loads(result.stdout)
     assert exported["files"] == files
-    assert {"gateway", "read", "wait", "skills", "plan", "memory"} <= set(exported["tools"])
+    assert {"gateway", "read", "wait", "skills", "plan", "memory", "preflight"} <= set(exported["tools"])

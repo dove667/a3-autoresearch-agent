@@ -70,7 +70,8 @@ def prepare_fresh_task(start: HarnessStart, task: str) -> tuple[HarnessStart, di
     removed.update(
         name
         for name in start.files
-        if name.startswith("context-history/summary-request-") and name.endswith(".json")
+        if (name.startswith("context-history/summary-request-") and name.endswith(".json"))
+        or name.startswith(".research-preflight/")
     )
     present = {
         name: start.files[name] for name in set(replacements) | removed if name in start.files

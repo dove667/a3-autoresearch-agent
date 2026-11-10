@@ -10,7 +10,7 @@ import urllib.request
 
 os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
 
-from a3_research_agent.harness import planning, skill_registry
+from a3_research_agent.harness import job_preflight, planning, skill_registry
 from a3_research_agent.harness.analysis import client as analyzer_client
 from a3_research_agent.harness.context import compaction
 from a3_research_agent.harness.context import manager as context_manager
@@ -121,6 +121,13 @@ def tool(name, a):
         return web_tools.dispatch(name, a)
     if name in getattr(skill_tools, "ROUTES", {}):
         return skill_tools.dispatch(name, a)
+    if name == "preflight":
+        return job_preflight.dispatch(
+            a,
+            lambda method, path, body=None: tool(
+                "gateway", {"method": method, "path": path, "body": body}
+            ),
+        )
     if name == "plan":
         return planning.dispatch(a)
     if name == "progress":
@@ -168,6 +175,8 @@ def tool(name, a):
                 return "read only"
             if p == planning.PATH.resolve():
                 return {"error": "use_plan_tool"}
+            if p.is_relative_to(job_preflight.RECEIPTS.resolve()):
+                return {"error": "use_preflight_tool"}
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_text(a["content"])
             try:
@@ -304,6 +313,13 @@ def spec(name, props, required):
             "read": "Read a bounded character page with content, whole-file SHA256, offset/end/total and EOF. limit is 1..8000, default 4000. An identical page still in context returns a reference. Optional fields selects top-level JSON keys instead.",
             "write": "Write text in workspace.",
             "list": "List accessible directory.",
+            "preflight": (
+                "Check a GPU job on CPU using the same command, source and inputs with "
+                "A3_RESEARCH_PREFLIGHT=1. Implement this mode in the entry to load the real "
+                "assets, import dependencies, exercise a minimal forward or data read, write "
+                "a3-preflight.json in the job workspace, and exit before production. After "
+                "completion use action=submit with the same job and preflight_id."
+            ),
             "plan": "Show or update the persistent research plan. Update with the current revision and patch steps by stable ID. Each new step needs task and criterion. Use depends_on for real prerequisites, jobs for submitted Controller IDs, progress for counts or blockers, and evidence when done. Give reason for route changes or archiving done/skipped steps. Show can select a single ID. Update before wait, which returns ready work instead of sleeping.",
             "progress": "List or explicitly update bounded operational items with evidence references. These are your claims, not validated scientific acceptance; closed items remain recorded across summaries.",
             "wait": "Wait until an owned job finishes, fails or is cancelled, or an operator notification arrives. Queued and running jobs stay in program-level wait. With no jobs, seconds is a finite 0..600 delay.",
@@ -359,6 +375,15 @@ tools = (
                 },
             },
             ["path"],
+        ),
+        spec(
+            "preflight",
+            {
+                "action": {"type": "string", "enum": ["check", "submit"]},
+                "job": {"type": "object"},
+                "preflight_id": S,
+            },
+            ["action", "job"],
         ),
         spec(
             "plan",
