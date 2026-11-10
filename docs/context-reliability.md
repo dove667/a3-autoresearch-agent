@@ -17,6 +17,62 @@ files in their existing package/continuation contract. Historical ready packages
 checkpoints are never automatically upgraded. An old acceptance record does not certify
 new code.
 
+## Research plans and durable notes
+
+The Agent uses `plan(action="show")` to read its current revision and
+`plan(action="update", revision=..., steps=[...])` to patch steps by ID. New steps
+carry a task and a concrete completion criterion. Dependencies refer to step IDs.
+The Agent records observed progress, relevant Controller job IDs and evidence
+references. Closed steps can be archived when no current step depends on them.
+Revisions preserve the previous plan and record reasons for route changes.
+
+```json
+{
+  "action": "update",
+  "revision": 0,
+  "goal": "Train ACT on a verified expanded dataset",
+  "steps": [
+    {
+      "id": "collect",
+      "task": "Complete and audit the 2×10 DAgger batches",
+      "criterion": "Manifest contains 1,000 unique eligible trajectories"
+    },
+    {
+      "id": "train",
+      "task": "Start ACT with the expanded manifest",
+      "criterion": "Training report identifies the manifest and checkpoint",
+      "depends_on": ["collect"]
+    }
+  ]
+}
+```
+
+The decision context includes a bounded plan view with ready steps and the last
+observed job status. An active step with a queued or running job can wait. When
+independent work is ready, a positive-duration `wait` returns those step IDs.
+The normal program-level wait still handles queueing and running jobs without
+model polling. The Agent verifies the step's criterion before recording evidence
+and marking it done. The plan tracks Agent claims and observed job states.
+
+Same-run resume reads `research-plan.json` from the existing workspace. A fresh
+task archives any inherited active plan and starts without one. A published night
+release carries the operator-reviewed handoff in its input bundle, from which
+the Agent creates the new plan. The source run and its evidence remain available
+through the established research access paths.
+
+Use `memory(action="search", key=...)` to look up prior conclusions, failures
+and verified entry points. Add `kind` or `scope` when a narrower search is needed,
+then read the selected note by ID. Notes can carry applicability in `scope`,
+source IDs or paths in `refs`, and an old note ID in `supersedes`. Search excludes
+superseded notes, which remain readable by ID. Existing free-text notes stay
+readable and searchable. The Agent chooses which findings to record and checks
+their applicability before reuse.
+
+Use Recall for original observations. Its default evidence mode ranks matching
+snippets and excludes tool arguments and prior retrieval responses. Use
+`mode="raw"` for historical tool traffic. Both modes point to the original round,
+and the complete source history remains on disk.
+
 ## Token budgets and full-transcript summaries
 
 The overlay asks authenticated `GET /context/config` for current nonsecret reserves

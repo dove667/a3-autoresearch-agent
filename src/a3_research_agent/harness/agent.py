@@ -10,7 +10,7 @@ import urllib.request
 
 os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
 
-from a3_research_agent.harness import skill_registry
+from a3_research_agent.harness import planning, skill_registry
 from a3_research_agent.harness.analysis import client as analyzer_client
 from a3_research_agent.harness.context import compaction
 from a3_research_agent.harness.context import manager as context_manager
@@ -121,6 +121,8 @@ def tool(name, a):
         return web_tools.dispatch(name, a)
     if name in getattr(skill_tools, "ROUTES", {}):
         return skill_tools.dispatch(name, a)
+    if name == "plan":
+        return planning.dispatch(a)
     if name == "progress":
         return memory_state.progress(a)
     if name == "gateway":
@@ -164,6 +166,8 @@ def tool(name, a):
         if name == "write":
             if not (p == roots[0] or roots[0] in p.parents):
                 return "read only"
+            if p == planning.PATH.resolve():
+                return {"error": "use_plan_tool"}
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_text(a["content"])
             try:
@@ -186,9 +190,19 @@ def tool(name, a):
             return select_json_fields(p.read_bytes(), a["fields"], str(p))
         return memory_state.read_page(p, a.get("offset", 0), a.get("limit", 4000))
     if name == "wait":
+        seconds = a.get("seconds", 5)
+        if type(seconds) is not int or not 0 <= seconds <= 600:
+            raise ValueError("Wait seconds must be an integer in 0..600")
+        if seconds:
+            ready = planning.view(compact=True)["ready"]
+            if ready:
+                return {"error": "plan_work_ready", "ready": ready}
+        jobs = waiting.active_jobs()
+        if jobs and seconds:
+            return waiting.wait_for_jobs(req, jobs, cursor=WAIT_CURSOR)
         return waiting.wait_for_change(
             req,
-            a.get("seconds", 5),
+            seconds,
             cursor=WAIT_CURSOR,
             signals=lambda timeout: req("GET", "/wait/signals", timeout=timeout),
         )
@@ -260,6 +274,8 @@ def save_tool_result(call, result, journal, messages):
         phase = "result_receipt"
         if call["name"] == "read":
             memory_state.record_page(call["call_id"], result)
+        if call["name"] == "wait":
+            memory_state.record_wait(result)
         phase = "result_archival"
         bounded = context_manager.bound_tool_result(result, call)
         journal["results"][call["call_id"]] = bounded
@@ -284,21 +300,25 @@ def spec(name, props, required):
         "type": "function",
         "name": name,
         "description": {
-            "gateway": 'Call Host APIs. For remote job creation POST /jobs body {command:["python","-m","module","--help"],gpu:false,files:{}}; command MUST be an array. GET /jobs/{id} reads a registered job in this run; research workspaces, versions and artifacts are shared for reading. Other paths /sessions, /versions, /checks/comparison, /fixtures/isolation, /evolution. Jobs execute isolated code, not local host commands.',
-            "read": "Read a bounded character page with content, whole-file SHA256, offset/end/total and EOF. limit is 1..8000, default 4000. Same-path changed hashes are different sources. Optional fields selects top-level JSON keys instead.",
+            "gateway": 'Call Host APIs. For remote job creation POST /jobs body {command:["python","-m","module","--help"],gpu:false,files:{}}; command MUST be an array. GET /jobs/{id} reads a registered job in this run; research workspaces, versions and artifacts are shared for reading. Attach local scripts with workspace_files and existing datasets or model assets with input_exports. Use wait after independent submissions. Jobs execute isolated code, not local host commands.',
+            "read": "Read a bounded character page with content, whole-file SHA256, offset/end/total and EOF. limit is 1..8000, default 4000. An identical page still in context returns a reference. Optional fields selects top-level JSON keys instead.",
             "write": "Write text in workspace.",
             "list": "List accessible directory.",
+            "plan": "Show or update the persistent research plan. Update with the current revision and patch steps by stable ID. Each new step needs task and criterion. Use depends_on for real prerequisites, jobs for submitted Controller IDs, progress for counts or blockers, and evidence when done. Give reason for route changes or archiving done/skipped steps. Show can select a single ID. Update before wait, which returns ready work instead of sleeping.",
             "progress": "List or explicitly update bounded operational items with evidence references. These are your claims, not validated scientific acceptance; closed items remain recorded across summaries.",
-            "wait": "Wait up to 600 seconds for owned job state changes, input changes or deadline; observation errors return immediately. No work is submitted or collected.",
+            "wait": "Wait until an owned job finishes, fails or is cancelled, or an operator notification arrives. Queued and running jobs stay in program-level wait. With no jobs, seconds is a finite 0..600 delay.",
             "recall": (
                 "Search original history by keyword over an n..m round window "
                 "(n=1 is the most recent round). Use after compaction or whenever "
                 "earlier evidence is missing. Returns labelled snippets from the "
-                "original messages; never reconstruct missing details from memory."
+                "original messages. Default evidence mode skips tool arguments and retrieval echoes; "
+                "use mode=raw for exact historical tool traffic."
             ),
             "memory": (
                 "Append a durable note to memory.jsonl (action=write) or read/list "
-                "entries (action=read|list). Notes survive compaction and new sessions."
+                "entries (action=read|list). Search by keywords with action=search, key, "
+                "and optional kind/scope filters. Write concise notes with refs and applicability "
+                "in scope. Use supersedes with an earlier note ID when correcting it."
             ),
         }[name],
         "parameters": {
@@ -312,6 +332,12 @@ def spec(name, props, required):
 
 
 S = {"type": "string"}
+
+
+def strings(limit):
+    return {"type": "array", "items": S, "maxItems": limit}
+
+
 tools = (
     [
         spec(
@@ -333,6 +359,37 @@ tools = (
                 },
             },
             ["path"],
+        ),
+        spec(
+            "plan",
+            {
+                "action": {"type": "string", "enum": ["show", "update"]},
+                "revision": {"type": "integer", "minimum": 0},
+                "goal": S,
+                "reason": S,
+                "id": S,
+                "archive": strings(planning.MAX_STEPS),
+                "steps": {
+                    "type": "array",
+                    "maxItems": planning.MAX_STEPS,
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": S,
+                            "task": S,
+                            "criterion": S,
+                            "status": {"type": "string", "enum": list(planning.STATUSES)},
+                            "depends_on": strings(8),
+                            "jobs": strings(8),
+                            "progress": S,
+                            "evidence": strings(4),
+                        },
+                        "required": ["id"],
+                        "additionalProperties": False,
+                    },
+                },
+            },
+            ["action"],
         ),
         spec(
             "progress",
@@ -358,6 +415,7 @@ tools = (
                 "keywords": {"type": "array", "items": S},
                 "n": {"type": "integer"},
                 "m": {"type": "integer"},
+                "mode": {"type": "string", "enum": ["evidence", "raw"]},
                 "window": {"type": "integer"},
                 "limit": {"type": "integer"},
             },
@@ -365,7 +423,15 @@ tools = (
         ),
         spec(
             "memory",
-            {"action": S, "content": S, "key": S, "kind": S},
+            {
+                "action": {"type": "string", "enum": ["write", "read", "list", "search"]},
+                "content": S,
+                "key": S,
+                "kind": S,
+                "scope": S,
+                "refs": strings(8),
+                "supersedes": S,
+            },
             ["action"],
         ),
     ]
@@ -420,6 +486,13 @@ def save_manifest():
         context_manager.atomic(filename, json.dumps(data))
 
 
+def operational_message():
+    state = memory_state.load()
+    value = memory_state.view(state)
+    value["research_plan"] = planning.view(jobs=state.get("jobs", {}), compact=True)
+    return {"role": "user", "content": json.dumps(value, ensure_ascii=False)}
+
+
 def checkpoint(messages):
     save_manifest()
     context_manager.atomic("checkpoint.json", json.dumps(messages, ensure_ascii=False))
@@ -455,6 +528,8 @@ def recover_journal(messages):
         )
         if c.get("name") == "read":
             memory_state.record_page(c["call_id"], value)
+        if c.get("name") == "wait":
+            memory_state.record_wait(value)
         restored.append(
             {
                 "type": "function_call_output",
@@ -522,12 +597,10 @@ def main() -> None:
                 )
                 save_manifest()
                 break
-            operational_data = memory_state.view()
+            operational = operational_message()
+            operational_data = json.loads(operational["content"])
             operational_data["independent_analysis"] = analyzer.view()
-            operational = {
-                "role": "user",
-                "content": json.dumps(operational_data, ensure_ascii=False),
-            }
+            operational["content"] = json.dumps(operational_data, ensure_ascii=False)
             state_reference = context_manager.archive(operational, "operational-view")
             # Asynchronous fork: this decision keeps the full history; a finished
             # compaction result is applied before a later decision, never mid-flight.

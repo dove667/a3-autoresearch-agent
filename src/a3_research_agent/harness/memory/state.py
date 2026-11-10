@@ -379,16 +379,43 @@ def record_gateway(method, path, result):
         "pending",
         "queued",
         "running",
+        "restarting",
         "completed",
         "cancelled",
         "failed",
     }:
         return
     state = load()
+    if update_job(state, job, status):
+        save(state)
+
+
+def record_wait(result):
+    if not isinstance(result, dict) or result.get("reason") != "state_changed":
+        return
+    state = load()
+    changed = False
+    for path, row in result.get("changes", {}).items():
+        job = path.removeprefix("/jobs/")
+        if job in state.get("jobs", {}) and row.get("status") in TERMINAL_JOB_STATES:
+            changed |= update_job(state, job, row["status"])
+    if changed:
+        save(state)
+
+
+TERMINAL_JOB_STATES = frozenset({"completed", "cancelled", "failed"})
+
+
+def update_job(state, job, status):
     jobs = state.setdefault("jobs", {})
-    if status in {"completed", "cancelled", "failed"} and jobs.get(job, {}).get("status") != status:
-        state["counters"]["progress_updates"] = state["counters"].get("progress_updates", 0) + 1
+    previous = jobs.get(job, {}).get("status")
+    if previous in TERMINAL_JOB_STATES:
+        return False
     jobs[job] = {"status": status, "observed_at": time.time()}
-    while len(jobs) > 32:
-        del jobs[min(jobs, key=lambda key: jobs[key]["observed_at"])]
-    save(state)
+    terminal = sorted(
+        (key for key, record in jobs.items() if record["status"] in TERMINAL_JOB_STATES),
+        key=lambda key: jobs[key]["observed_at"],
+    )
+    for key in terminal[: max(0, len(terminal) - 64)]:
+        del jobs[key]
+    return True

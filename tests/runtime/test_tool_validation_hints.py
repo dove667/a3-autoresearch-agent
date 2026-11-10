@@ -3,7 +3,7 @@ import pathlib
 
 import pytest
 
-from a3_research_agent.harness import skill_registry
+from a3_research_agent.harness import planning, skill_registry
 
 ROOT = pathlib.Path(__file__).resolve().parents[2] / "src/a3_research_agent/harness"
 
@@ -14,7 +14,7 @@ def functions():
         n
         for n in tree.body
         if isinstance(n, ast.FunctionDef)
-        and n.name in {"dispatch_tool_call", "spec"}
+        and n.name in {"dispatch_tool_call", "spec", "strings"}
         or isinstance(n, ast.Assign)
         and any(
             isinstance(x, ast.Name) and x.id in {"SAFE_VALIDATION_ERRORS", "S", "tools"}
@@ -26,6 +26,7 @@ def functions():
         "web_tools": None,
         "skill_tools": None,
         "skill_registry": skill_registry,
+        "planning": planning,
     }
     exec(compile(ast.Module(body=nodes, type_ignores=[]), "trusted-agent-functions", "exec"), ns)  # noqa: S102
     return ns

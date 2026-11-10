@@ -11,6 +11,7 @@ HARNESS_MODULES = (
     "input_skills.py",
     "lifecycle.py",
     "waiting.py",
+    "planning.py",
     "analysis/__init__.py",
     "analysis/client.py",
     "context/__init__.py",

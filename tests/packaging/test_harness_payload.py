@@ -1,4 +1,4 @@
-"""Harness imports and worker payloads must be independent of the source checkout."""
+"""Harness imports and source payloads must be independent of the source checkout."""
 
 import json
 import os
@@ -28,7 +28,7 @@ def test_agent_import_does_not_read_credentials_or_start_loop(tmp_path):
     assert list(tmp_path.iterdir()) == []
 
 
-def test_exported_sources_can_create_complete_child_payload_without_checkout(tmp_path):
+def test_exported_sources_can_reproduce_payload_without_checkout(tmp_path):
     from a3_research_agent.packaging.harness_payload import build_harness_payload
 
     files = build_harness_payload(
@@ -40,10 +40,11 @@ def test_exported_sources_can_create_complete_child_payload_without_checkout(tmp
         target.write_text(content)
     script = """
 import json
-from a3_research_agent.harness.orchestration import assignments as work_assignments
-arguments = dict(id='isolated', role='harness', objective='check sources', stop_condition='done', deliverables=['report.json'], context_files=[], read_only_exports=[])
-task, files = work_assignments.worker_package(arguments, coordinator_session_id='main')
-print(json.dumps({'files': sorted(files), 'source_files': sorted(task['source_hashes'])}))
+from pathlib import Path
+from a3_research_agent.harness.agent import tools
+from a3_research_agent.packaging.harness_payload import build_harness_payload
+extensions = {name: Path(name).read_text() for name in ("web_tools.py", "skill_tools.py")}
+print(json.dumps({"files": build_harness_payload(extensions), "tools": [x["name"] for x in tools]}))
 """
     result = subprocess.run(
         [sys.executable, "-c", script],
@@ -56,6 +57,5 @@ print(json.dumps({'files': sorted(files), 'source_files': sorted(task['source_ha
     )
     assert result.returncode == 0, result.stderr
     exported = json.loads(result.stdout)
-    assert set(files) <= set(exported["source_files"])
-    assert set(files) <= set(exported["files"])
-    assert {"worker-task.json", "checkpoint.json"} <= set(exported["files"])
+    assert exported["files"] == files
+    assert {"gateway", "read", "wait", "skills", "plan", "memory"} <= set(exported["tools"])

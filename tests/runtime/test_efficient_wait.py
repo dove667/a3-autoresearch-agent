@@ -363,6 +363,8 @@ def test_two_waits_in_one_model_batch_keep_prebatch_cursor(tmp_path, monkeypatch
     import ast
     from types import SimpleNamespace
 
+    from a3_research_agent.harness import planning
+
     m, clock = setup_wait(tmp_path, monkeypatch)
     from pathlib import Path
 
@@ -376,6 +378,7 @@ def test_two_waits_in_one_model_batch_keep_prebatch_cursor(tmp_path, monkeypatch
         "web_tools": None,
         "skill_tools": None,
         "WAIT_CURSOR": "a" * 64,
+        "planning": planning,
         "messages": [
             {"type": "function_call", "name": "wait", "call_id": "one"},
             {"type": "function_call", "name": "wait", "call_id": "two"},
@@ -383,6 +386,7 @@ def test_two_waits_in_one_model_batch_keep_prebatch_cursor(tmp_path, monkeypatch
         "req": lambda *a, **k: signal("b" * 64),
         "waiting": SimpleNamespace(
             wait_cursor=m.wait_cursor,
+            active_jobs=list,
             wait_for_change=lambda req, seconds, **kw: m.wait_for_change(
                 lambda *a, **k: {"status": "running"},
                 seconds,

@@ -9,8 +9,8 @@ Two append-only files live in the workspace:
 
 ``memory.jsonl``
     Notes the agent deliberately keeps (decisions, dead ends, applicable
-    conditions). Write is append-only; superseding an entry means writing a new
-    one that names the old id, so the audit trail survives.
+    conditions). Write is append-only; superseding an entry links to its original
+    ID. Search shows current notes; original IDs remain readable.
 """
 
 from __future__ import annotations
@@ -55,17 +55,18 @@ def _load(path):
     if not target.is_file():
         return []
     rows = []
-    for number, line in enumerate(target.read_text(encoding="utf-8").splitlines(), 1):
-        if not line.strip():
-            continue
-        try:
-            value = json.loads(line)
-        except json.JSONDecodeError:
-            # A truncated tail must not destroy earlier evidence.
-            rows.append({"type": "corrupt_line", "line": number})
-            continue
-        if isinstance(value, dict):
-            rows.append(value)
+    with target.open(encoding="utf-8") as stream:
+        for number, line in enumerate(stream, 1):
+            if not line.strip():
+                continue
+            try:
+                value = json.loads(line)
+            except json.JSONDecodeError:
+                # A truncated tail must not destroy earlier evidence.
+                rows.append({"type": "corrupt_line", "line": number})
+                continue
+            if isinstance(value, dict):
+                rows.append(value)
     return rows
 
 
@@ -365,92 +366,226 @@ def recent_rounds_text(messages, count=5, limit_per_round=4000):
 # ---------------------------------------------------------------- recall ----
 
 
+RETRIEVAL_TOOLS = frozenset({"recall", "memory", "plan", "progress"})
+
+
+def readable_result(value):
+    if isinstance(value, dict):
+        return "\n".join(f"{key}: {readable_result(item)}" for key, item in value.items())
+    if isinstance(value, list):
+        return "\n".join(map(readable_result, value))
+    if isinstance(value, str):
+        return value
+    return json.dumps(value, ensure_ascii=False)
+
+
+def evidence_text(message, call_names, mode):
+    if mode == "raw":
+        return _content_text(message)
+    kind = message.get("type")
+    if kind == "function_call":
+        return ""
+    if kind == "function_call_output":
+        if call_names.get(message.get("call_id")) in RETRIEVAL_TOOLS:
+            return ""
+        # Tool output is often a JSON string inside the Responses message.
+        text = _content_text(message)
+        try:
+            value = json.loads(text)
+        except ValueError:
+            return text
+        return readable_result(value)
+    return _content_text(message)
+
+
 def recall(
-    keywords, n, m, *, messages=None, path=HISTORY_PATH, window=SNIPPET_WINDOW, limit=SNIPPET_LIMIT
+    keywords,
+    n,
+    m,
+    *,
+    messages=None,
+    path=HISTORY_PATH,
+    window=SNIPPET_WINDOW,
+    limit=SNIPPET_LIMIT,
+    mode="evidence",
 ):
-    """Search original rounds ``n`` back through ``m`` back, returning snippets."""
-    terms = [str(k).strip() for k in (keywords or []) if str(k).strip()]
+    """Search original rounds n back through m back, with exact round labels."""
+    terms = list(dict.fromkeys(str(k).strip()[:160] for k in (keywords or []) if str(k).strip()))
     if not terms:
         return ["keywords 不能为空：传入 1 个或多个关键字"]
+    try:
+        n_int, m_int = sorted((max(1, int(n)), max(1, int(m))), reverse=True)
+        half = max(1, min(400, int(window)) // 2)
+        limit = max(1, min(SNIPPET_LIMIT, int(limit)))
+    except (TypeError, ValueError):
+        return ["n、m、window、limit 必须为整数：1 表示最近一轮"]
+    if mode not in ("evidence", "raw"):
+        return ["mode 必须为 evidence 或 raw"]
     source = list(messages) if messages is not None else load_history(path)
     rounds = split_rounds(source)
     if not rounds:
         return ["history.jsonl 中没有可用历史（尚无记录或被清空）"]
-    try:
-        n_int, m_int = int(n), int(m)
-    except (TypeError, ValueError):
-        return ["n、m 必须为整数：1 表示最近一轮"]
-    n_int, m_int = max(1, n_int), max(1, m_int)
-    if n_int < m_int:
-        n_int, m_int = m_int, n_int
-    start = max(0, len(rounds) - n_int)
-    end = min(len(rounds), len(rounds) - m_int + 1)
-    if end <= start:
-        end = min(len(rounds), start + 1)
-    haystack = "\n".join(round_text(rnd) for rnd in rounds[start:end])
-    if not haystack:
-        return ["指定轮次范围内没有可搜索文本"]
-    half = max(1, int(window) // 2)
-    lowered = haystack.lower()
-    found, seen = [], set()
-    for term in terms:
-        needle = term.lower()
-        position = 0
-        while len(found) < limit:
-            index = lowered.find(needle, position)
-            if index < 0:
-                break
-            low = max(0, index - half)
-            high = min(len(haystack), index + len(needle) + half)
-            snippet = " ".join(haystack[low:high].split())
-            if snippet and snippet not in seen:
-                seen.add(snippet)
-                ago_from = len(rounds) - end + 1
-                ago_to = len(rounds) - start
-                found.append(f"[{ago_to}~{ago_from}轮前] …{snippet}…")
-            position = index + max(1, len(needle))
-    if not found:
-        return [f"在 {m_int}~{n_int} 轮前范围内未找到关键字：" + ", ".join(terms)]
-    return found
+    call_names = {
+        message.get("call_id"): message.get("name")
+        for message in source
+        if message.get("type") == "function_call"
+    }
+    pattern = re.compile("|".join(map(re.escape, terms[:12])), re.IGNORECASE)
+    candidates, seen = [], set()
+    end = min(n_int, len(rounds))
+    for ago in range(m_int, end + 1):
+        for message in rounds[-ago]:
+            original = evidence_text(message, call_names, mode)
+            matches = pattern.finditer(original)
+            match = next(matches, None)
+            if match is None:
+                continue
+            matched_terms = {match.group().casefold()}
+            if len(terms) > 1:
+                for candidate in matches:
+                    matched_terms.add(candidate.group().casefold())
+                    if len(matched_terms) == len(terms):
+                        break
+            # Keep one representative snippet per message; prefer actual tool output.
+            snippet = " ".join(original[max(0, match.start() - half) : match.end() + half].split())
+            if snippet in seen:
+                continue
+            seen.add(snippet)
+            is_output = message.get("type") == "function_call_output"
+            candidates.append((len(matched_terms), is_output, -ago, snippet))
+    if not candidates:
+        return [f"在 {m_int}~{n_int} 轮前范围内未找到关键字：" + ", ".join(terms[:12])]
+    candidates.sort(key=lambda hit: hit[:3], reverse=True)
+    return [f"[{-ago}轮前] …{snippet}…" for _, _, ago, snippet in candidates[:limit]]
 
 
 def recall_tool(arguments):
-    """Dispatch entry used by agent.py."""
     if not isinstance(arguments, dict):
         return ["recall 参数必须是对象"]
     keywords = arguments.get("keywords") or []
     if isinstance(keywords, str):
         keywords = [keywords]
+    if not isinstance(keywords, list):
+        return ["keywords 必须为文本数组"]
     return recall(
         keywords,
         arguments.get("n", 1),
         arguments.get("m", 1),
         window=arguments.get("window", SNIPPET_WINDOW),
         limit=arguments.get("limit", SNIPPET_LIMIT),
+        mode=arguments.get("mode", "evidence"),
     )
 
 
 # ---------------------------------------------------------------- memory ----
 
 
-def write_memory(text, *, kind="note", refs=None, path=MEMORY_PATH):
-    body = (text or "").strip()
-    if not body:
+def write_memory(text, *, kind="note", refs=None, scope="", supersedes="", path=MEMORY_PATH):
+    if not isinstance(text, str) or not text.strip():
         return {"error": "memory text is empty"}
-    digest = hashlib.sha256(body.encode("utf-8")).hexdigest()
-    entry = {
-        "id": digest[:12],
-        "ts": time.time(),
-        "kind": str(kind or "note"),
+    body = text.strip()
+    if len(body) > 3000 or not all(
+        isinstance(value, str) and len(value) <= limit
+        for value, limit in ((kind, 48), (scope, 240), (supersedes, 64))
+    ):
+        return {
+            "error": "memory_bounds",
+            "hint": "Keep content within 3000 characters and use concise kind/scope",
+        }
+    if refs is None:
+        refs = []
+    if (
+        not isinstance(refs, list)
+        or len(refs) > 8
+        or any(not isinstance(ref, str) or not ref.strip() or len(ref) > 240 for ref in refs)
+    ):
+        return {
+            "error": "memory_refs",
+            "hint": "Use at most 8 source IDs or paths, up to 240 characters each",
+        }
+    fields = {
         "text": body,
-        "sha256": digest,
-        "refs": list(refs or []),
+        "kind": kind.strip() or "note",
+        "refs": list(dict.fromkeys(ref.strip() for ref in refs)),
+        "scope": scope.strip(),
+        "supersedes": supersedes.strip(),
     }
-    return _append(path, entry)
+    with _HISTORY_LOCK:
+        entries = load_memory(path)
+        if fields["supersedes"] and not any(row["id"] == fields["supersedes"] for row in entries):
+            return {
+                "error": "unknown_superseded_memory",
+                "hint": "Use the exact ID of an existing note",
+            }
+        for row in reversed(entries):
+            if all(row.get(key, "") == value for key, value in fields.items()):
+                return row
+        digest = hashlib.sha256(
+            json.dumps(fields, sort_keys=True, ensure_ascii=False).encode()
+        ).hexdigest()
+        entry = {"id": digest[:12], "ts": time.time(), "sha256": digest, **fields}
+        return _append(path, entry)
 
 
 def load_memory(path=MEMORY_PATH):
-    return [row for row in _load(path) if row.get("id") and row.get("text")]
+    return [
+        row
+        for row in _load(path)
+        if isinstance(row.get("id"), str) and isinstance(row.get("text"), str) and row["text"]
+    ]
+
+
+def current_notes(entries):
+    superseded = {
+        entry["supersedes"] for entry in entries if isinstance(entry.get("supersedes"), str)
+    }
+    unique = {}
+    for entry in entries:
+        if entry["id"] not in superseded:
+            unique[entry["id"]] = entry
+    return list(unique.values())
+
+
+def search_memory(query, *, kind="", scope="", path=MEMORY_PATH):
+    if not all(isinstance(value, str) and len(value) <= 240 for value in (query, kind, scope)):
+        return {
+            "error": "memory_search_bounds",
+            "hint": "Use short keywords and optional kind/scope",
+        }
+    terms = set(query.casefold().split())
+    if not terms and not kind.strip() and not scope.strip():
+        return {
+            "error": "memory_search_empty",
+            "hint": "Supply keywords in key or a kind/scope filter",
+        }
+    matches = []
+    for index, entry in enumerate(current_notes(load_memory(path))):
+        entry_kind = str(entry.get("kind", "note"))
+        entry_scope = str(entry.get("scope", ""))
+        refs = entry.get("refs") or []
+        if kind and kind.casefold() != entry_kind.casefold():
+            continue
+        if scope and scope.casefold() not in entry_scope.casefold():
+            continue
+        searchable = " ".join([entry["text"], entry_kind, entry_scope, str(refs)]).casefold()
+        count = sum(term in searchable for term in terms)
+        if terms and not count:
+            continue
+        score = (count, bool(refs), index)
+        matches.append(
+            (
+                score,
+                {
+                    "id": entry["id"],
+                    "kind": entry_kind,
+                    "scope": entry_scope,
+                    "preview": entry["text"][:300],
+                    "refs": refs,
+                },
+            )
+        )
+    matches.sort(key=lambda match: match[0], reverse=True)
+    return [entry for _, entry in matches[:6]]
 
 
 def read_memory(key=None, *, path=MEMORY_PATH, preview=120):
@@ -458,26 +593,45 @@ def read_memory(key=None, *, path=MEMORY_PATH, preview=120):
     if not entries:
         return "memory.jsonl 为空：先用 memory 工具写入一条经验。"
     if not key:
-        lines = [
-            f"- {e['id']} [{e.get('kind', 'note')}] {e['text'][:preview]}" for e in entries[-50:]
-        ]
-        return "记忆条目（最新在前请用 id 读取全文）:\n" + "\n".join(reversed(lines))
-    needle = str(key).strip().lower()
-    matches = [e for e in entries if e["id"].lower().startswith(needle)]
+        notes = current_notes(entries)[-12:]
+        lines = [f"- {e['id']} [{e.get('kind', 'note')}] {e['text'][:preview]}" for e in notes]
+        return "记忆条目（最新在前，请用 id 读取全文）：\n" + "\n".join(reversed(lines))
+    needle = str(key).strip().casefold()
+    matches = [e for e in entries if e["id"] == needle]
     if not matches:
-        matches = [e for e in entries if needle in e["text"].lower()]
+        matches = [e for e in entries if e["id"].startswith(needle)]
+    if not matches:
+        matches = [e for e in current_notes(entries) if needle in e["text"].casefold()]
     if not matches:
         return f"无此记忆: {key}"
-    return "\n\n".join(f"[{e['id']}] {e['text']}" for e in matches[-5:])
+    return "\n\n".join(
+        f"[{e['id']}] {e['text']}\n"
+        + json.dumps(
+            {field: e[field] for field in ("kind", "refs", "scope", "supersedes") if e.get(field)},
+            ensure_ascii=False,
+        )
+        for e in matches[-5:]
+    )
 
 
 def memory_tool(arguments):
-    """Dispatch entry used by agent.py: action=write|read|list."""
     if not isinstance(arguments, dict):
         return {"error": "memory 参数必须是对象"}
     action = str(arguments.get("action") or "read").lower()
     if action == "write":
-        return write_memory(arguments.get("content") or "", kind=arguments.get("kind") or "note")
+        return write_memory(
+            arguments.get("content"),
+            kind=arguments.get("kind", "note"),
+            refs=arguments.get("refs"),
+            scope=arguments.get("scope", ""),
+            supersedes=arguments.get("supersedes", ""),
+        )
+    if action == "search":
+        return search_memory(
+            arguments.get("key", ""),
+            kind=arguments.get("kind", ""),
+            scope=arguments.get("scope", ""),
+        )
     if action in ("read", "list"):
-        return read_memory(arguments.get("key"))
-    return {"error": "unknown memory action; use write / read / list"}
+        return read_memory(arguments.get("key") if action == "read" else None)
+    return {"error": "unknown memory action; use write / read / list / search"}

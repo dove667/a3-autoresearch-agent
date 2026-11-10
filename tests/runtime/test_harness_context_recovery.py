@@ -147,11 +147,14 @@ def test_corrupted_summary_record_does_not_allow_repeat_dispatch(tmp_path, monke
 
 
 def agent_functions(context):
+    from a3_research_agent.harness.memory import state
+
     source = ast.parse((SOURCE / "agent.py").read_text())
     wanted = {"save_manifest", "checkpoint", "checkpoint_hash", "recover_journal"}
     nodes = [n for n in source.body if isinstance(n, ast.FunctionDef) and n.name in wanted]
     namespace = {
         "context_manager": context,
+        "memory_state": state,
         "pathlib": pathlib,
         "os": os,
         "json": json,

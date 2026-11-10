@@ -5,6 +5,8 @@ import pathlib
 import re
 import time
 
+TERMINAL_STATES = frozenset({"completed", "failed", "cancelled"})
+
 
 def wait_cursor(messages):
     """Only completed wait results acknowledge a notification in existing history."""
@@ -30,6 +32,90 @@ def wait_cursor(messages):
         ):
             cursor = value["wake_cursor"]
     return cursor
+
+
+def active_jobs():
+    state = pathlib.Path("operational-state.json")
+    if not state.exists():
+        return []
+    return sorted(
+        job
+        for job, record in json.loads(state.read_text()).get("jobs", {}).items()
+        if record.get("status") not in TERMINAL_STATES
+        and re.fullmatch(r"[A-Za-z0-9_-]{1,100}", job)
+    )
+
+
+def wait_for_jobs(req, jobs, *, cursor=None, clock=time.monotonic, sleep=time.sleep):
+    """Renew observation on the Host until a terminal result or actionable notification."""
+    start = clock()
+    path = "/jobs/wait"
+    transient_errors = {408, 429, 500, 502, 503, 504}
+
+    def result(reason, **fields):
+        return {
+            "wait_schema": 1,
+            "reason": reason,
+            "elapsed_seconds": clock() - start,
+            **({"wake_cursor": cursor} if cursor else {}),
+            **fields,
+        }
+
+    delay = 2
+    offset = 0
+    while True:
+        batch = jobs[offset : offset + 64]
+        body = {"job_ids": batch, "seconds": 25}
+        if cursor is not None:
+            body["cursor"] = cursor
+        started = clock()
+        try:
+            value = req("POST", path, body, timeout=90)
+        except OSError:
+            value = {"http_error": 502}
+        if not isinstance(value, dict):
+            return result("observation_error", path=path, error="invalid_wait_response")
+        if value.get("http_error") in transient_errors:
+            sleep(delay)
+            delay = min(30, delay * 2)
+            continue
+        if value.get("http_error"):
+            return result("observation_error", path=path, http_error=value["http_error"])
+        delay = 2
+        reason, rows = value.get("reason"), value.get("jobs")
+        if not isinstance(rows, list) or any(
+            not isinstance(row, dict) or row.get("job_id") not in batch for row in rows
+        ):
+            return result("observation_error", path=path, error="invalid_wait_response")
+        terminal = {
+            "/jobs/" + row["job_id"]: {
+                key: row[key]
+                for key in ("status", "exit_code", "error", "evaluation")
+                if key in row
+            }
+            for row in rows
+            if row.get("status") in TERMINAL_STATES
+        }
+        if terminal:
+            return result("state_changed", changes=terminal)
+        if reason == "notification":
+            signals = value.get("signals")
+            if not isinstance(signals, dict) or not re.fullmatch(
+                r"[0-9a-f]{64}", str(signals.get("cursor", ""))
+            ):
+                return result("observation_error", path=path, error="invalid_notification")
+            cursor = signals["cursor"]
+            return result(
+                "notification",
+                notifications={key: signals.get(key) for key in ("feedback", "inputs", "is_main")},
+            )
+        if reason == "observation_error":
+            return result("observation_error", path=path, jobs=rows)
+        if reason != "timeout":
+            return result("observation_error", path=path, error="invalid_wait_response")
+        offset = offset + 64 if offset + 64 < len(jobs) else 0
+        # A healthy Host holds the request. Pace early timeout responses too.
+        sleep(max(0, 2 - (clock() - started)))
 
 
 def wait_for_change(

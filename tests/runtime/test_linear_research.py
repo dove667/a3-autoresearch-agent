@@ -115,34 +115,116 @@ def test_real_single_agent_submits_two_jobs_before_waiting(tmp_path):
     sandbox = ProcessSandbox(tmp_path / "processes", versions)
     submitted = []
     decisions = []
+    observed = []
+
+    def tool_call(name, call_id, arguments):
+        return {
+            "type": "function_call",
+            "name": name,
+            "call_id": call_id,
+            "arguments": json.dumps(arguments),
+        }
 
     def provider(**request):
         decisions.append(request)
+        assert {"plan", "memory"} <= {tool["name"] for tool in request["tools"]}
         assert "delegate" not in {tool["name"] for tool in request["tools"]}
-        assert "research yourself" in request["instructions"]
-        return {
-            "status": "completed",
-            "output": [
-                {
-                    "type": "function_call",
-                    "name": "gateway",
-                    "call_id": name,
-                    "arguments": json.dumps(
+        plan = json.loads(request["input"][-1]["content"])["research_plan"]
+        if len(decisions) == 1:
+            output = [
+                tool_call(
+                    "plan",
+                    "create-plan",
+                    {
+                        "action": "update",
+                        "revision": 0,
+                        "goal": "Verify independent execution",
+                        "steps": [
+                            {"id": name, "task": name, "criterion": "Synthetic completion receipt"}
+                            for name in ("collect", "evaluate")
+                        ],
+                    },
+                ),
+                *[
+                    tool_call(
+                        "gateway",
+                        name,
                         {
                             "method": "POST",
                             "path": "/jobs",
                             "body": {"command": ["python", name + ".py"]},
-                        }
-                    ),
+                        },
+                    )
+                    for name in ("collect", "evaluate")
+                ],
+            ]
+        elif len(decisions) == 2:
+            assert plan["ready"] == ["collect", "evaluate"]
+            output = [
+                tool_call(
+                    "plan",
+                    "bind-jobs",
+                    {
+                        "action": "update",
+                        "revision": plan["revision"],
+                        "steps": [
+                            {"id": name, "status": "active", "jobs": [record["job_id"]]}
+                            for name, record in zip(("collect", "evaluate"), submitted, strict=True)
+                        ],
+                    },
+                ),
+                tool_call("wait", "wait", {}),
+            ]
+        elif len(decisions) == 3:
+            assert all(
+                list(step["observed_jobs"].values()) == ["completed"] and step["status"] == "active"
+                for step in plan["steps"].values()
+            )
+            output = [
+                tool_call(
+                    "plan",
+                    "close-plan",
+                    {
+                        "action": "update",
+                        "revision": plan["revision"],
+                        "steps": [
+                            {"id": name, "status": "done", "evidence": ["job:" + record["job_id"]]}
+                            for name, record in zip(("collect", "evaluate"), submitted, strict=True)
+                        ],
+                    },
+                ),
+                tool_call(
+                    "write",
+                    "outcome",
+                    {
+                        "path": "run-outcome.json",
+                        "content": '{"status":"complete"}',
+                    },
+                ),
+            ]
+        else:
+            assert plan["counts"]["done"] == 2 and not plan["ready"]
+            output = [
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "Synthetic jobs verified."}],
                 }
-                for name in ("collect", "evaluate")
-            ],
-        }
+            ]
+        return {"status": "completed", "output": output}
 
     def remote(operation, payload):
-        assert operation == "submit", "No wait/status between independent submissions"
-        submitted.append(payload)
-        return {"job_id": str(len(submitted)), "status": "queued"}
+        if operation == "submit":
+            submitted.append(payload)
+            return {"job_id": payload["job_id"], "status": "queued"}
+        assert operation == "jobs-status"
+        assert len(submitted) == 2
+        observed.append(payload)
+        return {
+            "jobs": [
+                {"job_id": job, "status": "completed", "exit_code": 0} for job in payload["job_ids"]
+            ]
+        }
 
     app = create_app(
         model_name="fixture/scripted",
@@ -190,14 +272,21 @@ def test_real_single_agent_submits_two_jobs_before_waiting(tmp_path):
         files["task.txt"] = "Submit two independent synthetic remote jobs."
         try:
             session = app.state.start_local_harness(
-                ["python", "-m", "a3_research_agent.harness.agent", "--test"],
+                ["python", "-m", "a3_research_agent.harness.agent"],
                 files,
                 "Bearer root-token",
             )["session_id"]
             record = sandbox.records[session]
             assert record["process"].wait(timeout=20) == 0
-            assert len(decisions) == 1
+            assert len(decisions) == 4
             assert len(submitted) == 2
+            assert len(observed) == 1
+            assert set(observed[0]["job_ids"]) == {item["job_id"] for item in submitted}
+            workspace = record["directory"]
+            plan = json.loads((workspace / "research-plan.json").read_text())
+            assert plan["revision"] == 3
+            state = json.loads((workspace / "operational-state.json").read_text())
+            assert {job["status"] for job in state["jobs"].values()} == {"completed"}
             assert {item["experiment_id"] for item in submitted} == {session}
             assert len(sandbox.records) == 1
             assert not (record["directory"] / "orchestration").exists()
