@@ -138,3 +138,37 @@ def test_focus_prioritizes_steps_then_route_and_excludes_paused_routes():
     assert result["ready"] == ["alternative", "primary", "low"]
     assert result["focus"] == ["alternative"]
     assert next(iter(result["steps"])) == "alternative"
+
+
+def test_context_trimming_removes_routes_of_omitted_steps():
+    text = "研究" * 600
+    result = plan.dispatch(
+        {
+            "action": "update",
+            "revision": 0,
+            "direction": {
+                "objective": text,
+                "metrics": [text[:600]] * 20,
+                "gaps": [text[:600]] * 20,
+            },
+            "routes": [
+                route(
+                    f"r{i}",
+                    question=text,
+                    hypothesis=text,
+                    experiment=text,
+                    decision_rule=text,
+                    conclusion=text,
+                )
+                for i in range(5)
+            ],
+            "steps": [
+                step(
+                    f"s{i}", route=f"r{i}", task="t" * 200, criterion="c" * 240, progress="p" * 300
+                )
+                for i in range(5)
+            ],
+        }
+    )
+    assert result["steps"]
+    assert set(result["routes"]) <= {item["route"] for item in result["steps"].values()}
