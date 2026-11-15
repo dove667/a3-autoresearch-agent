@@ -14,7 +14,7 @@
 ├── prompt/                SOUL、执行约定与工作区说明
 ├── skills/                全项目唯一技能库
 ├── workspace/             Agent 自由读写的研究区，Git 忽略
-├── memory/                由 memory 工具管理的长期经验，Git 忽略
+├── memory/                由 memory 工具管理的经验修订与语义索引，Git 忽略
 ├── plan/                  跨运行研究计划与复盘，Git 忽略
 ├── trajectories/          模型执行与恢复记录，Git 忽略
 ├── runs/                  Host 调试与维护测试原始输出，Git 忽略
@@ -38,7 +38,7 @@
 
 `execution/controller/` 使用标准库管理远程作业；`execution/scheduling/` 负责资源准入，`execution/images/` 保存远程容器构建资源。所有 Python 导入使用 `a3_research_agent.*`。
 
-`harness/history.py` 检索原始执行历史，`harness/long_term_memory.py` 管理主动长期经验，`harness/operational_state.py` 记录读取和操作进度。`path_safety.py` 提供路径校验，`harness_payload.py` 声明发布源码。
+`harness/history.py` 检索原始执行历史，`harness/memory/` 管理主动长期经验，`harness/operational_state.py` 记录读取和操作进度。`path_safety.py` 提供路径校验，`harness_payload.py` 声明发布源码。
 
 ## 研究文件与机器状态
 
@@ -127,3 +127,5 @@ A3 参考源码按实际文件内容生成共享缓存；各次运行的 `public
 `runs/` 的控制台与请求诊断按排错价值保留；`trajectories/` 按原始行为和研究经验的分析价值保留，清理前核对当前恢复及经验来源引用。维护测试输出集中到 `runs/checks/`，持久工作约定更新本地 `AGENTS.md`。部署参数由 `.env` 配置，见[环境配置](../guides/setup.md)。
 
 所有 Controller 共用配置的执行端资源根目录，源码升级继续使用原 GPU 调度锁和作业记录。大文件与只读 exports 留在执行端。原地升级边界保存在 `.host/release-upgrades/`，事件保存在 `.host/release-events.jsonl`。
+
+`memory/entries.jsonl` 追加保存条目版本；`memory/index.sqlite3` 是按模型与内容哈希维护的可重建向量缓存；`memory/sources.json` 连接迁入条目的历史原文。`host/memory/` 管理模型校验、私有服务和进程生命周期；`harness/memory/` 管理条目、检索、来源与受控客户端。

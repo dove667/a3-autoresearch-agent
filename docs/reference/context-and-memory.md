@@ -57,15 +57,32 @@ the runtime preserves an immutable revision/hash snapshot under the trajectory's
 `plan-snapshots/`. Each night starts a new run and empty model context; shared workspace, plan, memory and skills carry research progress. Same-day interruption recovery remains an explicit option. The Agent updates its route from new evidence while retaining prior
 decisions, job references and results.
 
-The `memory` tool manages active long-term experience in the shared project-level
-`memory/entries.jsonl`. Use `memory(action="search", key=...)` to look up prior conclusions, failures
-and verified entry points. Add `kind` or `scope` when a narrower search is needed,
-then read the selected note by ID. Notes can carry applicability in `scope`,
-source IDs or paths in `refs`, and an old note ID in `supersedes`. Search excludes
-superseded notes, which remain readable by ID. An empty search returns recent
-current notes with their source references. Existing free-text notes stay
-readable and searchable. The Agent chooses which findings to record and checks
-their applicability before reuse.
+The `memory` tool manages shared research experience in `memory/entries.jsonl`.
+Entries have stable IDs, revisions, applicability, evidence references and an active/archived
+lifecycle. The Host starts an authenticated loopback memory worker and a local embedding
+process for each research run, then shuts them down together. Model weights remain cached;
+no external embedding API receives research notes. Current plan focus supplies a small
+retrieved experience view on model requests; complete notes and sources are read on demand.
+
+Retrieval combines normalized keywords, Chinese character terms and local semantic vectors.
+Search accepts a natural-language `key`, optional `scope`/`kind`, and `offset`/`limit` pages.
+The SQLite index is rebuildable and keyed by model fingerprint and content hash. Writes
+check exact and near duplicates; similar findings require an explicit update or a reasoned
+separate write. Similarity identifies candidates, while the Agent decides whether their
+experimental conditions and conclusions match.
+
+Use `write` for new durable lessons; `read` returns the current revision. `update` and
+`archive` require a matching revision or SHA256 and preserve prior records. `lifetime=run`
+limits a note to `run_ids`, defaulting to the creating run; `run_ids` records associated runs and supplies the allowed run list for run-lifetime notes. Archived
+and other-run temporary notes are excluded from normal suggestions and searches. The
+current input and permissions govern research; a historical note does not grant permission.
+
+The systems have separate responsibilities: plan describes future research and current work;
+memory captures learned findings and failure lessons; skills contain reusable procedures.
+`memory(action="sources", id=...)` lists controlled evidence locators. A selected `ref`
+can read available workspace text, verified historical bundle text or imported-note provenance.
+Job references return existing job API locators. Unresolved evidence is reported explicitly.
+`recall` searches the current run's original dialogue; it does not search old bundle files.
 
 Use `recall` for original observations retained in the current run's `conversation/history.jsonl`. Without `n`/`m`, it searches the available
 original history; an explicit round window retains its existing meaning. Search

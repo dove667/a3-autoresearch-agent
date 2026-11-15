@@ -64,3 +64,14 @@ bash start-autoresearch.sh --check
 需要联网研究时设置 `A3_WEB_ENABLED=1` 和 `TAVILY_API_KEY`。Host 提供搜索、提取、缓存和请求计数；凭据不交给研究进程。网页代理使用独立的 `A3_TAVILY_HTTP_PROXY` 配置，完整字段见 `.env.example`。
 
 首次启动、同一 run 恢复、原地发布与夜间窗口见[使用教程](usage.md)。长期研究目标和行为原则由 `prompt/SOUL.md` 提供，Host 按版本装载三个 prompt，根技能库独立管理版本和修改历史。
+
+
+## 本地记忆语义服务
+
+安装带 Metal 支持的 `llama-server`（其他平台可使用相应 CPU 构建），并使其位于 PATH；可用 `A3_MEMORY_LLAMA_SERVER` 指定可执行文件。准备模型：
+
+```bash
+uv run python -m a3_research_agent.host.memory.model --project-root .
+```
+
+默认模型为官方 [Qwen3-Embedding-0.6B Q8 GGUF](https://modelscope.cn/models/Qwen/Qwen3-Embedding-0.6B-GGUF)，下载后校验 SHA256 并保存在 `model-cache/`。常规启动器在实际研究启动时启动本地记忆服务，停止时关闭；`--check` 不启动推理服务。实验期间使用缓存模型，索引在 `memory/` 持久保存。

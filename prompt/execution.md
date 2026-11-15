@@ -1,6 +1,6 @@
 # 研究工具与执行约定
 
-Version: 0.27.0
+Version: 0.28.0
 
 本文件按当前操作查阅。工具定义提供参数、类型与限制；这里说明跨工具流程及直接使用 `gateway` 的入口。
 `input-manifest.json` 的 `execution_index` 给出章节字符 `offset/end` 和全文 SHA256，可用 `read` 分页定位；索引 `truncated:true` 时从 `next_offset` 续读。
@@ -155,3 +155,21 @@ Host 在进程停止后保存暂停状态和在途作业。运行状态、contin
 先保存计划、证据、记忆和恢复状态，再退出。需要主动停止时，单独调用 `POST /sessions/self/stop`，正文 `{"reason":"状态已保存"}`；进程可能在收到响应前结束。保存状态后仍需进程实际停止，Host 才记录退出结果。操作者暂停会保留在途作业，恢复时查询原编号。
 
 checkpoint 与工具 journal 由 Harness 保存；上下文压缩使用有来源的完整摘要，失败时保留原 checkpoint 并等待维护。人类反馈和输入更新经操作者登记后显式投递；沿反馈来源与长期目标继续研究。
+
+
+## 长期记忆的操作
+
+| 需要保存的内容 | 使用工具 |
+| --- | --- |
+| 下一步、研究路线、阻塞、作业进度 | `plan` |
+| 已学到的规律、失败教训、实验结论及适用条件 | `memory` |
+| 已验证、可复用的操作方法与附件 | `skills` |
+
+1. 开始研究问题时用自然语言搜索：`memory(action="search", key="ACT 续训为什么损害另一任务的表现", limit=6)`。搜索结合语义和关键词，`scope`、`kind` 可缩小范围；返回 `next_offset` 时可继续分页。
+2. 用 `memory(action="read", key="<ID>")` 读完整结论与 revision。默认只检索当前有效且适用于本 run 的记录。
+3. 用 `memory(action="sources", id="<ID>")` 列来源；再传返回的 `ref`、`offset`、`limit` 读取可用原文。作业来源通过返回的 job 接口读取；历史原记忆是来源记录，实验结论仍应核对实验结果。`recall` 用于当前 run 的原始对话。
+4. 保存可复用经验：`memory(action="write", content="<结论与限制>", kind="finding", scope="<模型、任务、条件>", refs=["jobs/<实际ID>"])`。临时观察加 `lifetime="run"`，日常作业进度直接更新 plan。
+5. 修正经验：先 read，再 `memory(action="update", id="<ID>", revision=<当前版本>, content="<修正后的完整结论>", reason="<修正依据>")`。归档过时内容使用 `archive`，同样提供 id、revision 和 reason；历史版本继续保留。
+6. 相似条目提示出现时先读已有记录，同一发现更新原记录。确属不同发现时说明区别，使用 `force=true, reason="<区别>"` 保存；不要为了绕过提示直接重复写入。版本冲突时重新 read 后合并。
+
+`list` 支持 offset/limit，审核历史用 `include_archived=true`。服务故障会明确报错，保留进展并报告维护者。
