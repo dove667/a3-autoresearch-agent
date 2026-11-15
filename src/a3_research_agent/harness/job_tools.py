@@ -79,7 +79,7 @@ TOOLS = [
         "job_submit",
         "Submit one remote command as an argument array. Attach local scripts with workspace_files "
         "using only path and optional destination; the tool computes SHA256. Attachments are "
-        "research/ UTF-8 files, at most 1 MiB each and "
+        "scripts/ UTF-8 files, at most 1 MiB each and "
         "8 MiB together. Use input_exports for binary assets, "
         "existing data or weights. Defaults gpu=false. Submit independent jobs, then wait. "
         "A submission_unknown response must be reconciled by its job_id, never resubmitted blindly.",
@@ -159,10 +159,10 @@ def workspace_references(references, workspace, *, allow_pinned_sources=False):
         relative = source.relative_to(root).as_posix()
         relative_name(relative, "source_path")
         parts = PurePosixPath(relative).parts
-        if len(parts) < 2 or parts[0] != "research":
+        if len(parts) < 2 or parts[0] != "scripts":
             fail(
                 "invalid_source_path",
-                "Attach source under research/; use destination to rename it in the remote workspace.",
+                "Attach source under scripts/; use destination to rename it in the remote workspace.",
             )
         destination = relative_name(reference.get("destination", relative), "destination")
         if destination in names:
@@ -220,7 +220,7 @@ def submit_request(args, workspace, *, allow_pinned_sources=False):
         or not command[0].strip()
     ):
         fail(
-            "invalid_command", 'Use an argument array, for example ["python", "research/train.py"].'
+            "invalid_command", 'Use an argument array, for example ["python", "scripts/train.py"].'
         )
     body = {**args, "gpu": boolean(args.get("gpu", False), "gpu")}
     if "workspace_files" in body:

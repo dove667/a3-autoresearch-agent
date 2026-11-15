@@ -95,8 +95,8 @@ def published_run(tmp_path, monkeypatch, request):
     workspace.mkdir(parents=True)
     protected = {
         "checkpoint.json": '[{"role":"user","content":"existing task and observations"}]',
-        "research/lesson.md": '{"id":"learned","text":"actual research lesson"}\n',
-        "research/train.py": "print('preserve research')\n",
+        "experiments/lesson.md": '{"id":"learned","text":"actual research lesson"}\n',
+        "scripts/train.py": "print('preserve research')\n",
         "research-plan.json": '{"version":1,"revision":5,"steps":{}}',
         "operational-state.json": '{"version":1,"jobs":{"existing-job":{"status":"running"}}}',
         "trajectory.jsonl": '{"original":"evidence"}\n',
@@ -617,8 +617,8 @@ def test_release_after_trajectory_rename_keeps_workspace_mapping(published_run):
         name: fixture_file(run, workspace, name).read_bytes()
         for name in (
             "checkpoint.json",
-            "research/lesson.md",
-            "research/train.py",
+            "experiments/lesson.md",
+            "scripts/train.py",
             "trajectory.jsonl",
         )
     }

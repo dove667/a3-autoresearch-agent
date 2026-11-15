@@ -49,7 +49,10 @@ plan step. Program-level waiting handles queueing and running jobs without
 model polling. The Agent verifies the step's criterion before recording evidence
 and marking it done. The plan tracks Agent claims and observed job states.
 
-Same-run resume reads `research-plan.json` from the current conversation state. A published
+The Agent authors the plan through `plan(action="show")` and
+`plan(action="update", revision=..., ...)`. The Harness persists it at
+`runtime_paths.state/research-plan.json`, under the current trajectory's `conversation/`.
+Same-run resume reads that plan from the current conversation state. A published
 night release preserves that plan and carries the operator-reviewed handoff in its
 input bundle. The Agent updates its route from new evidence while retaining prior
 decisions, job references and results.
@@ -236,8 +239,9 @@ reachability. Neither a process exit code nor a mock response proves those facts
 The Host sets `A3_STATE_ROOT` to `trajectories/<run>/conversation/`. The fixed
 runtime stores its plan, resume/continuation manifests, outcome, checkpoint, tool
 journal, history, trajectory, operational ledger, compaction transactions, preflight
-receipts and failure records there. Research code, experiment working material and
-freely written notes stay in the shared `workspace/`. Skills use the single root
+receipts and failure records there. Research code stays in `workspace/scripts/<model-or-method>/<optional-series>/<purpose>/`.
+Experiment configurations, results, figures, videos and analysis stay in
+`workspace/experiments/<date-name>/`, with job/export IDs and source hashes. Skills use the single root
 `skills/` library.
 
 The `plan` and `progress` tools maintain program metadata. The Agent records its

@@ -1,6 +1,6 @@
 # 研究工作区
 
-Version: 0.4.0
+Version: 0.5.0
 
 本地原生进程只提供文件与研究工具，没有本地 bash 或 Python 执行入口。仿真、训练、评估及脚本执行通过远程作业完成。运行状态 `runtime_paths` 给出实际路径：
 
@@ -13,9 +13,16 @@ Version: 0.4.0
 | `skills` | 统一技能库，使用 `skills` 工具管理 |
 | `memory` | 跨会话经验库，使用 `memory` 工具管理 |
 
-研究脚本保存在 `research/`，以便通过 `workspace_files` 附加到远程作业。实验材料和自由工作文件保存在工作区；研究计划通过 `plan` 工具维护。暂停、恢复和升级 Harness 共用这个工作区；恢复后按计划核对真实作业与产物。
+按以下约定组织研究文件：
 
-研究计划、接续与恢复清单、运行状态，以及 checkpoint、工具 journal、原始消息、执行日志、预检回执和上下文档案，均由 Harness 保存到当前 trajectory 的 `conversation/`。`context-history/...` 与 `.autorun-spill/...` 是相对 `runtime_paths.state` 的原文引用；使用 `recall` 检索，或拼接该根目录后用 `read` 分页核对。普通文件工具不能修改程序档案。
+- `scripts/<模型或方法>/<可选研究系列>/<用途>/` 保存源码，例如 `scripts/act/p142/training/`、`scripts/act/baseline/evaluation/`、`scripts/dagger/validation/`。研究系列仅在需要时增加一层；用途按实际内容命名，如 `data`、`training`、`evaluation`、`validation`；相关依赖放在一起，共用脚本复用，参数通过配置或命令传入。
+- `experiments/<日期-实验名>/` 保存该实验的 `config.json`、作业与源码引用、`results/`、`figures/`、`videos/` 和 `analysis/`。配置记录模型版本、数据、超参数、seed 与评测设置；每次独立实验单独建目录。按实际产物创建子目录，源脚本统一留在 `scripts/`。
+
+用 `workspace_files` 将 `scripts/` 中的源码附加到远程作业。需要多个依赖时一并附加；通过 `destination` 明确远程文件位置，并让命令、导入及相对路径与目标位置一致。大文件留在执行端，用 job/export ID 和哈希关联本地实验记录。暂停、恢复和升级 Harness 共用这个工作区；恢复后按计划核对真实作业与产物。
+
+研究计划由 Agent 编写，通过 `plan(action="show")` 查看、`plan(action="update", revision=..., ...)` 修改，Harness 保存到 `runtime_paths.state/research-plan.json`，即当前 trajectory 的 `conversation/research-plan.json`。计划保存目标、步骤、依赖、进展和作业引用。
+
+接续与恢复清单、运行状态，以及 checkpoint、工具 journal、原始消息、执行日志、预检回执和上下文档案，也由 Harness 保存到该 `conversation/`。`context-history/...` 与 `.autorun-spill/...` 是相对 `runtime_paths.state` 的原文引用；使用 `recall` 检索，或拼接该根目录后用 `read` 分页核对。普通文件工具不能修改程序档案。
 
 根目录 `skills/` 是唯一技能库，不复制到 workspace。通过技能工具搜索摘要、按需读正文与附件、创建和修改方法；通过 `memory` 工具检索、记录及修正长期经验。它们独立于对话和工作区保存，不随 Harness 发布覆盖。
 

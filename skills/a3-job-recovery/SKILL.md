@@ -1,8 +1,9 @@
 ---
 name: a3-job-recovery
-description: Use when submitting A3 research scripts, reconciling an unknown submission, diagnosing queued jobs or inspecting execution health without opening held-out scores.
+description: Use when submitting A3 research scripts, reconciling an unknown submission,
+  diagnosing queued jobs or inspecting execution health without opening held-out scores.
 metadata:
-  version: 0.1.0
+  version: 0.1.2
 ---
 
 # Submit and reconcile research jobs
@@ -11,13 +12,13 @@ The Controller's job ID identifies the execution. Save it with the submitted sou
 
 ## Submit the actual source
 
-Use the current `job_submit` tool and an argument-array command. Attach a local UTF-8 script under `research/` with `workspace_files`; the tool computes its SHA256. `files` contains literal UTF-8 source text. Existing datasets and weights use authorized `input_exports`.
+Use the current `job_submit` tool and an argument-array command. Attach a local UTF-8 script under `scripts/` with `workspace_files`; the tool computes its SHA256. `files` contains literal UTF-8 source text. Existing datasets and weights use authorized `input_exports`.
 
 ```json
 {
-  "command": ["python", "research/inspect_data.py"],
+  "command": ["python", "scripts/act/shared/diagnostics/inspect_data.py"],
   "gpu": false,
-  "workspace_files": [{"path": "research/inspect_data.py"}]
+  "workspace_files": [{"path": "scripts/act/shared/diagnostics/inspect_data.py"}]
 }
 ```
 

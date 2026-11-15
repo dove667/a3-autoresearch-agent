@@ -1,8 +1,12 @@
 ---
 name: a3-mujoco-autoresearch
-description: Develop and improve learned policies for the A3 dual-arm MuJoCo cookie-packing project. Use for method selection, ACT/Diffusion/Flow/VLA/world-model experiments, data and training diagnostics, paired closed-loop evaluation, and reusable research experience. Applies to research planning or authorized execution, not permission to start training or change the benchmark.
+description: Develop and improve learned policies for the A3 dual-arm MuJoCo cookie-packing
+  project. Use for method selection, ACT/Diffusion/Flow/VLA/world-model experiments,
+  data and training diagnostics, paired closed-loop evaluation, and reusable research
+  experience. Applies to research planning or authorized execution, not permission
+  to start training or change the benchmark.
 metadata:
-  version: 0.1.18
+  version: 0.1.19
 ---
 
 # A3 MuJoCo autoresearch

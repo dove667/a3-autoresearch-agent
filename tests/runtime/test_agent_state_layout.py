@@ -24,9 +24,9 @@ def test_runtime_state_and_handoff_use_the_internal_directory(tmp_path, monkeypa
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     monkeypatch.chdir(workspace)
-    research = workspace / "research"
-    research.mkdir()
-    (research / "finding.md").write_text("Retain the observed result")
+    results = workspace / "experiments"
+    results.mkdir()
+    (results / "finding.md").write_text("Retain the observed result")
     atomic(state_paths.path(state_paths.CHECKPOINT), "[]")
     agent.checkpoint([])
     agent.log({"event": "state-saved"})
@@ -37,11 +37,11 @@ def test_runtime_state_and_handoff_use_the_internal_directory(tmp_path, monkeypa
     assert state_paths.path(state_paths.OPERATIONS).is_file()
     assert json.loads(state_paths.path(state_paths.CHECKPOINT).read_text()) == []
     assert {path.name for path in workspace.iterdir()} == {
-        "research",
+        "experiments",
     }
     continuation = read_continuation(workspace, state_paths.state_root())
     assert state_paths.CHECKPOINT not in continuation["files"]
-    assert "research/finding.md" in continuation["files"]
+    assert "experiments/finding.md" in continuation["files"]
 
 
 def test_logical_archive_sources_restore_from_state_without_rewriting_bytes(tmp_path, monkeypatch):

@@ -30,13 +30,13 @@ A3_REMOTE_MAX_JOBS='0'
 
 ## 源码提交与回执
 
-Agent 使用 `job_submit` 附加当前 `research/` 中的 UTF-8 研究源码，工具计算文件 SHA256。`destination` 可指定作业中的相对目标路径，省略时保留源路径。例如：
+Agent 使用 `job_submit` 附加当前共享工作区 `scripts/` 中的 UTF-8 研究源码，工具计算文件 SHA256。`destination` 可指定作业中的相对目标路径，省略时保留源路径。例如：
 
 ```json
 {
   "command": ["python", "runner.py"],
   "gpu": false,
-  "workspace_files": [{"path": "research/runner.py", "destination": "runner.py"}]
+  "workspace_files": [{"path": "scripts/act/baseline/evaluation/runner.py", "destination": "runner.py"}]
 }
 ```
 

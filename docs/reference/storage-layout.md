@@ -43,10 +43,19 @@
 
 ```text
 workspace/
-├── research/              Agent 编写的研究代码
-├── experiments/           可继续使用的实验配置、分析与工作材料
-├── results/               本地研究输出
-└── …                      Agent 自行保存的研究文件与笔记
+├── scripts/               按模型或方法、研究系列和用途组织的源码
+│   ├── act/
+│   │   ├── baseline/      独立基线系列
+│   │   ├── p142/          同一研究系列的 data、training、evaluation 等入口
+│   │   └── shared/        ACT 共用的资产与诊断脚本
+│   └── dagger/            按来源核对、对账、验证等用途分类
+└── experiments/<日期-实验名>/
+    ├── config.json        模型、数据、超参数、seed 与评测设置
+    ├── report.md          实验报告与结论
+    ├── results/           逐回合结果、汇总、作业与源码引用
+    ├── figures/           图表
+    ├── videos/            录像
+    └── analysis/          分析与实验结论
 
 memory/
 └── entries.jsonl          主动长期经验、适用条件、修正与来源
@@ -80,11 +89,15 @@ trajectories/<开始时间>/
 
 Host 用 `A3_STATE_ROOT` 指定当前 run 的 `conversation/`，并在 `runtime_paths.state` 提供实际路径。`harness/state_paths.py` 统一定位 checkpoint、journal、压缩事务和操作台账；恢复继续读取原状态。`context-history/...`、`.autorun-spill/...` 等逻辑相对来源引用以该路径为基准，原文与内容哈希保持稳定，可通过普通文件工具只读核对。
 
-Host 管理全部程序元数据。`plan` 保存研究计划，`progress` 保存操作进展；`progress(action="outcome", status="continue"|"blocked", reason=..., external_blocker=...)` 记录研究状态。恢复与接续清单由程序生成，`files` 只列出工作区研究文件。
+研究计划内容由 Agent 编写，通过 `plan(action="show")` 查看、`plan(action="update", revision=..., ...)` 修改；Harness 将它保存在 `runtime_paths.state/research-plan.json`，即当前 trajectory 的 `conversation/research-plan.json`。其中记录目标、步骤、依赖、进展和作业引用。Host 管理其持久化与恢复。`progress` 保存操作进展；`progress(action="outcome", status="continue"|"blocked", reason=..., external_blocker=...)` 记录研究状态。恢复与接续清单由程序生成，`files` 只列出工作区研究文件。
 
 `memory` 保存 Agent 主动提炼的跨会话经验；`recall` 检索原始消息和工具观测；`skills` 管理可复用方法及附件。普通 `read`、`write`、`edit` 不直接接触根技能库和长期记忆；当前会话状态允许 `read`、`list`、`search_files` 只读访问。
 
-研究参数、逐回合结果、模型或数据摘要、录像与研究代码留在工作区或远程作业中，并记录原始 job 与来源。旧源码只作为历史快照保存，当前研究继续使用 `workspace/research/`。
+源码放在 `workspace/scripts/<模型或方法>/<可选研究系列>/<用途>/`，例如 `act/p142/training/`、`act/baseline/evaluation/`、`dagger/validation/`。研究系列层按需设置，按 data、training、evaluation、validation 等实际用途分类；参数变化通过配置或命令传入，复用同一入口。
+
+实验配置与产物集中到 `workspace/experiments/<日期-实验名>/`，需要时创建 results、figures、videos、analysis 子目录。配置记录模型与数据版本、超参数、seed、评测条件，结果关联原始 job/export ID、源码路径与哈希。大文件留在执行端，本地保存引用。历史源码快照随对应 trajectory 保存。
+
+retained 知识快照保存 `scripts/` 与 `experiments/` 中的 UTF-8 文本；实验二进制留在共享 workspace，仅在 `retained.json` 中登记路径、SHA256 与大小。迁移到另一项目或执行环境时，通过 exports 交接所需二进制资产。
 
 ## 调试、发布与远程数据
 

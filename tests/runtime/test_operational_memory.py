@@ -68,7 +68,7 @@ def test_closed_claim_survives_reload_without_becoming_acceptance(tmp_path, monk
             "id": "check",
             "status": "closed",
             "note": "rejected",
-            "evidence": ["research/decision.json"],
+            "evidence": ["experiments/decision.json"],
         }
     )
     restored = load(tmp_path, monkeypatch)

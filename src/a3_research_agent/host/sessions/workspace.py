@@ -11,8 +11,6 @@ from a3_research_agent.path_safety import workspace_path
 
 ACTIVE_STATES = {"created", "running"}
 MAX_ACTIVE_SESSIONS = 1
-MAX_INPUT_FILES = 128
-MAX_INPUT_BYTES = 20 * 1024 * 1024
 MAX_ARTIFACT_BYTES = 32 * 1024 * 1024
 DEFAULT_ARTIFACT_PAGE_BYTES = 1024 * 1024
 
@@ -58,11 +56,7 @@ def session_workspace(root: Path, session: str) -> Path:
 
 
 def write_workspace_files(root: Path, files: dict[str, str]) -> None:
-    if (
-        len(files) > MAX_INPUT_FILES
-        or sum(len(value.encode()) for value in files.values()) > MAX_INPUT_BYTES
-    ):
-        raise ValueError("Session input exceeds 128 files or 20 MiB")
+    """Materialize Host-selected local text after validating every target path."""
     targets = [(workspace_path(root, name), content) for name, content in files.items()]
     for path, content in targets:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -85,10 +79,10 @@ def write_durable(path: Path, content: str) -> None:
 
 
 def read_workspace_files(root: Path, references: list[dict]) -> tuple[dict, list]:
-    """Read bounded, hash-pinned UTF-8 source under the research directory."""
+    """Read bounded, hash-pinned UTF-8 source under scripts/."""
     selected, manifest, total = {}, [], 0
     if not 1 <= len(references) <= 16:
-        raise ValueError("Select 1..16 workspace research files")
+        raise ValueError("Select 1..16 workspace script files")
     for reference in references:
         name, expected = reference["path"], reference["sha256"]
         path = PurePosixPath(name)
@@ -97,11 +91,11 @@ def read_workspace_files(root: Path, references: list[dict]) -> tuple[dict, list
             or "\\" in name
             or path.is_absolute()
             or len(path.parts) < 2
-            or path.parts[0] != "research"
+            or path.parts[0] != "scripts"
             or any(part in {"..", "."} or part.startswith(".") for part in path.parts)
             or name in selected
         ):
-            raise ValueError("Workspace attachments need unique canonical research paths")
+            raise ValueError("Workspace attachments need unique canonical scripts paths")
         directory = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
         leaf = None
         try:

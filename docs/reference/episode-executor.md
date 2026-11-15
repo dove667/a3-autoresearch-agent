@@ -4,7 +4,7 @@
 
 ## 提交 batch
 
-将 manifest 和命令依赖的文件放入远程作业的 `/workspace`。例如 `research/episodes.json`：
+将 manifest 和命令依赖的文件放入远程作业的 `/workspace`。本地源码从 `scripts/` 通过 `workspace_files` 附加；本地 `experiments/` 中的 manifest 读取后通过 `files` 字段附加为远程同名路径。例如 `experiments/example-batch/episodes.json`：
 
 ```json
 {
@@ -12,7 +12,7 @@
   "episodes": [
     {
       "id": "episode-001",
-      "command": ["python", "research/run_episode.py", "--seed", "1", "--report", "/outputs/example-batch/episode-001.json"],
+      "command": ["python", "scripts/act/baseline/evaluation/run_episode.py", "--seed", "1", "--report", "/outputs/example-batch/episode-001.json"],
       "report": "/outputs/example-batch/episode-001.json",
       "work_units": 1
     }
@@ -30,7 +30,7 @@
 作业命令为：
 
 ```bash
-python /run/a3/episode_executor.py --manifest research/episodes.json --output /outputs/example-batch
+python /run/a3/episode_executor.py --manifest experiments/example-batch/episodes.json --output /outputs/example-batch
 ```
 
 每个新 batch 使用独立输出目录；跨作业恢复同一个 batch 时使用同一 manifest 和输出目录。学习型 Policy 或模型计算按[执行说明](../../prompt/execution.md)申请并确认 GPU。

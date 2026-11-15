@@ -14,4 +14,6 @@ Use `list_resources` to find relevant references, templates or helpers, then `re
 
 `archive` hides an outdated method from ordinary discovery while preserving the package. Use `list(include_archived=true)` to find it, and `save` to restore it. All mutations increment the package version and preserve the previous complete package under Host-managed `.runtime/skill-revisions/`. Re-read after a revision conflict before merging changes.
 
-Skills and `memory/entries.jsonl` persist independently of Harness releases. Save specific findings through `memory`, and reusable methods through `skills`. Inspect helpers before adapting them into `workspace/research/` and submitting them to a remote job. Skill access does not execute code or expand file permissions.
+Skills and `memory/entries.jsonl` persist independently of Harness releases. Save specific findings through `memory`, and reusable methods through `skills`. Inspect helpers before adapting them into `workspace/scripts/<model>/<series>/<purpose>/` and submitting them to a remote job. Skill access does not execute code or expand file permissions.
+
+Keep experiment parameters, source hashes, job IDs and results in `workspace/experiments/<date-name>/`. Reuse script entry points across parameter variants. Read and revise the research plan with `plan`; it is stored in `runtime_paths.state/research-plan.json`.

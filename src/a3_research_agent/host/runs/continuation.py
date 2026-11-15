@@ -157,7 +157,9 @@ def _remote_exports(identifiers):
 def _knowledge_name(name):
     parts = Path(name).parts
     return bool(
-        parts and parts[0] == "research" and not any(part.startswith(".") for part in parts)
+        parts
+        and parts[0] in {"scripts", "experiments"}
+        and not any(part.startswith(".") for part in parts)
     )
 
 
@@ -192,13 +194,30 @@ def _read_knowledge(run, reference):
 
 
 def _retain_knowledge(run, workspace, names):
-    content = {
-        name: workspace_path(workspace, name).read_bytes()
-        for name in names
-        if _knowledge_name(name)
-    }
-    for raw in content.values():
-        raw.decode("utf-8")
+    content, workspace_binaries = {}, []
+    for name in names:
+        if not _knowledge_name(name):
+            continue
+        raw = workspace_path(workspace, name).read_bytes()
+        if Path(name).parts[0] == "scripts":
+            raw.decode("utf-8")
+        else:
+            try:
+                raw.decode("utf-8")
+                binary = b"\0" in raw
+            except UnicodeDecodeError:
+                binary = True
+            if binary:
+                workspace_binaries.append(
+                    {
+                        "path": name,
+                        "sha256": hashlib.sha256(raw).hexdigest(),
+                        "bytes": len(raw),
+                        "location": "shared_workspace",
+                    }
+                )
+                continue
+        content[name] = raw
     manifest = {
         "version": 1,
         "files": {name: hashlib.sha256(raw).hexdigest() for name, raw in sorted(content.items())},
@@ -218,7 +237,7 @@ def _retain_knowledge(run, workspace, names):
             write_durable(staging / "manifest.json", json.dumps(manifest, sort_keys=True))
             staging.rename(directory)
     _read_knowledge(run, reference)
-    return reference
+    return {**reference, "workspace_binary_files": workspace_binaries}
 
 
 def publish_run_result(

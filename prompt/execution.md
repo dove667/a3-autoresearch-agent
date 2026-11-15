@@ -1,6 +1,6 @@
 # 研究工具与执行约定
 
-Version: 0.24.0
+Version: 0.25.0
 
 本文件按当前操作查阅。工具定义提供参数、类型与限制；这里说明跨工具流程及直接使用 `gateway` 的入口。
 `input-manifest.json` 的 `execution_index` 给出章节字符 `offset/end` 和全文 SHA256，可用 `read` 分页定位；索引 `truncated:true` 时从 `next_offset` 续读。
@@ -38,10 +38,10 @@ Version: 0.24.0
 用参数数组提交命令，命令本身不展开 shell 环境变量：
 
 ```json
-{"command":["python","research/train.py"],"gpu":true,"workspace_files":[{"path":"research/train.py"}]}
+{"command":["python","scripts/act/baseline/training/train.py"],"gpu":true,"workspace_files":[{"path":"scripts/act/baseline/training/train.py"}]}
 ```
 
-这是 `job_submit` 的参数。附件来自本身份 `research/` 下普通 UTF-8 文件，只填 `path` 与可选 `destination`，工具计算 SHA256；提交回执保存实际源码来源与哈希。数据、权重和视频通过 `input_exports` 复用。脚本及其导入的项目文件都需要随请求附加。
+这是 `job_submit` 的参数。附件来自共享工作区 `scripts/` 下普通 UTF-8 文件，只填 `path` 与可选 `destination`，工具计算 SHA256；提交回执保存实际源码来源与哈希。数据、权重和视频通过 `input_exports` 复用。脚本及其导入的项目文件都需要随请求附加。 实验配置保存在 `experiments/`，读取后用 `files` 字段附加 UTF-8 内容，或通过命令参数传入所需值；远程路径与命令保持一致。
 
 长训练、续训与大批量采集先调用 `preflight(action="check", job=<正式GPU请求>)`。同一研究入口在 `A3_RESEARCH_PREFLIGHT=1` 时执行 CPU 加载检查：导入依赖，加载基座、父 checkpoint 和数据清单，完成一次必要的模型前向或真实数据读取，在作业工作区写入 `a3-preflight.json`：
 
@@ -82,7 +82,7 @@ backbone、tokenizer 和预训练资源由部署者预置；缺项记录资产�
 最小 manifest：
 
 ```json
-{"version":1,"episodes":[{"id":"episode-001","command":["python","research/episode.py"],"report":"<输出目录的绝对路径>/episode-001.json"}]}
+{"version":1,"episodes":[{"id":"episode-001","command":["python","scripts/act/baseline/evaluation/episode.py"],"report":"<输出目录的绝对路径>/episode-001.json"}]}
 ```
 
 `id` 唯一，`report` 指向该命令实际写出的 JSON 对象。退出码 0 且报告有效才是执行完成，科学结果 `success:false` 仍为有效完成。可选字段有单项 `work_units`，及批次 `max_parallel`、`threads_per_episode`、`warmup_seconds`、`adjust_seconds`、`idle_timeout_seconds`。
@@ -123,7 +123,7 @@ backbone、tokenizer 和预训练资源由部署者预置；缺项记录资产�
 
 ## 保存进展与暂停
 
-研究计划用 `plan` 维护，进展记录用 `progress` 维护。保存研究状态调用 `progress`，参数例如：
+研究计划由 Agent 通过 `plan(action="show")` 查看、`plan(action="update", revision=..., ...)` 修改，Harness 保存为 `runtime_paths.state/research-plan.json`；进展记录用 `progress` 维护。保存研究状态调用 `progress`，参数例如：
 
 ```json
 {"action":"outcome","status":"continue","reason":"已保存当前结果与后续研究方向"}

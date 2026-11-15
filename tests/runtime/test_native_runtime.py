@@ -378,8 +378,8 @@ def test_native_restart_after_host_exit_reuses_durable_records(tmp_path, monkeyp
         restored.resume_sessions({"second-token": "main"}, "main")
         wait_for(lambda: len((workspace / "starts.jsonl").read_text().splitlines()) == 2)
         assert restored.status("main", "main")["status"] == "running"
-        (workspace / "research").mkdir()
-        source = workspace / "research/example.py"
+        (workspace / "scripts").mkdir()
+        source = workspace / "scripts/example.py"
         source.write_text("print('remote only')")
         import hashlib
 
@@ -387,12 +387,12 @@ def test_native_restart_after_host_exit_reuses_durable_records(tmp_path, monkeyp
             "main",
             [
                 {
-                    "path": "research/example.py",
+                    "path": "scripts/example.py",
                     "sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
                 }
             ],
         )
-        assert files == {"research/example.py": "print('remote only')"}
+        assert files == {"scripts/example.py": "print('remote only')"}
         assert manifest[0]["bytes"] == 20
     finally:
         restored.close()

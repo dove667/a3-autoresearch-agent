@@ -39,17 +39,18 @@ def native_run(tmp_path: Path, *, name="run-current", actor="main", stopped=Fals
     checkpoint = [{"role": "user", "content": "existing research and observations"}]
     (run / "conversation/checkpoint.json").parent.mkdir(parents=True, exist_ok=True)
     (run / "conversation/checkpoint.json").write_text(json.dumps(checkpoint))
-    (workspace / "research").mkdir()
-    (workspace / "research/lesson.md").write_text(
+    (workspace / "scripts").mkdir()
+    (workspace / "experiments").mkdir()
+    (workspace / "experiments/lesson.md").write_text(
         '{"id":"lesson","text":"retain the confirmed finding"}\n'
     )
-    (workspace / "research/train.py").write_text('print("research source")\n')
+    (workspace / "scripts/train.py").write_text('print("research source")\n')
     (run / "conversation/continuation.json").write_text(
         json.dumps(
             {
                 "version": 1,
                 "command": COMMAND,
-                "files": ["research/lesson.md", "research/train.py"],
+                "files": ["experiments/lesson.md", "scripts/train.py"],
             }
         )
     )

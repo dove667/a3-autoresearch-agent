@@ -14,7 +14,7 @@ def call(**arguments):
 
 def test_gpu_admission_uses_same_source_and_assets_and_requires_real_report(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    decoder = tmp_path / "research/decoder.py"
+    decoder = tmp_path / "scripts/decoder.py"
     decoder.parent.mkdir()
     decoder.write_text("def load(): return 1\n")
     job = {
@@ -24,7 +24,7 @@ def test_gpu_admission_uses_same_source_and_assets_and_requires_real_report(tmp_
         "files": {"train.py": "import decoder"},
         "workspace_files": [
             {
-                "path": "research/decoder.py",
+                "path": "scripts/decoder.py",
                 "destination": "decoder.py",
                 "sha256": hashlib.sha256(decoder.read_bytes()).hexdigest(),
             }

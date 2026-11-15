@@ -60,7 +60,7 @@ def test_same_run_peers_read_workspaces_jobs_and_versions_without_cancellation_r
         job = client.post("/jobs", headers=a, json={"command": ["true"]}).json()["job_id"]
         assert (
             client.get(
-                f"/sessions/{first}/artifacts?path=research/result.json", headers=b
+                f"/sessions/{first}/artifacts?path=experiments/result.json", headers=b
             ).status_code
             == 200
         )

@@ -18,8 +18,8 @@ def native_roots(tmp_path, monkeypatch):
 def test_job_submit_hashes_workspace_sources_and_uses_canonical_destinations(tmp_path):
     from a3_research_agent.harness import job_tools
 
-    source = tmp_path / "research/train.py"
-    source.parent.mkdir()
+    source = tmp_path / "scripts/act/p142/training/train.py"
+    source.parent.mkdir(parents=True)
     source.write_text("print('train')\n")
     calls = []
 
@@ -47,7 +47,7 @@ def test_job_submit_hashes_workspace_sources_and_uses_canonical_destinations(tmp
                 "gpu": True,
                 "workspace_files": [
                     {
-                        "path": "research/train.py",
+                        "path": "scripts/act/p142/training/train.py",
                         "destination": "train.py",
                         "sha256": hashlib.sha256(b"print('train')\n").hexdigest(),
                     }
@@ -327,14 +327,16 @@ def test_workspace_edit_cannot_replace_managed_plan(tmp_path):
 def test_conflicting_inline_and_attached_files_are_rejected_before_submission(tmp_path):
     from a3_research_agent.harness import job_tools
 
-    (tmp_path / "research").mkdir()
-    (tmp_path / "research/train.py").write_text("print('source')")
+    (tmp_path / "scripts/act/p142/training").mkdir(parents=True)
+    (tmp_path / "scripts/act/p142/training/train.py").write_text("print('source')")
     calls = []
     result = job_tools.dispatch(
         "job_submit",
         {
             "command": ["python", "train.py"],
-            "workspace_files": [{"path": "research/train.py", "destination": "train.py"}],
+            "workspace_files": [
+                {"path": "scripts/act/p142/training/train.py", "destination": "train.py"}
+            ],
             "files": {"train.py": "print('inline')"},
         },
         lambda *args: calls.append(args),
@@ -349,14 +351,14 @@ def test_preflight_hashes_sources_and_submits_production_only_once(tmp_path, mon
     from a3_research_agent.harness import agent
 
     monkeypatch.chdir(tmp_path)
-    source = tmp_path / "research/train.py"
-    source.parent.mkdir()
+    source = tmp_path / "scripts/act/p142/training/train.py"
+    source.parent.mkdir(parents=True)
     source.write_text("print('train')\n")
     submissions = []
     job = {
-        "command": ["python", "research/train.py"],
+        "command": ["python", "scripts/act/p142/training/train.py"],
         "gpu": True,
-        "workspace_files": [{"path": "research/train.py"}],
+        "workspace_files": [{"path": "scripts/act/p142/training/train.py"}],
     }
 
     def request(method, path, body=None):
@@ -375,7 +377,7 @@ def test_preflight_hashes_sources_and_submits_production_only_once(tmp_path, mon
     assert checked["job_id"] == "a" * 32
     assert submissions[0]["workspace_files"] == [
         {
-            "path": "research/train.py",
+            "path": "scripts/act/p142/training/train.py",
             "sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
         }
     ]
@@ -383,20 +385,22 @@ def test_preflight_hashes_sources_and_submits_production_only_once(tmp_path, mon
     first, repeated = agent.tool("preflight", arguments), agent.tool("preflight", arguments)
     assert first == repeated == {"job_id": "b" * 32, "status": "queued"}
     assert len(submissions) == 2
-    assert submissions[1]["command"] == ["python", "research/train.py"]
+    assert submissions[1]["command"] == ["python", "scripts/act/p142/training/train.py"]
 
 
 def test_preflight_checks_old_explicit_source_hash_before_submission(tmp_path):
     from a3_research_agent.harness import job_tools, tool_contracts
 
-    (tmp_path / "research").mkdir()
-    (tmp_path / "research/train.py").write_text("new contents")
+    (tmp_path / "scripts/act/p142/training").mkdir(parents=True)
+    (tmp_path / "scripts/act/p142/training/train.py").write_text("new contents")
     with pytest.raises(tool_contracts.ToolInputError) as caught:
         job_tools.submit_request(
             {
-                "command": ["python", "research/train.py"],
+                "command": ["python", "scripts/act/p142/training/train.py"],
                 "gpu": True,
-                "workspace_files": [{"path": "research/train.py", "sha256": "0" * 64}],
+                "workspace_files": [
+                    {"path": "scripts/act/p142/training/train.py", "sha256": "0" * 64}
+                ],
             },
             tmp_path,
             allow_pinned_sources=True,
@@ -407,28 +411,28 @@ def test_preflight_checks_old_explicit_source_hash_before_submission(tmp_path):
 def test_job_source_limits_match_host_attachment_contract(tmp_path):
     from a3_research_agent.harness import job_tools
 
-    research = tmp_path / "research"
-    research.mkdir()
-    large = research / "large.py"
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    large = scripts / "large.py"
     large.write_text("x" * (1024 * 1024 + 1))
     calls = []
     result = job_tools.dispatch(
         "job_submit",
         {
-            "command": ["python", "research/large.py"],
-            "workspace_files": [{"path": "research/large.py"}],
+            "command": ["python", "scripts/large.py"],
+            "workspace_files": [{"path": "scripts/large.py"}],
         },
         lambda *args: calls.append(args),
         workspace=tmp_path,
     )
     assert result["error"] == "source_file_too_large" and not calls
     for index in range(9):
-        (research / f"small-{index}.py").write_text("x" * 1024 * 1024)
+        (scripts / f"small-{index}.py").write_text("x" * 1024 * 1024)
     result = job_tools.dispatch(
         "job_submit",
         {
-            "command": ["python", "research/small-0.py"],
-            "workspace_files": [{"path": f"research/small-{index}.py"} for index in range(9)],
+            "command": ["python", "scripts/small-0.py"],
+            "workspace_files": [{"path": f"scripts/small-{index}.py"} for index in range(9)],
         },
         lambda *args: calls.append(args),
         workspace=tmp_path,
@@ -436,7 +440,7 @@ def test_job_source_limits_match_host_attachment_contract(tmp_path):
     assert result["error"] == "source_attachments_too_large" and not calls
 
 
-def test_job_source_requires_host_supported_research_path(tmp_path):
+def test_job_source_requires_host_supported_script_path(tmp_path):
     from a3_research_agent.harness import job_tools
 
     (tmp_path / "train.py").write_text("print('train')")
@@ -451,3 +455,25 @@ def test_job_source_requires_host_supported_research_path(tmp_path):
         workspace=tmp_path,
     )
     assert result["error"] == "invalid_source_path" and not calls
+
+
+@pytest.mark.parametrize("directory", ["research", "experiments"])
+def test_job_source_rejects_non_script_directories_without_submission(tmp_path, directory):
+    from a3_research_agent.harness import job_tools
+
+    source = tmp_path / directory / "train.py"
+    source.parent.mkdir()
+    source.write_text("print('train')")
+    calls = []
+    result = job_tools.dispatch(
+        "job_submit",
+        {
+            "command": ["python", "train.py"],
+            "workspace_files": [{"path": source.relative_to(tmp_path).as_posix()}],
+        },
+        lambda *args: calls.append(args),
+        workspace=tmp_path,
+    )
+    assert result["error"] == "invalid_source_path"
+    assert "scripts/" in result["hint"]
+    assert not calls

@@ -102,7 +102,7 @@ nohup bash start-autoresearch.sh --night-window --resume-from "trajectories/<开
 
 采集与评估通过[episode 执行器](../reference/episode-executor.md)管理完成台账和并发。作业脚本从环境读取 `A3_OUTPUTS`、`A3_EPISODE_EXECUTOR` 及资产路径，避免沿用另一后端的路径。
 
-计划由 `plan` 保存；操作进展与研究状态由 `progress` 保存。恢复和接续清单由程序生成，`files` 只列出工作区研究文件。这些元数据统一保存在当前 `conversation/`，Agent 使用对应工具更新。
+研究计划由 Agent 编写，通过 `plan(action="show")` 查看、`plan(action="update", revision=..., ...)` 修改，Harness 保存到 `runtime_paths.state/research-plan.json`。操作进展与研究状态由 `progress` 保存。恢复和接续清单由程序生成，`files` 只列出工作区研究文件。这些元数据统一保存在当前 `conversation/`，Agent 使用对应工具更新。
 
 长期经验由 `memory` 保存；`recall` 从原始历史检索观测。根 `skills/` 是唯一技能库，通过 `skills` 先看目录摘要，再读正文和所需附件；同一工具也负责更新正文、附件和归档。工作上下文达到压缩门槛后必须生成完整摘要，32k 等目标预算覆盖整个下一轮输入；机制见[上下文与记忆](../reference/context-and-memory.md)。
 
@@ -115,7 +115,8 @@ Agent 用 `progress(action="outcome", status="continue", reason=...)` 保存继�
 ## 查找状态与产物
 
 - `trajectories/<开始时间>/`：输入版本、Host 事件、模型用量与会话登记。
-- `workspace/`：研究代码、实验工作材料和自由笔记。
+- `workspace/scripts/<模型或方法>/<可选研究系列>/<用途>/`：采集、训练、评估与审计源码。
+- `workspace/experiments/<日期-实验名>/`：实验配置、结果、图表、录像与分析，关联 job/export 和源码哈希。
 - `trajectories/<开始时间>/conversation/`：计划、接续清单、研究状态、checkpoint、journal、原始消息和压缩状态。
 - `skills/`：由 `skills` 工具管理的唯一方法库。
 - `memory/entries.jsonl`：Agent 主动整理的长期经验、适用条件和证据引用。

@@ -26,13 +26,13 @@ def test_published_result_keeps_immutable_notes_and_research_without_old_context
     (run / "conversation/continuation.json").write_text(json.dumps(manifest))
     result = publish_run_result(run, workspace, "main")
     assert result["status"] == "ready" and result["harness_commit"] == COMMIT
-    before = (workspace / "research/lesson.md").read_text()
-    (workspace / "research/lesson.md").write_text("later edit")
+    before = (workspace / "experiments/lesson.md").read_text()
+    (workspace / "experiments/lesson.md").write_text("later edit")
     loaded = load_run_result(run)
     assert loaded.command == COMMAND and loaded.source_version == COMMIT
-    assert loaded.files["research/lesson.md"] == before
+    assert loaded.files["experiments/lesson.md"] == before
     assert "skills/local/SKILL.md" not in loaded.files
-    assert loaded.files["research/train.py"] == 'print("research source")\n'
+    assert loaded.files["scripts/train.py"] == 'print("research source")\n'
     assert loaded.files["checkpoint.json"] == "[]"
     assert "trajectory.jsonl" not in loaded.files
     assert (
@@ -44,7 +44,7 @@ def test_published_result_keeps_immutable_notes_and_research_without_old_context
 def test_modified_knowledge_fails_without_overwriting_its_evidence(tmp_path):
     run, workspace, _, _, _ = native_run(tmp_path)
     result = publish_run_result(run, workspace, "main")
-    file = run / result["knowledge"]["directory"] / "research/lesson.md"
+    file = run / result["knowledge"]["directory"] / "experiments/lesson.md"
     file.write_text("corrupt")
     with pytest.raises(ValueError, match="knowledge content changed"):
         load_run_result(run)
@@ -99,3 +99,40 @@ def test_published_seed_resolves_fixed_command_and_empty_context(tmp_path):
     )
     start = resolve_harness_start(tmp_path)
     assert start.harness_commit == COMMIT and start.files == {"checkpoint.json": "[]"}
+
+
+@pytest.mark.parametrize("raw", [b"\x89PNG\r\n\x1a\n", b"\x00\x00binary"])
+def test_retention_records_binary_results_in_shared_workspace_without_copying(tmp_path, raw):
+    import hashlib
+
+    run, workspace, _, _, _ = native_run(tmp_path)
+    binary = workspace / "experiments/frame.png"
+    binary.write_bytes(raw)
+    declaration = run / "conversation/continuation.json"
+    manifest = json.loads(declaration.read_text())
+    manifest["files"].append("experiments/frame.png")
+    declaration.write_text(json.dumps(manifest))
+
+    result = publish_run_result(run, workspace, "main")
+    assert result["knowledge"]["workspace_binary_files"] == [
+        {
+            "path": "experiments/frame.png",
+            "sha256": hashlib.sha256(raw).hexdigest(),
+            "bytes": len(raw),
+            "location": "shared_workspace",
+        }
+    ]
+    loaded = load_run_result(run)
+    assert "experiments/frame.png" not in loaded.files
+    assert "experiments/lesson.md" in loaded.files
+    assert "scripts/train.py" in loaded.files
+    assert not (run / result["knowledge"]["directory"] / "experiments/frame.png").exists()
+    assert binary.read_bytes() == raw
+
+
+def test_binary_script_fails_retention_instead_of_being_silently_excluded(tmp_path):
+    run, workspace, _, _, _ = native_run(tmp_path)
+    (workspace / "scripts/train.py").write_bytes(b"\xff")
+    with pytest.raises(UnicodeDecodeError):
+        publish_run_result(run, workspace, "main")
+    assert not (run / "retained.json").exists()

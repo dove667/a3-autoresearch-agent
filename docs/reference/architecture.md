@@ -41,7 +41,7 @@ Host 的 `launch.py` 负责启动装配；`sessions/processes.py` 负责创建�
 
 ## 一次实验怎样执行
 
-Agent 按 SOUL 中的研究目标和当前计划，按需读取 A3 方法 skill，准备 `research/` 中的脚本，再用 `job_submit` 提交命令、文件和资源需求。工具计算附件校验值并检查参数，Host 确定归属，Controller 在统一资源根目录中准入和启动。
+Agent 按 SOUL 中的研究目标和当前计划，按需读取 A3 方法 skill，准备 `scripts/<模型或方法>/<可选研究系列>/<用途>/` 中的脚本，再用 `job_submit` 提交命令、文件和资源需求。工具计算附件校验值并检查参数，Host 确定归属，Controller 在统一资源根目录中准入和启动。
 
 Host 在传输前保存 job 编号，Controller 按同一编号创建作业。响应丢失时，Agent 查询已有编号；提交工具不自动重发。`GET /jobs` 可以分页找回该身份的远程作业记录。
 
@@ -63,7 +63,7 @@ Controller 实例共用资源根目录和调度锁。独占模式持有整卡租
 
 `memory` 管理主动经验、适用条件与来源；`recall` 检索原始执行历史。Host 用 `A3_STATE_ROOT` 指定当前 `conversation/`，其中保存 `history.jsonl`、`context-history/` 和大工具结果。逻辑归档引用以 `runtime_paths.state` 为基准，保留原文哈希，可通过普通文件工具只读核对。
 
-`conversation/` 集中保存研究计划、接续与恢复清单、运行状态、checkpoint、工具 journal、轨迹、操作台账、压缩事务和故障记录。`plan` 与 `progress` 维护这些状态，恢复清单由程序生成。`workspace/` 保存研究代码、实验工作材料和自由笔记。Host 恢复与离线发布继续使用原会话状态和研究文件。
+`conversation/` 集中保存研究计划、接续与恢复清单、运行状态、checkpoint、工具 journal、轨迹、操作台账、压缩事务和故障记录。`plan` 与 `progress` 维护这些状态，恢复清单由程序生成。`workspace/scripts/` 按模型或方法、研究系列和用途保存源码，`workspace/experiments/<日期-实验名>/` 保存实验配置、结果与分析。Host 恢复与离线发布继续使用原会话状态和研究文件。
 
 根 `skills/` 是唯一技能库，所有技能使用相同工具权限。`skills` 先返回摘要，再按需读取正文和附件；修改使用当前哈希，自动递增包版本并把完整旧包归档到 `.runtime/skill-revisions/`。技能库独立于三个 prompt 的发布快照。
 
