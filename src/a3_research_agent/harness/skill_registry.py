@@ -1,7 +1,6 @@
 """Expose progressive discovery and controlled edits of the project skill library."""
 
 import os
-import re
 from pathlib import Path
 
 from . import knowledge_client, skill_search
@@ -198,28 +197,18 @@ def dispatch(args, *, root=None, history_root=None):
 def operate(root, history_root, args, offset, limit):
     action = args.get("action")
     if action == "list":
-        query = args.get("query", "")
-        if not isinstance(query, str) or len(query) > 1200:
-            raise library.SkillError("invalid_query")
-        terms = set(re.findall(r"\w+", query.casefold()))
-        matches = []
-        for entry in library.catalogs(root):
-            if not args.get("include_archived") and entry.get("status") == "archived":
-                continue
-            text = " ".join(
-                [entry["id"], entry["description"], *entry.get("keywords", [])]
-            ).casefold()
-            score = sum(term in text for term in terms)
-            if not terms or score:
-                matches.append((score, entry))
-        matches.sort(key=lambda item: item[0], reverse=True)
+        entries = [
+            entry
+            for entry in library.catalogs(root)
+            if args.get("include_archived") or entry.get("status") != "archived"
+        ]
         return {
             "skills": [
-                {**summary(e), "description": e["description"][:256]}
-                for _, e in matches[offset : offset + limit]
+                {**summary(entry), "description": entry["description"][:256]}
+                for entry in entries[offset : offset + limit]
             ],
-            "total": len(matches),
-            "next_offset": offset + limit if offset + limit < len(matches) else None,
+            "total": len(entries),
+            "next_offset": offset + limit if offset + limit < len(entries) else None,
         }
     skill_id = library.identifier(args.get("id"))
     entry = library.read_catalog(root, skill_id)
