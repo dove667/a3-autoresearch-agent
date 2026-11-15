@@ -15,7 +15,7 @@ def first_plan():
         {
             "action": "update",
             "revision": 0,
-            "goal": "Improve full evaluation",
+            "direction": {"objective": "Improve full evaluation"},
             "steps": [
                 {"id": "evaluate", "task": "Evaluate candidate", "criterion": "Saved results"}
             ],
@@ -34,7 +34,9 @@ def test_plan_continues_across_runs_without_loading_their_old_snapshots(tmp_path
     old = tmp_path / "trajectories/second/conversation/research-plan.json"
     old.parent.mkdir(parents=True)
     old.write_text('{"version":1,"revision":0,"goal":"obsolete","reason":"","steps":{}}')
-    assert planning.dispatch({"action": "show"})["goal"] == "Improve full evaluation"
+    assert (
+        planning.dispatch({"action": "show"})["direction"]["objective"] == "Improve full evaluation"
+    )
     result = planning.dispatch(
         {"action": "update", "revision": 1, "steps": [{"id": "evaluate", "status": "active"}]}
     )
@@ -78,7 +80,8 @@ def test_plan_uses_controlled_tools_outside_the_workspace(tmp_path, monkeypatch)
     assert first_plan()["revision"] == 1
     before = paths.plan_file().read_bytes()
     assert (
-        agent.tool("write", {"path": str(paths.plan_file()), "content": "overwritten"}) == "denied"
+        agent.tool("write", {"path": str(paths.plan_file()), "content": "overwritten"})["error"]
+        == "path_not_accessible"
     )
     edited = agent.tool(
         "edit", {"path": str(paths.plan_file()), "old_text": "Improve", "new_text": "Discard"}
@@ -89,7 +92,9 @@ def test_plan_uses_controlled_tools_outside_the_workspace(tmp_path, monkeypatch)
 
 def test_snapshots_preserve_original_bytes_and_reject_changed_archives(tmp_path):
     source = tmp_path / "plan.json"
-    raw = '{"version":1, "revision":198,"goal":"继续研究", "steps":{}}\n'.encode()
+    raw = (
+        '{"version":2, "revision":198,"direction":{"objective":"继续研究"}, "steps":{}}\n'.encode()
+    )
     source.write_bytes(raw)
     directory = tmp_path / "trajectories/run/plan-snapshots"
     snapshot = plan_store.snapshot(source, directory)

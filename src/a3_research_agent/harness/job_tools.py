@@ -19,7 +19,7 @@ from .tool_contracts import (
 
 STRING = {"type": "string"}
 JOB_ID = {"type": "string", "pattern": "^[a-f0-9]{32}$"}
-SOURCE_FILES = {
+ATTACHMENTS = {
     "type": "array",
     "maxItems": 16,
     "items": {
@@ -29,11 +29,10 @@ SOURCE_FILES = {
         "additionalProperties": False,
     },
 }
-SUBMIT_FIELDS = {
+REQUEST_FIELDS = {
     "command": {"type": "array", "items": STRING, "minItems": 1, "maxItems": 256},
     "gpu": {"type": "boolean"},
-    "workspace_files": SOURCE_FILES,
-    "files": {"type": "object", "additionalProperties": STRING},
+    "attachments": ATTACHMENTS,
     "input_exports": {"type": "array", "items": STRING, "maxItems": 64},
     "gpu_memory_mb": {"type": "integer", "minimum": 1},
     "retry_on_gpu_contention": {"type": "boolean"},
@@ -48,25 +47,6 @@ SUBMIT_FIELDS = {
         "additionalProperties": False,
     },
 }
-PREFLIGHT_JOB = {
-    "type": "object",
-    "properties": {
-        **SUBMIT_FIELDS,
-        "gpu": {"type": "boolean", "const": True},
-        "workspace_files": {
-            **SOURCE_FILES,
-            "items": {
-                **SOURCE_FILES["items"],
-                "properties": {
-                    **SOURCE_FILES["items"]["properties"],
-                    "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
-                },
-            },
-        },
-    },
-    "required": ["command", "gpu"],
-    "additionalProperties": False,
-}
 ARTIFACT_FIELDS = {
     "job_id": JOB_ID,
     "path": STRING,
@@ -77,13 +57,20 @@ ARTIFACT_FIELDS = {
 TOOLS = [
     definition(
         "job_submit",
-        "Submit one remote command as an argument array. Attach local scripts with workspace_files "
-        "using only path and optional destination; the tool computes SHA256. Attachments are "
-        "scripts/ UTF-8 files, at most 1 MiB each and "
-        "8 MiB together. Use input_exports for binary assets, "
-        "existing data or weights. Defaults gpu=false. Submit independent jobs, then wait. "
-        "A submission_unknown response must be reconciled by its job_id, never resubmitted blindly.",
-        SUBMIT_FIELDS,
+        "Submit a prepared GPU job with prepared_id only, or a CPU command with attachments. "
+        "CPU submissions default gpu=false. For a GPU job first call job_prepare, wait for its "
+        "preflight_job_id, then submit its prepared_id; never repeat the full GPU request. "
+        "attachments references workspace text files (scripts and experiment configs); hashes are automatic. "
+        "Use input_exports for data and weights. Reconcile submission_unknown by job_id before retrying.",
+        {**REQUEST_FIELDS, "prepared_id": {"type": "string", "pattern": "^prepared-[a-f0-9]{32}$"}},
+    ),
+    definition(
+        "job_prepare",
+        "Save a GPU request and run its real CPU preflight. Supply the production command, "
+        "attachments and assets once. Its entry must handle A3_RESEARCH_PREFLIGHT=1, load real "
+        "inputs, perform a minimal forward/data read, write a3-preflight.json with schema=1,status=passed, "
+        "and exit. Returns prepared_id and preflight_job_id. Wait for that job, then job_submit(prepared_id).",
+        REQUEST_FIELDS,
         ["command"],
     ),
     definition(
@@ -115,17 +102,6 @@ TOOLS = [
         {"job_id": JOB_ID},
         ["job_id"],
     ),
-    definition(
-        "job_export",
-        "Seal selected job files as an immutable read-only export for reuse. "
-        "Creation is asynchronous; use the returned export ID through the Host export APIs.",
-        {
-            "job_id": JOB_ID,
-            "path": STRING,
-            "area": {"type": "string", "enum": ["workspace", "outputs"]},
-        },
-        ["job_id", "path", "area"],
-    ),
 ]
 NAMES = frozenset(tool["name"] for tool in TOOLS)
 
@@ -139,79 +115,77 @@ def identifier(value):
     return value
 
 
-def workspace_references(references, workspace, *, allow_pinned_sources=False):
+def attachment_references(references, workspace):
     if not isinstance(references, list) or len(references) > 16:
         fail(
-            "invalid_workspace_files",
-            "Attach at most 16 workspace files using path and optional destination.",
+            "invalid_attachments",
+            "Attach at most 16 workspace text files using path and optional destination.",
         )
     result, total, names = [], 0, set()
     root = workspace.resolve()
     for reference in references:
-        allowed = {"path", "destination"}
-        if allow_pinned_sources:
-            allowed.add("sha256")
-        arguments(reference, allowed)
-        original = text(reference.get("path"), "source_path")
-        source = (root / original).resolve()
-        if not source.is_relative_to(root) or source == root:
-            fail("invalid_source_path", "Attach a regular file inside the current workspace.")
-        relative = source.relative_to(root).as_posix()
-        relative_name(relative, "source_path")
-        parts = PurePosixPath(relative).parts
-        if len(parts) < 2 or parts[0] != "scripts":
+        arguments(reference, {"path", "destination"})
+        original = text(reference.get("path"), "attachment_path")
+        if Path(original).is_absolute():
+            try:
+                original = Path(original).relative_to(root).as_posix()
+            except ValueError:
+                fail("invalid_attachment_path", "Select a file inside the current workspace.")
+        original = relative_name(original, "attachment_path")
+        source = root
+        for part in PurePosixPath(original).parts:
+            source /= part
+            if source.is_symlink():
+                fail(
+                    "invalid_attachment_path",
+                    "Attach regular files in workspace; symbolic links are not accepted.",
+                )
+        if not source.is_relative_to(root) or not source.is_file():
             fail(
-                "invalid_source_path",
-                "Attach source under scripts/; use destination to rename it in the remote workspace.",
+                "attachment_missing",
+                "Select a regular file inside workspace; use list or search_files first.",
             )
-        destination = relative_name(reference.get("destination", relative), "destination")
-        if destination in names:
-            fail("duplicate_destination", "Each attachment must have a different destination.")
+        destination = relative_name(reference.get("destination", original), "destination")
+        if destination in names or any(
+            PurePosixPath(destination) in PurePosixPath(name).parents
+            or PurePosixPath(name) in PurePosixPath(destination).parents
+            for name in names
+        ):
+            fail(
+                "conflicting_attachments",
+                "Use distinct remote destinations without file/directory conflicts.",
+            )
         names.add(destination)
-        if not source.is_file():
-            fail(
-                "source_file_missing",
-                "The attachment is missing or is a directory; use search_files or list.",
-            )
         if source.stat().st_size > 1024 * 1024:
             fail(
-                "source_file_too_large",
-                "Each source attachment must be at most 1 MiB; split code or use an export for large assets.",
+                "attachment_too_large",
+                "Each text attachment must fit 1 MiB; use exports for large assets.",
             )
         raw = source.read_bytes()
+        if len(raw) > 1024 * 1024:
+            fail("attachment_too_large", "Each text attachment must fit 1 MiB.")
         try:
             raw.decode("utf-8")
         except UnicodeError:
             fail(
-                "binary_source_file",
-                "Attach UTF-8 source files; use input_exports for binary assets.",
+                "binary_attachment",
+                "Attach UTF-8 text; reuse data, video and weights through exports.",
             )
         total += len(raw)
-        if len(raw) > 1024 * 1024:
-            fail("source_file_too_large", "Each source attachment must be at most 1 MiB.")
         if total > 8 * 1024 * 1024:
-            fail(
-                "source_attachments_too_large",
-                "Source attachments must total at most 8 MiB; use exports for large assets.",
-            )
-        digest = hashlib.sha256(raw).hexdigest()
-        if "sha256" in reference and reference["sha256"] != digest:
-            fail(
-                "source_revision_conflict",
-                "The pinned source hash differs from the current file; inspect the source before a new preflight.",
-            )
+            fail("attachments_too_large", "Text attachments must total at most 8 MiB.")
         result.append(
             {
-                "path": relative,
-                "sha256": digest,
-                **({"destination": destination} if "destination" in reference else {}),
+                "path": original,
+                "sha256": hashlib.sha256(raw).hexdigest(),
+                **({"destination": destination} if destination != original else {}),
             }
         )
     return result
 
 
-def submit_request(args, workspace, *, allow_pinned_sources=False):
-    arguments(args, SUBMIT_FIELDS)
+def submit_request(args, workspace, *, default_gpu=False):
+    arguments(args, REQUEST_FIELDS)
     command = args.get("command")
     if (
         not isinstance(command, list)
@@ -222,39 +196,15 @@ def submit_request(args, workspace, *, allow_pinned_sources=False):
         fail(
             "invalid_command", 'Use an argument array, for example ["python", "scripts/train.py"].'
         )
-    body = {**args, "gpu": boolean(args.get("gpu", False), "gpu")}
-    if "workspace_files" in body:
-        body["workspace_files"] = workspace_references(
-            body["workspace_files"], workspace, allow_pinned_sources=allow_pinned_sources
-        )
+    body = {key: value for key, value in args.items() if key != "attachments"}
+    body["gpu"] = boolean(args.get("gpu", default_gpu), "gpu")
+    references = attachment_references(args.get("attachments", []), workspace)
+    if references:
+        body["workspace_files"] = references
     if "gpu_memory_mb" in body:
         integer(body["gpu_memory_mb"], "gpu_memory_mb", 1, 2**31 - 1)
     if "retry_on_gpu_contention" in body:
         boolean(body["retry_on_gpu_contention"], "retry_on_gpu_contention")
-    files = body.get("files", {})
-    if not isinstance(files, dict) or len(files) > 128:
-        fail("invalid_files", "Use a mapping of at most 128 relative source paths to UTF-8 text.")
-    for name, content in files.items():
-        relative_name(name)
-        if not isinstance(content, str):
-            fail("invalid_files", "Inline file content must be text; use exports for binary data.")
-    references = body.get("workspace_files", [])
-    destinations = [reference.get("destination", reference["path"]) for reference in references]
-    names = set(files) | set(destinations)
-    if len(names) != len(files) + len(destinations) or any(
-        parent.as_posix() in names for name in names for parent in PurePosixPath(name).parents
-    ):
-        fail(
-            "conflicting_job_files",
-            "Use unique file destinations that do not conflict with directories.",
-        )
-    uploaded = sum(len(value.encode()) for value in files.values()) + sum(
-        (workspace / reference["path"]).stat().st_size for reference in references
-    )
-    if len(names) > 128 or uploaded > 20 * 1024 * 1024:
-        fail(
-            "job_inputs_too_large", "Inline source must total at most 20 MiB; use exports for data."
-        )
     exports = body.get("input_exports", [])
     if (
         not isinstance(exports, list)
@@ -264,7 +214,7 @@ def submit_request(args, workspace, *, allow_pinned_sources=False):
             for value in exports
         )
     ):
-        fail("invalid_input_exports", "Use at most 64 exact export IDs returned by the Host.")
+        fail("invalid_input_exports", "Use at most 64 exact export IDs returned by export_create.")
     evaluation = body.get("evaluation")
     if evaluation is not None:
         arguments(evaluation, {"baseline_job_id", "baseline_manifest", "candidate_manifest"})
@@ -358,10 +308,28 @@ def artifact(args, request):
 
 def dispatch(name, args, request, *, workspace=None):
     try:
-        if name == "job_submit":
-            return submission_result(
-                request("POST", "/jobs", submit_request(args, Path(workspace or Path.cwd())))
-            )
+        if name in {"job_prepare", "job_submit"}:
+            from . import job_preparation
+
+            root = Path(workspace or Path.cwd())
+            if name == "job_prepare":
+                job = submit_request(args, root, default_gpu=True)
+                if not job["gpu"]:
+                    fail(
+                        "gpu_preparation_required",
+                        "Use job_submit(command,attachments) directly for CPU work.",
+                    )
+                return job_preparation.prepare(job, request)
+            if "prepared_id" in args:
+                arguments(args, {"prepared_id"})
+                return job_preparation.submit(args["prepared_id"], request, root)
+            job = submit_request(args, root)
+            if job["gpu"]:
+                fail(
+                    "gpu_job_needs_preparation",
+                    "Call job_prepare with this GPU request, then job_submit(prepared_id).",
+                )
+            return submission_result(request("POST", "/jobs", job))
         if name == "job_artifact":
             return artifact(args, request)
         if name == "job_list":
@@ -373,21 +341,13 @@ def dispatch(name, args, request, *, workspace=None):
                 if field in parameters:
                     text(parameters[field], field, 200)
             return request("GET", "/jobs" + ("?" + urlencode(parameters) if parameters else ""))
-        if name in {"job_status", "job_cancel", "job_export"}:
-            arguments(args, {"job_id", "path", "area"} if name == "job_export" else {"job_id"})
+        if name in {"job_status", "job_cancel"}:
+            arguments(args, {"job_id"})
             path = "/jobs/" + identifier(args.get("job_id"))
             if name == "job_status":
                 return request("GET", path)
             if name == "job_cancel":
                 return request("DELETE", path)
-            area = args.get("area", "outputs")
-            if area not in {"workspace", "outputs"}:
-                fail("invalid_area", "Use workspace or outputs.")
-            return request(
-                "POST",
-                path + "/exports",
-                {"location": area, "path": relative_name(args.get("path"))},
-            )
         fail("unknown_job_tool", "Use one of the registered job tools.")
     except ToolInputError as error:
         return {"error": error.code, "hint": error.hint}

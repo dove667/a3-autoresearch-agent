@@ -80,7 +80,7 @@ def test_source_delivery_hash_identifies_actual_bytes(tmp_path):
 
 
 @pytest.mark.parametrize("directory", ["research", "experiments"])
-def test_source_attachments_reject_non_script_directories(tmp_path, directory):
+def test_source_attachments_accept_research_and_experiment_text(tmp_path, directory):
     source = tmp_path / directory / "run.py"
     source.parent.mkdir()
     source.write_text("print('source')")
@@ -88,8 +88,8 @@ def test_source_attachments_reject_non_script_directories(tmp_path, directory):
         "path": source.relative_to(tmp_path).as_posix(),
         "sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
     }
-    with pytest.raises(ValueError, match="canonical scripts paths"):
-        read_workspace_files(tmp_path, [reference])
+    files, _ = read_workspace_files(tmp_path, [reference])
+    assert files[reference["path"]] == "print('source')"
 
 
 @pytest.mark.parametrize("case", ["file_count", "total_bytes"])

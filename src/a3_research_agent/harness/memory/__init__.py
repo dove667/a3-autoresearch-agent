@@ -122,7 +122,7 @@ def selected(arguments, entries, run_id):
 
 
 def identify(arguments, entries, run_id):
-    key = text(arguments.get("id", arguments.get("key", "")), "id", 64, required=True)
+    key = text(arguments.get("id", ""), "id", 64, required=True)
     matches = [entry for identifier, entry in entries.items() if identifier == key]
     if not matches:
         matches = [entry for identifier, entry in entries.items() if identifier.startswith(key)]
@@ -140,22 +140,12 @@ def identify(arguments, entries, run_id):
 
 
 def check_revision(arguments, entry):
-    revision, expected = arguments.get("revision"), arguments.get("expected_sha256")
-    if revision is None and expected is None:
+    revision = arguments.get("revision")
+    if type(revision) is not int or revision != entry["revision"]:
         raise MemoryError(
             "memory_conflict",
-            "Read the note first, then supply revision or expected_sha256",
+            "Read the note and supply its current revision before editing.",
             revision=entry["revision"],
-            sha256=entry["sha256"],
-        )
-    if (revision is not None and (type(revision) is not int or revision != entry["revision"])) or (
-        expected is not None and expected != entry["sha256"]
-    ):
-        raise MemoryError(
-            "memory_conflict",
-            "The note changed; read it again before editing",
-            revision=entry["revision"],
-            sha256=entry["sha256"],
         )
 
 
@@ -209,6 +199,38 @@ def dispatch(arguments, *, root, run_id="", embedder=None, model_id="none", sour
     try:
         if not isinstance(arguments, dict):
             raise MemoryError("memory_validation", "Memory arguments must be an object")
+        note_fields = {
+            "content",
+            "kind",
+            "scope",
+            "refs",
+            "supersedes",
+            "lifetime",
+            "run_ids",
+            "tags",
+            "force",
+            "reason",
+        }
+        actions = {
+            "write": note_fields,
+            "update": note_fields | {"id", "revision"},
+            "archive": {"id", "revision", "reason"},
+            "restore": {"id", "revision", "reason"},
+            "read": {"id", "include_archived"},
+            "search": {"query", "kind", "scope", "include_archived", "offset", "limit"},
+            "list": {"kind", "scope", "include_archived", "offset", "limit"},
+            "context": {"query", "limit"},
+            "sources": {"id", "ref", "offset", "limit", "include_archived"},
+        }
+        action = arguments.get("action", "read")
+        if (
+            not isinstance(action, str)
+            or action not in actions
+            or arguments.keys() - actions[action] - {"action"}
+        ):
+            raise MemoryError(
+                "memory_validation", "Use only the fields for the selected memory action"
+            )
         with store.locked(root) as directory:
             return _dispatch(
                 arguments,
@@ -227,8 +249,11 @@ def dispatch(arguments, *, root, run_id="", embedder=None, model_id="none", sour
 def _dispatch(arguments, *, root, run_id, embedder, model_id, source_reader):
     action = arguments.get("action", "read")
     entries = store.current(root)
+    if action == "restore":
+        action = "update"
+        arguments = {**arguments, "action": action, "status": "active"}
     if action in ("list", "search", "context"):
-        query = text(arguments.get("key", ""), "key", 1200)
+        query = text(arguments.get("query", ""), "query", 1200)
         candidates = selected(arguments, entries, run_id)
         ranked = retrieval.rank(
             candidates,

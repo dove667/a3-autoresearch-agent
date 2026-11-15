@@ -55,13 +55,16 @@ print(json.dumps({"files": build_harness_payload(), "tools": [x["name"] for x in
     exported = json.loads(result.stdout)
     assert exported["files"] == files
     assert {
-        "gateway",
         "read",
-        "wait",
+        "job_wait",
+        "idle_wait",
         "skills",
         "plan",
         "memory",
-        "preflight",
+        "job_prepare",
+        "research_status",
+        "vision_inspect",
+        "export_manifest",
         "job_submit",
         "job_artifact",
         "search_files",
@@ -70,3 +73,5 @@ print(json.dumps({"files": build_harness_payload(), "tools": [x["name"] for x in
         "web_fetch",
         "web_status",
     } <= set(exported["tools"])
+
+    assert {"gateway", "wait", "progress", "preflight", "job_export"}.isdisjoint(exported["tools"])

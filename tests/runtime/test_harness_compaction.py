@@ -40,12 +40,10 @@ def test_ready_fork_bounds_new_tail_and_replays_publication_without_model(shutdo
         assert record["kind"] == "applied" and cm.paired(candidate)
         assert cm.message_cost(candidate) <= cm.decision_budget([])
         assert messages == original
-        # Crash before checkpoint publication: replay precisely the saved proposal.
         restarted = compaction.ForkCompactor(gateway)
         again, _ = restarted.before_request(messages)
         assert again == candidate
         cm.atomic(state_paths.path("checkpoint.json"), json.dumps(candidate))
-        # Crash after checkpoint publication, before acknowledgment: never reapply tail.
         final = compaction.ForkCompactor(gateway)
         acknowledged, _ = final.apply_ready(candidate)
         assert acknowledged == candidate
@@ -73,8 +71,7 @@ def test_failed_compaction_preserves_oversized_fresh_batch_and_checkpoint():
 def test_hard_wait_timeout_keeps_running_prefix_identity(monkeypatch):
     with workspace():
         monkeypatch.setitem(cm.TOKEN_CONFIG, "decision_input_tokens", 31000)
-
-        started, release = threading.Event(), threading.Event()
+        started, release = (threading.Event(), threading.Event())
         calls = []
 
         def provider(*args, **kwargs):
@@ -85,7 +82,6 @@ def test_hard_wait_timeout_keeps_running_prefix_identity(monkeypatch):
 
         original = history(rounds=4, filler=5000)
         fork = compaction.ForkCompactor(Gateway(), hard_wait_seconds=0)
-        # Hold the real fork thread at publication; summary quality is a separate gate.
         monkeypatch.setattr(fork, "_run", provider)
         fork.start(original)
         assert started.wait(2)
@@ -104,7 +100,6 @@ def test_hard_wait_timeout_keeps_running_prefix_identity(monkeypatch):
 def test_interrupted_fork_fallback_uses_current_operational_reserve(monkeypatch):
     with workspace():
         monkeypatch.setitem(cm.TOKEN_CONFIG, "decision_input_tokens", 11000)
-
         original = [{"role": "user", "content": "goal"}]
         for i in range(6):
             original += [{"role": "user", "content": "u" * 900}] + tool_pair(str(i), "r" * 100)
@@ -134,7 +129,7 @@ def test_interrupted_fork_fallback_uses_current_operational_reserve(monkeypatch)
 def workspace():
     """Fresh cwd so every on-disk artefact is isolated per test."""
     previous = os.getcwd()
-    config, metric = cm.TOKEN_CONFIG, cm.metric
+    config, metric = (cm.TOKEN_CONFIG, cm.metric)
     cm.TOKEN_CONFIG = {
         "decision_input_tokens": 49000,
         "trigger_tokens": 48000,
@@ -150,18 +145,13 @@ def workspace():
             yield pathlib.Path(directory)
         finally:
             os.chdir(previous)
-            cm.TOKEN_CONFIG, cm.metric = config, metric
+            cm.TOKEN_CONFIG, cm.metric = (config, metric)
 
 
 def completed(text):
     return {
         "status": "completed",
-        "output": [
-            {
-                "type": "message",
-                "content": [{"type": "output_text", "text": text}],
-            }
-        ],
+        "output": [{"type": "message", "content": [{"type": "output_text", "text": text}]}],
     }
 
 
@@ -210,9 +200,6 @@ def history(rounds=6, filler=900, completed_last=True):
     return messages
 
 
-# ------------------------------------------------------------------- spill ---
-
-
 def test_spill_replaces_oversized_result():
     with workspace():
         payload = "x" * 60000
@@ -246,9 +233,6 @@ def test_spill_env_override_and_disable():
             os.environ.pop("AUTORUN_SPILL_BYTES", None)
 
 
-# -------------------------------------------------------------- structured ---
-
-
 def test_structured_instruction_lists_all_sections():
     for title in SECTIONS:
         assert "## " + title in compaction.STRUCTURED_INSTRUCTION
@@ -263,23 +247,18 @@ def test_missing_sections_detects_partial_summary():
     assert len(missing) == 7
 
 
-# -------------------------------------------------------------------- fork ---
-
-
 def test_fork_does_not_block_and_applies_later():
     with workspace():
         gateway = Gateway(delay=0.4)
         compactor = compaction.ForkCompactor(gateway, tools=[], trigger_tokens=2000)
         messages = history()
         before = len(messages)
-
         started = time.time()
         same, record = compactor.before_request(messages)
         elapsed = time.time() - started
         assert record["kind"] == "fork_started"
         assert same is messages and len(same) == before
         assert elapsed < 0.2, f"fork blocked the decision for {elapsed:.2f}s"
-
         compactor.wait(timeout=10)
         applied, record = compactor.before_request(messages)
         assert record["kind"] == "applied"
@@ -294,9 +273,7 @@ def test_legacy_summary_uses_narrow_instructions_without_main_tools():
     with workspace():
         gateway = Gateway()
         compactor = compaction.ForkCompactor(
-            gateway,
-            tools=[{"type": "function", "name": "read"}],
-            trigger_tokens=2000,
+            gateway, tools=[{"type": "function", "name": "read"}], trigger_tokens=2000
         )
         messages = history()
         compactor.before_request(messages)
@@ -330,9 +307,6 @@ def test_unpaired_result_is_skipped_not_forced():
         assert not state_paths.path(compaction.RESULT_PATH).exists()
 
 
-# ---------------------------------------------------------------- fallback ---
-
-
 def test_summary_failure_preserves_original_history_instead_of_building_recall_checkpoint():
     with workspace():
         compactor = compaction.ForkCompactor(Gateway(fail=True), tools=[], trigger_tokens=1000)
@@ -358,9 +332,6 @@ def test_summary_failure_preserves_original_history_instead_of_building_recall_c
         assert "replacement" not in json.loads(state_paths.path(compaction.RESULT_PATH).read_text())
 
 
-# ------------------------------------------------------------------ recall ---
-
-
 def test_recall_finds_original_text_by_round_window():
     with workspace():
         messages = history()
@@ -381,9 +352,6 @@ def test_recall_needs_keywords():
     assert "不能为空" in recall.recall([], 2, 1)[0]
 
 
-# ------------------------------------------------------------------ memory ---
-
-
 def test_memory_write_then_read_and_list():
     with workspace():
         entry = memory.dispatch(
@@ -392,7 +360,7 @@ def test_memory_write_then_read_and_list():
         )
         assert entry["id"] and entry["kind"] == "result"
         detail = memory.dispatch(
-            {"action": "read", "key": entry["id"][:6]}, root=paths.memory_root()
+            {"action": "read", "id": entry["id"][:6]}, root=paths.memory_root()
         )["text"]
         assert "baseline smolvla 2x5 = 4.2" in detail
         listing = json.dumps(
@@ -409,7 +377,7 @@ def test_memory_tool_dispatch_and_empty_write():
             )
         )["id"]
         assert (
-            memory.dispatch({"action": "search", "key": "note A"}, root=paths.memory_root())[
+            memory.dispatch({"action": "search", "query": "note A"}, root=paths.memory_root())[
                 "items"
             ][0]["preview"]
             == "note A"
@@ -427,7 +395,7 @@ if __name__ == "__main__":
         try:
             globals()[name]()
             print("PASS", name)
-        except Exception:  # noqa: BLE001 - standalone runner
+        except Exception:  # noqa: BLE001 - standalone test runner records each failure
             failures += 1
             print("FAIL", name)
             traceback.print_exc()
@@ -448,7 +416,7 @@ def test_token_trigger_does_not_start_at_legacy_byte_threshold(monkeypatch):
         monkeypatch.setattr(fork, "start", lambda *args, **kwargs: started.append(True))
         messages = [{"role": "user", "content": "a" * 60000}]
         same, _ = fork.before_request(messages)
-        assert same == messages and not started
+        assert same == messages and (not started)
         messages = [{"role": "user", "content": "a" * 105000}]
         fork.before_request(messages)
         assert started == [True]
@@ -490,7 +458,7 @@ def test_restart_recomputes_token_hysteresis_from_saved_replacement(monkeypatch)
             "replacement": replacement,
             "replacement_sha256": compaction.digest(replacement),
         }
-        (state_paths.path("compaction-result.json")).parent.mkdir(parents=True, exist_ok=True)
+        state_paths.path("compaction-result.json").parent.mkdir(parents=True, exist_ok=True)
         state_paths.path("compaction-result.json").write_text(json.dumps(saved))
         restarted = compaction.ForkCompactor(Gateway())
         started = []
@@ -524,7 +492,7 @@ def test_published_tail_hysteresis_survives_ack_and_restart(monkeypatch):
             "after_bytes": cm.size(replacement),
             "strategy": "host_summary",
         }
-        (state_paths.path("compaction-result.json")).parent.mkdir(parents=True, exist_ok=True)
+        state_paths.path("compaction-result.json").parent.mkdir(parents=True, exist_ok=True)
         state_paths.path("compaction-result.json").write_text(json.dumps(saved))
         applied, record = fork.before_request(original + tail)
         assert record["kind"] == "applied"
@@ -540,5 +508,5 @@ def test_published_tail_hysteresis_survives_ack_and_restart(monkeypatch):
                 compactor, "start", lambda *args, started=started, **kwargs: started.append(True)
             )
             same, _ = compactor.before_request(applied)
-            assert same == applied and not started
+            assert same == applied and (not started)
             assert compactor._last_after_tokens == expected

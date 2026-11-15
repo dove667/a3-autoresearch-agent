@@ -73,7 +73,13 @@ def test_plain_file_tools_can_read_but_cannot_mutate_state(tmp_path, monkeypatch
     atomic(state_paths.path(state_paths.CHECKPOINT), "[]")
     checkpoint = state_paths.path(state_paths.CHECKPOINT)
     assert agent.tool("read", {"path": str(checkpoint)})["content"] == "[]"
-    assert agent.tool("write", {"path": str(checkpoint), "content": "overwritten"}) == "read only"
+    denied = agent.dispatch_tool_call(
+        {
+            "name": "write",
+            "arguments": json.dumps({"path": str(checkpoint), "content": "overwritten"}),
+        }
+    )
+    assert denied["ok"] is False and denied["error"] == "path_not_accessible"
     result = agent.tool("edit", {"path": str(checkpoint), "old_text": "[]", "new_text": "{}"})
     assert result["error"] == "path_not_accessible"
     assert checkpoint.read_text() == "[]"

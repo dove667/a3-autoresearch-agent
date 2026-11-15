@@ -60,26 +60,6 @@ def test_receipts_distinguish_retrieved_delivered_and_preview(tmp_path, monkeypa
     assert m.counters()["delivered_reads"] == 1
 
 
-def test_closed_claim_survives_reload_without_becoming_acceptance(tmp_path, monkeypatch):
-    m = load(tmp_path, monkeypatch)
-    m.progress(
-        {
-            "action": "update",
-            "id": "check",
-            "status": "closed",
-            "note": "rejected",
-            "evidence": ["experiments/decision.json"],
-        }
-    )
-    restored = load(tmp_path, monkeypatch)
-    value = restored.view()["items"]["check"]
-    assert value["status"] == "closed" and "not validated" in value["authority"]
-    assert not (tmp_path / "conversation/run-outcome.json").exists()
-    assert list((tmp_path / "conversation/context-history").glob("progress-item*")) == []
-    restored.progress({"action": "update", "id": "check", "status": "waiting", "evidence": []})
-    assert list((tmp_path / "conversation/context-history").glob("progress-item*"))
-
-
 def test_corrupt_state_fails_closed_and_snapshot_remains(tmp_path, monkeypatch):
     m = load(tmp_path, monkeypatch)
     m.state_file().parent.mkdir()
@@ -98,13 +78,10 @@ def test_invalid_pages_fail_explicitly(tmp_path, monkeypatch, args):
         m.read_page(p, **args)
 
 
-def test_repeated_cycles_keep_exact_coverage_and_closed_claim(tmp_path, monkeypatch):
+def test_repeated_cycles_keep_exact_coverage_without_manual_task_ledger(tmp_path, monkeypatch):
     m = load(tmp_path, monkeypatch)
     p = tmp_path / "report"
     p.write_text("内容" * 20000)
-    m.progress(
-        {"action": "update", "id": "report", "status": "closed", "evidence": ["decision.json"]}
-    )
     for i in range(30):
         page = m.read_page(p, i * 1000, 1000)
         m.record_page(str(i), page)
@@ -113,28 +90,8 @@ def test_repeated_cycles_keep_exact_coverage_and_closed_claim(tmp_path, monkeypa
         )
         m = load(tmp_path, monkeypatch)
     assert m.view()["reads"][0]["delivered"] == [[0, 30000]]
-    assert m.view()["items"]["report"]["status"] == "closed"
+    assert "items" not in m.view()
     assert len(json.dumps(m.view(), ensure_ascii=False).encode()) <= 8000
-
-
-@pytest.mark.parametrize(
-    "reference", ["", ".", "./", "../outside", "https://host/path", "bad\0path"]
-)
-def test_invalid_evidence_reference_cannot_close_item(tmp_path, monkeypatch, reference):
-    m = load(tmp_path, monkeypatch)
-    with pytest.raises(ValueError):
-        m.progress({"action": "update", "id": "x", "status": "closed", "evidence": [reference]})
-
-
-def test_changed_evidence_is_flagged_without_automatic_reopening(tmp_path, monkeypatch):
-    m = load(tmp_path, monkeypatch)
-    p = tmp_path / "decision.json"
-    p.write_text("old")
-    m.progress({"action": "update", "id": "x", "status": "closed", "evidence": ["decision.json"]})
-    p.write_text("new")
-    item = m.view()["items"]["x"]
-    assert item["evidence_changed_or_unavailable"]
-    assert item["status"] == "closed"
 
 
 def test_sparse_coverage_is_bounded_and_never_fills_gaps(tmp_path, monkeypatch):
@@ -148,49 +105,19 @@ def test_sparse_coverage_is_bounded_and_never_fills_gaps(tmp_path, monkeypatch):
     assert all(b - a == 1 for a, b in entry["retrieved"])
 
 
-def test_identical_operational_claim_is_not_new_progress(tmp_path, monkeypatch):
-    m = load(tmp_path, monkeypatch)
-    item = {"action": "update", "id": "x", "status": "waiting", "evidence": []}
-    m.progress(item)
-    before = m.load()["revision"]
-    m.progress(item)
-    assert m.load()["revision"] == before
-
-
 @pytest.mark.parametrize("diagnostic_fails", [False, True])
 def test_receipt_failure_cannot_hide_successful_job_result(tmp_path, monkeypatch, diagnostic_fails):
-    import ast
-    from types import SimpleNamespace
+    from a3_research_agent.harness import agent
 
-    tree = ast.parse((ROOT / "agent.py").read_text())
-    nodes = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "tool"]
     result = {"job_id": "a" * 32, "status": "created"}
 
-    def fail(*args):
+    def fail(*args, **kwargs):
         raise OSError("receipt failed")
 
-    from a3_research_agent.harness import job_tools, lifecycle, research_web, workspace_tools
-
-    def request(method, path, data=None):
-        if path == "/sessions/self":
-            return {"session_id": "worker"}
-        if path == "/evolution":
-            return {"http_error": 403}
-        return result
-
-    namespace = {
-        "job_tools": job_tools,
-        "workspace_tools": workspace_tools,
-        "research_web": research_web,
-        "lifecycle": lifecycle,
-        "web_tools": SimpleNamespace(ROUTES={}),
-        "skill_tools": SimpleNamespace(ROUTES={}),
-        "operational_state": SimpleNamespace(record_gateway=fail),
-        "req": request,
-        "log": fail if diagnostic_fails else lambda value: None,
-    }
-    exec(compile(ast.Module(body=nodes, type_ignores=[]), "tool-fixture", "exec"), namespace)  # noqa: S102 - selected trusted local function only
-    assert namespace["tool"]("gateway", {"method": "POST", "path": "/jobs", "body": {}}) == result
+    monkeypatch.setattr(agent, "req", lambda *args, **kwargs: result)
+    monkeypatch.setattr(agent.operational_state, "record_gateway", fail)
+    monkeypatch.setattr(agent, "log", fail if diagnostic_fails else lambda value: None)
+    assert agent.request_host("POST", "/jobs", {}) == result
 
 
 def test_repetition_includes_skill_documents_after_other_sources(tmp_path, monkeypatch):
@@ -205,20 +132,14 @@ def test_repetition_includes_skill_documents_after_other_sources(tmp_path, monke
 
 
 def test_large_json_selection_returns_explicit_bounded_not_delivered(tmp_path, monkeypatch):
-    import ast
-    import hashlib
+    from a3_research_agent.harness import file_tools
+    from a3_research_agent.harness.tool_contracts import ToolInputError
 
-    m = load(tmp_path, monkeypatch)
-    tree = ast.parse((ROOT / "agent.py").read_text())
-    nodes = [
-        n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "select_json_fields"
-    ]
-    ns = {"json": json, "hashlib": hashlib, "context_manager": m.context_manager}
-    exec(compile(ast.Module(body=nodes, type_ignores=[]), "selected-local-function", "exec"), ns)  # noqa: S102 - trusted local helper only
     raw = json.dumps({"rows": ["large result " * 10000]}).encode()
-    result = ns["select_json_fields"](raw, ["rows"], "/workspace/report.json")
-    assert result["error"] == "field_selection_exceeds_page_budget" and "fields" not in result
-    assert result["sha256"] == hashlib.sha256(raw).hexdigest() and len(json.dumps(result)) < 1000
+    with pytest.raises(ToolInputError) as error:
+        file_tools.select_fields(raw, ["rows"], "/workspace/report.json")
+    assert error.value.code == "field_selection_exceeds_page_budget"
+    assert len(error.value.hint) < 1000
 
 
 def test_identical_page_reference_requires_visible_content(tmp_path, monkeypatch):

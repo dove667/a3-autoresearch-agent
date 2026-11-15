@@ -141,7 +141,7 @@ class MemorySources:
                 "kind": "memory",
                 "tool": "memory",
                 "action": "read",
-                "key": memory[1],
+                "id": memory[1],
             }
         name = relative_name(reference)
         if name.startswith("workspace/"):

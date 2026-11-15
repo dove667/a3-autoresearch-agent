@@ -23,7 +23,8 @@ def test_published_research_contract(tmp_path):
 
 def test_research_web_is_an_explicit_optional_service():
     execution = (ROOT / "prompt/execution.md").read_text()
-    assert "Host 默认关闭网页网关，部署方启用并接入工具后使用" in execution
-    assert "缺失注册或后端故障交给维护者" in execution
-    for endpoint in ("/web/status", "/web/search", "/web/fetch"):
-        assert endpoint in execution
+    assert "网页服务默认关闭" in execution and "web_status" in execution
+    assert "缺少认证或服务时报告维护者" in execution
+    for tool in ("web_status", "web_search", "web_fetch"):
+        assert tool in execution
+    assert "/web/search" not in execution

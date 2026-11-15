@@ -7,7 +7,7 @@ def test_unconfigured_service_has_explicit_error(monkeypatch):
     monkeypatch.delenv("A3_KNOWLEDGE_SERVICE_URL", raising=False)
     monkeypatch.delenv("A3_KNOWLEDGE_SERVICE_TOKEN", raising=False)
     assert (
-        client.dispatch({"action": "search", "key": "past failures"})["error"]
+        client.dispatch({"action": "search", "query": "past failures"})["error"]
         == "knowledge_service_unavailable"
     )
 
@@ -36,7 +36,7 @@ def test_research_focus_changes_refresh_suggestions_and_writes_invalidate(monkey
     client.suggestions(plan)
     client.suggestions(plan)
     assert len(calls) == 1
-    assert "Evaluate checkpoint" in calls[0]["key"]
+    assert "Evaluate checkpoint" in calls[0]["query"]
     client.dispatch({"action": "write", "content": "New finding"})
     client.suggestions(plan)
     assert len(calls) == 3

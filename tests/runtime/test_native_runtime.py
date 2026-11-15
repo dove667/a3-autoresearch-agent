@@ -209,7 +209,13 @@ def test_native_start_stop_and_resume_snapshot_current_shared_plan_without_resto
 
     def plan(revision):
         return json.dumps(
-            {"version": 1, "revision": revision, "goal": "Research", "reason": "", "steps": {}}
+            {
+                "version": 2,
+                "revision": revision,
+                "direction": {"objective": "Research", "metrics": [], "gaps": []},
+                "reason": "",
+                "steps": {},
+            }
         )
 
     first_plan = plan(5)
@@ -537,7 +543,7 @@ def test_fresh_daily_run_uses_existing_workspace_and_new_context(tmp_path, monke
     source.write_text("preserved research")
     local.plan_file.parent.mkdir(parents=True, exist_ok=True)
     local.plan_file.write_text(
-        '{"version":1,"revision":8,"goal":"Continue","reason":"","steps":{}}'
+        '{"version":2,"revision":8,"direction":{"objective":"Continue","metrics":[],"gaps":[]},"reason":"","steps":{}}'
     )
     try:
         launch(local, {"checkpoint.json": "[]", "scripts/train.py": "preserved research"})

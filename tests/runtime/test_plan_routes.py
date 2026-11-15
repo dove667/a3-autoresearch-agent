@@ -93,3 +93,16 @@ def test_route_changes_need_reason_and_cannot_break_step_links(monkeypatch, tmp_
     monkeypatch.setenv("A3_PLAN_SNAPSHOTS_ROOT", str(tmp_path / "next/plan-snapshots"))
     assert plan.dispatch({"action": "show"})["direction"]["gaps"] == ["Placement stability"]
     assert plan.load()["revision"] == 1
+
+
+def test_plan_rejects_obsolete_goal_and_wrong_action_fields():
+    assert (
+        plan.dispatch({"action": "update", "revision": 0, "goal": "old"})["error"]
+        == "plan_validation"
+    )
+    assert plan.dispatch({"action": "show", "steps": []})["error"] == "plan_validation"
+    create()
+    assert (
+        plan.dispatch({"action": "update", "revision": 1, "direction": "wrong"})["error"]
+        == "plan_validation"
+    )

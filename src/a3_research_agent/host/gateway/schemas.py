@@ -13,9 +13,6 @@ class ObservationRequest(BaseModel):
     repeated_reads: int = Field(ge=0, le=1000000000, strict=True)
     retrieved_characters: int = Field(ge=0, le=1000000000, strict=True)
     delivered_reads: int = Field(ge=0, le=1000000000, strict=True)
-    open_items: int = Field(ge=0, le=1000000000, strict=True)
-    waiting_items: int = Field(ge=0, le=1000000000, strict=True)
-    closed_items: int = Field(ge=0, le=1000000000, strict=True)
 
 
 class SummaryRequest(BaseModel):

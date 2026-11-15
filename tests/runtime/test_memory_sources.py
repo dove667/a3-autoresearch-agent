@@ -61,7 +61,7 @@ def test_declared_sources_are_paged_and_other_project_files_are_inaccessible(tmp
     entry = {"id": "a" * 12, "refs": ["workspace/experiments/trial/report.md"]}
     reader = MemorySources(tmp_path)
     result = reader(entry, {"ref": entry["refs"][0], "offset": 2, "limit": 3})
-    assert result["content"] == "abc" and not result["eof"]
+    assert result["content"] == "abc" and (not result["eof"])
     assert reader(entry, {"ref": ".env"})["error"] == "memory_source_unavailable"
     entry["refs"] = ["workspace/../.env"]
     assert reader(entry, {"ref": entry["refs"][0]})["error"] == "memory_source_unavailable"
@@ -104,4 +104,4 @@ def test_job_and_memory_locators_preserve_tool_boundaries(tmp_path):
     entry = {"id": "a" * 12, "refs": ["run-20261110/jobs/" + job, "hypothesis:" + "c" * 12]}
     reader = MemorySources(tmp_path)
     assert reader(entry, {"ref": entry["refs"][0]})["path"] == "/jobs/" + job
-    assert reader(entry, {"ref": entry["refs"][1]})["key"] == "c" * 12
+    assert reader(entry, {"ref": entry["refs"][1]})["id"] == "c" * 12

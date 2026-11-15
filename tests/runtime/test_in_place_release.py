@@ -106,7 +106,7 @@ def published_run(tmp_path, monkeypatch, request):
         "experiments/lesson.md": '{"id":"learned","text":"actual research lesson"}\n',
         "scripts/train.py": "print('preserve research')\n",
         "research-plan.json": '{"version":1,"revision":5,"steps":{}}',
-        "plan/current.json": '{"version":1,"revision":9,"steps":{}}',
+        "plan/current.json": '{"version":2,"revision":9,"direction":{"objective":"Shared","metrics":[],"gaps":[]},"routes":{},"steps":{}}',
         "operational-state.json": '{"version":1,"jobs":{"existing-job":{"status":"running"}}}',
         "trajectory.jsonl": '{"original":"evidence"}\n',
         "pending-calls.json": "null",

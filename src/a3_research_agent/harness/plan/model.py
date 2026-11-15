@@ -84,12 +84,13 @@ def revise(plan, arguments):
     changes = arguments.get("steps", [])
     if not isinstance(changes, list) or len(changes) > MAX_STEPS:
         raise ValueError(f"Supply at most {MAX_STEPS} step updates")
-    goal = bounded_text(
-        arguments.get("goal", arguments.get("direction", {}).get("objective", plan["goal"])),
-        1200,
-        "goal",
-        required=True,
-    )
+    direction_patch = arguments.get("direction", {})
+    if not isinstance(direction_patch, dict) or direction_patch.keys() - {
+        "objective",
+        "metrics",
+        "gaps",
+    }:
+        raise ValueError("direction accepts objective, metrics and gaps")
     reason = bounded_text(arguments.get("reason", ""), 240, "reason")
     steps = plan["steps"].copy()
     archived = bounded_list(arguments.get("archive", []), MAX_STEPS, ID.fullmatch, "archive IDs")
@@ -100,7 +101,11 @@ def revise(plan, arguments):
             raise ValueError("Only done or skipped steps can be archived")
         del steps[key]
     seen = set()
-    route_changed = bool(plan["revision"] and goal != plan["goal"])
+    route_changed = bool(
+        plan["revision"]
+        and direction_patch.get("objective", plan["direction"]["objective"])
+        != plan["direction"]["objective"]
+    )
     for patch in changes:
         key = patch.get("id") if isinstance(patch, dict) else None
         if not isinstance(key, str) or not ID.fullmatch(key) or key in seen or key in archived:
@@ -117,14 +122,10 @@ def revise(plan, arguments):
     if not 1 <= len(steps) <= MAX_STEPS:
         raise ValueError(f"A plan must contain 1–{MAX_STEPS} steps")
     if route_changed and not reason:
-        raise ValueError("Give a reason when revising the goal, route or a closed step")
+        raise ValueError("Give a reason when revising direction, route or a closed step")
     validate_dependencies(steps)
-    direction = {**plan.get("direction", {"objective": "", "metrics": [], "gaps": []})}
-    patch = arguments.get("direction", {})
-    if not isinstance(patch, dict) or patch.keys() - direction.keys():
-        raise ValueError("direction accepts objective, metrics and gaps")
-    direction.update(patch)
-    direction["objective"] = bounded_text(direction["objective"], 1200, "objective")
+    direction = {**plan["direction"], **direction_patch}
+    direction["objective"] = bounded_text(direction["objective"], 1200, "objective", required=True)
     for field in ("metrics", "gaps"):
         direction[field] = bounded_list(
             direction[field], 20, lambda x: bool(x.strip()) and len(x) <= 600, field
@@ -176,7 +177,6 @@ def revise(plan, arguments):
         raise ValueError("Step route must identify an existing research route")
     return {
         **plan,
-        "goal": goal,
         "direction": direction,
         "routes": routes,
         "reason": reason,

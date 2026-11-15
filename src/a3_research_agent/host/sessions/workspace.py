@@ -79,10 +79,10 @@ def write_durable(path: Path, content: str) -> None:
 
 
 def read_workspace_files(root: Path, references: list[dict]) -> tuple[dict, list]:
-    """Read bounded, hash-pinned UTF-8 source under scripts/."""
+    """Read bounded, hash-pinned UTF-8 files from the research workspace."""
     selected, manifest, total = {}, [], 0
     if not 1 <= len(references) <= 16:
-        raise ValueError("Select 1..16 workspace script files")
+        raise ValueError("Select 1..16 workspace text files")
     for reference in references:
         name, expected = reference["path"], reference["sha256"]
         path = PurePosixPath(name)
@@ -90,12 +90,10 @@ def read_workspace_files(root: Path, references: list[dict]) -> tuple[dict, list
             name != path.as_posix()
             or "\\" in name
             or path.is_absolute()
-            or len(path.parts) < 2
-            or path.parts[0] != "scripts"
             or any(part in {"..", "."} or part.startswith(".") for part in path.parts)
             or name in selected
         ):
-            raise ValueError("Workspace attachments need unique canonical scripts paths")
+            raise ValueError("Workspace attachments need unique canonical workspace paths")
         directory = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
         leaf = None
         try:

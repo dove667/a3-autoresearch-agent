@@ -47,7 +47,11 @@ def client_for(tmp_path, *, response=None, forbidden=False, context_budget=None,
         if forbidden:
             return {"status": "error", "error": "PermissionError"}
         assert payload["experiment_id"] == "owner-a"
-        return {"encoding": "base64", "data": base64.b64encode(raw.getvalue()).decode()}
+        return {
+            "encoding": "base64",
+            "data": base64.b64encode(raw.getvalue()).decode(),
+            **({"area": payload["area"]} if "area" in payload else {}),
+        }
 
     def forward(**body):
         models.append(body)
@@ -119,16 +123,14 @@ def test_vision_uses_real_image_items_worker_route_and_private_phase_isolation(t
     assert log["response_model"] == "actual-visual-worker"
 
 
-def test_harness_gateway_reaches_owned_vision_without_opening_operator_routes(
-    tmp_path, monkeypatch
-):
+def test_high_level_tools_reach_owned_vision_without_raw_transport(tmp_path, monkeypatch):
     from a3_research_agent.harness import agent
 
     client, reads, models = client_for(tmp_path)
     monkeypatch.chdir(tmp_path)
     forwarded = []
 
-    def request(method, path, data=None):
+    def request(method, path, data=None, **kwargs):
         forwarded.append(path)
         if path == "/sessions/self":
             return {"session_id": "owner-a", "is_main": True, "has_been_main": True}
@@ -139,17 +141,22 @@ def test_harness_gateway_reaches_owned_vision_without_opening_operator_routes(
         return response.json()
 
     monkeypatch.setattr(agent, "req", request)
-    status = agent.tool("gateway", {"method": "GET", "path": "/vision/status"})
-    assert status["available"] is True
-    result = agent.tool(
-        "gateway", {"method": "POST", "path": "/vision/inspect", "body": request_body()}
+    status = agent.dispatch_tool_call({"name": "vision_status", "arguments": "{}"})
+    assert status["ok"] is True and status["available"] is True
+    result = agent.dispatch_tool_call(
+        {"name": "vision_inspect", "arguments": json.dumps(request_body())}
     )
-    assert result["analysis"].startswith("Two red frames")
+    assert result["ok"] is True and result["analysis"].startswith("Two red frames")
     assert len(reads) == 2 and len(models) == 1
-    assert agent.tool("gateway", {"method": "GET", "path": "/control/inputs"}) == "path not allowed"
-    assert (
-        agent.tool("gateway", {"method": "GET", "path": "/visionary/status"}) == "path not allowed"
+    assert all(
+        frame["area"] == "outputs" and frame["experiment_id"] == "owner-a" for frame in reads
     )
+    assert "PRIVATE_OPERATOR_FEEDBACK" not in json.dumps(models)
+    for path in ("/control/inputs", "/visionary/status"):
+        denied = agent.dispatch_tool_call(
+            {"name": "gateway", "arguments": json.dumps({"method": "GET", "path": path})}
+        )
+        assert denied["ok"] is False and denied["error"] == "unknown_tool"
     assert "/control/inputs" not in forwarded and "/visionary/status" not in forwarded
 
 

@@ -1,67 +1,48 @@
-"""Controlled research outcomes live outside the freely writable workspace."""
+"""Whole-run reports are separate from the research task plan."""
 
 import json
 
-from a3_research_agent.harness import research_status
-from a3_research_agent.host.runs.supervisor import evaluate_outcome
+from a3_research_agent.harness import control_tools, paths, research_status, state_paths
 
 
-def test_outcome_tool_writes_state_and_host_reads_workspace_evidence(tmp_path, monkeypatch):
-    workspace = tmp_path / "workspace"
-    workspace.mkdir()
-    monkeypatch.setenv("A3_WORKSPACE", str(workspace))
-    evidence = workspace / "auth-error.txt"
-    evidence.write_text("Controlled expired authentication")
-    blocker = {
-        "kind": "authentication",
-        "requires_human": True,
-        "reason": "Authentication expired",
-        "required_action": "Renew access",
-        "evidence": ["auth-error.txt"],
-    }
-    result = research_status.update(
-        {
-            "action": "outcome",
-            "status": "blocked",
-            "reason": "Needs access",
-            "external_blocker": blocker,
-        }
-    )
-    assert result["status"] == "blocked"
-    state_root = tmp_path / "conversation"
-    assert not (workspace / "run-outcome.json").exists()
-    assert evaluate_outcome(workspace, state_root)["external_blocker"] == blocker
-    before = (state_root / "run-outcome.json").read_bytes()
-    blocker["evidence"] = ["../outside.txt"]
-    assert "error" in research_status.update(
-        {
-            "action": "outcome",
-            "status": "blocked",
-            "reason": "Needs access",
-            "external_blocker": blocker,
-        }
-    )
-    assert (state_root / "run-outcome.json").read_bytes() == before
-    assert "error" in research_status.update({"action": "outcome", "status": "complete"})
-    assert (state_root / "run-outcome.json").read_bytes() == before
-
-
-def test_progress_routes_outcomes_and_ignores_workspace_metadata(tmp_path, monkeypatch):
-    from a3_research_agent.harness import agent
-
-    workspace = tmp_path / "workspace"
-    workspace.mkdir()
-    monkeypatch.setenv("A3_WORKSPACE", str(workspace))
-    (workspace / "run-outcome.json").write_text('{"status":"blocked"}')
-    result = agent.tool(
-        "progress", {"action": "outcome", "status": "continue", "reason": "Saved progress"}
+def test_continue_status_is_flat_and_does_not_create_task_records():
+    result = control_tools.dispatch(
+        "research_status",
+        {"status": "continue", "reason": "Results recorded; further evaluation planned"},
+        None,
     )
     assert result["status"] == "continue"
-    state_root = tmp_path / "conversation"
-    assert evaluate_outcome(workspace, state_root) == {
-        "status": "continue",
-        "reason": "Saved progress",
+    assert "external_blocker" not in result
+    assert not paths.plan_file().exists()
+    assert json.loads(state_paths.path(state_paths.OUTCOME).read_text())["status"] == "continue"
+
+
+def test_blocked_status_requires_real_evidence_and_infers_operator_requirement(
+    tmp_path, monkeypatch
+):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    monkeypatch.setenv("A3_WORKSPACE", str(workspace))
+    args = {
+        "status": "blocked",
+        "reason": "Dataset export is unavailable",
+        "kind": "missing_resource",
+        "required_action": "Restore the referenced dataset export",
+        "evidence": ["experiments/error.txt"],
     }
-    assert json.loads((workspace / "run-outcome.json").read_text())["status"] == "blocked"
-    spec = next(tool for tool in agent.tools if tool["name"] == "progress")
-    assert "outcome" in spec["parameters"]["properties"]["action"]["enum"]
+    assert "error" in research_status.update(args)
+    (workspace / "experiments").mkdir()
+    (workspace / "experiments/error.txt").write_text("export request returned not found")
+    result = research_status.update(args)
+    assert result["external_blocker"]["requires_human"] is True
+    assert result["external_blocker"]["evidence"] == ["experiments/error.txt"]
+    assert research_status.read_outcome(workspace, state_paths.state_root())["status"] == "blocked"
+
+
+def test_obsolete_progress_envelope_and_unrelated_blocker_fields_are_rejected():
+    assert "error" in research_status.update(
+        {"action": "outcome", "status": "continue", "reason": "old envelope"}
+    )
+    assert "error" in research_status.update(
+        {"status": "continue", "reason": "working", "kind": "permission"}
+    )

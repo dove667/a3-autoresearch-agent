@@ -13,9 +13,6 @@ OBSERVATIONS = {
     "repeated_reads": 7,
     "retrieved_characters": 1000,
     "delivered_reads": 3,
-    "open_items": 2,
-    "waiting_items": 1,
-    "closed_items": 0,
 }
 
 

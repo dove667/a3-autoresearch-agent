@@ -14,7 +14,7 @@ def test_plan_tracks_dependencies_evidence_and_job_results(tmp_path, monkeypatch
         "plan",
         action="update",
         revision=0,
-        goal="Expand ACT training data",
+        direction={"objective": "Expand ACT training data"},
         steps=[
             {"id": "pilot", "task": "Verify DAgger", "criterion": "One valid saved trajectory"},
             {
@@ -112,10 +112,10 @@ def test_memory_search_preserves_sources_and_superseded_notes(tmp_path, monkeypa
     assert call("memory", **corrected)["id"] == new["id"]
     assert len((tmp_path / "memory/entries.jsonl").read_text().splitlines()) == 2
     assert [
-        row["id"] for row in call("memory", action="search", key="DAgger checkpoint")["items"]
+        row["id"] for row in call("memory", action="search", query="DAgger checkpoint")["items"]
     ] == [new["id"]]
-    assert "jobs/second/report.json" in call("memory", action="read", key=new["id"])["refs"]
-    assert "adapter" in call("memory", action="read", key=old["id"])["text"]
+    assert "jobs/second/report.json" in call("memory", action="read", id=new["id"])["refs"]
+    assert "adapter" in call("memory", action="read", id=old["id"])["text"]
 
 
 def test_recall_defaults_to_evidence_and_can_search_raw_calls(tmp_path, monkeypatch):
@@ -141,8 +141,8 @@ def test_recall_defaults_to_evidence_and_can_search_raw_calls(tmp_path, monkeypa
         {"type": "function_call_output", "call_id": "2", "output": '["checkpoint query echo"]'},
     ]
     agent.history_tools.append_history_many(rows)
-    query = {"keywords": ["checkpoint"], "n": 2, "m": 1}
-    evidence = call("recall", **query)
+    query = {"keywords": ["checkpoint"], "recent_rounds": 2}
+    evidence = call("recall", **query)["items"]
     assert len(evidence) == 1 and "missing decoder" in evidence[0]
     assert "2轮前" in evidence[0]
-    assert any("query echo" in row for row in call("recall", **query, mode="raw"))
+    assert any("query echo" in row for row in call("recall", **query, mode="raw")["items"])

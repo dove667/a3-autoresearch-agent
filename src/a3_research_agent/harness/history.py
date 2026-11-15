@@ -281,7 +281,7 @@ def recent_rounds_text(messages, count=5, limit_per_round=4000):
 # ---------------------------------------------------------------- recall ----
 
 
-RETRIEVAL_TOOLS = frozenset({"recall", "memory", "plan", "progress"})
+RETRIEVAL_TOOLS = frozenset({"recall", "memory", "plan", "research_status"})
 
 
 def readable_result(value):
@@ -404,18 +404,40 @@ def recall(
 
 
 def recall_tool(arguments):
-    if not isinstance(arguments, dict):
-        return ["recall 参数必须是对象"]
-    keywords = arguments.get("keywords") or []
-    if isinstance(keywords, str):
-        keywords = [keywords]
-    if not isinstance(keywords, list):
-        return ["keywords 必须为文本数组"]
-    return recall(
-        keywords,
-        arguments.get("n"),
-        arguments.get("m"),
-        window=arguments.get("window", SNIPPET_WINDOW),
-        limit=arguments.get("limit", SNIPPET_LIMIT),
-        mode=arguments.get("mode", "evidence"),
+    """Validate the small model-facing contract before searching current-run history."""
+    if not isinstance(arguments, dict) or arguments.keys() - {
+        "keywords",
+        "recent_rounds",
+        "limit",
+        "mode",
+    }:
+        return {
+            "error": "invalid_recall",
+            "hint": "Use keywords, optional recent_rounds, limit and mode.",
+        }
+    keywords = arguments.get("keywords")
+    if (
+        not isinstance(keywords, list)
+        or not 1 <= len(keywords) <= 12
+        or any(not isinstance(term, str) or not term.strip() for term in keywords)
+    ):
+        return {
+            "error": "invalid_keywords",
+            "hint": "Supply 1–12 nonempty search terms for this run's original history.",
+        }
+    rounds, limit, mode = (
+        arguments.get("recent_rounds"),
+        arguments.get("limit", 6),
+        arguments.get("mode", "evidence"),
     )
+    if (
+        (rounds is not None and (type(rounds) is not int or rounds < 1))
+        or type(limit) is not int
+        or not 1 <= limit <= 12
+        or mode not in {"evidence", "raw"}
+    ):
+        return {
+            "error": "invalid_recall",
+            "hint": "Use positive recent_rounds, limit within1–12, mode evidence or raw.",
+        }
+    return recall(keywords, rounds, 1 if rounds else None, limit=limit, mode=mode)

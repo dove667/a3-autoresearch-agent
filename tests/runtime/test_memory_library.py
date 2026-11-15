@@ -19,7 +19,7 @@ def test_revisions_archiving_and_run_lifetimes(tmp_path):
         durable["id"]
     ]
     assert (
-        invoke(tmp_path, "read", run="day-two", key=temporary["id"])["error"]
+        invoke(tmp_path, "read", run="day-two", id=temporary["id"])["error"]
         == "memory_not_applicable"
     )
     assert (
@@ -47,12 +47,12 @@ def test_revisions_archiving_and_run_lifetimes(tmp_path):
 def test_keyword_normalization_and_pagination(tmp_path):
     invoke(tmp_path, "write", content="2×10 数据去重需要按 seed 和来源核对", scope="DAgger")
     invoke(tmp_path, "write", content="2x10 数据需要实际训练清单", scope="DAgger")
-    page = invoke(tmp_path, "search", key="2x10 去重", limit=1)
+    page = invoke(tmp_path, "search", query="2x10 去重", limit=1)
     assert "去重" in page["items"][0]["preview"]
     assert page["next_offset"] == 1
-    second = invoke(tmp_path, "search", key="2x10 去重", limit=1, offset=1)
+    second = invoke(tmp_path, "search", query="2x10 去重", limit=1, offset=1)
     assert second["items"][0]["id"] != page["items"][0]["id"]
-    assert invoke(tmp_path, "search", key="数据去重")["items"]
+    assert invoke(tmp_path, "search", query="数据去重")["items"]
 
 
 def test_semantic_retrieval_cache_and_duplicate_confirmation(tmp_path):
@@ -75,11 +75,11 @@ def test_semantic_retrieval_cache_and_duplicate_confirmation(tmp_path):
         )
 
     first = call("write", content="语义检索经验")
-    hit = call("search", key="semantic search")
+    hit = call("search", query="semantic search")
     assert hit["items"][0]["id"] == first["id"]
     assert hit["retrieval"] == "hybrid"
     count = len(calls)
-    call("search", key="semantic search")
+    call("search", query="semantic search")
     assert len(calls) == count
     duplicate = call("write", content="含义相同的另一条记录")
     assert duplicate["error"] == "similar_memory_exists"
@@ -98,18 +98,18 @@ def test_updates_are_serialized_and_supersession_is_explicit(tmp_path):
     with ThreadPoolExecutor(max_workers=2) as pool:
         results = list(pool.map(update, ["Count 1000", "Count 1001"]))
     assert sum(result.get("error") == "memory_conflict" for result in results) == 1
-    current = invoke(tmp_path, "read", key=original["id"])
+    current = invoke(tmp_path, "read", id=original["id"])
     correction = invoke(
         tmp_path, "write", content="Validated count differs", supersedes=original["id"]
     )
     assert [row["id"] for row in invoke(tmp_path, "list")["items"]] == [correction["id"]]
-    assert invoke(tmp_path, "read", key=original["id"])["superseded_by"] == [correction["id"]]
+    assert invoke(tmp_path, "read", id=original["id"])["superseded_by"] == [correction["id"]]
     assert current["revision"] == 2
 
 
 def test_historical_run_notes_are_explicitly_readable_without_becoming_suggestions(tmp_path):
     note = invoke(tmp_path, "write", content="Current job is waiting", lifetime="run")
-    audit = invoke(tmp_path, "read", run="next-day", key=note["id"], include_archived=True)
+    audit = invoke(tmp_path, "read", run="next-day", id=note["id"], include_archived=True)
     assert audit["applicable"] is False
     assert invoke(tmp_path, "list", run="next-day")["items"] == []
     page = invoke(tmp_path, "list", run="next-day", include_archived=True)
@@ -117,6 +117,7 @@ def test_historical_run_notes_are_explicitly_readable_without_becoming_suggestio
 
 
 def test_document_similarity_detects_duplicates_without_query_instruction_bias(tmp_path):
+
     class Encoder:
         def __call__(self, texts):
             return [[1.0, 0.0] for _ in texts]
@@ -171,7 +172,7 @@ def test_long_notes_embed_in_bounded_chunks_and_context_is_progressive(tmp_path)
         model_id="bounded",
     )
     view = dispatch(
-        {"action": "context", "key": "经验"},
+        {"action": "context", "query": "经验"},
         root=tmp_path,
         run_id="a",
         embedder=embed,
@@ -181,7 +182,7 @@ def test_long_notes_embed_in_bounded_chunks_and_context_is_progressive(tmp_path)
     assert len(view["items"][0]["preview"]) == 180
     assert len(view["items"][0]["scope"]) <= 180
     assert len(view["items"][0]["refs"][0]) <= 180
-    assert len(invoke(tmp_path, "read", key=note["id"])["text"]) == 5800
+    assert len(invoke(tmp_path, "read", id=note["id"])["text"]) == 5800
 
 
 def test_run_scoped_correction_only_supersedes_within_its_applicable_runs(tmp_path):
@@ -197,9 +198,8 @@ def test_run_scoped_correction_only_supersedes_within_its_applicable_runs(tmp_pa
     next_day = invoke(tmp_path, "list", run="day-two")
     assert [row["id"] for row in next_day["items"]] == [original["id"]]
     assert next_day["items"][0]["superseded_by"] == []
-    assert invoke(tmp_path, "read", run="day-two", key=original["id"])["superseded_by"] == []
+    assert invoke(tmp_path, "read", run="day-two", id=original["id"])["superseded_by"] == []
     invoke(tmp_path, "archive", id=correction["id"], revision=1, reason="Run ended")
-    # Archiving the correction does not restore the earlier conclusion within that run.
     assert invoke(tmp_path, "list")["items"] == []
     assert invoke(tmp_path, "list", run="day-two")["items"][0]["id"] == original["id"]
 

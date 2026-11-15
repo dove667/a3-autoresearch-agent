@@ -24,6 +24,7 @@ from a3_research_agent.host.published_harness import (
 from a3_research_agent.host.runs.directories import debug_directory
 from a3_research_agent.path_safety import workspace_path
 
+from .artifact_pages import read_session_page
 from .workspace import (
     ACTIVE_STATES,
     MAX_ACTIVE_SESSIONS,
@@ -153,6 +154,14 @@ class ProcessRuntime:
         if name.startswith("conversation/"):
             return read_artifact(self.state_root, name.removeprefix("conversation/"), offset, limit)
         return read_artifact(session_workspace(self.root, session_id), name, offset, limit)
+
+    def artifact_text(self, owner, session_id, name, offset=0, limit=4000):
+        self.owned(owner, session_id)
+        if name.startswith("conversation/"):
+            return read_session_page(
+                self.state_root, name.removeprefix("conversation/"), offset, limit
+            )
+        return read_session_page(session_workspace(self.root, session_id), name, offset, limit)
 
     @staticmethod
     def require_native_source(source):

@@ -23,10 +23,12 @@ def decode(raw: bytes) -> dict:
     if (
         not isinstance(plan, dict)
         or type(plan.get("version")) is not int
-        or plan["version"] != 1
+        or plan["version"] != 2
         or type(plan.get("revision")) is not int
         or plan["revision"] < 0
         or not isinstance(plan.get("steps"), dict)
+        or "goal" in plan
+        or not isinstance(plan.get("direction"), dict)
     ):
         raise ValueError("Unsupported research plan structure")
     return plan
@@ -37,7 +39,14 @@ def load(plan_file: Path) -> dict:
     try:
         return decode(path.read_bytes())
     except FileNotFoundError:
-        return {"version": 1, "revision": 0, "goal": "", "reason": "", "steps": {}}
+        return {
+            "version": 2,
+            "revision": 0,
+            "direction": {"objective": "", "metrics": [], "gaps": []},
+            "routes": {},
+            "reason": "",
+            "steps": {},
+        }
 
 
 @contextmanager

@@ -19,8 +19,8 @@ def test_documented_status_example_uses_the_controlled_tool(tmp_path, monkeypatc
     examples = [
         json.loads(body) for body in re.findall(r"```json\n(.*?)\n```", execution, re.DOTALL)
     ]
-    arguments = next(example for example in examples if example.get("action") == "outcome")
-    assert agent.tool("progress", arguments)["status"] == "continue"
+    arguments = next(example for example in examples if example.get("status") == "continue")
+    assert agent.tool("research_status", arguments)["status"] == "continue"
     saved = tmp_path / "conversation/run-outcome.json"
     assert json.loads(saved.read_text())["reason"] == arguments["reason"]
     assert not list(workspace.iterdir())

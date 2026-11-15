@@ -32,7 +32,7 @@ def test_memory_uses_the_host_root_across_working_directories(tmp_path, monkeypa
     assert (root / "entries.jsonl").is_file()
     monkeypatch.chdir(second)
     assert (
-        memory.dispatch({"action": "search", "key": "checkpoint"}, root=paths.memory_root())[
+        memory.dispatch({"action": "search", "query": "checkpoint"}, root=paths.memory_root())[
             "items"
         ][0]["id"]
         == note["id"]

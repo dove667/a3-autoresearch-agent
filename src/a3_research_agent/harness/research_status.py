@@ -64,24 +64,31 @@ def read_outcome(workspace: Path, state_root: Path) -> dict:
 
 
 def update(arguments):
-    """Apply one explicit outcome tool request without modifying research files."""
+    """Save the whole-run status; research task progress belongs to plan."""
     try:
-        if arguments.keys() - {"action", "status", "reason", "external_blocker"}:
-            raise ValueError("Outcome accepts only action, status, reason and external_blocker")
+        if arguments.keys() - {"status", "reason", "kind", "required_action", "evidence"}:
+            raise ValueError("Use status, reason and optional blocker fields")
         status, reason = arguments.get("status"), arguments.get("reason", "")
-        if arguments.get("action") != "outcome" or status not in {"continue", "blocked"}:
-            raise ValueError("Use outcome status continue or blocked")
+        if status not in {"continue", "blocked"}:
+            raise ValueError("Use status continue or blocked")
         if not isinstance(reason, str) or not reason.strip() or len(reason) > 1000:
-            raise ValueError("Give a nonempty outcome reason of at most 1000 characters")
+            raise ValueError("Give a nonempty reason of at most1000 characters")
         outcome = {"status": status, "reason": reason.strip()}
         if status == "blocked":
             outcome["external_blocker"] = validate_blocker(
-                arguments.get("external_blocker"), paths.workspace_root()
+                {
+                    "kind": arguments.get("kind"),
+                    "requires_human": True,
+                    "reason": reason.strip(),
+                    "required_action": arguments.get("required_action"),
+                    "evidence": arguments.get("evidence"),
+                },
+                paths.workspace_root(),
             )
-        elif "external_blocker" in arguments:
-            raise ValueError("Only blocked outcomes accept external_blocker")
+        elif any(field in arguments for field in ("kind", "required_action", "evidence")):
+            raise ValueError("Only blocked status accepts kind, required_action or evidence")
         raw = json.dumps(outcome, ensure_ascii=False, sort_keys=True)
         atomic(state_paths.path(state_paths.OUTCOME), raw)
         return {**outcome, "sha256": hashlib.sha256(raw.encode()).hexdigest()}
     except (ValueError, TypeError, KeyError) as error:
-        return {"error": "invalid_research_outcome", "hint": str(error)}
+        return {"error": "invalid_research_status", "hint": str(error)}

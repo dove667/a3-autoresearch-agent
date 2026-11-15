@@ -27,7 +27,7 @@ def suggestions(plan):
     cached = _CONTEXT_CACHE.get(key)
     if cached and time.monotonic() - cached[0] < 30:
         return cached[1]
-    result = call({"action": "context", "key": query, "limit": 3})
+    result = call({"action": "context", "query": query, "limit": 3})
     _CONTEXT_CACHE.clear()
     _CONTEXT_CACHE[key] = (time.monotonic(), result)
     return result
@@ -35,6 +35,6 @@ def suggestions(plan):
 
 def dispatch(arguments):
     result = call(arguments)
-    if arguments.get("action") in {"write", "update", "archive"}:
+    if arguments.get("action") in {"write", "update", "archive", "restore"}:
         _CONTEXT_CACHE.clear()
     return result

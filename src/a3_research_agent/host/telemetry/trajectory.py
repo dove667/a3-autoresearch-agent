@@ -25,9 +25,6 @@ OBSERVATIONS = frozenset(
         "repeated_reads",
         "retrieved_characters",
         "delivered_reads",
-        "open_items",
-        "waiting_items",
-        "closed_items",
     }
 )
 MAX_EVENTS = 256

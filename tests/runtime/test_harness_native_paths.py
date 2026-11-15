@@ -40,5 +40,5 @@ def test_default_wait_manifest_uses_native_input_directory(tmp_path, monkeypatch
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("A3_INPUT_ROOT", str(tmp_path))
     (tmp_path / "input-manifest.json").write_text('{"status":"updating"}')
-    result = waiting.wait_for_change(lambda *args, **kwargs: {}, seconds=1)
+    result = waiting.wait_idle(lambda *args, **kwargs: {}, seconds=1)
     assert result["reason"] == "inputs_changed"

@@ -66,7 +66,6 @@ def view(plan=None, *, jobs=None, compact=False):
         "unlinked_steps": [key for key, step in steps.items() if not step.get("route")],
         "notice": "Agent-authored plan. Job status is last observed. Verify evidence before closing.",
         "revision": plan["revision"],
-        "goal": plan["goal"],
         "reason": plan["reason"],
         "ready": ready,
         "counts": {
@@ -131,6 +130,16 @@ def dispatch(arguments):
 
 def dispatch_locked(arguments):
     action = arguments.get("action")
+    allowed = {
+        "show": {"action", "id"},
+        "update": {"action", "revision", "direction", "routes", "steps", "archive", "reason"},
+        "review": {"action", "revision", "id", "decision", "conclusion", "evidence", "reason"},
+    }
+    if action not in allowed or arguments.keys() - allowed[action]:
+        return {
+            "error": "plan_validation",
+            "hint": "Use only the fields for show, update or review; direction.objective holds the objective",
+        }
     plan = load()
     plan_store.snapshot(plan_file(), paths.plan_snapshots_root())
     if action == "show":

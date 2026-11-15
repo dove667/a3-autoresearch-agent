@@ -157,8 +157,20 @@ class SessionRoutes:
         authorization: Annotated[str | None, Header()] = None,
         offset: Annotated[int, Query(ge=0)] = 0,
         limit: Annotated[int | None, Query(ge=1, le=MAX_ARTIFACT_BYTES)] = None,
+        text: bool = False,
     ):
         record = self.readable_session(authorization, session_id)
+        if text:
+            if limit is not None and limit > 8000:
+                raise HTTPException(422, "Text pages are at most 8000 characters")
+            return self.deployment_call(
+                self.session_runtime.artifact_text,
+                record["owner"],
+                session_id,
+                path,
+                offset,
+                limit or 4000,
+            )
         if limit is not None or offset:
             return self.deployment_call(
                 self.session_runtime.artifact, record["owner"], session_id, path, offset, limit

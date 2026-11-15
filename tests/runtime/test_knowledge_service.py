@@ -37,7 +37,7 @@ def test_memory_service_requires_credential_and_keeps_run_scoped_notes(tmp_path)
             },
         ).json()
         assert entry["run_ids"] == ["today"]
-        hits = client.post("/memory", json={"action": "search", "key": "manifest"}).json()
+        hits = client.post("/memory", json={"action": "search", "query": "manifest"}).json()
         assert len(hits["items"]) == 1
         assert client.post("/memory", content="x" * 65537).status_code == 413
         assert client.post("/memory", content=iter([b"x" * 40000, b"x" * 40000])).status_code == 413
@@ -95,11 +95,7 @@ def test_shutdown_kills_surviving_child_after_worker_exits(tmp_path, monkeypatch
 
     ready = tmp_path / "child-pid"
     child_script = "import signal,time;signal.signal(signal.SIGTERM,signal.SIG_IGN);time.sleep(60)"
-    parent_script = (
-        "import subprocess,sys,time;from pathlib import Path;"
-        "p=subprocess.Popen([sys.executable,'-c',sys.argv[2]]);"
-        "Path(sys.argv[1]).write_text(str(p.pid));time.sleep(.2)"
-    )
+    parent_script = "import subprocess,sys,time;from pathlib import Path;p=subprocess.Popen([sys.executable,'-c',sys.argv[2]]);Path(sys.argv[1]).write_text(str(p.pid));time.sleep(.2)"
     process = subprocess.Popen(
         [sys.executable, "-c", parent_script, str(ready), child_script], start_new_session=True
     )

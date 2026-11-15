@@ -8,22 +8,25 @@ import time
 import urllib.error
 import urllib.request
 
-from a3_research_agent.harness import research_status, state_paths
+from a3_research_agent.harness import state_paths
 
 os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
 
-from a3_research_agent.harness import history as history_tools
 from a3_research_agent.harness import (
-    job_preflight,
+    control_tools,
+    file_tools,
+    host_tools,
     job_tools,
     lifecycle,
     operational_state,
     research_web,
     skill_registry,
+    tool_catalog,
     tool_contracts,
+    tool_results,
     waiting,
-    workspace_tools,
 )
+from a3_research_agent.harness import history as history_tools
 from a3_research_agent.harness import (
     paths as runtime_paths,
 )
@@ -89,226 +92,83 @@ def log(x):
         f.write(json.dumps(x, ensure_ascii=False) + "\n")
 
 
-def select_json_fields(raw, fields, path):
-    if (
-        not isinstance(fields, list)
-        or not 1 <= len(fields) <= 32
-        or any(not isinstance(k, str) or len(k) > 200 for k in fields)
-    ):
-        return {
-            "error": "invalid_fields",
-            "hint": "Use fields with 1..32 top-level JSON object keys, at most 200 characters each.",
-        }
+def request_host(method, path, data=None, *, timeout=300):
+    """Keep HTTP transport and automatic observations inside the maintained runtime."""
+    result = req(method, path, data, timeout=timeout)
     try:
-        value = json.loads(raw)
-    except (ValueError, UnicodeError):
-        return {
-            "error": "source_not_json",
-            "path": path,
-            "hint": "Use read without fields for a bounded text page; the source is not valid JSON.",
-        }
-    if not isinstance(value, dict):
-        return {
-            "error": "json_root_not_object",
-            "path": path,
-            "hint": "Use read without fields for a bounded page; fields selects top-level object keys.",
-        }
-    result = {
-        "path": path,
-        "sha256": hashlib.sha256(raw).hexdigest(),
-        "fields": {k: value[k] for k in fields if k in value},
-        "missing_fields": [k for k in fields if k not in value],
-    }
-    if context_manager.size(result) > 10000:
-        return {
-            "path": path,
-            "sha256": result["sha256"],
-            "error": "field_selection_exceeds_page_budget",
-            "notice": "Selected values were not delivered. Use bounded character pages with offset/limit and source hash.",
-        }
+        operational_state.record_gateway(method, path, result)
+    except Exception:  # noqa: BLE001 - observation failure must not hide an executed operation
+        try:
+            log({"operational_receipt": "host_observation_failed"})
+        except OSError:
+            pass
     return result
 
 
-def tool(name, a):
+def tool(name, arguments):
+    if name in file_tools.NAMES:
+        return file_tools.dispatch(name, arguments)
     if name in job_tools.NAMES:
-        return job_tools.dispatch(
-            name,
-            a,
-            lambda method, path, body=None: tool(
-                "gateway", {"method": method, "path": path, "body": body}
-            ),
-        )
-    if name in workspace_tools.NAMES:
-        return workspace_tools.dispatch(name, a)
+        return job_tools.dispatch(name, arguments, request_host)
+    if name in host_tools.NAMES:
+        return host_tools.dispatch(name, arguments, request_host)
+    if name in control_tools.NAMES:
+        return control_tools.dispatch(name, arguments, request_host, cursor=WAIT_CURSOR)
     if name in research_web.NAMES:
-        return research_web.dispatch(
-            name,
-            a,
-            lambda method, path, body=None: tool(
-                "gateway", {"method": method, "path": path, "body": body}
-            ),
-        )
+        return research_web.dispatch(name, arguments, request_host)
     if name == "skills":
-        return skill_registry.dispatch(a)
-    if name == "recall":
-        return history_tools.recall_tool(a)
+        return skill_registry.dispatch(arguments)
     if name == "memory":
-        return memory_client.dispatch(a)
-    if name == "preflight":
-        return job_preflight.dispatch(
-            {
-                **a,
-                "job": job_tools.submit_request(
-                    a.get("job"), pathlib.Path.cwd(), allow_pinned_sources=True
-                ),
-            },
-            lambda method, path, body=None: tool(
-                "gateway", {"method": method, "path": path, "body": body}
-            ),
-        )
+        return memory_client.dispatch(arguments)
+    if name == "recall":
+        return history_tools.recall_tool(arguments)
     if name == "plan":
-        return planning.dispatch(a)
-    if name == "progress":
-        if a.get("action") == "outcome":
-            return research_status.update(a)
-        return operational_state.progress(a)
-    if name == "gateway":
-        path = a["path"]
-        if not any(
-            path == p or path.startswith((p + "/", p + "?"))
-            for p in [
-                "/jobs",
-                "/resources/gpus",
-                "/sessions",
-                "/checks/comparison",
-                "/fixtures/isolation",
-                "/telemetry",
-                "/vision",
-                "/web",
-            ]
-        ):
-            return "path not allowed"
-        result = req(a["method"], path, a.get("body"))
-        try:
-            operational_state.record_gateway(a["method"], path, result)
-        except Exception:  # noqa: BLE001 — preserve the result of an already executed operation
-            try:
-                log({"operational_receipt": "gateway_update_failed"})
-            except OSError:
-                pass  # Optional diagnostics cannot hide an executed operation.
-        return result
-    if name in ("read", "write", "list"):
-        tool_contracts.text(a.get("path"), "path")
-        p = pathlib.Path(a["path"]).resolve()
-        roots = [
-            runtime_paths.workspace_root(),
-            runtime_paths.reference_root(),
-            runtime_paths.input_root(),
-            state_paths.state_root(),
-        ]
-        if not any(p == r or r in p.parents for r in roots):
-            return "denied"
-        if name == "write":
-            if not (p == roots[0] or roots[0] in p.parents):
-                return "read only"
-            p.parent.mkdir(parents=True, exist_ok=True)
-            p.write_text(a["content"])
-            return "written"
-        if name == "list":
-            if not p.is_dir():
-                return {
-                    "error": "path_is_file",
-                    "hint": "Use read for a file; list requires a directory.",
-                }
-            return [str(x) for x in p.iterdir()][:300]
-        if p.is_dir():
-            return {
-                "error": "path_is_directory",
-                "hint": "Use list for a directory, then read a selected file.",
-            }
-        if a.get("fields") is not None:
-            if p.stat().st_size > 1024 * 1024:
-                return {
-                    "error": "field_selection_source_too_large",
-                    "path": str(p),
-                    "notice": "Use bounded offset/limit text pages; no JSON fields were read.",
-                }
-            return select_json_fields(p.read_bytes(), a["fields"], str(p))
-        offset = tool_contracts.integer(a.get("offset", 0), "offset", 0, 2**63 - 1)
-        limit = tool_contracts.integer(a.get("limit", 4000), "limit", 1, 8000)
-        return operational_state.read_page(p, offset, limit)
-    if name == "wait":
-        seconds = a.get("seconds", 5)
-        if type(seconds) is not int or not 0 <= seconds <= 600:
-            raise ValueError("Wait seconds must be an integer in 0..600")
-        jobs = waiting.active_jobs()
-        if jobs and seconds:
-            return waiting.wait_for_jobs(req, jobs, cursor=WAIT_CURSOR)
-        return waiting.wait_for_change(
-            req,
-            seconds,
-            cursor=WAIT_CURSOR,
-            signals=lambda timeout: req("GET", "/wait/signals", timeout=timeout),
-        )
-    return "unknown tool"
-
-
-# Only exact, locally defined validation messages may become public advice.
-# Unexpected exceptions retain the generic boundary; never echo their text.
-SAFE_VALIDATION_ERRORS = {
-    "progress": {
-        "Invalid bounded operational item": (
-            "progress_bounds",
-            "Use id 1..80 characters, status open|waiting|closed and note at most 400 characters.",
-        ),
-        "Evidence must be bounded workspace-relative references": (
-            "progress_evidence",
-            "Use at most 8 workspace-relative evidence paths, each at most 300 characters; no URLs, absolute paths or traversal.",
-        ),
-        "Closed operational items require evidence references, not a pass label": (
-            "progress_evidence_required",
-            "Closing an item requires actual evidence references; do not substitute a success label.",
-        ),
-        "Operational item capacity reached; preserve and consolidate explicitly": (
-            "progress_capacity",
-            "Operational item capacity reached. Inspect existing items; preserve history and consolidate explicitly rather than dropping records.",
-        ),
-    },
-    "wait": {
-        "Wait seconds must be an integer in 0..600": (
-            "wait_bounds",
-            "Use an integer seconds value in 0..600.",
-        )
-    },
-}
+        return planning.dispatch(arguments)
+    tool_contracts.fail("unknown_tool", "Select a registered high-level research tool.")
 
 
 def dispatch_tool_call(call):
-    arguments = {}
     try:
         try:
-            arguments = json.loads(call["arguments"])
-        except json.JSONDecodeError:
-            return {
-                "error": "invalid_tool_json",
-                "hint": "Send one valid JSON object as the tool arguments.",
-            }
+            arguments = json.loads(call.get("arguments", ""))
+        except (ValueError, TypeError):
+            return tool_results.failure(
+                "invalid_tool_json", "Send one valid JSON object as arguments."
+            )
         if not isinstance(arguments, dict):
-            return {"error": "invalid_arguments", "hint": "Tool arguments must be a JSON object."}
-        return tool(call["name"], arguments)
+            return tool_results.failure(
+                "invalid_arguments", "Tool arguments must be a JSON object."
+            )
+        contract = tool_catalog.BY_NAME.get(call.get("name"))
+        if contract is None:
+            return tool_results.failure(
+                "unknown_tool",
+                "Select a registered high-level tool; low-level gateway calls are unavailable.",
+            )
+        schema = contract["parameters"]
+        tool_contracts.arguments(arguments, schema["properties"])
+        missing = set(schema.get("required", [])) - arguments.keys()
+        if missing:
+            return tool_results.failure(
+                "missing_arguments", "Provide required fields: " + ", ".join(sorted(missing))
+            )
+        return tool_results.normalize(tool(call["name"], arguments))
     except tool_contracts.ToolInputError as error:
-        return {"error": error.code, "hint": error.hint}
+        return tool_results.failure(error.code, error.hint)
     except FileNotFoundError:
-        return {"error": "file_not_found", "path": arguments.get("path")}
+        return tool_results.failure(
+            "file_not_found", "List the directory and use an existing path."
+        )
     except PermissionError:
-        return {"error": "permission_denied", "path": arguments.get("path")}
-    except ValueError as error:
-        advice = SAFE_VALIDATION_ERRORS.get(call.get("name"), {}).get(str(error))
-        if advice:
-            return {"error": "validation_failed", "code": advice[0], "hint": advice[1]}
-        return {"error": "tool_execution_failed", "error_type": type(error).__name__}
-    except Exception as error:  # noqa: BLE001 - keep private errors out of tool results
-        return {"error": "tool_execution_failed", "error_type": type(error).__name__}
+        return tool_results.failure(
+            "permission_denied", "Use an authorized research path or resource ID."
+        )
+    except Exception as error:  # noqa: BLE001 - unexpected implementation details stay private
+        return tool_results.failure(
+            "tool_execution_failed",
+            "Report this tool failure with its arguments and stored response.",
+            error_type=type(error).__name__,
+        )
 
 
 class ToolResultPersistenceError(RuntimeError):
@@ -333,7 +193,7 @@ def save_tool_result(call, result, journal, messages, visible_count):
             result = (
                 operational_state.visible_page_reference(result, messages[:visible_count]) or result
             )
-        if call["name"] == "wait":
+        if call["name"] in {"job_wait", "idle_wait"}:
             operational_state.record_wait(result)
         phase = "result_archival"
         bounded = context_manager.bound_tool_result(result, call)
@@ -356,259 +216,7 @@ def save_tool_result(call, result, journal, messages, visible_count):
         raise ToolResultPersistenceError(phase) from error
 
 
-def spec(name, props, required):
-    return {
-        "type": "function",
-        "name": name,
-        "description": {
-            "gateway": (
-                "Advanced Host API access; prefer job_submit/job_status/job_artifact for common work. "
-                "For remote job creation POST /jobs body "
-                '{command:["python","-m","module","--help"],gpu:false,files:{}}; command MUST '
-                "be an array. GET /jobs/{id} reads an accessible job's status and log tail. "
-                "GET /resources/gpus reads aggregate GPU memory and utilization on demand. "
-                "The current research workspace and artifacts are available for reading. Attach "
-                "local scripts with workspace_files and existing datasets or model assets "
-                "with input_exports. Use wait after independent submissions. Jobs execute "
-                "isolated code, not local host commands."
-            ),
-            "read": "Read a bounded character page with content, whole-file SHA256, offset/end/total and EOF. limit is 1..8000, default 4000. An identical page still in context returns a reference. Optional fields selects top-level JSON keys instead.",
-            "write": "Write text in workspace.",
-            "list": "List accessible directory.",
-            "preflight": (
-                "Check a GPU job on CPU using the same command, source and inputs; workspace_files "
-                "needs only path and optional destination, with source hashes computed locally. "
-                "The check uses "
-                "A3_RESEARCH_PREFLIGHT=1. Implement this mode in the entry to load the real "
-                "assets, import dependencies, exercise a minimal forward or data read, write "
-                "a3-preflight.json in the job workspace, and exit before production. After "
-                "completion use action=submit with the same job and preflight_id."
-            ),
-            "plan": "Manage the shared three-level research plan: direction (objective, metrics, gaps), routes (question, hypothesis, experiment, decision_rule), and execution steps linked by route ID. Start each run with show. Patch only changed fields. Higher priority (0..100) comes first. After terminal job results, use review with route id, decision continue/pause/complete, conclusion and evidence; then update next steps. Review records the last observed terminal jobs, not scientific verification. Show or update the persistent research plan. Update with the current revision and patch steps by stable ID. Each new step needs task and criterion. Use depends_on for real prerequisites, jobs for submitted Controller IDs, progress for counts or blockers, and evidence when done. Give reason for route changes or archiving done/skipped steps. Show can select a single ID. Ready steps are included in the decision context; use wait when submitted work must finish.",
-            "progress": (
-                "Use list/update for operational items and workspace evidence. Use action=outcome "
-                "with status=continue and reason to save research progress, or status=blocked with "
-                "external_blocker (kind, requires_human=true, reason, required_action, evidence) "
-                "when operator action is needed. Metadata is saved outside workspace. Closed "
-                "items remain recorded across summaries."
-            ),
-            "wait": "Wait until an owned job finishes, fails or is cancelled, or an operator notification arrives. Queued and running jobs stay in program-level wait. With no jobs, seconds is a finite 0..600 delay.",
-            "recall": (
-                "Search original history by keyword; by default search all available history. "
-                "Optionally restrict to an n..m round window (n=1 is the most recent round). "
-                "Use after compaction or whenever "
-                "earlier evidence is missing. Returns labelled snippets from the "
-                "original messages. Default evidence mode skips tool arguments and retrieval echoes; "
-                "use mode=raw for exact historical tool traffic."
-            ),
-            "memory": (
-                "Research experience across runs. Store findings, failure lessons and applicability here; "
-                "use plan for future work/current jobs and skills for reusable procedures. "
-                "search(key=natural-language question,scope?,kind?,limit?,offset?) uses semantic+keyword retrieval; "
-                "read(key=id) returns full note and revision. write(content,scope,refs,kind?) saves a durable note. "
-                "Use lifetime=run only for temporary observations; run_ids records associated runs and limits run-lifetime applicability. "
-                "update(id,revision,content?,scope?,refs?,reason) corrects a note in place with history; "
-                "archive(id,revision,reason) removes obsolete notes from normal retrieval. "
-                "Similar writes return suggestions: update an existing note, or force=true with reason to keep a distinct finding. "
-                "sources(id) lists evidence locators; sources(id,ref,offset?,limit?) reads an available source. "
-                "list supports offset/limit and include_archived. Historical notes never grant current permissions."
-            ),
-        }[name],
-        "parameters": {
-            "type": "object",
-            "properties": props,
-            "required": required,
-            "additionalProperties": False,
-        },
-        "strict": False,
-    }
-
-
-S = {"type": "string"}
-
-
-def strings(limit):
-    return {"type": "array", "items": S, "maxItems": limit}
-
-
-tools = (
-    [
-        spec(
-            "gateway",
-            {"method": S, "path": S, "body": {"type": "object"}},
-            ["method", "path"],
-        ),
-        spec(
-            "read",
-            {
-                "path": S,
-                "offset": {"type": "integer", "minimum": 0},
-                "limit": {"type": "integer", "minimum": 1, "maximum": 8000},
-                "fields": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "minItems": 1,
-                    "maxItems": 32,
-                },
-            },
-            ["path"],
-        ),
-        spec(
-            "preflight",
-            {
-                "action": {"type": "string", "enum": ["check", "submit"]},
-                "job": job_tools.PREFLIGHT_JOB,
-                "preflight_id": S,
-            },
-            ["action", "job"],
-        ),
-        spec(
-            "plan",
-            {
-                "action": {"type": "string", "enum": ["show", "update", "review"]},
-                "revision": {"type": "integer", "minimum": 0},
-                "goal": S,
-                "reason": S,
-                "id": S,
-                "direction": {
-                    "type": "object",
-                    "properties": {"objective": S, "metrics": strings(20), "gaps": strings(20)},
-                    "additionalProperties": False,
-                },
-                "routes": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "id": S,
-                            "question": S,
-                            "hypothesis": S,
-                            "experiment": S,
-                            "decision_rule": S,
-                            "status": {
-                                "type": "string",
-                                "enum": ["proposed", "active", "paused", "completed"],
-                            },
-                            "priority": {"type": "integer", "minimum": 0, "maximum": 100},
-                            "conclusion": S,
-                            "evidence": strings(20),
-                        },
-                        "required": ["id"],
-                        "additionalProperties": False,
-                    },
-                },
-                "decision": {"type": "string", "enum": ["continue", "pause", "complete"]},
-                "conclusion": S,
-                "evidence": strings(20),
-                "archive": strings(planning.MAX_STEPS),
-                "steps": {
-                    "type": "array",
-                    "maxItems": planning.MAX_STEPS,
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "id": S,
-                            "route": S,
-                            "priority": {"type": "integer", "minimum": 0, "maximum": 100},
-                            "task": S,
-                            "criterion": S,
-                            "status": {"type": "string", "enum": list(planning.STATUSES)},
-                            "depends_on": strings(8),
-                            "jobs": strings(8),
-                            "progress": S,
-                            "evidence": strings(4),
-                        },
-                        "required": ["id"],
-                        "additionalProperties": False,
-                    },
-                },
-            },
-            ["action"],
-        ),
-        spec(
-            "progress",
-            {
-                "action": {"type": "string", "enum": ["list", "update", "outcome"]},
-                "id": {"type": "string", "minLength": 1, "maxLength": 80},
-                "status": {
-                    "type": "string",
-                    "enum": ["open", "waiting", "closed", "continue", "blocked"],
-                },
-                "reason": {"type": "string", "maxLength": 1000},
-                "external_blocker": {
-                    "type": "object",
-                    "properties": {
-                        "kind": {
-                            "type": "string",
-                            "enum": sorted(research_status.EXTERNAL_BLOCKERS),
-                        },
-                        "requires_human": {"type": "boolean"},
-                        "reason": {"type": "string", "maxLength": 1000},
-                        "required_action": {"type": "string", "maxLength": 1000},
-                        "evidence": strings(8),
-                    },
-                    "required": ["kind", "requires_human", "reason", "required_action", "evidence"],
-                    "additionalProperties": False,
-                },
-                "note": {"type": "string", "maxLength": 400},
-                "evidence": {
-                    "type": "array",
-                    "maxItems": 8,
-                    "items": {"type": "string", "minLength": 1, "maxLength": 300},
-                },
-            },
-            ["action"],
-        ),
-        spec("write", {"path": S, "content": S}, ["path", "content"]),
-        spec("list", {"path": S}, ["path"]),
-        spec("wait", {"seconds": {"type": "integer", "minimum": 0, "maximum": 600}}, []),
-        spec(
-            "recall",
-            {
-                "keywords": {"type": "array", "items": S},
-                "n": {"type": "integer"},
-                "m": {"type": "integer"},
-                "mode": {"type": "string", "enum": ["evidence", "raw"]},
-                "window": {"type": "integer"},
-                "limit": {"type": "integer"},
-            },
-            ["keywords"],
-        ),
-        spec(
-            "memory",
-            {
-                "action": {
-                    "type": "string",
-                    "enum": ["write", "read", "list", "search", "update", "archive", "sources"],
-                },
-                "content": S,
-                "key": S,
-                "kind": S,
-                "scope": S,
-                "refs": strings(16),
-                "supersedes": S,
-                "id": S,
-                "revision": {"type": "integer", "minimum": 1},
-                "expected_sha256": S,
-                "reason": S,
-                "status": {"type": "string", "enum": ["active", "archived"]},
-                "lifetime": {"type": "string", "enum": ["durable", "run"]},
-                "run_ids": strings(32),
-                "tags": strings(24),
-                "include_archived": {"type": "boolean"},
-                "force": {"type": "boolean"},
-                "offset": {"type": "integer", "minimum": 0},
-                "limit": {"type": "integer", "minimum": 1, "maximum": 8000},
-                "ref": S,
-            },
-            ["action"],
-        ),
-    ]
-    + job_tools.TOOLS
-    + workspace_tools.TOOLS
-    + research_web.TOOLS
-    + skill_registry.TOOLS
-)
+tools = tool_catalog.TOOLS
 
 
 INSTRUCTIONS = ""
@@ -703,7 +311,7 @@ def recover_journal(messages):
         )
         if c.get("name") == "read":
             operational_state.record_page(c["call_id"], value)
-        if c.get("name") == "wait":
+        if c.get("name") in {"job_wait", "idle_wait"}:
             operational_state.record_wait(value)
         restored.append(
             {

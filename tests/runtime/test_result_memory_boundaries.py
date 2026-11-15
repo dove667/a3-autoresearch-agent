@@ -57,7 +57,7 @@ def output(result, call_id="call-test"):
 def test_ingress_bounds_serialized_envelope_and_retains_exact_result(tmp_path, monkeypatch, result):
     monkeypatch.chdir(tmp_path)
     cm = load("context_manager")
-    call = {"call_id": "call-test", "name": "gateway", "arguments": "{}"}
+    call = {"call_id": "call-test", "name": "job_submit", "arguments": "{}"}
     bounded = cm.bound_tool_result(result, call)
     message = output(bounded)
     assert cm.size(message) <= 12000
@@ -132,7 +132,7 @@ def test_many_moderate_outputs_use_the_actual_metadata_floor(tmp_path, monkeypat
     monkeypatch.chdir(tmp_path)
     cm = load("context_manager")
     messages = [
-        {"type": "function_call", "call_id": str(i), "name": "gateway", "arguments": "{}"}
+        {"type": "function_call", "call_id": str(i), "name": "job_submit", "arguments": "{}"}
         for i in range(10)
     ] + [output("x" * 1000, str(i)) for i in range(10)]
     fitted = cm.fit_tool_outputs(messages, 10000)
@@ -189,23 +189,35 @@ def agent_functions(*names):
 
 
 def test_execution_is_separate_from_result_publication(tmp_path, monkeypatch):
+    from a3_research_agent.harness import agent
+
     monkeypatch.chdir(tmp_path)
     calls = []
-    raw = "x" * 100000
-    cm = load("context_manager")
-    ns = {
-        "json": json,
-        "tool": lambda *args: calls.append(args) or raw,
-        "spill_tools": types.SimpleNamespace(
-            maybe_spill=lambda *a, **k: (_ for _ in ()).throw(OSError())
-        ),
-        "context_manager": cm,
-        "state_paths": state_paths,
-        "operational_state": types.SimpleNamespace(record_page=lambda *a: None),
-    }
-    exec(compile(agent_functions("dispatch_tool_call"), "isolated-agent", "exec"), ns)
-    assert ns["dispatch_tool_call"]({"call_id": "c", "name": "gateway", "arguments": "{}"}) == raw
-    assert len(calls) == 1
+    raw = {"job_id": "a" * 32, "status": "queued", "data": "x" * 100000}
+
+    def request(method, path, data=None, **kwargs):
+        calls.append((method, path, data))
+        return raw
+
+    monkeypatch.setattr(agent, "req", request)
+    monkeypatch.setattr(
+        agent.context_manager,
+        "bound_tool_result",
+        lambda *a, **k: (_ for _ in ()).throw(OSError("publication unavailable")),
+    )
+    result = agent.dispatch_tool_call(
+        {
+            "call_id": "c",
+            "name": "job_submit",
+            "arguments": json.dumps({"command": ["python", "scripts/check.py"]}),
+        }
+    )
+    assert result["ok"] is True and result["data"] == raw["data"]
+    assert len(calls) == 1 and calls[0] == (
+        "POST",
+        "/jobs",
+        {"command": ["python", "scripts/check.py"], "gpu": False},
+    )
 
 
 def test_archive_failure_leaves_executed_raw_result_in_journal(tmp_path, monkeypatch):
@@ -234,7 +246,7 @@ def test_archive_failure_leaves_executed_raw_result_in_journal(tmp_path, monkeyp
     journal = {"results": {}}
     messages = []
     with pytest.raises(ns["ToolResultPersistenceError"]):
-        ns["save_tool_result"]({"call_id": "c", "name": "gateway"}, raw, journal, messages, 0)
+        ns["save_tool_result"]({"call_id": "c", "name": "job_submit"}, raw, journal, messages, 0)
     assert json.loads(state_paths.path("pending-calls.json").read_text())["results"]["c"] == raw
     assert not messages
 
@@ -244,7 +256,7 @@ def test_recovery_publishes_persisted_result_without_reexecuting_tool(tmp_path, 
     cm = load("context_manager")
     base = [{"role": "user", "content": "original task"}]
     cm.atomic(state_paths.path("checkpoint.json"), json.dumps(base))
-    call = {"type": "function_call", "call_id": "c", "name": "gateway", "arguments": "{}"}
+    call = {"type": "function_call", "call_id": "c", "name": "job_submit", "arguments": "{}"}
     raw = {"job_id": "already-created", "status": "completed", "data": "x" * 100000}
     journal = {
         "base_hash": hashlib.sha256(state_paths.path("checkpoint.json").read_bytes()).hexdigest(),
@@ -302,7 +314,7 @@ def test_irreducible_envelope_is_a_bounded_failure_not_lost_calls(tmp_path, monk
         {
             "type": "function_call",
             "call_id": "c",
-            "name": "gateway",
+            "name": "job_submit",
             "arguments": "argument " * 4000,
         },
         output({"status": "completed"}, "c"),

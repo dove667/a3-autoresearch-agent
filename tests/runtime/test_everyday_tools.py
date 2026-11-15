@@ -15,48 +15,6 @@ def native_roots(tmp_path, monkeypatch):
         monkeypatch.setenv(variable, str(directory))
 
 
-def test_job_submit_hashes_workspace_sources_and_uses_canonical_destinations(tmp_path):
-    from a3_research_agent.harness import job_tools
-
-    source = tmp_path / "scripts/act/p142/training/train.py"
-    source.parent.mkdir(parents=True)
-    source.write_text("print('train')\n")
-    calls = []
-
-    def request(method, path, body=None):
-        calls.append((method, path, body))
-        return {"job_id": "a" * 32, "status": "queued"}
-
-    result = job_tools.dispatch(
-        "job_submit",
-        {
-            "command": ["python", "train.py"],
-            "gpu": True,
-            "workspace_files": [{"path": str(source), "destination": "train.py"}],
-        },
-        request,
-        workspace=tmp_path,
-    )
-    assert result["job_id"] == "a" * 32
-    assert calls == [
-        (
-            "POST",
-            "/jobs",
-            {
-                "command": ["python", "train.py"],
-                "gpu": True,
-                "workspace_files": [
-                    {
-                        "path": "scripts/act/p142/training/train.py",
-                        "destination": "train.py",
-                        "sha256": hashlib.sha256(b"print('train')\n").hexdigest(),
-                    }
-                ],
-            },
-        )
-    ]
-
-
 def test_invalid_command_is_explained_before_any_submission(tmp_path):
     from a3_research_agent.harness import job_tools
 
@@ -67,20 +25,6 @@ def test_invalid_command_is_explained_before_any_submission(tmp_path):
     assert result["error"] == "invalid_command"
     assert "array" in result["hint"]
     assert not calls
-
-
-def test_source_escape_and_unexpected_attachment_fields_do_not_submit(tmp_path):
-    from a3_research_agent.harness import job_tools
-
-    for reference in [{"path": "../private.py"}, {"path": "train.py", "bytes": 12}]:
-        calls = []
-        result = job_tools.dispatch(
-            "job_submit",
-            {"command": ["python", "train.py"], "workspace_files": [reference]},
-            lambda *a, calls=calls: calls.append(a),
-            workspace=tmp_path,
-        )
-        assert result.get("error") and not calls
 
 
 def test_uncertain_submission_is_returned_once_without_retry(tmp_path):
@@ -243,6 +187,15 @@ def test_agent_exposes_builtin_tools_without_optional_extensions():
         "web_fetch",
         "web_status",
     } <= set(names)
+    assert {"gateway", "preflight", "progress", "wait", "job_export"}.isdisjoint(names)
+    assert {
+        "job_prepare",
+        "job_wait",
+        "idle_wait",
+        "research_status",
+        "export_create",
+        "vision_inspect",
+    } <= set(names)
     assert len(names) == len(set(names))
 
 
@@ -258,17 +211,16 @@ def test_malformed_tool_arguments_return_actionable_json_error():
 def test_reading_directory_explains_the_required_tool(tmp_path, monkeypatch):
     from a3_research_agent.harness import agent
 
-    monkeypatch.setattr(agent.pathlib.Path, "is_dir", lambda self: True)
     result = agent.dispatch_tool_call(
         {"name": "read", "arguments": json.dumps({"path": str(agent.runtime_paths.input_root())})}
     )
     assert result["error"] == "path_is_directory" and "list" in result["hint"]
 
 
-def test_read_page_bounds_explain_invalid_limit_without_exposing_source(monkeypatch):
+def test_read_page_bounds_explain_invalid_limit_without_exposing_source():
     from a3_research_agent.harness import agent
 
-    monkeypatch.setattr(agent.pathlib.Path, "is_dir", lambda self: False)
+    (agent.runtime_paths.input_root() / "execution.md").write_text("private source body")
     result = agent.dispatch_tool_call(
         {
             "name": "read",
@@ -280,13 +232,17 @@ def test_read_page_bounds_explain_invalid_limit_without_exposing_source(monkeypa
     assert result["error"] == "invalid_limit" and "8000" in result["hint"]
 
 
-def test_json_field_selection_explains_non_object_sources():
-    from a3_research_agent.harness.agent import select_json_fields
+def test_json_field_selection_explains_non_object_sources(tmp_path):
+    from a3_research_agent.harness import file_tools
 
     for raw in (b"not JSON", b'["one", "two"]'):
-        result = select_json_fields(raw, ["score"], "report.json")
+        path = tmp_path / "report.json"
+        path.write_bytes(raw)
+        result = file_tools.dispatch(
+            "read", {"path": str(path), "fields": ["score"]}, workspace=tmp_path, readonly_roots=()
+        )
         assert result["error"] in {"source_not_json", "json_root_not_object"}
-        assert "read" in result["hint"]
+        assert "page" in result["hint"].lower()
 
 
 def test_workspace_search_reports_truncation_and_edit_respects_read_only_input(tmp_path):
@@ -321,158 +277,3 @@ def test_workspace_edit_cannot_replace_managed_plan(tmp_path):
         protected=[path],
     )
     assert result["error"] == "managed_state_read_only" and path.read_text() == "old"
-
-
-def test_conflicting_inline_and_attached_files_are_rejected_before_submission(tmp_path):
-    from a3_research_agent.harness import job_tools
-
-    (tmp_path / "scripts/act/p142/training").mkdir(parents=True)
-    (tmp_path / "scripts/act/p142/training/train.py").write_text("print('source')")
-    calls = []
-    result = job_tools.dispatch(
-        "job_submit",
-        {
-            "command": ["python", "train.py"],
-            "workspace_files": [
-                {"path": "scripts/act/p142/training/train.py", "destination": "train.py"}
-            ],
-            "files": {"train.py": "print('inline')"},
-        },
-        lambda *args: calls.append(args),
-        workspace=tmp_path,
-    )
-    assert result["error"] == "conflicting_job_files" and not calls
-
-
-def test_preflight_hashes_sources_and_submits_production_only_once(tmp_path, monkeypatch):
-    import base64
-
-    from a3_research_agent.harness import agent
-
-    monkeypatch.chdir(tmp_path)
-    source = tmp_path / "scripts/act/p142/training/train.py"
-    source.parent.mkdir(parents=True)
-    source.write_text("print('train')\n")
-    submissions = []
-    job = {
-        "command": ["python", "scripts/act/p142/training/train.py"],
-        "gpu": True,
-        "workspace_files": [{"path": "scripts/act/p142/training/train.py"}],
-    }
-
-    def request(method, path, body=None):
-        if path == "/sessions/self":
-            return {"is_main": True}
-        if method == "POST" and path == "/jobs":
-            submissions.append(body)
-            return {"job_id": ("a" if len(submissions) == 1 else "b") * 32, "status": "queued"}
-        if "/artifacts?" in path:
-            raw = json.dumps({"schema": 1, "status": "passed"}).encode()
-            return {"encoding": "base64", "data": base64.b64encode(raw).decode()}
-        return {"job_id": "a" * 32, "status": "completed", "exit_code": 0}
-
-    monkeypatch.setattr(agent, "req", request)
-    checked = agent.tool("preflight", {"action": "check", "job": job})
-    assert checked["job_id"] == "a" * 32
-    assert submissions[0]["workspace_files"] == [
-        {
-            "path": "scripts/act/p142/training/train.py",
-            "sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
-        }
-    ]
-    arguments = {"action": "submit", "job": job, "preflight_id": "a" * 32}
-    first, repeated = agent.tool("preflight", arguments), agent.tool("preflight", arguments)
-    assert first == repeated == {"job_id": "b" * 32, "status": "queued"}
-    assert len(submissions) == 2
-    assert submissions[1]["command"] == ["python", "scripts/act/p142/training/train.py"]
-
-
-def test_preflight_checks_old_explicit_source_hash_before_submission(tmp_path):
-    from a3_research_agent.harness import job_tools, tool_contracts
-
-    (tmp_path / "scripts/act/p142/training").mkdir(parents=True)
-    (tmp_path / "scripts/act/p142/training/train.py").write_text("new contents")
-    with pytest.raises(tool_contracts.ToolInputError) as caught:
-        job_tools.submit_request(
-            {
-                "command": ["python", "scripts/act/p142/training/train.py"],
-                "gpu": True,
-                "workspace_files": [
-                    {"path": "scripts/act/p142/training/train.py", "sha256": "0" * 64}
-                ],
-            },
-            tmp_path,
-            allow_pinned_sources=True,
-        )
-    assert caught.value.code == "source_revision_conflict"
-
-
-def test_job_source_limits_match_host_attachment_contract(tmp_path):
-    from a3_research_agent.harness import job_tools
-
-    scripts = tmp_path / "scripts"
-    scripts.mkdir()
-    large = scripts / "large.py"
-    large.write_text("x" * (1024 * 1024 + 1))
-    calls = []
-    result = job_tools.dispatch(
-        "job_submit",
-        {
-            "command": ["python", "scripts/large.py"],
-            "workspace_files": [{"path": "scripts/large.py"}],
-        },
-        lambda *args: calls.append(args),
-        workspace=tmp_path,
-    )
-    assert result["error"] == "source_file_too_large" and not calls
-    for index in range(9):
-        (scripts / f"small-{index}.py").write_text("x" * 1024 * 1024)
-    result = job_tools.dispatch(
-        "job_submit",
-        {
-            "command": ["python", "scripts/small-0.py"],
-            "workspace_files": [{"path": f"scripts/small-{index}.py"} for index in range(9)],
-        },
-        lambda *args: calls.append(args),
-        workspace=tmp_path,
-    )
-    assert result["error"] == "source_attachments_too_large" and not calls
-
-
-def test_job_source_requires_host_supported_script_path(tmp_path):
-    from a3_research_agent.harness import job_tools
-
-    (tmp_path / "train.py").write_text("print('train')")
-    calls = []
-    result = job_tools.dispatch(
-        "job_submit",
-        {
-            "command": ["python", "train.py"],
-            "workspace_files": [{"path": "train.py"}],
-        },
-        lambda *args: calls.append(args),
-        workspace=tmp_path,
-    )
-    assert result["error"] == "invalid_source_path" and not calls
-
-
-@pytest.mark.parametrize("directory", ["research", "experiments"])
-def test_job_source_rejects_non_script_directories_without_submission(tmp_path, directory):
-    from a3_research_agent.harness import job_tools
-
-    source = tmp_path / directory / "train.py"
-    source.parent.mkdir()
-    source.write_text("print('train')")
-    calls = []
-    result = job_tools.dispatch(
-        "job_submit",
-        {
-            "command": ["python", "train.py"],
-            "workspace_files": [{"path": source.relative_to(tmp_path).as_posix()}],
-        },
-        lambda *args: calls.append(args),
-        workspace=tmp_path,
-    )
-    assert result["error"] == "invalid_source_path"
-    assert "scripts/" in result["hint"]
-    assert not calls

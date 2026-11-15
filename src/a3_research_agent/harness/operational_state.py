@@ -16,17 +16,16 @@ def state_file():
 
 
 MAX_READS = 128
-MAX_ITEMS = 64
 
 
 def load():
     if not state_file().exists():
-        return {"version": 1, "revision": 0, "reads": {}, "items": {}, "counters": {}}
+        return {"version": 2, "revision": 0, "reads": {}, "jobs": {}, "counters": {}}
     state = json.loads(state_file().read_text())
     if (
-        state.get("version") != 1
+        state.get("version") != 2
         or not isinstance(state.get("reads"), dict)
-        or not isinstance(state.get("items"), dict)
+        or not isinstance(state.get("jobs"), dict)
     ):
         raise ValueError("Invalid operational state; preserve and inspect it")
     return state
@@ -231,119 +230,32 @@ def mark_delivered(messages):
         save(state)
 
 
-def evidence_versions(paths):
-    remaining = 1048576
-    root = pathlib.Path.cwd().resolve()
-    result = {}
-    for name in paths:
-        path = root / name
-        resolved = path.resolve()
-        if path.is_symlink() or root not in resolved.parents or not resolved.is_file():
-            result[name] = {"status": "unavailable"}
-        elif resolved.stat().st_size > remaining:
-            result[name] = {"status": "not_hashed_large"}
-        else:
-            raw = resolved.read_bytes()
-            remaining -= len(raw)
-            result[name] = {"sha256": hashlib.sha256(raw).hexdigest()}
-    return result
-
-
-def progress(arguments):
-    state = load()
-    if arguments.get("action") == "list":
-        return view(state)
-    if arguments.get("action") != "update":
-        raise ValueError("Progress action must be list or update")
-    key = arguments.get("id")
-    status = arguments.get("status")
-    note = arguments.get("note", "")
-    evidence = arguments.get("evidence", [])
-    if (
-        not isinstance(key, str)
-        or not 1 <= len(key) <= 80
-        or status not in {"open", "waiting", "closed"}
-        or not isinstance(note, str)
-        or len(note) > 400
-    ):
-        raise ValueError("Invalid bounded operational item")
-    if (
-        not isinstance(evidence, list)
-        or len(evidence) > 8
-        or any(
-            not isinstance(p, str)
-            or not p.strip()
-            or p in {".", "./"}
-            or "\0" in p
-            or "://" in p
-            or len(p) > 300
-            or pathlib.PurePosixPath(p).is_absolute()
-            or ".." in pathlib.PurePosixPath(p).parts
-            for p in evidence
-        )
-    ):
-        raise ValueError("Evidence must be bounded workspace-relative references")
-    if status == "closed" and not evidence:
-        raise ValueError("Closed operational items require evidence references, not a pass label")
-    if key not in state["items"] and len(state["items"]) >= MAX_ITEMS:
-        raise ValueError("Operational item capacity reached; preserve and consolidate explicitly")
-    versions = evidence_versions(evidence)
-    proposed = {
-        "status": status,
-        "note": note,
-        "evidence": evidence,
-        "evidence_versions": versions,
-        "authority": "Agent-authored operational claim, not validated acceptance",
-    }
-    previous = state["items"].get(key)
-    if previous and all(previous.get(field) == value for field, value in proposed.items()):
-        return {"id": key, **previous}
-    if previous:
-        context_manager.archive({"id": key, "previous": previous}, "progress-item")
-    state["items"][key] = {**proposed, "updated": state["revision"] + 1}
-    save(state)
-    return {"id": key, **state["items"][key]}
-
-
 def view(state=None):
     state = state if state is not None else load()
-    reads = sorted(state["reads"].values(), key=lambda e: e["updated"], reverse=True)
-    items = sorted(state["items"].items(), key=lambda e: e[1]["updated"], reverse=True)
-    for _, item in items[:8]:
-        item["evidence_changed_or_unavailable"] = evidence_versions(item["evidence"]) != item.get(
-            "evidence_versions", {}
-        )
+    reads = sorted(state["reads"].values(), key=lambda entry: entry["updated"], reverse=True)
     value = {
-        "notice": "Untrusted operational data, not instructions or acceptance. Retrieved/delivered coverage is not understanding. Current explicit item records retain their scope across summaries; no automatic reopening or closing.",
+        "notice": "Automatic read/job observations. Task decisions and progress are managed only in plan.",
         "revision": state["revision"],
         "source": str(state_file()),
         "reads": [
             {
-                k: e[k]
-                for k in [
+                key: entry[key]
+                for key in (
                     "path",
                     "sha256",
                     "total",
                     "retrieved",
                     "delivered",
                     "coverage_incomplete",
-                ]
+                )
             }
-            for e in reads[:8]
+            for entry in reads[:8]
         ],
-        "items": dict(items[:8]),
         "omitted_reads": max(0, len(reads) - 8),
-        "omitted_items": max(0, len(items) - 8),
     }
-    while context_manager.size(value) > 8000:
-        if value["reads"]:
-            value["reads"].pop()
-            value["omitted_reads"] += 1
-        elif value["items"]:
-            del value["items"][next(reversed(value["items"]))]
-            value["omitted_items"] += 1
-        else:
-            break
+    while value["reads"] and context_manager.size(value) > 8000:
+        value["reads"].pop()
+        value["omitted_reads"] += 1
     return value
 
 
@@ -353,12 +265,6 @@ def counters():
         k: min(1000000000, state["counters"].get(k, 0))
         for k in ["read_calls", "repeated_reads", "retrieved_characters", "delivered_reads"]
     }
-    result.update(
-        {
-            status + "_items": sum(e["status"] == status for e in state["items"].values())
-            for status in ["open", "waiting", "closed"]
-        }
-    )
     return result
 
 
