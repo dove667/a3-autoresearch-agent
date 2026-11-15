@@ -117,7 +117,9 @@ def main():
     model = verify_model(model_path(project))
     binary = shutil.which(os.environ.get("A3_EMBEDDING_SERVER", "llama-server"))
     if binary is None:
-        raise RuntimeError("Install llama.cpp or configure A3_EMBEDDING_SERVER for semantic retrieval")
+        raise RuntimeError(
+            "Install llama.cpp or configure A3_EMBEDDING_SERVER for semantic retrieval"
+        )
     embedding_token = secrets.token_urlsafe(32)
     embedding_port = free_port()
     environment = {**os.environ, "LLAMA_API_KEY": embedding_token}
