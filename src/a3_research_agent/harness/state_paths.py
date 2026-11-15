@@ -3,7 +3,7 @@
 import os
 from pathlib import Path, PurePosixPath
 
-LAYOUT_VERSION = 1
+LAYOUT_VERSION = 2
 CHECKPOINT = "checkpoint.json"
 JOURNAL = "pending-calls.json"
 HISTORY = "history.jsonl"
@@ -16,7 +16,6 @@ CONTEXT_FAILURE = "context-failure.json"
 PREFLIGHT = "preflight"
 ARCHIVES = "context-history"
 SPILL = ".autorun-spill"
-PLAN = "research-plan.json"
 CONTINUATION = "continuation.json"
 RESUME = "resume.json"
 OUTCOME = "run-outcome.json"

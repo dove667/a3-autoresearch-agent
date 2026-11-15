@@ -16,4 +16,4 @@ Use `list_resources` to find relevant references, templates or helpers, then `re
 
 Skills and `memory/entries.jsonl` persist independently of Harness releases. Save specific findings through `memory`, and reusable methods through `skills`. Inspect helpers before adapting them into `workspace/scripts/<model>/<series>/<purpose>/` and submitting them to a remote job. Skill access does not execute code or expand file permissions.
 
-Keep experiment parameters, source hashes, job IDs and results in `workspace/experiments/<date-name>/`. Reuse script entry points across parameter variants. Read and revise the research plan with `plan`; it is stored in `runtime_paths.state/research-plan.json`.
+Keep experiment parameters, source hashes, job IDs and results in `workspace/experiments/<date-name>/`. Reuse script entry points across parameter variants. Read and revise the research plan with `plan`; the single cross-run plan is the project-root `plan.json`, exposed as `runtime_paths.plan`. Each trajectory keeps historical `plan-snapshots/`; a new run or resume reads the latest shared plan, without restoring an old snapshot over it.

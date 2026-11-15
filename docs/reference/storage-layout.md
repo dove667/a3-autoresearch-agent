@@ -15,6 +15,7 @@
 ├── skills/                全项目唯一技能库
 ├── workspace/             Agent 自由读写的研究区，Git 忽略
 ├── memory/                由 memory 工具管理的长期经验，Git 忽略
+├── plan.json              由 plan 工具管理的跨运行研究计划，Git 忽略
 ├── trajectories/          模型执行与恢复记录，Git 忽略
 ├── runs/                  Host 调试与维护测试原始输出，Git 忽略
 ├── .runtime/              Host 状态、技能修改历史和源码缓存，Git 忽略
@@ -62,7 +63,6 @@ memory/
 
 trajectories/<开始时间>/
 ├── conversation/
-│   ├── research-plan.json 研究路线、里程碑与作业引用
 │   ├── continuation.json 程序生成的研究文件清单
 │   ├── resume.json       程序生成的恢复清单
 │   ├── run-outcome.json  受控保存的研究状态
@@ -75,6 +75,7 @@ trajectories/<开始时间>/
 │   ├── preflight/         预检回执
 │   ├── context-history/   摘要与工具结果引用的原文
 │   └── .autorun-spill/    大工具结果归档
+├── plan-snapshots/        该次运行开始、修订和停止时的计划历史快照
 ├── inputs/                当前三个 prompt 的快照
 ├── input-revisions/       不可变输入版本
 ├── .host/                 私有控制状态、锁与发布事务
@@ -89,7 +90,9 @@ trajectories/<开始时间>/
 
 Host 用 `A3_STATE_ROOT` 指定当前 run 的 `conversation/`，并在 `runtime_paths.state` 提供实际路径。`harness/state_paths.py` 统一定位 checkpoint、journal、压缩事务和操作台账；恢复继续读取原状态。`context-history/...`、`.autorun-spill/...` 等逻辑相对来源引用以该路径为基准，原文与内容哈希保持稳定，可通过普通文件工具只读核对。
 
-研究计划内容由 Agent 编写，通过 `plan(action="show")` 查看、`plan(action="update", revision=..., ...)` 修改；Harness 将它保存在 `runtime_paths.state/research-plan.json`，即当前 trajectory 的 `conversation/research-plan.json`。其中记录目标、步骤、依赖、进展和作业引用。Host 管理其持久化与恢复。`progress` 保存操作进展；`progress(action="outcome", status="continue"|"blocked", reason=..., external_blocker=...)` 记录研究状态。恢复与接续清单由程序生成，`files` 只列出工作区研究文件。
+项目顶层 `plan.json` 保存跨运行共用的最新研究计划，记录目标、步骤、依赖、进展和作业引用。Agent 通过 `plan(action="show")` 查看、`plan(action="update", revision=..., ...)` 修改；Host 通过 `A3_PLAN_FILE` 配置绝对路径，并在 `runtime_paths.plan` 中提供该路径。普通文件工具不直接修改计划。每次运行在 `plan-snapshots/` 按 revision 与内容哈希保留开始、修订和停止时的历史快照；新运行和恢复始终读取根计划。旧 `conversation/research-plan.json` 保留为历史资料。
+
+`progress` 保存操作进展；`progress(action="outcome", status="continue"|"blocked", reason=..., external_blocker=...)` 记录研究状态。恢复与接续清单由程序生成，`files` 只列出工作区研究文件。
 
 `memory` 保存 Agent 主动提炼的跨会话经验；`recall` 检索原始消息和工具观测；`skills` 管理可复用方法及附件。普通 `read`、`write`、`edit` 不直接接触根技能库和长期记忆；当前会话状态允许 `read`、`list`、`search_files` 只读访问。
 

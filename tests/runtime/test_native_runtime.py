@@ -106,11 +106,14 @@ def test_native_run_has_one_process_and_owner_scoped_access(tmp_path, monkeypatc
         local.close()
 
 
-def test_old_workspace_state_layout_requires_a_maintenance_release(tmp_path, monkeypatch):
+@pytest.mark.parametrize(
+    "declaration", ['CHECKPOINT = "checkpoint.json"\n', "LAYOUT_VERSION = 1\n"]
+)
+def test_old_workspace_state_layout_requires_a_maintenance_release(
+    tmp_path, monkeypatch, declaration
+):
     local = runtime(tmp_path, monkeypatch)
-    (local.published_source / "a3_research_agent/harness/state_paths.py").write_text(
-        'CHECKPOINT = "checkpoint.json"\n'
-    )
+    (local.published_source / "a3_research_agent/harness/state_paths.py").write_text(declaration)
     with pytest.raises(ValueError, match="state layout"):
         local.require_native_source(local.published_source)
     assert not local.records
@@ -152,6 +155,10 @@ def test_native_child_uses_fixed_source_scoped_env_and_keeps_logs(tmp_path, monk
         assert record["environment"]["A3_WORKSPACE"] == str(workspace)
         assert workspace == tmp_path / "workspace"
         assert record["environment"]["A3_STATE_ROOT"] == str(local.state_root)
+        assert record["environment"]["A3_PLAN_FILE"] == str(tmp_path / "plan.json")
+        assert record["environment"]["A3_PLAN_SNAPSHOTS_ROOT"] == str(
+            tmp_path / "trajectories/run-unit/plan-snapshots"
+        )
         assert not (workspace / "checkpoint.json").exists()
         assert not (workspace / ".agent").exists()
         assert record["environment"]["A3_MEMORY_ROOT"] == str(tmp_path / "memory")
@@ -168,6 +175,65 @@ def test_native_child_uses_fixed_source_scoped_env_and_keeps_logs(tmp_path, monk
         assert (workspace / "interrupted.json").read_text() == "saved"
         assert "native child ready" in local.status("main", "main")["output"]
         assert local.records["main"]["self_stopped"] is True
+    finally:
+        local.close()
+
+
+def test_native_runs_share_one_plan_but_have_separate_snapshot_directories(tmp_path, monkeypatch):
+    from a3_research_agent.host.sessions.processes import ProcessRuntime
+
+    first = runtime(tmp_path, monkeypatch)
+    second = ProcessRuntime(
+        root=tmp_path / "trajectories/run-next/sessions",
+        inputs=first.inputs,
+        public_a3=first.public_a3,
+        endpoint=first.endpoint,
+        published_source=first.published_source,
+    )
+    first_env = first.environment(tmp_path / "workspace", first.inputs, "first")
+    second_env = second.environment(tmp_path / "workspace", second.inputs, "second")
+    assert first_env["A3_PLAN_FILE"] == second_env["A3_PLAN_FILE"] == str(tmp_path / "plan.json")
+    assert first_env["A3_PLAN_SNAPSHOTS_ROOT"] != second_env["A3_PLAN_SNAPSHOTS_ROOT"]
+    assert second.plan_snapshots == tmp_path / "trajectories/run-next/plan-snapshots"
+    assert not (tmp_path / "plan.json").exists()
+
+
+def test_native_start_stop_and_resume_snapshot_current_shared_plan_without_restoring_history(
+    tmp_path, monkeypatch
+):
+    local = runtime(tmp_path, monkeypatch)
+
+    def plan(revision):
+        return json.dumps(
+            {"version": 1, "revision": revision, "goal": "Research", "reason": "", "steps": {}}
+        )
+
+    first_plan = plan(5)
+    local.plan_file.write_text(first_plan)
+    try:
+        workspace = launch(local)
+        snapshots = list(local.plan_snapshots.glob("*.json"))
+        assert len(snapshots) == 1
+        initial_snapshot = snapshots[0]
+        assert initial_snapshot.read_text() == first_plan
+        second_plan = plan(6)
+        local.plan_file.write_text(second_plan)
+        local.suspend()
+        assert len(list(local.plan_snapshots.glob("*.json"))) == 2
+        assert initial_snapshot.read_text() == first_plan
+
+        # A past conversation's saved plan cannot replace the shared current plan.
+        (local.state_root / "research-plan.json").write_text(plan(1))
+        latest_plan = plan(7)
+        local.plan_file.write_text(latest_plan)
+        local.resume_sessions({"next-token": "main"}, "main")
+        wait_for(lambda: len((workspace / "starts.jsonl").read_text().splitlines()) == 2)
+        assert local.plan_file.read_text() == latest_plan
+        assert initial_snapshot.read_text() == first_plan
+        assert {
+            json.loads(p.read_text())["revision"] for p in local.plan_snapshots.glob("*.json")
+        } == {5, 6, 7}
+        assert (local.state_root / "research-plan.json").read_text() == plan(1)
     finally:
         local.close()
 

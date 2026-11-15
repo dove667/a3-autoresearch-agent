@@ -13,7 +13,7 @@ import uuid
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from a3_research_agent.harness import state_paths
+from a3_research_agent.harness import plan_store, state_paths
 from a3_research_agent.host.published_harness import (
     COMMAND,
     conversation_root,
@@ -85,6 +85,8 @@ class ProcessRuntime:
         if self.root.name != "sessions":
             raise ValueError("Session metadata must use the current run/sessions layout")
         self.state_root = conversation_root(self.root.parent)
+        self.plan_file = workspace_path(project_for_run(self.root.parent), "plan.json")
+        self.plan_snapshots = workspace_path(self.root.parent, "plan-snapshots")
         self.public_a3, self.endpoint = Path(public_a3), endpoint
         self.logs = debug_directory(self.root.parent)
         self.python = str(Path(python or sys.executable).absolute())
@@ -204,6 +206,7 @@ class ProcessRuntime:
             write_durable(console, "")
         with console.open("rb") as stream:
             os.fsync(stream.fileno())
+        plan_store.snapshot(self.plan_file, self.plan_snapshots)
         record["terminal_state"] = state
         record["exit_saved_at"] = time.time()
         record["exit_archived"] = True
@@ -249,6 +252,8 @@ class ProcessRuntime:
             "A3_GATEWAY_TOKEN": token,
             "A3_WORKSPACE": str(workspace),
             "A3_STATE_ROOT": str(self.state_root),
+            "A3_PLAN_FILE": str(self.plan_file),
+            "A3_PLAN_SNAPSHOTS_ROOT": str(self.plan_snapshots),
             "A3_SKILLS_ROOT": str(
                 workspace_path(project_for_run(self.root.parent), "skills").resolve()
             ),
@@ -328,6 +333,7 @@ class ProcessRuntime:
             write_workspace_files(workspace, research_files)
             selected_inputs = Path(inputs or self.inputs).resolve(strict=True)
             environment = self.environment(workspace, selected_inputs, token)
+            plan_store.snapshot(self.plan_file, self.plan_snapshots)
             launches = list(previous.get("previous_launches", [])) if previous else []
             if previous:
                 launches.append(

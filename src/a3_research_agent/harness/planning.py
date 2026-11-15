@@ -1,15 +1,14 @@
 """Persistent research planning and its view of observed remote work."""
 
-import json
 import re
 
 from a3_research_agent.harness import operational_state as operational
-from a3_research_agent.harness import state_paths
+from a3_research_agent.harness import paths, plan_store
 from a3_research_agent.harness.context import manager
 
 
 def plan_file():
-    return state_paths.path(state_paths.PLAN)
+    return paths.plan_file()
 
 
 STATUSES = ("pending", "active", "blocked", "done", "skipped")
@@ -19,12 +18,7 @@ MAX_STEPS = 20
 
 
 def load():
-    if not plan_file().exists():
-        return {"version": 1, "revision": 0, "goal": "", "reason": "", "steps": {}}
-    plan = json.loads(plan_file().read_text())
-    if plan.get("version") != 1:
-        raise ValueError("Unsupported research plan version")
-    return plan
+    return plan_store.load(plan_file())
 
 
 def bounded_text(value, limit, name, *, required=False):
@@ -178,8 +172,14 @@ def view(plan=None, *, jobs=None, compact=False):
 
 
 def dispatch(arguments):
+    with plan_store.locked(plan_file()):
+        return dispatch_locked(arguments)
+
+
+def dispatch_locked(arguments):
     action = arguments.get("action")
     plan = load()
+    plan_store.snapshot(plan_file(), paths.plan_snapshots_root())
     if action == "show":
         result = view(plan)
         key = arguments.get("id")
@@ -205,6 +205,6 @@ def dispatch(arguments):
         if plan["revision"]:
             manager.archive(plan, "plan-revision")
         proposed["revision"] += 1
-        manager.atomic(plan_file(), json.dumps(proposed, ensure_ascii=False))
+        plan_store.save(plan_file(), proposed, paths.plan_snapshots_root())
         plan = proposed
     return view(plan, compact=True)

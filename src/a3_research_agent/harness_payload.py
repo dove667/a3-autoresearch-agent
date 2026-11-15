@@ -14,6 +14,7 @@ HARNESS_MODULES = (
     "lifecycle.py",
     "waiting.py",
     "planning.py",
+    "plan_store.py",
     "job_preflight.py",
     "job_tools.py",
     "workspace_tools.py",

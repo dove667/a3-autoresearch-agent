@@ -6,7 +6,7 @@ description: Develop and improve learned policies for the A3 dual-arm MuJoCo coo
   experience. Applies to research planning or authorized execution, not permission
   to start training or change the benchmark.
 metadata:
-  version: 0.1.19
+  version: 0.1.20
 ---
 
 # A3 MuJoCo autoresearch

@@ -604,6 +604,7 @@ def operational_message():
         "reference": str(runtime_paths.reference_root()),
         "memory": str(runtime_paths.memory_root()),
         "skills": str(runtime_paths.skills_root()),
+        "plan": str(runtime_paths.plan_file()),
     }
     return {"role": "user", "content": json.dumps(value, ensure_ascii=False)}
 

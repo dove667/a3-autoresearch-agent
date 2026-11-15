@@ -3,6 +3,8 @@
 import os
 from pathlib import Path
 
+from .plan_store import checked_path
+
 
 def _root(name):
     value = os.environ.get(name)
@@ -25,6 +27,20 @@ def reference_root():
 
 def memory_root():
     return _root("A3_MEMORY_ROOT")
+
+
+def plan_file():
+    value = os.environ.get("A3_PLAN_FILE")
+    if not value or not Path(value).is_absolute():
+        raise RuntimeError("Host must configure an absolute research plan file")
+    return checked_path(Path(value))
+
+
+def plan_snapshots_root():
+    value = os.environ.get("A3_PLAN_SNAPSHOTS_ROOT")
+    if not value or not Path(value).is_absolute():
+        raise RuntimeError("Host must configure an absolute research plan snapshot root")
+    return checked_path(Path(value))
 
 
 def skills_root():

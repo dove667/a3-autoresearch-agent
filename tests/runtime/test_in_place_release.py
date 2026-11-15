@@ -24,6 +24,8 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def fixture_file(run, workspace, name):
+    if name == "plan.json":
+        return run.parents[1] / name
     root = (
         run / "conversation"
         if name
@@ -80,7 +82,7 @@ def published_run(tmp_path, monkeypatch, request):
     )
     (source / "harness/paths.py").write_text("NATIVE_PATHS = True\n")
     (source / "harness/state_paths.py").write_text(
-        'LAYOUT_VERSION = 1\nCHECKPOINT = "checkpoint.json"\n'
+        'LAYOUT_VERSION = 2\nCHECKPOINT = "checkpoint.json"\n'
     )
     git("add", "src")
     git("commit", "--quiet", "-am", "new published source")
@@ -98,6 +100,7 @@ def published_run(tmp_path, monkeypatch, request):
         "experiments/lesson.md": '{"id":"learned","text":"actual research lesson"}\n',
         "scripts/train.py": "print('preserve research')\n",
         "research-plan.json": '{"version":1,"revision":5,"steps":{}}',
+        "plan.json": '{"version":1,"revision":9,"steps":{}}',
         "operational-state.json": '{"version":1,"jobs":{"existing-job":{"status":"running"}}}',
         "trajectory.jsonl": '{"original":"evidence"}\n',
         "pending-calls.json": "null",

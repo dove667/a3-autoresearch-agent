@@ -312,8 +312,7 @@ def test_workspace_search_reports_truncation_and_edit_respects_read_only_input(t
 def test_workspace_edit_cannot_replace_managed_plan(tmp_path):
     from a3_research_agent.harness import workspace_tools
 
-    path = tmp_path / "conversation/research-plan.json"
-    path.parent.mkdir()
+    path = tmp_path / "plan.json"
     path.write_text("old")
     result = workspace_tools.dispatch(
         "edit",

@@ -1,6 +1,6 @@
 # 研究工具与执行约定
 
-Version: 0.25.0
+Version: 0.26.0
 
 本文件按当前操作查阅。工具定义提供参数、类型与限制；这里说明跨工具流程及直接使用 `gateway` 的入口。
 `input-manifest.json` 的 `execution_index` 给出章节字符 `offset/end` 和全文 SHA256，可用 `read` 分页定位；索引 `truncated:true` 时从 `next_offset` 续读。
@@ -123,7 +123,7 @@ backbone、tokenizer 和预训练资源由部署者预置；缺项记录资产�
 
 ## 保存进展与暂停
 
-研究计划由 Agent 通过 `plan(action="show")` 查看、`plan(action="update", revision=..., ...)` 修改，Harness 保存为 `runtime_paths.state/research-plan.json`；进展记录用 `progress` 维护。保存研究状态调用 `progress`，参数例如：
+研究计划统一保存在项目顶层 `plan.json`，`runtime_paths.plan` 给出路径。通过 `plan(action="show")` 查看、`plan(action="update", revision=..., ...)` 修改，普通文件工具不直接修改它。新运行与恢复先读取最新计划，核对已有 job 状态；进展记录用 `progress` 维护。保存研究状态调用 `progress`，参数例如：
 
 ```json
 {"action":"outcome","status":"continue","reason":"已保存当前结果与后续研究方向"}
@@ -131,7 +131,7 @@ backbone、tokenizer 和预训练资源由部署者预置；缺项记录资产�
 
 需要人工处理的外部阻塞用 `status:"blocked"`，附 `external_blocker`：`kind`、`requires_human:true`、`reason`、`required_action`、`evidence`；kind 为 authentication、permission、unavailable_service 或 missing_resource，证据必须是工作区内实际存在的非空文件。正常排队与待完成研究继续推进。
 
-Host 在进程停止后保存暂停状态和在途作业。研究计划、运行状态、continuation/resume 清单、checkpoint 与工具 journal 由程序保存在当前 trajectory 的 `conversation/`，无需手写这些 JSON。接续清单自动记录工作区研究文件；技能、长期记忆和远程 exports 分别持续保存在各自的系统中。
+Host 在进程停止后保存暂停状态和在途作业。运行状态、continuation/resume 清单、checkpoint 与工具 journal 由程序保存在当前 trajectory 的 `conversation/`，无需手写这些 JSON。共享计划在 `plan-snapshots/` 保存当时的历史版本，后续运行继续使用根 `plan.json` 的最新内容。接续清单自动记录工作区研究文件；技能、长期记忆和远程 exports 分别持续保存在各自的系统中。
 
 先保存计划、证据、记忆和恢复状态，再退出。需要主动停止时，单独调用 `POST /sessions/self/stop`，正文 `{"reason":"状态已保存"}`；进程可能在收到响应前结束。保存状态后仍需进程实际停止，Host 才记录退出结果。操作者暂停会保留在途作业，恢复时查询原编号。
 

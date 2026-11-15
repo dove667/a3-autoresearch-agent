@@ -35,7 +35,7 @@ def native_run(tmp_path: Path, *, name="run-current", actor="main", stopped=Fals
         package / "agent.py",
     ):
         path.write_text("")
-    (package / "state_paths.py").write_text("LAYOUT_VERSION = 1\n")
+    (package / "state_paths.py").write_text("LAYOUT_VERSION = 2\n")
     checkpoint = [{"role": "user", "content": "existing research and observations"}]
     (run / "conversation/checkpoint.json").parent.mkdir(parents=True, exist_ok=True)
     (run / "conversation/checkpoint.json").write_text(json.dumps(checkpoint))

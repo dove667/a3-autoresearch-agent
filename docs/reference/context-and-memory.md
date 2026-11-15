@@ -50,11 +50,12 @@ model polling. The Agent verifies the step's criterion before recording evidence
 and marking it done. The plan tracks Agent claims and observed job states.
 
 The Agent authors the plan through `plan(action="show")` and
-`plan(action="update", revision=..., ...)`. The Harness persists it at
-`runtime_paths.state/research-plan.json`, under the current trajectory's `conversation/`.
-Same-run resume reads that plan from the current conversation state. A published
-night release preserves that plan and carries the operator-reviewed handoff in its
-input bundle. The Agent updates its route from new evidence while retaining prior
+`plan(action="update", revision=..., ...)`. The Harness persists it in
+the project-root `plan.json`, exposed as `runtime_paths.plan`. New runs, resume
+and maintenance releases read this shared latest plan. At start, revision and stop,
+the runtime preserves an immutable revision/hash snapshot under the trajectory's
+`plan-snapshots/`. A published night release carries the operator-reviewed handoff
+in its input bundle. The Agent updates its route from new evidence while retaining prior
 decisions, job references and results.
 
 The `memory` tool manages active long-term experience in the shared project-level
@@ -237,14 +238,20 @@ reachability. Neither a process exit code nor a mock response proves those facts
 ## Durable operational memory and bounded analysis
 
 The Host sets `A3_STATE_ROOT` to `trajectories/<run>/conversation/`. The fixed
-runtime stores its plan, resume/continuation manifests, outcome, checkpoint, tool
+runtime stores its resume/continuation manifests, outcome, checkpoint, tool
 journal, history, trajectory, operational ledger, compaction transactions, preflight
 receipts and failure records there. Research code stays in `workspace/scripts/<model-or-method>/<optional-series>/<purpose>/`.
 Experiment configurations, results, figures, videos and analysis stay in
 `workspace/experiments/<date-name>/`, with job/export IDs and source hashes. Skills use the single root
 `skills/` library.
 
-The `plan` and `progress` tools maintain program metadata. The Agent records its
+The Host sets `A3_PLAN_FILE` to the project-root `plan.json`; the `plan` tool
+reads and updates this shared research plan. Ordinary file tools do not modify it.
+Each trajectory retains its historical snapshots under `plan-snapshots/`; old
+`conversation/research-plan.json` files remain historical material. Read the latest
+plan and reconcile its existing jobs before further submissions.
+
+The `progress` tool maintains run metadata. The Agent records its
 research status with `progress(action="outcome", status="continue"|"blocked",
 reason=..., external_blocker=...)`. The runtime saves `run-outcome.json` and generates
 the resume and continuation file lists; the Agent works through the corresponding
