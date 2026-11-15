@@ -114,6 +114,11 @@ def view(plan=None, *, jobs=None, compact=False):
         result["omitted_reviews_due"] = len(review_due) - len(result["review_due"])
         while len(visible) > 1 and manager.size({**result, "steps": visible}) > 5500:
             del visible[next(reversed(visible))]
+            selected_routes = {step.get("route") for step in visible.values()}
+            result["routes"] = {
+                key: route for key, route in result["routes"].items() if key in selected_routes
+            }
+            result["omitted_routes"] = len(routes) - len(result["routes"])
         result["omitted_steps"] = len(steps) - len(visible)
         steps = visible
     return {**result, "steps": steps}
