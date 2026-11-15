@@ -9,6 +9,7 @@
 ```dotenv
 A3_REMOTE_BACKEND='process'
 A3_REMOTE_MANAGED_JOBS='1'
+A3_REMOTE_MANAGED_GPU_MEMORY_MB='8192'
 A3_REMOTE_DATA_ROOT='/data/project'
 A3_REMOTE_RUN_ROOT='/data/project/remote-runtime'
 A3_REMOTE_TMP_ROOT='/data/project/temporary'
@@ -31,9 +32,13 @@ A3_REMOTE_MAX_JOBS='0'
 
 不设置单作业 CPU、RAM 或 PID 硬上限。提交时检查整机负载、可用内存、待用 RAM 估计和数据盘余量；CPU／内存估计用于限制同时接收的作业数，不限制已运行进程的实际占用。GPU 显存预算、物理卡数量和共享租约继续生效，与旧 Docker 作业共用调度锁和记录。`max_jobs=0` 取消固定数量上限，仍经过整机准入。
 
-启用 `A3_REMOTE_MANAGED_JOBS=1` 后，提交立即获得持久 job ID 和 queued 状态。独立服务器 dispatcher 每10秒检查待执行任务；CPU、内存、GPU 或数据盘暂时不足时保持原任务排队，资源满足后沿用原 ID 启动。dispatcher 不调用模型，Host 断网不影响队列和已启动作业。显存预留由 Controller 按可用容量分配；可选旧请求估计作为最低需求提示，Agent 无需读取服务器状态或计算可用显存。episode 执行器继续在分配内调整并发。Controller 的配置、诊断与运维属于部署者。
+启用 `A3_REMOTE_MANAGED_JOBS=1` 后，提交立即获得持久 job ID 和 queued 状态。独立服务器 dispatcher 每10秒检查待执行任务；CPU、内存、GPU 或数据盘暂时不足时保持原任务排队，资源满足后沿用原 ID 启动。dispatcher 不调用模型，Host 断网不影响队列和已启动作业。
+
+共享 GPU 作业按单作业预算预留显存。显式 `gpu_memory_mb` 保留原值；未指定时采用 `A3_REMOTE_MANAGED_GPU_MEMORY_MB`，默认 8192 MiB，并受配置的单卡容量约束。Controller 只预留该预算，余下显存继续容纳其他作业；Agent 无需计算服务器当前空闲显存。超配置容量的显式请求在上传前返回 `resource_unavailable`。请求超过所有允许设备的物理容量（扣除缓冲）时，已排队作业明确失败并保留原因；临时占用和项目同时用卡数量限制仍等待。episode 执行器在分配预算内调整并发。Controller 的配置、诊断与运维属于部署者。
 
 队列和输入保存于数据盘，取消 queued 作业后不会执行；活动管理索引只保留非终态作业，历史元数据保留。空闲一分钟后 dispatcher 退出，下次提交自动唤起，带进程身份验证和单实例锁。待执行队列可从同一数据目录恢复；服务器重启导致实际执行中断时不重放未知进度。启用前已运行的作业保持原 watcher。队列没有额外模型或 Agent 会话。
+
+每次准入在共享调度锁内取得一次活动作业与 GPU 状态，直接用于资源检查和启动；排队层只补充请求预算，不重复扫描历史或采样显存。既有作业的实际预算保持原值，历史 Docker 与 process 作业共同参与准入。旧排队记录在下次派发时使用保存的显式预算或默认预算，不重新提交或更换 job ID。
 
 未启用托管执行时，资源不足仍返回 `resource_busy`。进程 watcher 每5秒检查存储预算和整盘余量；触及阈值停止本作业、保留文件。CPU／内存准入使用整机估计，研究程序应保持有界数据缓存与线程数。共享缓存、临时数据、完整进程日志和归档计入 run 预算。入队前的容量不足不接受新输入，交由操作者处理；排队不扩大存储额度。
 

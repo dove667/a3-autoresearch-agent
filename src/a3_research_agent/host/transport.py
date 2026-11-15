@@ -32,6 +32,7 @@ def remote_call(operation: str, payload: dict) -> dict:
         ("A3_REMOTE_MEMORY", "--memory"),
         ("A3_REMOTE_MAX_GPUS", "--max-gpus"),
         ("A3_REMOTE_GPU_MEMORY_MB", "--gpu-memory-mb"),
+        ("A3_REMOTE_MANAGED_GPU_MEMORY_MB", "--managed-gpu-memory-mb"),
         ("A3_REMOTE_GPU_HEADROOM_MB", "--gpu-headroom-mb"),
         ("A3_REMOTE_GPU_CAPACITY_MB", "--gpu-capacity-mb"),
         ("A3_REMOTE_JOB_TIMEOUT", "--timeout"),

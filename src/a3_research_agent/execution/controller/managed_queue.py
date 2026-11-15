@@ -49,6 +49,16 @@ def enqueue(store: JobStore, request: dict, args) -> dict:
     validate_data_paths(
         Path(args.data_root), [store.root, Path(args.tmp_root or store.root / "temporary")]
     )
+    request = managed_gpu_request(request, args)
+    capacity = getattr(args, "gpu_capacity_mb", 0)
+    if request["gpu"] and args.share_gpus and capacity and request["gpu_memory_mb"] > capacity:
+        return {
+            "job_id": None,
+            "status": "resource_unavailable",
+            "reason": "requested GPU memory exceeds the per-device capacity",
+            "gpu_memory_mb": request["gpu_memory_mb"],
+            "gpu_capacity_mb": capacity,
+        }
     with (store.root / "locks/scheduler.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         run_id = request.get("run_id")
@@ -104,19 +114,15 @@ def enqueue(store: JobStore, request: dict, args) -> dict:
     }
 
 
-def automatic_gpu_budget(store, request, args):
-    """Assign available capacity; optional legacy memory values are minimum hints."""
-    from a3_research_agent.execution.scheduling.gpu import active_jobs, select_shared_gpu
-
-    if not request["gpu"] or not args.share_gpus or getattr(args, "fixed_gpu_reservation", False):
+def managed_gpu_request(request, args):
+    """Freeze a bounded per-job reservation without inspecting or claiming a device."""
+    if not request["gpu"] or not args.share_gpus or request.get("gpu_memory_mb") is not None:
         return request
-    minimum = min(request.get("gpu_memory_mb") or 8192, args.gpu_capacity_mb or 8192)
-    report = {}
-    gpu = select_shared_gpu(store, args, active_jobs(store), minimum, diagnostics=report)
-    if gpu is None:
-        return None
-    device = next(row for row in report["devices"] if row["uuid"] == gpu)
-    return {**request, "gpu_memory_mb": max(minimum, int(device["available_mb"]))}
+    memory_mb = getattr(args, "managed_gpu_memory_mb", 8192)
+    capacity = getattr(args, "gpu_capacity_mb", 0)
+    if capacity:
+        memory_mb = min(memory_mb, capacity)
+    return {**request, "gpu_memory_mb": memory_mb}
 
 
 def dispatch_once(store):
@@ -144,14 +150,25 @@ def dispatch_once(store):
             continue
         args = Namespace(**job["controller_options"])
         try:
-            with (store.root / "locks/scheduler.lock").open("a") as lock:
-                fcntl.flock(lock, fcntl.LOCK_EX)
-                request = automatic_gpu_budget(store, job["queued_request"], args)
-            if request is None:
-                continue
-            # submit rechecks every limit under the scheduler lock before launching.
+            request = managed_gpu_request(job["queued_request"], args)
+            # One authoritative observation under submit's lock avoids a second
+            # history scan and GPU probe for every queued candidate.
             result = submit(store, request, args, queued_job=job)
-            if result["status"] in {"resource_busy", "resource_unavailable", "storage_limit"}:
+            if result["status"] == "resource_unavailable":
+                from .lifecycle import lifecycle_lock
+
+                with lifecycle_lock(store, job):
+                    current = store.load(identifier, job["experiment_id"])
+                    if current["status"] == "queued":
+                        current.update(
+                            status="failed",
+                            error=result["reason"],
+                            admission_failure=result,
+                            finished_at=time.time(),
+                        )
+                        store.save(current)
+                continue
+            if result["status"] in {"resource_busy", "storage_limit"}:
                 continue
         except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
             # Persist infrastructure incidents for the human operator. Do not ask the model

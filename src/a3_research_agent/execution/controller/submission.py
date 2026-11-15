@@ -91,10 +91,13 @@ def submit(store: JobStore, request: dict, args, *, queued_job: dict | None = No
                 allowed = set(args.gpu_ids.split(",")) if args.gpu_ids else None
                 gpu_uuid, lease = acquire_gpu(store, allowed)
             if gpu_uuid is None:
+                impossible = shared and memory_mb > allocation.get("max_capacity_mb", memory_mb)
                 result = {
                     "job_id": None,
-                    "status": "resource_busy",
-                    "reason": "no_eligible_gpu",
+                    "status": "resource_unavailable" if impossible else "resource_busy",
+                    "reason": "requested GPU memory exceeds allowed device capacity"
+                    if impossible
+                    else "no_eligible_gpu",
                     "retry_after_seconds": 2,
                     **({"gpu_allocation": allocation} if shared else {}),
                 }

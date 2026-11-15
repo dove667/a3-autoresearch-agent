@@ -143,17 +143,27 @@ def select_shared_gpu(
         max_gpus=args.max_gpus,
         selected_gpu_uuid=None,
         devices=[],
+        max_capacity_mb=0,
     )
     processes = gpu_process_memory()
     allowed = set(args.gpu_ids.split(",")) if args.gpu_ids else None
     candidates = []
     for device in gpu_devices():
         gpu = device["uuid"]
-        decision = {**device, "reason": "eligible"}
+        physical_capacity = max(0, device["total_mb"] - args.gpu_headroom_mb)
+        configured = getattr(args, "gpu_capacity_mb", 0)
+        capacity = min(physical_capacity, configured) if configured else physical_capacity
+        decision = {
+            **device,
+            "reason": "eligible",
+            "capacity_mb": capacity,
+            "physical_capacity_mb": physical_capacity,
+        }
         report["devices"].append(decision)
         if allowed is not None and gpu not in allowed and device["index"] not in allowed:
             decision["reason"] = "device_not_allowed"
             continue
+        report["max_capacity_mb"] = max(report["max_capacity_mb"], capacity)
         occupants = [job for job in jobs if job.get("gpu_uuid") == gpu]
         if any(not job.get("gpu_shared") for job in occupants):
             decision["reason"] = "exclusive_project_job"
@@ -170,11 +180,6 @@ def select_shared_gpu(
         pending = sum(
             max(0, job["gpu_memory_mb"] - container_gpu_memory(job, processes)) for job in occupants
         )
-        physical_capacity = device["total_mb"] - args.gpu_headroom_mb
-        capacity = physical_capacity
-        configured = getattr(args, "gpu_capacity_mb", 0)
-        if configured:
-            capacity = min(capacity, configured)
         available = max(
             0, min(capacity - reserved, physical_capacity - device["used_mb"] - pending)
         )
