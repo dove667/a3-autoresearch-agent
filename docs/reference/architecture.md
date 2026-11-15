@@ -39,7 +39,7 @@ Host 的 `launch.py` 负责启动装配；`sessions/processes.py` 负责创建�
 
 同一天意外中断的 run 可由维护者通过离线发布事务升级后恢复。升级保留研究目录、模型上下文、计划、长期记忆、技能库与作业归属，同时归档旧版本、输入和 checkpoint 边界。事务可以在中断后继续；具体入口见[操作者监督](../guides/maintenance.md)。
 
-研究进程停止后，Host 保存控制台、退出记录与暂停状态，保留研究文件和在途远程作业。Agent 通过 `progress(action="outcome", ...)` 记录继续研究的进展或需人工处理的阻塞，程序保存到当前 `conversation/run-outcome.json`。可选的 retained 记录保存共享工作区文件的路径、哈希与来源，加载时核对内容，避免复制研究代码和实验文本。
+研究进程停止后，Host 保存控制台、退出记录与暂停状态，保留研究文件和在途远程作业。Agent 通过 `research_status(...)` 记录继续研究的进展或需人工处理的阻塞，程序保存到当前 `conversation/run-outcome.json`。可选的 retained 记录保存共享工作区文件的路径、哈希与来源，加载时核对内容，避免复制研究代码和实验文本。
 
 ## 一次实验怎样执行
 
@@ -82,3 +82,5 @@ Host 保存进程停止状态、恢复信息和研究记录。Agent 持续比较
 ## 维护重点
 
 依据实际执行轨迹减少工具参数错误、无效检索、重复提交和无效模型等待，检查摘要是否完整、经验是否影响后续行动，并衡量端到端研究效率。功能回归、基础设施验证和科学实验结果分别记录。
+
+模型工具目录由 `harness/tool_catalog.py` 统一声明，参数与结果通过高层工具转换。HTTP 请求只在 `agent.request_host` 和 Host 内部传递；模型不获得通用 method/path/body 入口。`file_tools.py`、`job_tools.py`、`host_tools.py` 和 `control_tools.py` 分别负责文件、作业、资源与资产、等待和运行状态。

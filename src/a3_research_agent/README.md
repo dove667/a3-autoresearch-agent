@@ -15,3 +15,5 @@
 `harness/history.py` 保存和检索原始执行历史，`harness/memory/` 管理主动提炼的长期经验，`harness/operational_state.py` 记录工具交付、读取和作业进度。`harness/context/` 负责工作上下文与完整摘要，`skill_registry.py` 负责可复用方法。
 
 实际研究数据位于项目根 `workspace/`，长期记忆位于根 `memory/`。源码目录中不保存运行工作区。完整边界与数据流见[系统架构](../../docs/reference/architecture.md)，数据位置见[目录职责](../../docs/reference/storage-layout.md)。
+
+`harness/tool_catalog.py` 声明模型可见的高层工具；`file_tools.py`、`job_tools.py`、`host_tools.py` 和 `control_tools.py` 按领域处理，`tool_results.py` 统一成功、错误和提交未知回执。模型不获得通用 HTTP 工具。

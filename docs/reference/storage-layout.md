@@ -38,7 +38,7 @@
 
 `execution/controller/` 使用标准库管理远程作业；`execution/scheduling/` 负责资源准入，`execution/images/` 保存远程容器构建资源。所有 Python 导入使用 `a3_research_agent.*`。
 
-`harness/history.py` 检索原始执行历史，`harness/memory/` 管理主动长期经验，`harness/operational_state.py` 记录读取和操作进度。`path_safety.py` 提供路径校验，`harness_payload.py` 声明发布源码。
+`harness/history.py` 检索原始执行历史，`harness/memory/` 管理主动长期经验，`harness/operational_state.py` 记录程序观察到的读取与作业状态。`path_safety.py` 提供路径校验，`harness_payload.py` 声明发布源码。
 
 ## 研究文件与机器状态
 
@@ -72,7 +72,7 @@ trajectories/<开始时间>/
 │   ├── trajectory.jsonl   模型循环与请求轨迹
 │   ├── operational-state.json
 │   ├── compaction-*.json  压缩状态与事务
-│   ├── preflight/         预检回执
+│   ├── prepared-jobs/     保存的正式请求、CPU预检与提交回执
 │   ├── context-history/   摘要与工具结果引用的原文
 │   └── .autorun-spill/    大工具结果归档
 ├── plan-snapshots/        该次运行开始、修订和停止时的计划历史快照
@@ -94,9 +94,9 @@ Host 用 `A3_STATE_ROOT` 指定当前 run 的 `conversation/`，并在 `runtime_
 
 项目顶层 `plan/current.json` 保存跨运行共用的最新研究计划，记录长期方向、研究路线与假设、执行步骤和结果复盘，关联依赖、优先级、作业与证据。Agent 通过 `plan(action="show")` 查看、`plan(action="update", revision=..., ...)` 修改；Host 通过 `A3_PLAN_FILE` 配置绝对路径，并在 `runtime_paths.plan` 中提供该路径。普通文件工具不直接修改计划。每次运行在 `plan-snapshots/` 按 revision 与内容哈希保留开始、修订和停止时的历史快照；新运行和恢复始终读取根计划。旧 `conversation/research-plan.json` 保留为历史资料。
 
-`progress` 保存操作进展；`progress(action="outcome", status="continue"|"blocked", reason=..., external_blocker=...)` 记录研究状态。恢复与接续清单由程序生成，`files` 只列出工作区研究文件。
+plan 是 Agent 维护任务与进展的唯一位置；`conversation/operational-state.json` 自动记录读取和作业状态。`research_status(status="continue"|"blocked", reason=..., kind=..., required_action=..., evidence=[...])` 保存整轮研究状态，外部阻塞使用后三项，普通继续状态只需 status 和 reason。恢复与接续清单由程序生成，`files` 只列出工作区研究文件。
 
-`memory` 保存 Agent 主动提炼的跨会话经验；`recall` 检索原始消息和工具观测；`skills` 管理可复用方法及附件。普通 `read`、`write`、`edit` 不直接接触根技能库和长期记忆；当前会话状态允许 `read`、`list`、`search_files` 只读访问。
+`memory` 保存 Agent 主动提炼的跨会话经验；`recall` 检索当前 run 的原始消息和工具观测；`skills` 管理可复用方法及附件。普通 `read`、`write`、`edit` 不直接接触根技能库和长期记忆；当前会话状态允许 `read`、`list`、`search_files` 只读访问。
 
 源码放在 `workspace/scripts/<模型或方法>/<可选研究系列>/<用途>/`，例如 `act/p142/training/`、`act/baseline/evaluation/`、`dagger/validation/`。研究系列层按需设置，按 data、training、evaluation、validation 等实际用途分类；参数变化通过配置或命令传入，复用同一入口。
 
@@ -131,3 +131,12 @@ A3 参考源码按实际文件内容生成共享缓存；各次运行的 `public
 `memory/entries.jsonl` 追加保存条目版本；`memory/index.sqlite3` 是按模型与内容哈希维护的可重建向量缓存；`memory/sources.json` 连接迁入条目的历史原文。`host/knowledge_service/` 管理模型校验、私有服务和进程生命周期；`harness/memory/` 管理条目、检索、来源与受控客户端。
 
 知识服务通过 `host/knowledge_service/` 共享一个 embedding 进程；`harness/knowledge_client.py` 是受控客户端，`harness/semantic_index.py` 提供通用向量缓存和文本归一化。技能目录与经验库分别保存，技能索引在 `.runtime/skill-index/`，索引不承担版本历史或正文存储。
+
+
+高层工具定义与校验放在 `harness/tool_catalog.py`、`job_tools.py`、`host_tools.py`、
+`control_tools.py` 和 `file_tools.py`。HTTP调用由固定运行层完成，模型不接触通用
+Gateway入口。作业源码和文本配置统一用 attachments 引用 workspace 内文件；GPU请求
+保存在当前 run 的 prepared-jobs，随后按 prepared_id 提交。计划存储使用 version2，
+目标只在 direction.objective；旧目标字段在维护时一次迁移，运行时不加载旧格式。
+
+模型工具由 `harness/tool_catalog.py` 统一注册，文件、作业、Host能力和运行控制分别在 `file_tools.py`、`job_tools.py`、`host_tools.py`、`control_tools.py` 实现；`tool_results.py` 统一模型回执。准备好的作业保存在当前 conversation/prepared-jobs/，模型使用编号提交，无需复制原请求。

@@ -81,23 +81,38 @@ nohup bash start-autoresearch.sh --night-window --harness-commit <已发布提�
 
 ## 常用工具和作业流程
 
-`job_submit` 接受命令参数数组、源码路径和资产引用。工具自动计算本地源码哈希；训练数据与权重使用只读 exports。独立且输入就绪的任务可先并行提交，再用 `wait` 等待终态或操作者通知。Controller 负责排队、GPU 分配与生命周期。
+CPU作业使用 `job_submit(command=[...], attachments=[{"path":"scripts/train.py"}])`；
+源码和实验文本配置都可附加，工具自动计算哈希。GPU作业先用
+`job_prepare(command=[...], gpu=true, attachments=[...], input_exports=[...])` 保存正式请求并执行CPU检查。
+入口在 `A3_RESEARCH_PREFLIGHT=1` 时加载真实模型与数据，检查通过写入工作区
+`a3-preflight.json`，内容为 `{"schema":1,"status":"passed"}`。
+收到 prepared_id 和 preflight_job_id 后，调用 `job_wait(job_ids=[preflight_job_id])`；
+检查完成，再用 `job_submit(prepared_id="...")` 提交保存的请求，无需重填参数。
 
-`job_status` 和 `job_list` 查询实际状态，`job_artifact` 按字符分页读取结果并返回文件哈希。`search_files` 查找源码与可读记录，`edit` 精确修改工作区研究文件。预检、技能与联网工具同样提供具体参数定义，详细契约见[执行接口](../../prompt/execution.md)。
+独立且输入就绪的任务可以并行提交。`job_wait` 等待指定作业，默认最多600秒；省略job_ids时
+等待程序已观察到的活动作业。`idle_wait(seconds=30)` 只等操作者或输入通知，不轮询作业。
+Controller负责排队、GPU分配与生命周期。提交结果未知时先按编号查询，避免重复启动。
+
+`job_status`、`job_list` 查询实际状态，`job_artifact` 按字符分页读取结果和哈希。
+资产通过 `export_create`、`export_status`、`export_manifest`、`export_list` 管理；
+`evaluation_compare` 比较已有配对结果，`vision_inspect` 检查指定的原始帧。
+`search_files` 查找源码与记录，`edit` 精确修改工作区文件；覆盖现有文件的write需要当前哈希。
+高层工具返回统一ok标志、失败提示和分页游标，模型无需构造HTTP方法、URL或原始body。
+详细参数见[执行接口](../../prompt/execution.md)。
 
 文件工具在 `workspace/` 自由读写，输入、A3 参考源码和当前会话状态只读；根技能库和长期记忆分别通过 `skills`、`memory` 操作。Agent 工具不提供本地 Bash 或 Python，研究脚本通过远程 jobs 执行。
 
 采集与评估通过[episode 执行器](../reference/episode-executor.md)管理完成台账和并发。作业脚本从环境读取 `A3_OUTPUTS`、`A3_EPISODE_EXECUTOR` 及资产路径，避免沿用另一后端的路径。
 
-研究计划按长期方向、研究路线与假设、执行步骤三层组织，由 Agent 编写，通过 `plan(action="show")` 查看、`plan(action="update", revision=..., ...)` 修改，统一保存到项目顶层 `plan/current.json`，路径由 `runtime_paths.plan` 提供。关键结果返回后，Agent 读取原始产物，通过 `plan(action="review", revision=..., id=<路线ID>, conclusion=..., evidence=[...], decision="continue"|"pause"|"complete")` 保存复盘和路线决策。每轮上下文包含计划摘要与待复盘作业，新运行、恢复和发布升级共用最新计划，先核对计划中的既有 job 并重新检查阻塞；各次运行的开始、修订和停止快照保存在对应 trajectory 的 `plan-snapshots/`。操作进展与研究状态由 `progress` 保存到当前 `conversation/`。恢复和接续清单由程序生成，`files` 只列出工作区研究文件。
+研究计划按长期方向、研究路线与假设、执行步骤三层组织，由 Agent 编写，通过 `plan(action="show")` 查看、`plan(action="update", revision=..., ...)` 修改，统一保存到项目顶层 `plan/current.json`，路径由 `runtime_paths.plan` 提供。关键结果返回后，Agent 读取原始产物，通过 `plan(action="review", revision=..., id=<路线ID>, conclusion=..., evidence=[...], decision="continue"|"pause"|"complete")` 保存复盘和路线决策。每轮上下文包含计划摘要与待复盘作业，新运行、恢复和发布升级共用最新计划，先核对计划中的既有 job 并重新检查阻塞；各次运行的开始、修订和停止快照保存在对应 trajectory 的 `plan-snapshots/`。任务和研究进展只在plan维护；程序自动记录读取和作业观察，整轮状态由 `research_status` 保存到当前 `conversation/`。恢复和接续清单由程序生成，`files` 只列出工作区研究文件。
 
-长期经验由 `memory` 保存；`recall` 从原始历史检索观测。根 `skills/` 是唯一技能库，通过 `skills` 先看目录摘要，再读正文和所需附件；同一工具也负责更新正文、附件和归档。工作上下文达到压缩门槛后必须生成完整摘要，32k 等目标预算覆盖整个下一轮输入；机制见[上下文与记忆](../reference/context-and-memory.md)。
+长期经验由 `memory` 保存，search使用query，read使用id，修订/归档/恢复使用当前revision；`recall`只检索当前run的原始观测。根 `skills/` 是唯一技能库，通过 `skills` 先看目录摘要，再读正文和所需附件；同一工具也负责更新正文、附件和归档。工作上下文达到压缩门槛后必须生成完整摘要，32k 等目标预算覆盖整个下一轮输入；机制见[上下文与记忆](../reference/context-and-memory.md)。
 
 ## 持续研究与暂停
 
 长期目标直接写在 `prompt/SOUL.md`：持续提高 A3 2×5、2×10 全量评测的入盒准确率与通过率。Agent 根据证据调整假设、数据、模型和研究路线，记录模型版本、数据清单、种子与评测设置，持续比较结果。全量评测用于衡量研究进展，由操作者决定暂停和恢复。日常 Harness 维护沿用原 run 和工作区。
 
-Agent 用 `progress(action="outcome", status="continue", reason=...)` 保存继续研究的状态；需人工处理的外部阻塞使用 `status="blocked"` 并附 `external_blocker`。Host 保存相应元数据，研究文件继续留在工作区。
+Agent 用 `research_status(status="continue", reason=...)` 保存整轮状态；需人工处理的外部阻塞使用 `status="blocked"`，并提供kind、required_action和实际存在的workspace证据路径evidence。Host 保存相应元数据，研究文件继续留在工作区。
 
 ## 查找状态与产物
 

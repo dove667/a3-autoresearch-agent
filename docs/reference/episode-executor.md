@@ -4,7 +4,7 @@
 
 ## 提交 batch
 
-将 manifest 和命令依赖的文件放入远程作业的 `/workspace`。本地源码从 `scripts/` 通过 `workspace_files` 附加；本地 `experiments/` 中的 manifest 读取后通过 `files` 字段附加为远程同名路径。例如 `experiments/example-batch/episodes.json`：
+将 manifest 和命令依赖的文件放入远程作业的 `/workspace`。本地源码和 `experiments/` 中的 manifest 统一通过 `attachments` 引用，工具读取并计算哈希，默认保留相对路径。例如 `experiments/example-batch/episodes.json`：
 
 ```json
 {

@@ -3,7 +3,7 @@ name: a3-job-recovery
 description: 提交和恢复A3远程作业：源码附件、CPU预检、提交未知、排队、部分回合与失败重试。Job submission, preflight and
   recovery.
 metadata:
-  version: 0.1.3
+  version: 0.1.4
 ---
 
 # 提交与接续研究作业
@@ -12,19 +12,19 @@ metadata:
 
 ## 提交源码
 
-`command` 使用参数数组，工作区源码必须在 `scripts/`。`workspace_files` 附加真实文件并由工具计算哈希；已有大数据和权重通过已授权 `input_exports` 使用。
+`command` 使用参数数组，源码放在 `scripts/`，实验配置放在 `experiments/`，都可作为附件。`attachments` 附加真实文件并由工具计算哈希；已有大数据和权重通过已授权 `input_exports` 使用。
 
 ```json
-{"command":["python","scripts/act/shared/diagnostics/inspect_data.py"],"gpu":false,"workspace_files":[{"path":"scripts/act/shared/diagnostics/inspect_data.py"}]}
+{"command":["python","scripts/act/shared/diagnostics/inspect_data.py"],"gpu":false,"attachments":[{"path":"scripts/act/shared/diagnostics/inspect_data.py"}]}
 ```
 
-使用当前 `job_submit` 工具的其他资源参数。GPU正式作业先按 `preflight` 的当前说明通过CPU预检。保存返回的job ID、源码回执和预期结果位置，绑定到plan后再等待。
+使用当前 `job_submit` 工具的其他资源参数。GPU作业先用 `job_prepare` 保存请求并提交CPU预检，等返回的preflight_job_id完成后只用 `job_submit(prepared_id=...)` 提交。保存返回的job ID、源码回执和预期结果位置，绑定到plan后再等待。
 
 ## 按状态处理
 
 | 观察到的状态 | 下一步 |
 | --- | --- |
-| `queued`、资源紧张 | 保留同一ID，用 `wait` 等待调度。 |
+| `queued`、资源紧张 | 保留同一ID，用 `job_wait` 等待调度。 |
 | 提交未知但返回ID | 用 `job_status` 查该ID；必要时用 `job_list` 核对当前授权清单。 |
 | 传输失败且没有ID | 保存命令、源码哈希、时间与错误，核对授权清单和输出；身份仍不明确时请操作者处理。 |
 | 终态执行错误 | 读日志、源码和episode ledger，修复已定位问题，仅补做未完成工作。 |

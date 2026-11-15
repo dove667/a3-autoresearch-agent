@@ -19,6 +19,6 @@
 
 ## 调用视觉辅助工具
 
-通过 `gateway` 调用 `POST /vision/inspect`，正文提供 `question` 和1–6个按时间排列的 `frames`。每帧填写 `job_id`、相对 `path`、`episode_id`、`step`、`sim_time_s`、`camera`；图片在job工作区时用默认 `area=workspace`，在输出目录时填写 `area=outputs`。
+调用 `vision_inspect`，提供 `question` 和1–6个按时间排列的 `frames`。每帧填写 `job_id`、相对 `path`、`episode_id`、`step`、`sim_time_s`、`camera`；area默认outputs，图片在job工作区时填写area="workspace"。
 
 每张PNG/JPEG最多512 KiB、边长最多1024像素，总量最多3 MiB。同一episode按step递增排列。保存返回的帧来源、模型和分析；结合原始动作与状态判断结论，避免把大段Base64或全部视频放进主上下文。当前execution提示词定义实际接口限制。

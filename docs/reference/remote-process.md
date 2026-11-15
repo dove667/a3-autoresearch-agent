@@ -36,11 +36,11 @@ Agent 使用 `job_submit` 附加当前共享工作区 `scripts/` 中的 UTF-8 �
 {
   "command": ["python", "runner.py"],
   "gpu": false,
-  "workspace_files": [{"path": "scripts/act/baseline/evaluation/runner.py", "destination": "runner.py"}]
+  "attachments": [{"path": "scripts/act/baseline/evaluation/runner.py", "destination": "runner.py"}]
 }
 ```
 
-直接调用 HTTP `POST /jobs` 时，`workspace_files` 的每项还需提供当前源码的 `sha256`。Host 按身份读取并核对文件，拒绝符号链接、重复目标与文件／目录冲突。附件上限为 16 个、每个 1 MiB、合计 8 MiB；连同内联 `files` 最多 128 个文件、20 MiB。数据集和权重通过 `input_exports` 引用。
+模型使用 `job_submit` 或 `job_prepare` 的 attachments。Host 内部将它转换为带 SHA256 的 workspace_files 并按身份读取核对，拒绝符号链接、重复目标与文件／目录冲突。附件最多16个、每个1 MiB、合计8 MiB，源码与实验配置采用同一入口。数据集和权重通过 input_exports 引用。HTTP POST /jobs 是基础设施内部接口。
 
 响应中的 `source_files` 与 Host 的 `job-inputs.jsonl` 保存实际源路径、目标、摘要和字节数，供报告关联作业版本。`submission_unknown` 保留已分配的 job ID，先查现有状态和产物。源码传递不创建额外研究身份。
 
@@ -86,6 +86,6 @@ Host 中断或恢复不重新执行远程命令。进程状态用 PID、启动�
 
 ## 提交后等待结果
 
-Agent 提交任务和科研参数，Controller 与 episode 执行器负责资源、生命周期和并发调整。`POST /jobs/wait` 一次等待最多 64 个作业；Host 复用 30 秒活动状态缓存、批量读取 watcher 元数据，终态缓存 5 分钟。接口返回简短终态或通知，等待超时由 Harness 内部续接，不唤醒模型。模型只在完成、中途停止或明确的人类通知时处理结果。研究代码错误由 Agent 分析；Controller 异常由操作者检查服务器记录。托管模式的部署说明和常规作业结果不展示服务器资源明细，具体请求见[执行说明](../../prompt/execution.md)。
+Agent 提交任务和科研参数，Controller 与 episode 执行器负责资源、生命周期和并发调整。Agent 通过 `job_wait` 等待最多64个指定作业，超时后返回；底层 Host 等待请求由 Harness 续接。Host 复用 30 秒活动状态缓存、批量读取 watcher 元数据，终态缓存 5 分钟。接口返回简短终态或通知，模型在目标终态、总超时、输入变化或操作者通知时处理结果。研究代码错误由 Agent 分析；Controller 异常由操作者检查服务器记录。托管模式的部署说明和常规作业结果不展示服务器资源明细，具体请求见[执行说明](../../prompt/execution.md)。
 
 固定 Host 监督每 15 秒观察一次会话生命周期，仅状态变化追加监督事件；不驱动研究步骤或重启 Agent。作业 watcher 继续独立运行，不依赖 Agent 查询来推进训练或完成归档。

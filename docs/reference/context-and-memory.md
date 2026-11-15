@@ -24,7 +24,7 @@ Revisions preserve the previous plan and record reasons for route changes.
 {
   "action": "update",
   "revision": 0,
-  "goal": "Train ACT on a verified expanded dataset",
+  "direction": {"objective": "Improve 2×5 and 2×10 full-evaluation accuracy and success", "metrics": ["Per-task accuracy and native success"], "gaps": []},
   "steps": [
     {
       "id": "collect",
@@ -44,9 +44,11 @@ Revisions preserve the previous plan and record reasons for route changes.
 The decision context includes a bounded plan view with ready steps and the last
 observed job status. An active step with a queued or running job can wait. When
 independent work is ready, the next decision frame includes those step IDs.
-`wait` observes submitted jobs even when the Agent has not yet linked them to a
-plan step. Program-level waiting handles queueing and running jobs without
-model polling. The Agent verifies the step's criterion before recording evidence
+`job_wait(job_ids=[...], timeout_seconds=600)` observes selected jobs even when they
+are not yet linked to plan steps. Omit job_ids to use the currently observed active jobs.
+The timeout bounds the whole wait; zero performs one observation. `idle_wait(seconds=30)`
+waits only for operator/input notifications and does not poll jobs. Both modes wake for
+input changes and preserve notification acknowledgement through completed tool results. The Agent verifies the step's criterion before recording evidence
 and marking it done. The plan tracks Agent claims and observed job states.
 
 The Agent authors the plan through `plan(action="show")` and
@@ -65,14 +67,15 @@ no external embedding API receives research notes. Current plan focus supplies a
 retrieved experience view on model requests; complete notes and sources are read on demand.
 
 Retrieval combines normalized keywords, Chinese character terms and local semantic vectors.
-Search accepts a natural-language `key`, optional `scope`/`kind`, and `offset`/`limit` pages.
+Search accepts a natural-language `query`, optional `scope`/`kind`, and `offset`/`limit` pages.
 The SQLite index is rebuildable and keyed by model fingerprint and content hash. Writes
 check exact and near duplicates; similar findings require an explicit update or a reasoned
 separate write. Similarity identifies candidates, while the Agent decides whether their
 experimental conditions and conclusions match.
 
-Use `write` for new durable lessons; `read` returns the current revision. `update` and
-`archive` require a matching revision or SHA256 and preserve prior records. `lifetime=run`
+Use `write` for new durable lessons; `read(id=...)` returns the current revision. `update`,
+`archive` and `restore` require that revision and preserve prior records. Restore reactivates
+an archived note with an explicit reason; obsolete key and expected_sha256 arguments are not accepted. `lifetime=run`
 limits a note to `run_ids`, defaulting to the creating run; `run_ids` records associated runs and supplies the allowed run list for run-lifetime notes. Archived
 and other-run temporary notes are excluded from normal suggestions and searches. The
 current input and permissions govern research; a historical note does not grant permission.
@@ -81,7 +84,7 @@ The systems have separate responsibilities: plan describes future research and c
 memory captures learned findings and failure lessons; skills contain reusable procedures.
 `memory(action="sources", id=...)` lists controlled evidence locators. A selected `ref`
 can read available workspace text, verified historical bundle text or imported-note provenance.
-Job references return existing job API locators. Unresolved evidence is reported explicitly.
+Job references identify the `job_status` tool; use `job_artifact` for referenced results. Unresolved evidence is reported explicitly.
 `recall` searches the current run's original dialogue; it does not search old bundle files.
 
 Use `recall` for original observations retained in the current run's `conversation/history.jsonl`. Without `n`/`m`, it searches the available
@@ -91,26 +94,27 @@ snippets and excludes tool arguments and prior retrieval responses. Use
 `mode="raw"` for historical tool traffic. Both modes point to the original round,
 and the complete source history remains on disk.
 
-## Preflight for long GPU jobs
+## Prepare and submit GPU jobs
 
-Call `preflight(action="check", job=...)` with the complete production
-`POST /jobs` request, including `gpu: true`. The Harness sends the same command,
-inline source, hashed workspace references and read-only exports to a CPU job
-with `A3_RESEARCH_PREFLIGHT=1`. Implement this mode in the real entry point.
-Load and check the checkpoint, import the adapter and its dependencies, and
-exercise a minimal forward pass or a real dataset read as applicable. Before
-exiting zero, write `a3-preflight.json` in the job workspace with
-`{"schema":1,"status":"passed"}`. Keep this branch out of the production output
-and preserve the error when loading fails.
+Call `job_prepare(command=[...], gpu=true, attachments=[...], input_exports=[...])`
+with the production command once. Attachments accept regular workspace UTF-8 files,
+including scripts and experiment configurations; each item provides a path and optional
+remote destination, and the runtime computes SHA256. Binary data and weights use immutable
+exports. The runtime saves the exact request and starts its CPU check.
 
-After completion, call `preflight(action="submit", preflight_id=..., job=...)`
-with the same production request. This tool requires a successful Controller
-exit and a readable report. Any request change requires a new check. Pin assets
-to immutable exports or verify the expected content digests in the entry point.
-The CPU check can surface import, load, and input errors. CUDA-specific behavior
-still requires a GPU pilot. Existing ordinary job submissions keep their API.
-Same-run resume preserves receipts. If production submission is uncertain, use
-the registered job ID or check the job list before another attempt.
+The real entry point must handle `A3_RESEARCH_PREFLIGHT=1`: load the checkpoint and
+actual dataset inputs, import dependencies, and exercise a minimal forward or data read.
+Before exiting zero, write `a3-preflight.json` in the job workspace with
+`{"schema":1,"status":"passed"}`. Preserve loading errors and avoid production outputs
+in this branch. CUDA-specific behavior is checked by the subsequent GPU execution.
+
+Preparation returns `prepared_id` and `preflight_job_id`. Wait with
+`job_wait(job_ids=[preflight_job_id])`, then call `job_submit(prepared_id=...)`.
+The runtime checks completion, the report and unchanged attachment hashes, then submits
+its saved request. Modified inputs require a new preparation. CPU work uses
+`job_submit(command=[...], attachments=[...])` directly. No second model-facing GPU
+submission or raw HTTP entry is exposed. Saved receipts fence uncertain sends and avoid
+repeating a production request; inspect `job_status` or `job_list` to reconcile uncertainty.
 
 ## Token budgets and full-transcript summaries
 
@@ -251,17 +255,18 @@ corrections/unknowns, source reads, normal tool work after recovery, and referen
 reachability. Neither a process exit code nor a mock response proves those facts.
 
 
-## Durable operational memory and bounded analysis
+## Automatic observations and bounded analysis
 
 The Host sets `A3_STATE_ROOT` to `trajectories/<run>/conversation/`. The fixed
 runtime stores its resume/continuation manifests, outcome, checkpoint, tool
-journal, history, trajectory, operational ledger, compaction transactions, preflight
+journal, history, trajectory, operational ledger, compaction transactions, prepared-job
 receipts and failure records there. Research code stays in `workspace/scripts/<model-or-method>/<optional-series>/<purpose>/`.
 Experiment configurations, results, figures, videos and analysis stay in
 `workspace/experiments/<date-name>/`, with job/export IDs and source hashes. Skills use the single root
 `skills/` library.
 
-The Host sets `A3_PLAN_FILE` to the project-root `plan/current.json`. The `plan`
+The Host sets `A3_PLAN_FILE` to the project-root `plan/current.json`. Storage uses version2
+and `direction.objective` is its sole objective field. The `plan`
 tool maintains three levels: `direction` contains the long-term objective, metric
 list and capability gaps; stable-ID `routes` contain research questions,
 hypotheses, experiments, decision rules and priorities; `steps` contain route
@@ -282,11 +287,12 @@ before choosing their next experiment. Ordinary file tools do not modify the pla
 Each trajectory retains immutable revision snapshots under `plan-snapshots/`;
 old `conversation/research-plan.json` files remain historical material.
 
-The `progress` tool maintains run metadata. The Agent records its
-research status with `progress(action="outcome", status="continue"|"blocked",
-reason=..., external_blocker=...)`. The runtime saves `run-outcome.json` and generates
-the resume and continuation file lists; the Agent works through the corresponding
-tools.
+Plan is the only Agent-maintained task ledger. `conversation/operational-state.json`
+contains automatic job and read observations, not another editable task list.
+Use `research_status(status="continue", reason=...)` to report whole-run progress.
+An external blocker uses `status="blocked"`, `reason`, `kind`, `required_action` and
+workspace `evidence` paths. The runtime infers the need for operator action and saves
+`run-outcome.json`; resume and continuation manifests are generated automatically.
 
 `context-history/` and `.autorun-spill/` are logical source references relative to
 `runtime_paths.state`. Their contents and hashes remain unchanged. Ordinary file
@@ -317,15 +323,12 @@ These checks cover directly referenced control sources and decoded dependencies.
 They do not continuously traverse every historical citation or establish semantic
 truth, fault-free upstream services or unlimited disk space.
 
-The `progress` tool records explicit Agent-authored open/waiting/closed items and
-workspace-relative evidence references; research decisions remain Agent-authored.
-Missing/large/changed evidence is uncertain, not automatically passed or reopened.
-Current operational facts are attached as a bounded ephemeral frame on each normal
-decision, outside rolling summaries and the saved model history. Its estimated
-cost is reserved before compression. The exact frame is archived with its source
-references; resume/continuation lists are generated from workspace research files.
-A corrupt sidecar fails closed rather than silently resetting it. One previous sidecar and separate
-progress-item archives bound redundant storage while preserving task changes.
+Automatic read and job observations are attached as a bounded ephemeral frame on each
+normal decision, outside rolling summaries and the saved model history. Its cost is
+reserved before compression. The exact frame is archived with source references;
+resume/continuation lists are generated from workspace research files. A corrupt sidecar
+fails rather than silently resetting observations. Task decisions and their evidence are
+maintained in the shared plan; there is no second model-authored operational task list.
 
 Resume and maintenance releases preserve the current conversation state. Future
 sessions share research files in `workspace/`, the root skill library and active
@@ -359,3 +362,13 @@ body edits preserve managed YAML metadata. Binary resources, stale hashes and mi
 ambiguous matches are rejected. Complete old packages are retained before each versioned
 transaction; unchanged edits do not increment the version. Use `save` to create a package or
 change its description, keywords or complete body.
+
+
+## Model-visible tool results
+
+The model uses named high-level tools for jobs, exports, evaluation comparison, visual
+inspection and session status. HTTP routing, credentials and the Host Gateway remain
+internal. Every model-visible result has `ok=true` or `ok=false`; failures include an
+`error` and a correction `hint`. List operations expose a continuation cursor and reads
+expose the source hash and character page. Replacing an existing workspace file requires
+its current expected_sha256; use `edit` for a small change.
