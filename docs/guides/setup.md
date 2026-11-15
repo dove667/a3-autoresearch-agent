@@ -54,7 +54,7 @@ A3 仓库、SSH 目标和远程路径由 `.env` 指定。模型执行记录保�
 所有 Controller 共用资源根目录与资源配置。托管队列管理等待、显存预算和作业生命周期；具体配置见[进程后端](../reference/remote-process.md)和[远程容器部署](../reference/remote-docker.md)。
 
 ```bash
-bash scripts/start-rsi.sh --check
+bash start-autoresearch.sh --check
 ```
 
 此检查验证配置、A3 路径和 Controller 健康响应。真实模型调用、训练和科学评估由相应验证或研究任务完成。

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 umask 077
-harness_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
+harness_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 export PYTHONPATH="$harness_root/src${PYTHONPATH:+:$PYTHONPATH}"
 if [[ "$(uname -s)" == Darwin ]]; then
     # Hold sleep assertions for the runtime's lifetime; allow the display to sleep.

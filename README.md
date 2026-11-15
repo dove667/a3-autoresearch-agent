@@ -17,13 +17,13 @@ cp .env.example .env
 按[环境配置](docs/guides/setup.md)填写模型认证、项目路径和远程资源配置。恢复已保存的研究：
 
 ```bash
-bash scripts/start-rsi.sh --resume-from "trajectories/<开始时间>"
+bash start-autoresearch.sh --resume-from "trajectories/<开始时间>"
 ```
 
 首次使用已发布的 Harness 时，指定完整 Git 提交：
 
 ```bash
-bash scripts/start-rsi.sh --harness-commit <已发布提交SHA>
+bash start-autoresearch.sh --harness-commit <已发布提交SHA>
 ```
 
 独立开发或体验原始 mini-SWE-agent：

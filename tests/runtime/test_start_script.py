@@ -11,10 +11,9 @@ import pytest
 @pytest.mark.parametrize("system", ["Darwin", "Linux"])
 def test_start_script_preserves_arguments_stdin_and_exit_status_with_sleep_guard(tmp_path, system):
     root = tmp_path / "project with spaces"
-    scripts = root / "scripts"
-    scripts.mkdir(parents=True)
-    source = Path(__file__).resolve().parents[2] / "scripts/start-rsi.sh"
-    shutil.copy2(source, scripts / "start-rsi.sh")
+    root.mkdir(parents=True)
+    source = Path(__file__).resolve().parents[2] / "start-autoresearch.sh"
+    shutil.copy2(source, root / "start-autoresearch.sh")
     python = root / ".venv/bin/python"
     python.parent.mkdir(parents=True)
     python.symlink_to(sys.executable)
@@ -39,7 +38,7 @@ def test_start_script_preserves_arguments_stdin_and_exit_status_with_sleep_guard
     guard.chmod(0o755)
     marker = tmp_path / "guard-enabled"
     result = subprocess.run(
-        ["/bin/bash", str(scripts / "start-rsi.sh"), "--run-harness", "run with spaces"],
+        ["/bin/bash", str(root / "start-autoresearch.sh"), "--resume-from", "run with spaces"],
         env={**os.environ, "PATH": f"{commands}:{os.defpath}", "GUARD_MARKER": str(marker)},
         input="must not reach the unattended launcher",
         capture_output=True,
@@ -49,7 +48,7 @@ def test_start_script_preserves_arguments_stdin_and_exit_status_with_sleep_guard
     )
     assert result.returncode == 7, result.stderr
     assert json.loads(result.stdout) == {
-        "args": ["--project-root", str(root), "--run-harness", "run with spaces"],
+        "args": ["--project-root", str(root), "--resume-from", "run with spaces"],
         "stdin": "",
     }
     assert marker.exists() == (system == "Darwin")
