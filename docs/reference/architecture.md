@@ -63,7 +63,7 @@ Controller 实例共用资源根目录和调度锁。独占模式持有整卡租
 
 `memory/entries.jsonl` 保存 Agent 主动提炼的经验、适用条件及来源，由 `memory` 工具管理。`recall` 从 `workspace/history.jsonl` 等原始执行历史检索片段；`workspace/context-history/` 保存摘要来源和大工具结果。研究计划与自写 skills 同样保存在 `workspace/`。恢复、未来会话和维护发布共用这些目录。
 
-Host 从根目录 `skills/` 发现包含 `SKILL.md` 与 `assets/catalog-entry.json` 的完整方法包，随公共输入和发布包交付正文、引用文件及 helper，并分别记录版本和文件哈希。Agent 自写 skills 保存在研究工作区；输入更新和安装保留其局部修订，将新部署参考包独立保存。Agent 使用多关键词检索并按需读取正文和附件。
+Host 从根目录 `skills/` 发现包含 `SKILL.md` 与 `assets/catalog-entry.json` 的完整方法包，随公共输入和发布包交付正文、引用文件及 helper，并分别记录版本和文件哈希。Agent 自写 skills 保存在研究工作区；未修改的部署技能沿用原 ID 更新并归档旧版；已有 Agent 局部修订时保留原内容，将新参考独立保存。Agent 使用多关键词检索并按需读取正文和附件。
 
 研究目标和行为原则集中在 `prompt/SOUL.md`。`prompt/execution.md` 与 `prompt/workspace.md` 按需提供执行和路径说明，方法 skill 按研究问题检索。
 

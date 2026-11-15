@@ -1,4 +1,4 @@
-"""Workspaces services used by Host launch."""
+"""Create reproducible read-only source snapshots for the research process."""
 
 import shutil
 import subprocess

@@ -11,11 +11,11 @@ from dotenv import load_dotenv
 from a3_research_agent.host.inputs.versions import InputVersions
 from a3_research_agent.host.launch import launch_run
 from a3_research_agent.host.models.settings import model_settings
+from a3_research_agent.host.remote_client import remote_call, validate_remote_health
 from a3_research_agent.host.runs.continuation import resolve_harness_start
 from a3_research_agent.host.runs.directories import create_run_directory
 from a3_research_agent.host.runs.state import RunLease
-from a3_research_agent.host.transport import remote_call, validate_remote_health
-from a3_research_agent.host.workspaces import git
+from a3_research_agent.host.source_snapshots import git
 from a3_research_agent.project import checkout_root, resolve_project_root
 
 

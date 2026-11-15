@@ -125,7 +125,7 @@ def test_transient_controller_fault_stays_internal_without_losing_queue(tmp_path
 
 
 def test_managed_agent_deployment_does_not_publish_server_limits(monkeypatch):
-    from a3_research_agent.host.transport import remote_limits
+    from a3_research_agent.host.remote_client import remote_limits
 
     monkeypatch.setenv("A3_REMOTE_BACKEND", "process")
     monkeypatch.setenv("A3_REMOTE_MANAGED_JOBS", "1")
@@ -256,7 +256,7 @@ def test_host_forwards_managed_default_budget(monkeypatch):
     import shlex
     import subprocess
 
-    from a3_research_agent.host import transport
+    from a3_research_agent.host import remote_client as transport
 
     monkeypatch.setenv("A3_REMOTE_HOST", "configured-server")
     monkeypatch.setenv("A3_REMOTE_CONTROLLER", "controller.py")

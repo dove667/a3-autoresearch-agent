@@ -355,7 +355,7 @@ def test_job_temporary_files_use_isolated_data_directory_and_count_toward_budget
 
 
 def test_remote_resource_settings_are_forwarded_and_reported(monkeypatch):
-    from a3_research_agent.host import transport as launch
+    from a3_research_agent.host import remote_client as launch
 
     monkeypatch.setenv("A3_REMOTE_MANAGED_JOBS", "0")
     monkeypatch.setenv("A3_REMOTE_BACKEND", "docker")

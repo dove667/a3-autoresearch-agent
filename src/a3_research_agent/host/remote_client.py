@@ -1,4 +1,4 @@
-"""Transport services used by Host launch."""
+"""Send owner-scoped Controller requests over SSH and validate deployment health."""
 
 import json
 import os

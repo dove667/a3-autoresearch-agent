@@ -192,7 +192,7 @@ def test_failed_native_attempt_does_not_reserve_gpu_while_retry_is_decided(tmp_p
 
 
 def test_process_deployment_advertises_real_paths_instead_of_container_aliases(monkeypatch):
-    from a3_research_agent.host import transport
+    from a3_research_agent.host import remote_client as transport
 
     monkeypatch.setenv("A3_REMOTE_BACKEND", "process")
     monkeypatch.setenv("A3_REMOTE_A3_ROOT", "/data/project/a3")
@@ -203,7 +203,7 @@ def test_process_deployment_advertises_real_paths_instead_of_container_aliases(m
 
 
 def test_process_limits_ignore_legacy_container_hard_caps(monkeypatch):
-    from a3_research_agent.host.transport import remote_limits
+    from a3_research_agent.host.remote_client import remote_limits
 
     monkeypatch.setenv("A3_REMOTE_MANAGED_JOBS", "0")
     monkeypatch.setenv("A3_REMOTE_BACKEND", "process")

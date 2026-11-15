@@ -1,6 +1,6 @@
 import pytest
 
-from a3_research_agent.host.transport import validate_remote_health
+from a3_research_agent.host.remote_client import validate_remote_health
 
 
 @pytest.mark.parametrize(

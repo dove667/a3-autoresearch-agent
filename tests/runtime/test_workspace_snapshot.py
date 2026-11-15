@@ -1,6 +1,6 @@
 import subprocess
 
-from a3_research_agent.host.workspaces import snapshot_checkout
+from a3_research_agent.host.source_snapshots import snapshot_checkout
 
 
 def make_repository(path):

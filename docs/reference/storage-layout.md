@@ -32,7 +32,7 @@
 
 ## 源码边界
 
-`host/launch.py` 装配并启动服务，`host/gateway/` 按模型、作业、会话、网络与操作者控制分组，所有路由共用同一身份注册表、锁和 checkpoint。
+`host/source_snapshots.py` 准备只读源码快照，`host/remote_client.py` 封装 SSH Controller 调用。`host/launch.py` 装配并启动服务，`host/gateway/` 按模型、作业、会话、网络与操作者控制分组，所有路由共用同一身份注册表、锁和 checkpoint。
 
 `host/sessions/processes.py` 只处理本地原生进程生命周期；`host/sessions/workspace.py` 提供当前工作区和受限文件操作。`host/runs/` 管理运行状态、checkpoint 配对、恢复与保留结果；`host/releases.py` 处理暂停期间的原地发布事务。
 

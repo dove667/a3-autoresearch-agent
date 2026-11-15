@@ -20,6 +20,49 @@ def relative_path(name):
     return path.as_posix()
 
 
+def unedited_deployed_reference(entry, identifier):
+    """Only replace a deployed reference whose whole installed tree is unchanged."""
+    if (
+        not entry
+        or entry.get("status") != "reference"
+        or entry.get("reference_id") != identifier
+        or not entry.get("deployed_tree_sha256")
+        or entry.get("managed_by") == "skills"
+    ):
+        return False
+    name = entry.get("local_source")
+    if not isinstance(name, str) or not name.startswith("skills/"):
+        return False
+    source = pathlib.Path(relative_path(name))
+    if source.is_symlink() or any(parent.is_symlink() for parent in source.parents):
+        return False
+    try:
+        if digest(source.read_bytes()) != entry.get("source_sha256"):
+            return False
+        files = {}
+        for path in source.parent.rglob("*"):
+            if path.is_symlink():
+                return False
+            if path.is_file():
+                if path.stat().st_size > 1024 * 1024 or len(files) >= 128:
+                    return False
+                relative = path.relative_to(source.parent).as_posix()
+                files[f"skills/{identifier}/{relative}"] = digest(path.read_bytes())
+        return digest(json.dumps(files, sort_keys=True).encode()) == entry["deployed_tree_sha256"]
+    except OSError:
+        return False
+
+
+def available_reference_id(identifier, version, tree_hash, entries):
+    """Allocate an identifiable reference ID without replacing any catalog history."""
+    base = identifier + "-reference-" + version + "-" + tree_hash[:8]
+    candidate, sequence = base, 2
+    while candidate in entries:
+        candidate = f"{base}-{sequence}"
+        sequence += 1
+    return candidate
+
+
 def install_input_skills(input_root=None):
     """Materialize selected deployed references, without injecting their whole text.
 
@@ -75,13 +118,33 @@ def install_input_skills(input_root=None):
         tree_hash = digest(
             json.dumps({n: manifest["files"][n]["sha256"] for n in names}, sort_keys=True).encode()
         )
-        if any(e.get("deployed_tree_sha256") == tree_hash for e in entries.values()):
+        matching = [
+            e
+            for e in entries.values()
+            if e.get("status") == "reference" and e.get("deployed_tree_sha256") == tree_hash
+        ]
+        current = entries.get(identifier)
+        replaceable = unedited_deployed_reference(current, identifier)
+        if matching and (not replaceable or current.get("deployed_tree_sha256") == tree_hash):
             continue  # A resume must not overwrite an Agent-improved skill copy.
-        installed_id = (
-            identifier
-            if identifier not in entries
-            else identifier + "-reference-" + version + "-" + tree_hash[:8]
-        )
+        if replaceable:
+            archived_id = available_reference_id(
+                identifier, current["version"], current["deployed_tree_sha256"], entries
+            )
+            entries[archived_id] = {**current, "id": archived_id, "status": "archived"}
+            installed_id = identifier
+            replacement = next(
+                (e for e in matching if unedited_deployed_reference(e, identifier)), None
+            )
+            if replacement is not None:
+                # Repair catalogs that already installed the new tree under a separate ID.
+                del entries[replacement["id"]]
+                entries[identifier] = {**replacement, "id": identifier}
+                continue
+        elif current is None:
+            installed_id = identifier
+        else:
+            installed_id = available_reference_id(identifier, version, tree_hash, entries)
         destination = "skills/" + installed_id + "-reference-" + version + "/"
         source_hash = None
         for source in names:
