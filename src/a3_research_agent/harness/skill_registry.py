@@ -10,6 +10,8 @@ ACTIONS = [
     "list",
     "read",
     "save",
+    "edit",
+    "edit_resource",
     "archive",
     "list_resources",
     "read_resource",
@@ -23,6 +25,9 @@ PROPERTIES = {
     "query": {"type": "string", "maxLength": 240},
     "description": {"type": "string", "maxLength": 512},
     "content": {"type": "string"},
+    "old_text": {"type": "string", "minLength": 1},
+    "new_text": {"type": "string"},
+    "replace_all": {"type": "boolean"},
     "keywords": {"type": "array", "items": {"type": "string"}, "maxItems": 24},
     "source": {"type": "string", "maxLength": 2000},
     "expected_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
@@ -41,6 +46,9 @@ TOOLS = [
             "only a needed UTF-8 attachment. Text reads use character offset/limit pages and return "
             "SHA256. save(id,description,content,source,keywords?) creates or updates a skill; updating "
             "and archive require the current body expected_sha256. save restores archived skills. "
+            "edit(id,old_text,new_text,expected_sha256,replace_all=false) changes only Markdown body "
+            "text, keeping managed YAML metadata intact. edit_resource adds path and edits a UTF-8 "
+            "attachment using its resource hash. Exact text must match once unless replace_all=true. "
             "write_resource(id,path,content,expected_sha256?) creates an absent attachment without "
             "a hash; replacing or delete_resource requires its current resource SHA256. Every edit "
             "versions the whole package and preserves its previous files. No code execution."
@@ -121,6 +129,26 @@ def conflict(expected, raw):
     return None
 
 
+def replace_text(raw, args):
+    """Return exact text changes without accepting ambiguous or binary edits."""
+    try:
+        current = raw.decode("utf-8")
+    except UnicodeError as error:
+        raise library.SkillError("binary_resource_not_editable") from error
+    old, new = args.get("old_text"), args.get("new_text")
+    replace_all = args.get("replace_all", False)
+    if not isinstance(old, str) or not old or not isinstance(new, str):
+        raise library.SkillError("edit_requires_old_and_new_text")
+    if type(replace_all) is not bool:
+        raise library.SkillError("invalid_replace_all")
+    matches = current.count(old)
+    if not matches:
+        raise library.SkillError("edit_text_not_found")
+    if matches > 1 and not replace_all:
+        raise library.SkillError("edit_text_ambiguous")
+    return current.replace(old, new, -1 if replace_all else 1), matches
+
+
 def dispatch(args, *, root=None, history_root=None):
     try:
         root, history_root = configured_roots(root, history_root)
@@ -180,6 +208,25 @@ def operate(root, history_root, args, offset, limit):
     raw = library.read_body(root, entry) if entry else None
     if action == "read":
         return page(raw, entry, offset, limit)
+    if action == "edit":
+        if entry.get("status") == "archived":
+            raise library.SkillError("archived_skill_requires_save")
+        if error := conflict(args.get("expected_sha256"), raw):
+            return error
+        header, content = library.frontmatter(raw.decode("utf-8"))
+        replacement, matches = replace_text(content.encode(), args)
+        if replacement == content:
+            return {**summary(entry), "sha256": library.digest(raw), "unchanged": True}
+        updated = {**entry, "version": library.next_version(entry["version"])}
+        # Preserve the managed header; the exact edit only applies to Markdown content.
+        body = library.body_with_header(header, replacement, updated)
+        revision = library.commit_package(root, history_root, updated, body)
+        return {
+            **summary(updated),
+            "sha256": library.digest(body),
+            "replacements": matches,
+            "history_revision": revision,
+        }
     if action == "list_resources":
         files = library.package_files(root, skill_id)
         resources = [
@@ -193,7 +240,7 @@ def operate(root, history_root, args, offset, limit):
             "total": len(resources),
             "next_offset": offset + 24 if offset + 24 < len(resources) else None,
         }
-    if action in {"read_resource", "write_resource", "delete_resource"}:
+    if action in {"read_resource", "write_resource", "delete_resource", "edit_resource"}:
         relative = args.get("path")
         path = library.resource_path(root, skill_id, relative)
         resource = library.read_bytes(path, library.MAX_RESOURCE_BYTES) if path.exists() else None
@@ -205,7 +252,7 @@ def operate(root, history_root, args, offset, limit):
             raise library.SkillError("archived_skill_requires_save")
         if error := conflict(args.get("expected_sha256"), resource):
             return error
-        if action == "delete_resource" and resource is None:
+        if action in {"delete_resource", "edit_resource"} and resource is None:
             raise library.SkillError("resource_not_found")
         replacement = None
         if action == "write_resource":
@@ -213,6 +260,19 @@ def operate(root, history_root, args, offset, limit):
             if not isinstance(content, str) or len(content.encode()) > library.MAX_RESOURCE_BYTES:
                 raise library.SkillError("resource_too_large")
             replacement = content.encode()
+        matches = None
+        if action == "edit_resource":
+            content, matches = replace_text(resource, args)
+            replacement = content.encode()
+            if len(replacement) > library.MAX_RESOURCE_BYTES:
+                raise library.SkillError("resource_too_large")
+            if replacement == resource:
+                return {
+                    **summary(entry),
+                    "path": relative,
+                    "sha256": library.digest(resource),
+                    "unchanged": True,
+                }
         updated = {**entry, "version": library.next_version(entry["version"])}
         body = library.body_bytes(raw.decode(), updated)
         revision = library.commit_package(
@@ -224,6 +284,7 @@ def operate(root, history_root, args, offset, limit):
             "sha256": library.digest(replacement) if replacement is not None else None,
             "skill_sha256": library.digest(body),
             "history_revision": revision,
+            **({"replacements": matches} if matches is not None else {}),
         }
     if action not in {"save", "archive"}:
         raise library.SkillError("invalid_action")

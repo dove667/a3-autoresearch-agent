@@ -169,10 +169,9 @@ def frontmatter(content):
     return header, parts[1].lstrip("\n")
 
 
-def body_bytes(content, entry):
-    header, body = frontmatter(content)
-    header["name"] = entry["id"]
-    header.setdefault("description", entry["description"])
+def body_with_header(header, body, entry):
+    """Serialize controlled package metadata around the supplied Markdown body."""
+    header = {**header, "name": entry["id"], "description": entry["description"]}
     header["metadata"] = {**header.get("metadata", {}), "version": entry["version"]}
     encoded = (
         "---\n" + yaml.safe_dump(header, allow_unicode=True, sort_keys=False) + "---\n\n" + body
@@ -180,6 +179,11 @@ def body_bytes(content, entry):
     if len(encoded) > MAX_BODY_BYTES:
         raise SkillError("skill_too_large")
     return encoded
+
+
+def body_bytes(content, entry):
+    header, body = frontmatter(content)
+    return body_with_header(header, body, entry)
 
 
 def read_body(root, entry):
