@@ -5,7 +5,9 @@ import json
 import os
 import shutil
 import subprocess
+from contextlib import nullcontext
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -42,6 +44,11 @@ def fixture_file(run, workspace, name):
 
 @pytest.fixture
 def published_run(tmp_path, monkeypatch, request):
+    from a3_research_agent.host import launch
+
+    monkeypatch.setattr(
+        launch, "MemoryService", lambda *args: nullcontext(SimpleNamespace(environment={}))
+    )
     for key in list(os.environ):
         if key.startswith(
             ("A3_MODEL_", "A3_CONTEXT_", "A3_SUMMARY_", "A3_WORKER_", "A3_UPSTREAM_")

@@ -26,7 +26,11 @@ HARNESS_MODULES = (
     "context/manager.py",
     "context/spill.py",
     "history.py",
-    "long_term_memory.py",
+    "memory/__init__.py",
+    "memory/client.py",
+    "memory/store.py",
+    "memory/retrieval.py",
+    "memory/sources.py",
     "jsonl_store.py",
     "operational_state.py",
 )

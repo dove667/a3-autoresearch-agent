@@ -1,8 +1,7 @@
 import json
 
-from a3_research_agent.harness import agent
+from a3_research_agent.harness import agent, memory, paths
 from a3_research_agent.harness import history as recall
-from a3_research_agent.harness import long_term_memory as memory
 from a3_research_agent.harness import operational_state as state
 from a3_research_agent.harness import plan as planning
 
@@ -39,14 +38,26 @@ def test_recall_defaults_do_not_retrieve_prior_retrieval_echoes(tmp_path, monkey
 
 def test_empty_note_search_returns_current_source_linked_notes(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    old = memory.write_memory("obsolete decoder advice", refs=["old-report.json"])
-    new = memory.write_memory(
-        "decoder version must match", refs=["verified-report.json"], supersedes=old["id"]
+    old = memory.dispatch(
+        {"action": "write", "content": "obsolete decoder advice", "refs": ["old-report.json"]},
+        root=paths.memory_root(),
     )
-    matches = memory.memory_tool({"action": "search"})
+    new = memory.dispatch(
+        {
+            "action": "write",
+            "content": "decoder version must match",
+            "refs": ["verified-report.json"],
+            "supersedes": old["id"],
+        },
+        root=paths.memory_root(),
+    )
+    matches = memory.dispatch({"action": "search"}, root=paths.memory_root())["items"]
     assert [row["id"] for row in matches] == [new["id"]]
     assert matches[0]["refs"] == ["verified-report.json"]
-    assert "obsolete decoder advice" in memory.read_memory(old["id"])
+    assert (
+        "obsolete decoder advice"
+        in memory.dispatch({"action": "read", "key": old["id"]}, root=paths.memory_root())["text"]
+    )
 
 
 def test_wait_observes_submitted_job_without_requiring_plan_bookkeeping(tmp_path, monkeypatch):

@@ -67,7 +67,17 @@ def process_state(status, exit_code=None):
 class ProcessRuntime:
     """Execute published code with explicit local process ownership and exit evidence."""
 
-    def __init__(self, *, root, inputs, public_a3, endpoint, published_source, python=None):
+    def __init__(
+        self,
+        *,
+        root,
+        inputs,
+        public_a3,
+        endpoint,
+        published_source,
+        python=None,
+        memory_environment=None,
+    ):
         address = urlsplit(endpoint)
         if (
             address.scheme != "http"
@@ -91,6 +101,7 @@ class ProcessRuntime:
         self.public_a3, self.endpoint = Path(public_a3), endpoint
         self.logs = debug_directory(self.root.parent)
         self.python = str(Path(python or sys.executable).absolute())
+        self.memory_environment = dict(memory_environment or {})
         self.records = {}
         self.lock = threading.RLock()
         self.root.mkdir(parents=True, exist_ok=True)
@@ -264,6 +275,7 @@ class ProcessRuntime:
                 ).resolve()
             ),
             "A3_MEMORY_ROOT": str(memory),
+            **self.memory_environment,
             "A3_INPUT_ROOT": str(inputs),
             "A3_REFERENCE_ROOT": str(self.public_a3.resolve()),
             "A3_HARNESS_ROOT": str(self.published_source.resolve()),

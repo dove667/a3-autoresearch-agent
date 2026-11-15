@@ -17,7 +17,6 @@ from a3_research_agent.harness import (
     job_preflight,
     job_tools,
     lifecycle,
-    long_term_memory,
     operational_state,
     research_web,
     skill_registry,
@@ -33,6 +32,7 @@ from a3_research_agent.harness import (
 )
 from a3_research_agent.harness.context import compaction
 from a3_research_agent.harness.context import manager as context_manager
+from a3_research_agent.harness.memory import client as memory_client
 
 BASE = None
 TOKEN = None
@@ -153,7 +153,7 @@ def tool(name, a):
     if name == "recall":
         return history_tools.recall_tool(a)
     if name == "memory":
-        return long_term_memory.memory_tool(a)
+        return memory_client.dispatch(a)
     if name == "preflight":
         return job_preflight.dispatch(
             {
@@ -402,10 +402,16 @@ def spec(name, props, required):
                 "use mode=raw for exact historical tool traffic."
             ),
             "memory": (
-                "Append a durable note to project memory/entries.jsonl (action=write) or read/list "
-                "entries (action=read|list). Search by keywords with action=search, key, "
-                "and optional kind/scope filters. Write concise notes with refs and applicability "
-                "in scope. Use supersedes with an earlier note ID when correcting it."
+                "Research experience across runs. Store findings, failure lessons and applicability here; "
+                "use plan for future work/current jobs and skills for reusable procedures. "
+                "search(key=natural-language question,scope?,kind?,limit?,offset?) uses semantic+keyword retrieval; "
+                "read(key=id) returns full note and revision. write(content,scope,refs,kind?) saves a durable note. "
+                "Use lifetime=run only for temporary observations; run_ids records associated runs and limits run-lifetime applicability. "
+                "update(id,revision,content?,scope?,refs?,reason) corrects a note in place with history; "
+                "archive(id,revision,reason) removes obsolete notes from normal retrieval. "
+                "Similar writes return suggestions: update an existing note, or force=true with reason to keep a distinct finding. "
+                "sources(id) lists evidence locators; sources(id,ref,offset?,limit?) reads an available source. "
+                "list supports offset/limit and include_archived. Historical notes never grant current permissions."
             ),
         }[name],
         "parameters": {
@@ -571,13 +577,29 @@ tools = (
         spec(
             "memory",
             {
-                "action": {"type": "string", "enum": ["write", "read", "list", "search"]},
+                "action": {
+                    "type": "string",
+                    "enum": ["write", "read", "list", "search", "update", "archive", "sources"],
+                },
                 "content": S,
                 "key": S,
                 "kind": S,
                 "scope": S,
-                "refs": strings(8),
+                "refs": strings(16),
                 "supersedes": S,
+                "id": S,
+                "revision": {"type": "integer", "minimum": 1},
+                "expected_sha256": S,
+                "reason": S,
+                "status": {"type": "string", "enum": ["active", "archived"]},
+                "lifetime": {"type": "string", "enum": ["durable", "run"]},
+                "run_ids": strings(32),
+                "tags": strings(24),
+                "include_archived": {"type": "boolean"},
+                "force": {"type": "boolean"},
+                "offset": {"type": "integer", "minimum": 0},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 8000},
+                "ref": S,
             },
             ["action"],
         ),
@@ -631,6 +653,7 @@ def operational_message():
     state = operational_state.load()
     value = operational_state.view(state)
     value["research_plan"] = planning.view(jobs=state.get("jobs", {}), compact=True)
+    value["research_experience"] = memory_client.suggestions(value["research_plan"])
     value["runtime_paths"] = {
         "workspace": str(runtime_paths.workspace_root()),
         "state": str(state_paths.state_root()),

@@ -84,6 +84,14 @@ def test_plan_tracks_dependencies_evidence_and_job_results(tmp_path, monkeypatch
 
 
 def test_memory_search_preserves_sources_and_superseded_notes(tmp_path, monkeypatch):
+    from a3_research_agent.harness import memory
+    from a3_research_agent.harness.memory import client
+
+    monkeypatch.setattr(
+        client,
+        "call",
+        lambda args: memory.dispatch(args, root=tmp_path / "memory", run_id="test-run"),
+    )
     monkeypatch.chdir(tmp_path)
     old = call(
         "memory",
@@ -101,13 +109,13 @@ def test_memory_search_preserves_sources_and_superseded_notes(tmp_path, monkeypa
         "supersedes": old["id"],
     }
     new = call("memory", **corrected)
-    assert call("memory", **corrected) == new
+    assert call("memory", **corrected)["id"] == new["id"]
     assert len((tmp_path / "memory/entries.jsonl").read_text().splitlines()) == 2
-    assert [row["id"] for row in call("memory", action="search", key="DAgger checkpoint")] == [
-        new["id"]
-    ]
-    assert "jobs/second/report.json" in call("memory", action="read", key=new["id"])
-    assert "adapter" in call("memory", action="read", key=old["id"])
+    assert [
+        row["id"] for row in call("memory", action="search", key="DAgger checkpoint")["items"]
+    ] == [new["id"]]
+    assert "jobs/second/report.json" in call("memory", action="read", key=new["id"])["refs"]
+    assert "adapter" in call("memory", action="read", key=old["id"])["text"]
 
 
 def test_recall_defaults_to_evidence_and_can_search_raw_calls(tmp_path, monkeypatch):

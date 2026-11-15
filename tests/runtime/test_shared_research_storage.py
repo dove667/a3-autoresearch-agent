@@ -16,7 +16,7 @@ def test_research_workspace_is_shared_across_run_identities(tmp_path):
 
 
 def test_memory_uses_the_host_root_across_working_directories(tmp_path, monkeypatch):
-    from a3_research_agent.harness import long_term_memory as memory
+    from a3_research_agent.harness import memory, paths
 
     root = tmp_path / "memory"
     monkeypatch.setenv("A3_MEMORY_ROOT", str(root))
@@ -25,19 +25,29 @@ def test_memory_uses_the_host_root_across_working_directories(tmp_path, monkeypa
     first.mkdir()
     second.mkdir()
     monkeypatch.chdir(first)
-    note = memory.write_memory("Use the saved checkpoint", refs=["job-original"])
+    note = memory.dispatch(
+        {"action": "write", "content": "Use the saved checkpoint", "refs": ["job-original"]},
+        root=paths.memory_root(),
+    )
     assert (root / "entries.jsonl").is_file()
     monkeypatch.chdir(second)
-    assert memory.search_memory("checkpoint")[0]["id"] == note["id"]
+    assert (
+        memory.dispatch({"action": "search", "key": "checkpoint"}, root=paths.memory_root())[
+            "items"
+        ][0]["id"]
+        == note["id"]
+    )
     assert not (first / "memory.jsonl").exists()
     assert not (second / "memory.jsonl").exists()
 
 
 def test_memory_requires_a_host_configured_root(tmp_path, monkeypatch):
-    from a3_research_agent.harness import long_term_memory as memory
+    from a3_research_agent.harness import memory, paths
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("A3_MEMORY_ROOT", raising=False)
     with pytest.raises(RuntimeError, match="Host must configure"):
-        memory.write_memory("Preserve this finding")
+        memory.dispatch(
+            {"action": "write", "content": "Preserve this finding"}, root=paths.memory_root()
+        )
     assert list(tmp_path.iterdir()) == []

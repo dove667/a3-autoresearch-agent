@@ -15,8 +15,7 @@ import time
 import pytest
 
 from a3_research_agent.harness import history as recall
-from a3_research_agent.harness import long_term_memory as memory
-from a3_research_agent.harness import state_paths
+from a3_research_agent.harness import memory, paths, state_paths
 from a3_research_agent.harness.context import compaction, spill
 from a3_research_agent.harness.context import manager as cm
 
@@ -339,14 +338,23 @@ def test_summary_failure_preserves_original_history_instead_of_building_recall_c
         compactor = compaction.ForkCompactor(Gateway(fail=True), tools=[], trigger_tokens=1000)
         messages = history()
         recall.append_history_many(messages)
-        memory.write_memory("已确认 2x10 任务需 3200 步，原因是回合长度", kind="fact")
+        memory.dispatch(
+            {
+                "action": "write",
+                "content": "已确认 2x10 任务需 3200 步，原因是回合长度",
+                "kind": "fact",
+            },
+            root=paths.memory_root(),
+        )
         cm.atomic(state_paths.path("checkpoint.json"), json.dumps(messages))
         compactor.before_request(messages)
         compactor.wait(timeout=10)
         with pytest.raises(cm.ContextError, match="compaction"):
             compactor.before_request(messages)
         assert json.loads(state_paths.path("checkpoint.json").read_text()) == messages
-        assert "已确认 2x10 任务需 3200 步" in memory.read_memory()
+        assert "已确认 2x10 任务需 3200 步" in json.dumps(
+            memory.dispatch({"action": "list"}, root=paths.memory_root()), ensure_ascii=False
+        )
         assert "replacement" not in json.loads(state_paths.path(compaction.RESULT_PATH).read_text())
 
 
@@ -378,21 +386,37 @@ def test_recall_needs_keywords():
 
 def test_memory_write_then_read_and_list():
     with workspace():
-        entry = memory.write_memory("baseline smolvla 2x5 = 4.2", kind="result")
+        entry = memory.dispatch(
+            {"action": "write", "content": "baseline smolvla 2x5 = 4.2", "kind": "result"},
+            root=paths.memory_root(),
+        )
         assert entry["id"] and entry["kind"] == "result"
-        detail = memory.read_memory(entry["id"][:6])
+        detail = memory.dispatch(
+            {"action": "read", "key": entry["id"][:6]}, root=paths.memory_root()
+        )["text"]
         assert "baseline smolvla 2x5 = 4.2" in detail
-        listing = memory.read_memory()
+        listing = json.dumps(
+            memory.dispatch({"action": "list"}, root=paths.memory_root()), ensure_ascii=False
+        )
         assert entry["id"] in listing
 
 
 def test_memory_tool_dispatch_and_empty_write():
     with workspace():
-        assert json.loads(json.dumps(memory.memory_tool({"action": "write", "content": "note A"})))[
-            "id"
-        ]
-        assert "note A" in memory.memory_tool({"action": "read", "key": "note A"})
-        assert "error" in memory.memory_tool({"action": "write", "content": "  "})
+        assert json.loads(
+            json.dumps(
+                memory.dispatch({"action": "write", "content": "note A"}, root=paths.memory_root())
+            )
+        )["id"]
+        assert (
+            memory.dispatch({"action": "search", "key": "note A"}, root=paths.memory_root())[
+                "items"
+            ][0]["preview"]
+            == "note A"
+        )
+        assert "error" in memory.dispatch(
+            {"action": "write", "content": "  "}, root=paths.memory_root()
+        )
 
 
 if __name__ == "__main__":
