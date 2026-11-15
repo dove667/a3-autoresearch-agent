@@ -63,6 +63,7 @@ def published_run(tmp_path, monkeypatch, request):
         "from pathlib import Path\nPath('native-started.txt').write_text('new published source')\n"
     )
     (source / "harness/paths.py").write_text("NATIVE_PATHS = True\n")
+    (source / "harness/state_paths.py").write_text('CHECKPOINT = ".agent/checkpoint.json"\n')
     git("add", "src")
     git("commit", "--quiet", "-am", "new published source")
     commit = git("rev-parse", "HEAD")
@@ -75,14 +76,14 @@ def published_run(tmp_path, monkeypatch, request):
     workspace = research_workspace(run, actor)
     workspace.mkdir(parents=True)
     protected = {
-        "checkpoint.json": '[{"role":"user","content":"existing task and observations"}]',
+        ".agent/checkpoint.json": '[{"role":"user","content":"existing task and observations"}]',
         "research/lesson.md": '{"id":"learned","text":"actual research lesson"}\n',
         "skills/index.json": '{"skills":[{"id":"learned-skill"}]}',
         "research/train.py": "print('preserve research')\n",
         "research-plan.json": '{"version":1,"revision":5,"steps":{}}',
-        "operational-state.json": '{"version":1,"jobs":{"existing-job":{"status":"running"}}}',
-        "trajectory.jsonl": '{"original":"evidence"}\n',
-        "pending-calls.json": "null",
+        ".agent/operational-state.json": '{"version":1,"jobs":{"existing-job":{"status":"running"}}}',
+        ".agent/trajectory.jsonl": '{"original":"evidence"}\n',
+        ".agent/pending-calls.json": "null",
     }
     for name, text in protected.items():
         path = workspace / name
@@ -177,7 +178,7 @@ def test_apply_release_keeps_run_owner_workspace_and_complete_research_state(pub
     with pytest.raises(ValueError, match="model"):
         load_resume_state(run, RunStateStore(run), "old/model")
     archive = run / ".host/release-upgrades" / outcome["upgrade_id"]
-    assert (archive / "checkpoint.json").read_text() == protected["checkpoint.json"]
+    assert (archive / ".agent/checkpoint.json").read_text() == protected[".agent/checkpoint.json"]
     assert json.loads((archive / "state-before.json").read_text())["model"] == "old/model"
     assert json.loads((archive / "pin-before.json").read_text())["commit"] == previous
     assert not (run / ".host/pending-release.json").exists()
@@ -193,19 +194,21 @@ def test_apply_release_preserves_an_empty_initial_checkpoint(published_run):
 
     _, run, workspace, _, commit, proposal, release, protected, env, _ = published_run
     checkpoint = b"[\n]\n"
-    (workspace / "checkpoint.json").write_bytes(checkpoint)
-    (workspace / "pending-calls.json").write_text("null")
+    (workspace / ".agent/checkpoint.json").parent.mkdir(parents=True, exist_ok=True)
+    (workspace / ".agent/checkpoint.json").write_bytes(checkpoint)
+    (workspace / ".agent/pending-calls.json").parent.mkdir(parents=True, exist_ok=True)
+    (workspace / ".agent/pending-calls.json").write_text("null")
     outcome = apply_release(run, release, proposal["digest"], environment=env)
     assert outcome["status"] == "complete"
     assert run_commit(run) == commit
-    assert (workspace / "checkpoint.json").read_bytes() == checkpoint
-    assert (workspace / "pending-calls.json").read_text() == "null"
+    assert (workspace / ".agent/checkpoint.json").read_bytes() == checkpoint
+    assert (workspace / ".agent/pending-calls.json").read_text() == "null"
     archive = run / ".host/release-upgrades" / outcome["upgrade_id"]
-    assert (archive / "checkpoint.json").read_bytes() == checkpoint
+    assert (archive / ".agent/checkpoint.json").read_bytes() == checkpoint
     assert all(
         (workspace / name).read_text() == content
         for name, content in protected.items()
-        if name not in {"checkpoint.json", "pending-calls.json"}
+        if name not in {".agent/checkpoint.json", ".agent/pending-calls.json"}
     )
     assert RunStateStore(run).load()["status"] == "suspended"
 
@@ -222,7 +225,7 @@ def test_published_night_release_resumes_same_run_instead_of_making_a_fresh_task
     assert selected == command and target == run and extra == {}
     assert schedule.select() == (command, run, {})
     assert run_commit(run) == commit
-    assert (workspace / "checkpoint.json").read_text() == protected["checkpoint.json"]
+    assert (workspace / ".agent/checkpoint.json").read_text() == protected[".agent/checkpoint.json"]
     assert json.loads(schedule.state.read_text())["release"] == proposal["digest"]
 
 
@@ -239,7 +242,8 @@ def test_release_refuses_a_live_run_or_unreconciled_checkpoint_before_container_
     with pytest.raises(ValueError, match="suspended"):
         apply_release(run, release, proposal["digest"], environment=env)
     RunStateStore(run).update(status="suspended")
-    (workspace / "checkpoint.json").write_text(
+    (workspace / ".agent/checkpoint.json").parent.mkdir(parents=True, exist_ok=True)
+    (workspace / ".agent/checkpoint.json").write_text(
         json.dumps(
             [
                 {"type": "function_call", "call_id": "uncertain", "name": "gateway"},
@@ -256,7 +260,9 @@ def test_release_keeps_an_unfinished_journal_without_replaying_its_tool(publishe
 
     _, run, workspace, _, _, proposal, release, _, env, calls = published_run
     journal = {
-        "base_hash": hashlib.sha256((workspace / "checkpoint.json").read_bytes()).hexdigest(),
+        "base_hash": hashlib.sha256(
+            (workspace / ".agent/checkpoint.json").read_bytes()
+        ).hexdigest(),
         "output": [
             {
                 "type": "function_call",
@@ -267,9 +273,10 @@ def test_release_keeps_an_unfinished_journal_without_replaying_its_tool(publishe
         ],
         "results": {},
     }
-    (workspace / "pending-calls.json").write_text(json.dumps(journal))
+    (workspace / ".agent/pending-calls.json").parent.mkdir(parents=True, exist_ok=True)
+    (workspace / ".agent/pending-calls.json").write_text(json.dumps(journal))
     apply_release(run, release, proposal["digest"], environment=env)
-    assert json.loads((workspace / "pending-calls.json").read_text()) == journal
+    assert json.loads((workspace / ".agent/pending-calls.json").read_text()) == journal
     assert not any(call[0] in {"start", "create", "unpause"} for call in calls)
 
 
@@ -295,7 +302,7 @@ def test_interrupted_apply_fences_resume_and_retries_without_a_second_input_revi
     monkeypatch.setattr(releases, "replace_run_pin", replace)
     result = releases.apply_release(run, release, proposal["digest"], environment=env)
     assert result["commit"] == commit and result["input_revision"] == revision
-    assert (workspace / "checkpoint.json").read_text() == protected["checkpoint.json"]
+    assert (workspace / ".agent/checkpoint.json").read_text() == protected[".agent/checkpoint.json"]
     feedback = json.loads((run / ".host/human-feedback/state.json").read_text())
     assert len(feedback["records"]) == 1
 
@@ -487,7 +494,7 @@ def test_real_fresh_published_host_saves_provenance_before_native_start(
             return {"status": "incomplete"}
 
     monkeypatch.setattr(bootstrap, "RunSupervisor", Supervisor)
-    start = HarnessStart(COMMAND.copy(), {"checkpoint.json": "[]"}, harness_commit=commit)
+    start = HarnessStart(COMMAND.copy(), {".agent/checkpoint.json": "[]"}, harness_commit=commit)
     original_write = bootstrap.write_durable
     creates = []
     original_create = bootstrap.ProcessRuntime.create
@@ -588,10 +595,10 @@ def test_release_after_trajectory_rename_keeps_workspace_mapping(published_run):
     protected = {
         name: (workspace / name).read_bytes()
         for name in (
-            "checkpoint.json",
+            ".agent/checkpoint.json",
             "research/lesson.md",
             "research/train.py",
-            "trajectory.jsonl",
+            ".agent/trajectory.jsonl",
         )
     }
     original_identity = run_identity(run)

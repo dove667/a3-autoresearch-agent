@@ -9,6 +9,7 @@ import time
 from copy import deepcopy
 from pathlib import Path
 
+from a3_research_agent.harness import state_paths
 from a3_research_agent.host.published_harness import COMMAND, run_commit, run_identity
 from a3_research_agent.host.runs.directories import debug_directory
 from a3_research_agent.host.runs.state import RunStateStore
@@ -120,7 +121,7 @@ def preflight_blocked_resume(
     commit = run_commit(run)
     if commit is None or state.get("harness_commit") != commit or record.get("command") != COMMAND:
         raise ValueError("Blocked resume requires the fixed current published Harness")
-    checkpoint_text = workspace_path(workspace, "checkpoint.json").read_text()
+    checkpoint_text = workspace_path(workspace, state_paths.CHECKPOINT).read_text()
     messages = json.loads(checkpoint_text)
     if (
         not isinstance(messages, list)

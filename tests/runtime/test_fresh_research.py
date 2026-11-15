@@ -15,8 +15,8 @@ def test_repeated_fresh_research_shares_immutable_source_knowledge(tmp_path):
     before = dict(source.files)
     first, metadata = prepare_research_start(source)
     second, _ = prepare_research_start(source)
-    assert json.loads(first.files["checkpoint.json"]) == []
-    assert json.loads(second.files["checkpoint.json"]) == []
+    assert json.loads(first.files[".agent/checkpoint.json"]) == []
+    assert json.loads(second.files[".agent/checkpoint.json"]) == []
     assert (
         first.files["research/lesson.md"]
         == second.files["research/lesson.md"]

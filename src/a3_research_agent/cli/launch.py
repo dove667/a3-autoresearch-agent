@@ -8,6 +8,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from a3_research_agent.harness import state_paths
 from a3_research_agent.host.inputs.versions import InputVersions
 from a3_research_agent.host.launch import launch_run
 from a3_research_agent.host.models.settings import model_settings
@@ -77,7 +78,7 @@ def launch_main() -> None:
         start = resolve_harness_start(args.run_harness) if args.run_harness else None
         if args.harness_commit:
             start = HarnessStart(
-                COMMAND.copy(), {"checkpoint.json": "[]"}, harness_commit=args.harness_commit
+                COMMAND.copy(), {state_paths.CHECKPOINT: "[]"}, harness_commit=args.harness_commit
             )
         if (start and not start.harness_commit) or (
             args.resume_from and not run_commit(args.resume_from.resolve())

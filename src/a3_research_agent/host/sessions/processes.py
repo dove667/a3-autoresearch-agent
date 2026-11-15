@@ -12,6 +12,7 @@ import uuid
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from a3_research_agent.harness import state_paths
 from a3_research_agent.host.published_harness import COMMAND, project_for_run, research_workspace
 from a3_research_agent.host.runs.directories import debug_directory
 from a3_research_agent.path_safety import workspace_path
@@ -135,10 +136,10 @@ class ProcessRuntime:
         source = Path(source).resolve()
         if not all(
             (source / "a3_research_agent/harness" / name).is_file()
-            for name in ("agent.py", "paths.py")
+            for name in ("agent.py", "paths.py", "state_paths.py")
         ):
             raise ValueError(
-                "Published Harness source is incomplete; expected harness/agent.py and harness/paths.py"
+                "Published Harness source is incomplete; expected agent.py, paths.py and state_paths.py"
             )
         return source
 
@@ -458,7 +459,7 @@ class ProcessRuntime:
                     )
                 return
             workspace = session_workspace(self.root, main_owner)
-            checkpoint = json.loads((workspace / "checkpoint.json").read_text())
+            checkpoint = json.loads((workspace / state_paths.CHECKPOINT).read_text())
             if not isinstance(checkpoint, list) or not all(
                 isinstance(item, dict) for item in checkpoint
             ):

@@ -6,9 +6,10 @@ import json
 import re
 from pathlib import Path
 
+from a3_research_agent.harness import state_paths
 from a3_research_agent.harness.context.manager import atomic
 
-RECEIPTS = Path(".research-preflight")
+RECEIPTS = Path(state_paths.PREFLIGHT)
 REPORT = "a3-preflight.json"
 JOB_ID = re.compile(r"[0-9a-f]{32}")
 

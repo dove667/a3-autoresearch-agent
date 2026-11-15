@@ -7,9 +7,10 @@ import os
 import pathlib
 import time
 
+from a3_research_agent.harness import state_paths
 from a3_research_agent.harness.context import manager as context_manager
 
-PATH = pathlib.Path("operational-state.json")
+PATH = pathlib.Path(state_paths.OPERATIONS)
 MAX_READS = 128
 MAX_ITEMS = 64
 

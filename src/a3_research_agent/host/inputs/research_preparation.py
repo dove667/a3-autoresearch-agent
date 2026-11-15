@@ -4,6 +4,7 @@ import hashlib
 import json
 from pathlib import Path
 
+from a3_research_agent.harness import state_paths
 from a3_research_agent.host.runs.continuation import prepare_fresh_research
 from a3_research_agent.path_safety import workspace_path
 
@@ -26,7 +27,7 @@ def prepare_research_start(start):
     fresh, context = prepare_fresh_research(start)
     fresh.files.update(
         {
-            "trajectory.jsonl": "",
+            state_paths.TRAJECTORY: "",
             "progress.md": "# Research progress\n",
             "run-outcome.json": json.dumps({"status": "continue", "reason": "Research continues"}),
         }

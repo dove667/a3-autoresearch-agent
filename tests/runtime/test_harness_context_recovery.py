@@ -9,6 +9,8 @@ import uuid
 
 import pytest
 
+from a3_research_agent.harness import state_paths
+
 SOURCE = pathlib.Path(__file__).resolve().parents[2] / "src/a3_research_agent/harness"
 
 
@@ -153,6 +155,7 @@ def agent_functions(context):
     wanted = {"save_manifest", "checkpoint", "checkpoint_hash", "recover_journal"}
     nodes = [n for n in source.body if isinstance(n, ast.FunctionDef) and n.name in wanted]
     namespace = {
+        "state_paths": state_paths,
         "context_manager": context,
         "operational_state": state,
         "pathlib": pathlib,
@@ -169,9 +172,16 @@ def agent_functions(context):
 
 def initial_state(tmp_path):
     old = [{"role": "user", "content": "last committed state"}]
-    (tmp_path / "checkpoint.json").write_text(json.dumps(old))
-    (tmp_path / "pending-calls.json").write_text("null")
-    names = ["checkpoint.json", "pending-calls.json", "resume.json", "continuation.json"]
+    (tmp_path / ".agent/checkpoint.json").parent.mkdir(parents=True, exist_ok=True)
+    (tmp_path / ".agent/checkpoint.json").write_text(json.dumps(old))
+    (tmp_path / ".agent/pending-calls.json").parent.mkdir(parents=True, exist_ok=True)
+    (tmp_path / ".agent/pending-calls.json").write_text("null")
+    names = [
+        ".agent/checkpoint.json",
+        ".agent/pending-calls.json",
+        "resume.json",
+        "continuation.json",
+    ]
     for name in ["resume.json", "continuation.json"]:
         (tmp_path / name).write_text(
             json.dumps({"command": ["python", "agent.py", "--resume"], "files": names})
@@ -196,7 +206,7 @@ def test_manifest_failure_leaves_last_committed_checkpoint_usable(tmp_path, monk
     monkeypatch.setattr(os, "replace", fail_manifest)
     with pytest.raises(OSError):
         functions["checkpoint"]([{"role": "user", "content": "Source: new-history.json"}])
-    assert json.loads((tmp_path / "checkpoint.json").read_text()) == old
+    assert json.loads((tmp_path / ".agent/checkpoint.json").read_text()) == old
     for name in ["resume.json", "continuation.json"]:
         manifest = json.loads((tmp_path / name).read_text())
         assert all((tmp_path / p).is_file() for p in manifest["files"])
@@ -207,13 +217,14 @@ def test_clearing_resolved_journal_does_not_invalidate_resume_manifest(tmp_path,
     context = load_context()
     functions = agent_functions(context)
     old = initial_state(tmp_path)
-    (tmp_path / "pending-calls.json").write_text(
+    (tmp_path / ".agent/pending-calls.json").parent.mkdir(parents=True, exist_ok=True)
+    (tmp_path / ".agent/pending-calls.json").write_text(
         json.dumps({"base_hash": "earlier-checkpoint", "output": [], "results": {}})
     )
     assert functions["recover_journal"](old) == old
     manifest = json.loads((tmp_path / "resume.json").read_text())
     assert all((tmp_path / p).is_file() for p in manifest["files"])
-    assert json.loads((tmp_path / "pending-calls.json").read_text()) is None
+    assert json.loads((tmp_path / ".agent/pending-calls.json").read_text()) is None
 
 
 def test_manifest_flush_failure_does_not_publish_new_checkpoint(tmp_path, monkeypatch):
@@ -232,7 +243,7 @@ def test_manifest_flush_failure_does_not_publish_new_checkpoint(tmp_path, monkey
     monkeypatch.setattr(os, "fsync", fail_manifest_flush)
     with pytest.raises(OSError):
         functions["checkpoint"]([{"role": "user", "content": "Source: new-history.json"}])
-    assert json.loads((tmp_path / "checkpoint.json").read_text()) == old
+    assert json.loads((tmp_path / ".agent/checkpoint.json").read_text()) == old
 
 
 def test_summary_headroom_does_not_recursively_split_a_feasible_plan(tmp_path, monkeypatch):
@@ -691,10 +702,13 @@ def test_invalid_second_manifest_keeps_both_manifests_and_checkpoint(tmp_path, m
         json.dumps({"files": [], "remote_exports": ["export-kept"]})
     )
     (tmp_path / "continuation.json").write_text(broken)
-    (tmp_path / "checkpoint.json").write_text('[{"role":"user","content":"last valid state"}]')
+    (tmp_path / ".agent/checkpoint.json").parent.mkdir(parents=True, exist_ok=True)
+    (tmp_path / ".agent/checkpoint.json").write_text(
+        '[{"role":"user","content":"last valid state"}]'
+    )
     before = {
         name: (tmp_path / name).read_bytes()
-        for name in ["resume.json", "continuation.json", "checkpoint.json"]
+        for name in ["resume.json", "continuation.json", ".agent/checkpoint.json"]
     }
     with pytest.raises((ValueError, TypeError)):
         agent_functions(context)["checkpoint"]([{"role": "user", "content": "new state"}])

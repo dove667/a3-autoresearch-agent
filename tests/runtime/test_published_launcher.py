@@ -67,7 +67,7 @@ def test_fresh_published_commit_launches_research_without_docker(published_run, 
     assert "goal.md" not in args.input_proposal["contents"]
     assert run.parent == root / "trajectories"
     assert start.harness_commit == commit and start.command == COMMAND
-    assert start.files == {"checkpoint.json": "[]"}
+    assert start.files == {".agent/checkpoint.json": "[]"}
 
 
 def test_check_reads_native_configuration_without_an_execution_start(

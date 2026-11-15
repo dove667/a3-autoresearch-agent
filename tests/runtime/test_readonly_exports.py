@@ -242,7 +242,7 @@ def test_retained_declaration_carries_only_validated_export_references(tmp_path)
             {
                 "version": 1,
                 "command": COMMAND,
-                "files": ["checkpoint.json"],
+                "files": [".agent/checkpoint.json"],
                 "remote_exports": [identifier],
             }
         )
@@ -286,7 +286,7 @@ def test_new_run_imports_explicit_retained_exports_and_rolls_back_partial_failur
 
     start = HarnessStart(
         COMMAND,
-        {"checkpoint.json": "[]"},
+        {".agent/checkpoint.json": "[]"},
         source_owner="old-main",
         remote_exports=[identifier],
         harness_commit="a" * 40,
@@ -319,7 +319,7 @@ def test_many_retained_assets_use_bounded_checks_before_any_grant():
 
     start = HarnessStart(
         COMMAND,
-        {"checkpoint.json": "[]"},
+        {".agent/checkpoint.json": "[]"},
         source_owner="old-main",
         remote_exports=identifiers,
         harness_commit="a" * 40,

@@ -8,9 +8,9 @@ import pathlib
 import re
 from collections import Counter
 
-from a3_research_agent.harness import jsonl_store
+from a3_research_agent.harness import jsonl_store, state_paths
 
-HISTORY_PATH = "history.jsonl"
+HISTORY_PATH = state_paths.HISTORY
 SNIPPET_WINDOW = 100
 SNIPPET_LIMIT = 30
 
@@ -350,7 +350,7 @@ def recall(
     # loading the lifetime transcript and every parsed tool result into memory.
     total_rounds = sum(1 for _ in iter_rounds(source()))
     if not total_rounds:
-        return ["history.jsonl 中没有可用历史（尚无记录或被清空）"]
+        return [".agent/history.jsonl 中没有可用历史（尚无记录或被清空）"]
     n_int, m_int = sorted(
         (bounds[0] if bounds[0] is not None else total_rounds, bounds[1] or 1), reverse=True
     )

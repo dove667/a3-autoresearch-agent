@@ -1,6 +1,6 @@
 # 研究工具与执行约定
 
-Version: 0.23.0
+Version: 0.23.1
 
 本文件按当前操作查阅。工具定义提供参数、类型与限制；这里说明跨工具流程及直接使用 `gateway` 的入口。
 `input-manifest.json` 的 `execution_index` 给出章节字符 `offset/end` 和全文 SHA256，可用 `read` 分页定位；索引 `truncated:true` 时从 `next_offset` 续读。
@@ -119,7 +119,7 @@ backbone、tokenizer 和预训练资源由部署者预置；缺项记录资产�
 Host 在进程停止后保存暂停状态、文件和在途作业。需要另存可检索的知识快照时可写 `continuation.json`，使用固定 Harness 入口并显式列出实际存在的知识文件，例如：
 
 ```json
-{"version":1,"command":["python","-P","-m","a3_research_agent.harness.agent","--resume"],"files":["checkpoint.json","research/findings.md"],"remote_exports":["export-..."]}
+{"version":1,"command":["python","-P","-m","a3_research_agent.harness.agent","--resume"],"files":[".agent/checkpoint.json","research/findings.md"],"remote_exports":["export-..."]}
 ```
 
 `files` 中每个文件都必须实际存在；按需要列入已保存的技能与研究文件，`remote_exports` 只填写已 ready 的真实快照 ID。长期记忆继续使用根目录 memory，普通恢复直接沿用原工作区。

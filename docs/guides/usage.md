@@ -13,7 +13,7 @@ cp .env.example .env
 在 `.env` 配置模型服务、各模型的实际上下文窗口、A3 源码、SSH 目标、远程 Controller、资产和资源预算。凭据由 Host 保管。远程受信任进程后端的准备方式见[进程后端](../reference/remote-process.md)；模型与依赖见[环境配置](setup.md)。常规本地运行无需 Docker。
 
 ```bash
-bash scripts/start-rsi.sh --check
+bash start-autoresearch.sh --check
 ```
 
 检查会核对配置、A3 源码与远程 Controller 健康响应。模型调用、真实训练和科学评估分别由对应运行完成。
@@ -24,7 +24,7 @@ bash scripts/start-rsi.sh --check
 
 ```bash
 git fetch origin
-bash scripts/start-rsi.sh --harness-commit <已发布提交SHA>
+bash start-autoresearch.sh --harness-commit <已发布提交SHA>
 ```
 
 Host 验证固定提交，将 Harness 缓存在 `.runtime/published-harness/v2/<commit>/`，并使用项目根目录唯一的 `workspace/` 与 `memory/`。模型通过具体工具编写研究脚本、提交作业、读取结果与记录经验。研究源码和产物留在该工作区，运行中的 Harness 源码从已发布版本加载。
@@ -42,7 +42,7 @@ uv run mini
 ## 恢复原研究
 
 ```bash
-bash scripts/start-rsi.sh --resume-from "trajectories/<开始时间>"
+bash start-autoresearch.sh --resume-from "trajectories/<开始时间>"
 ```
 
 恢复使用同一个 run 和主身份，继续根目录 `workspace/` 中的对话、checkpoint、skills、计划与作业台账，以及 `memory/entries.jsonl` 中的长期经验。原生进程中断时保留工具 journal；已保存的结果在恢复时重新交付，结果未知的调用先检查实际状态。
@@ -77,7 +77,7 @@ uv run python -m a3_research_agent.cli.apply_release "trajectories/<开始时间
 ## 夜间窗口与防休眠
 
 ```bash
-bash scripts/start-rsi.sh --night-window --resume-from "trajectories/<开始时间>"
+bash start-autoresearch.sh --night-window --resume-from "trajectories/<开始时间>"
 ```
 
 窗口为北京时间 21:00 到次日 09:00。到点保存本地恢复状态并结束 Agent，远程 Controller 继续管理已提交作业。下一个窗口按发布记录更新或恢复原研究。`A3_NIGHT_WINDOW_RUN_ID` 可指定对应锚点，要求受管理的 run 通过此入口恢复。
@@ -86,7 +86,7 @@ macOS 脚本自动使用 `caffeinate -is`，运行期间防止空闲休眠，退
 
 ```bash
 mkdir -p runs/night-window
-nohup bash scripts/start-rsi.sh --night-window --resume-from "trajectories/<开始时间>" \
+nohup bash start-autoresearch.sh --night-window --resume-from "trajectories/<开始时间>" \
   > runs/night-window/launcher.log 2>&1 &
 ```
 
@@ -114,4 +114,4 @@ nohup bash scripts/start-rsi.sh --night-window --resume-from "trajectories/<开�
 - `trajectories/<开始时间>/.host/release-upgrades/`：原地升级事务和旧状态边界。
 - 执行端配置的运行根目录：持久 job 元数据、日志、输出与只读 exports。
 
-排查时先读取 `loop-failure.json`、`pending-calls.json`、Gateway 事件和对应 job 的实际状态。提交结果未知时沿返回的 job ID 查询；源码或依赖错误由 Agent 修复，Controller、认证和部署问题交给维护者。目录职责见[项目结构](../reference/storage-layout.md)。
+排查时先读取 `.agent/loop-failure.json`、`.agent/pending-calls.json`、Gateway 事件和对应 job 的实际状态。提交结果未知时沿返回的 job ID 查询；源码或依赖错误由 Agent 修复，Controller、认证和部署问题交给维护者。目录职责见[项目结构](../reference/storage-layout.md)。

@@ -6,6 +6,7 @@ import re
 import time
 
 from a3_research_agent.harness import paths as runtime_paths
+from a3_research_agent.harness import state_paths
 
 TERMINAL_STATES = frozenset({"completed", "failed", "cancelled"})
 
@@ -37,7 +38,7 @@ def wait_cursor(messages):
 
 
 def active_jobs():
-    state = pathlib.Path("operational-state.json")
+    state = pathlib.Path(state_paths.OPERATIONS)
     if not state.exists():
         return []
     return sorted(

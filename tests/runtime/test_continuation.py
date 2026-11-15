@@ -20,7 +20,7 @@ def test_published_result_keeps_immutable_notes_and_research_without_old_context
     (workspace / "skills/local/SKILL.md").write_text("Reusable experiment method")
     manifest = json.loads((workspace / "continuation.json").read_text())
     manifest["files"].append("skills/local/SKILL.md")
-    for name in ("research-plan.json", "operational-state.json", "history.jsonl"):
+    for name in ("research-plan.json", ".agent/operational-state.json", ".agent/history.jsonl"):
         (workspace / name).write_text('{"old_task":"retained in the source run"}')
         manifest["files"].append(name)
     (workspace / "continuation.json").write_text(json.dumps(manifest))
@@ -33,10 +33,11 @@ def test_published_result_keeps_immutable_notes_and_research_without_old_context
     assert loaded.files["research/lesson.md"] == before
     assert loaded.files["skills/local/SKILL.md"] == "Reusable experiment method"
     assert loaded.files["research/train.py"] == 'print("research source")\n'
-    assert loaded.files["checkpoint.json"] == "[]"
-    assert "trajectory.jsonl" not in loaded.files
+    assert loaded.files[".agent/checkpoint.json"] == "[]"
+    assert ".agent/trajectory.jsonl" not in loaded.files
     assert (
-        not {"research-plan.json", "operational-state.json", "history.jsonl"} & loaded.files.keys()
+        not {"research-plan.json", ".agent/operational-state.json", ".agent/history.jsonl"}
+        & loaded.files.keys()
     )
     assert loaded.previous_run == run
 
@@ -67,9 +68,10 @@ def test_only_current_published_seed_manifest_is_accepted(tmp_path, mutation):
         "version": 1,
         "harness_commit": COMMIT,
         "command": COMMAND,
-        "files": ["checkpoint.json"],
+        "files": [".agent/checkpoint.json"],
     }
-    (directory / "checkpoint.json").write_text("[]")
+    (directory / ".agent/checkpoint.json").parent.mkdir(parents=True, exist_ok=True)
+    (directory / ".agent/checkpoint.json").write_text("[]")
     if mutation == "version":
         manifest.pop("version")
     elif mutation == "command":
@@ -84,16 +86,17 @@ def test_only_current_published_seed_manifest_is_accepted(tmp_path, mutation):
 
 
 def test_published_seed_resolves_fixed_command_and_empty_context(tmp_path):
-    (tmp_path / "checkpoint.json").write_text("[]\n")
+    (tmp_path / ".agent/checkpoint.json").parent.mkdir(parents=True, exist_ok=True)
+    (tmp_path / ".agent/checkpoint.json").write_text("[]\n")
     (tmp_path / "run.json").write_text(
         json.dumps(
             {
                 "version": 1,
                 "harness_commit": COMMIT,
                 "command": COMMAND,
-                "files": ["checkpoint.json"],
+                "files": [".agent/checkpoint.json"],
             }
         )
     )
     start = resolve_harness_start(tmp_path)
-    assert start.harness_commit == COMMIT and start.files == {"checkpoint.json": "[]"}
+    assert start.harness_commit == COMMIT and start.files == {".agent/checkpoint.json": "[]"}

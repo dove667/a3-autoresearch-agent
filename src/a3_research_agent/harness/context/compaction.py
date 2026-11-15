@@ -15,11 +15,12 @@ import threading
 import uuid
 
 from a3_research_agent.harness import history as history_tools
+from a3_research_agent.harness import state_paths
 from a3_research_agent.harness.context import manager as cm
 from a3_research_agent.harness.context import spill as spill_tools
 
-RESULT_PATH = "compaction-result.json"
-EPOCH_PATH = "compaction-epoch.json"
+RESULT_PATH = state_paths.COMPACTION_RESULT
+EPOCH_PATH = state_paths.COMPACTION_EPOCH
 CHECKPOINT_OPEN = cm.MEMORY_OPEN
 CHECKPOINT_CLOSE = cm.MEMORY_CLOSE
 KEEP_ROUNDS = 5
@@ -306,7 +307,7 @@ class ForkCompactor:
             and digest(messages[: len(replacement)]) == active["replacement_sha256"]
         ):
             self._restore_trigger_baseline(result, messages)
-            checkpoint = pathlib.Path("checkpoint.json")
+            checkpoint = pathlib.Path(state_paths.CHECKPOINT)
             if checkpoint.exists():
                 saved = json.loads(checkpoint.read_text())
                 if (

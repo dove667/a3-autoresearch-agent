@@ -30,10 +30,10 @@ def blocked(tmp_path):
 
 def test_explicit_native_blocked_resume_preserves_checkpoint_and_scope(tmp_path):
     run, workspace, state, store, runtime = blocked(tmp_path)
-    original = (workspace / "checkpoint.json").read_bytes()
+    original = (workspace / ".agent/checkpoint.json").read_bytes()
     plan = resume.preflight_blocked_resume(run, state)
     attempt = resume.begin_blocked_resume(run, state, store, runtime, plan, {"revision": "current"})
-    assert (workspace / "checkpoint.json").read_bytes() == original
+    assert (workspace / ".agent/checkpoint.json").read_bytes() == original
     token = state["gateway"]["session_records"]["main"]["token"]
     assert token != "main-token" and state["gateway"]["sessions"][token] == "main"
     assert state["gateway"]["sessions"]["root-token"] == run.name
@@ -76,15 +76,21 @@ def test_native_blocked_preflight_rejects_invalid_state_without_writes(tmp_path,
     elif change == "evidence":
         (workspace / "service-error.json").unlink()
     elif change == "checkpoint":
-        (workspace / "checkpoint.json").write_text("{}")
+        (workspace / ".agent/checkpoint.json").parent.mkdir(parents=True, exist_ok=True)
+        (workspace / ".agent/checkpoint.json").write_text("{}")
     elif change == "pending_call":
-        (workspace / "checkpoint.json").write_text('[{"type":"function_call","call_id":"x"}]')
+        (workspace / ".agent/checkpoint.json").parent.mkdir(parents=True, exist_ok=True)
+        (workspace / ".agent/checkpoint.json").write_text(
+            '[{"type":"function_call","call_id":"x"}]'
+        )
     elif change == "duplicate_call":
-        (workspace / "checkpoint.json").write_text(
+        (workspace / ".agent/checkpoint.json").parent.mkdir(parents=True, exist_ok=True)
+        (workspace / ".agent/checkpoint.json").write_text(
             '[{"type":"function_call","call_id":"x"},{"type":"function_call","call_id":"x"},{"type":"function_call_output","call_id":"x"}]'
         )
     elif change == "orphan_result":
-        (workspace / "checkpoint.json").write_text(
+        (workspace / ".agent/checkpoint.json").parent.mkdir(parents=True, exist_ok=True)
+        (workspace / ".agent/checkpoint.json").write_text(
             '[{"type":"function_call_output","call_id":"x"}]'
         )
     elif change == "pin":

@@ -15,7 +15,7 @@
 ├── archive/               历史阶段提示词
 ├── skills/                经审核的完整研究方法包
 ├── tests/                 固定实现的回归与打包检查
-├── scripts/               薄命令入口
+├── start-autoresearch.sh   根目录启动入口
 ├── docs/                  安装、使用、架构与接口说明
 ├── third_party/           固定版本的第三方 submodule
 ├── workspace/             唯一研究工作区，Git 忽略
@@ -48,14 +48,21 @@ Harness 通过 Gateway 请求模型、计算和外部网络。工具参数校验
 
 ```text
 workspace/
+├── .agent/                Harness 私有运行状态
+│   ├── checkpoint.json    模型上下文
+│   ├── pending-calls.json 工具调用 journal
+│   ├── history.jsonl      原始模型消息与工具结果
+│   ├── trajectory.jsonl   循环与请求轨迹
+│   └── …                  操作台账、压缩事务、故障与预检回执
 ├── research/              Agent 编写的研究脚本与分析
 ├── results/               Agent 本地研究输出，A3_RUN_DIR
 ├── skills/                工作区 skills
 ├── context-history/       上下文摘要绑定的原文快照与工具归档
-├── history.jsonl          原始模型消息与工具结果
 ├── research-plan.json     研究路线、里程碑与作业引用
-├── checkpoint.json        模型上下文与恢复状态
-└── …                      工具 journal、轨迹、计划与研究文件
+├── progress.md            研究进展
+├── continuation.json      后续研究声明
+├── resume.json            当前入口声明
+└── run-outcome.json       Agent 保存的研究状态
 
 memory/
 └── entries.jsonl          主动长期经验、适用条件、修正与来源
@@ -76,11 +83,13 @@ trajectories/<开始时间>/
 
 所有未来会话、恢复和 Harness 升级共用根目录 `workspace/` 与 `memory/`。Host 独立保存 run、研究身份与远程作业的归属映射，工作区保持单个活动研究进程使用。
 
-`memory/entries.jsonl` 保存 Agent 主动选择、提炼和修正的长期经验，通过 `memory` 工具按条件检索；`workspace/history.jsonl` 保留原始消息与工具观测，通过 `recall` 定点核对来源。`workspace/skills/` 保存可复用的方法。恢复时继续读取已有文件。
+`memory/entries.jsonl` 保存 Agent 主动选择、提炼和修正的长期经验，通过 `memory` 工具按条件检索；`workspace/.agent/history.jsonl` 保留原始消息与工具观测，通过 `recall` 定点核对来源。`workspace/skills/` 保存可复用的方法。恢复时继续读取已有文件。
 
 工作区中的 `context-history/` 由上下文管理器在需要保存原文快照或大工具结果时写入。源码仓库根目录无需同名空目录。
 
-`runs/<开始时间>/` 保存 Host 标准输出、控制台、会话生命周期和 Gateway 诊断日志；维护验证也按任务放在 `runs/`。科学结果、数据分析与实验对照整理到 `experiments/<日期_主题>/`，并保留原始作业和产物引用。
+`.agent/` 的文件位置由 `harness/state_paths.py` 统一声明。checkpoint 与 journal 一起保留，压缩事务和操作台账跟随原工作区恢复。原文归档 `context-history/` 与 `.autorun-spill/` 保留现有路径及内容哈希，研究文件中的来源引用继续有效。
+
+`runs/<开始时间>/` 保存 Host 标准输出、控制台、会话生命周期和 Gateway 诊断日志；`runs/checks/<检查主题>/` 统一保存测试和维护验证的原始输出。科学结果、数据分析与实验对照整理到 `experiments/<日期_主题>/`，保留参数、逐回合原始结果、模型或数据校验值及作业引用，并注明材料来自自主研究 Agent 还是独立操作的实验。
 
 运行目录按 Host 本地开始时间命名为 `YYYY-MM-DD_HH-MM-SS-ffffff`，重名时原子追加序号。`trajectories/latest-run.txt` 只帮助定位最近运行。恢复显式指定原 run，首次启动显式指定已发布 Harness 提交。
 
@@ -94,7 +103,7 @@ trajectories/<开始时间>/
 | --- | --- |
 | `workspace/` | 当前研究代码、上下文、计划、自写 skills 与原始历史 |
 | `memory/entries.jsonl` | Agent 主动积累的长期经验 |
-| `runs/` | 调试日志、测试、维护验证、构建与迁移记录 |
+| `runs/` | 按开始时间保存的 Host 调试日志；`checks/` 集中测试与维护验证输出 |
 | `.runtime/night-window/` | 夜间调度与发布选择 |
 | `.runtime/published-harness/v2/<commit>/` | 可重建的固定 Harness 源码缓存 |
 | `.runtime/project-job-index.json` | 项目历史远程作业索引 |

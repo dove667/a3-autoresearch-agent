@@ -4,6 +4,7 @@ import json
 import re
 from pathlib import Path, PurePosixPath
 
+from a3_research_agent.harness import state_paths
 from a3_research_agent.host.published_harness import COMMAND
 from a3_research_agent.host.runs.checkpoints import require_tool_results
 from a3_research_agent.path_safety import workspace_path
@@ -50,21 +51,21 @@ def load_published_manifest(directory: Path) -> tuple[str, list[str], dict[str, 
     commit = manifest.get("harness_commit")
     if not isinstance(commit, str) or not re.fullmatch(r"[a-f0-9]{40}", commit):
         raise ValueError("Published Harness seed requires its full commit SHA")
-    checkpoint = workspace_path(directory, "checkpoint.json").read_text()
-    if names != ["checkpoint.json"] or json.loads(checkpoint) != []:
+    checkpoint = workspace_path(directory, state_paths.CHECKPOINT).read_text()
+    if names != [state_paths.CHECKPOINT] or json.loads(checkpoint) != []:
         raise ValueError("Published Harness seed must contain only an empty checkpoint")
-    return commit, COMMAND.copy(), {"checkpoint.json": "[]"}
+    return commit, COMMAND.copy(), {state_paths.CHECKPOINT: "[]"}
 
 
 def read_continuation(workspace: Path) -> dict:
     manifest = json.loads(workspace_path(workspace, "continuation.json").read_text())
     names = declared_files(manifest)
-    if "checkpoint.json" not in names:
+    if state_paths.CHECKPOINT not in names:
         raise ValueError("Continuation must declare its native checkpoint")
     for name in names:
         if not workspace_path(workspace, name).is_file():
             raise ValueError(f"Continuation file is unavailable: {name}")
-    messages = json.loads(workspace_path(workspace, "checkpoint.json").read_text())
+    messages = json.loads(workspace_path(workspace, state_paths.CHECKPOINT).read_text())
     if not isinstance(messages, list) or not all(isinstance(item, dict) for item in messages):
         raise ValueError("Published Harness checkpoint must be a message list")
     require_tool_results(messages)

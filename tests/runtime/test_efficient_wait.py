@@ -26,7 +26,8 @@ class Clock:
 
 def setup_wait(tmp_path, monkeypatch):
     m = load(tmp_path, monkeypatch)
-    (tmp_path / "operational-state.json").write_text(
+    (tmp_path / ".agent/operational-state.json").parent.mkdir(parents=True, exist_ok=True)
+    (tmp_path / ".agent/operational-state.json").write_text(
         json.dumps({"jobs": {"job-1": {"status": "running"}}})
     )
     clock = Clock()
@@ -99,7 +100,8 @@ def test_invalid_deadline_fails_explicitly(tmp_path, monkeypatch, seconds):
 
 def test_known_job_failure_interrupts_wait(tmp_path, monkeypatch):
     m, clock = setup_wait(tmp_path, monkeypatch)
-    (tmp_path / "operational-state.json").write_text(
+    (tmp_path / ".agent/operational-state.json").parent.mkdir(parents=True, exist_ok=True)
+    (tmp_path / ".agent/operational-state.json").write_text(
         json.dumps({"jobs": {"job-1": {"status": "running"}}})
     )
 
@@ -136,7 +138,8 @@ def test_malformed_status_is_not_silently_treated_as_waiting(tmp_path, monkeypat
 
 def test_deadline_is_checked_between_slow_status_requests(tmp_path, monkeypatch):
     m, clock = setup_wait(tmp_path, monkeypatch)
-    (tmp_path / "operational-state.json").write_text(
+    (tmp_path / ".agent/operational-state.json").parent.mkdir(parents=True, exist_ok=True)
+    (tmp_path / ".agent/operational-state.json").write_text(
         json.dumps({"jobs": {"job-1": {"status": "running"}, "job-2": {"status": "running"}}})
     )
     calls = []
@@ -265,7 +268,8 @@ def test_signal_error_is_visible_and_not_slept_through(tmp_path, monkeypatch):
 
 def test_slow_status_request_does_not_starve_notification_check(tmp_path, monkeypatch):
     m, clock = setup_wait(tmp_path, monkeypatch)
-    (tmp_path / "operational-state.json").write_text(
+    (tmp_path / ".agent/operational-state.json").parent.mkdir(parents=True, exist_ok=True)
+    (tmp_path / ".agent/operational-state.json").write_text(
         json.dumps({"jobs": {"job-" + str(i): {"status": "running"} for i in range(3)}})
     )
 
@@ -317,7 +321,8 @@ def test_raw_result_journal_restores_notification_cursor_before_next_wait(tmp_pa
     old = initial_state(tmp_path)
     notice = {"wait_schema": 1, "reason": "notification", "wake_cursor": "b" * 64}
     call = {"type": "function_call", "name": "wait", "call_id": "call-wait", "arguments": "{}"}
-    (tmp_path / "pending-calls.json").write_text(
+    (tmp_path / ".agent/pending-calls.json").parent.mkdir(parents=True, exist_ok=True)
+    (tmp_path / ".agent/pending-calls.json").write_text(
         json.dumps(
             {
                 "base_hash": functions["checkpoint_hash"](),
@@ -328,7 +333,7 @@ def test_raw_result_journal_restores_notification_cursor_before_next_wait(tmp_pa
     )
     restored = functions["recover_journal"](old)
     assert m.wait_cursor(restored) == "b" * 64
-    assert json.loads((tmp_path / "pending-calls.json").read_text()) is None
+    assert json.loads((tmp_path / ".agent/pending-calls.json").read_text()) is None
     assert context.paired(restored)
 
 

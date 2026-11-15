@@ -8,6 +8,8 @@ import time
 import urllib.error
 import urllib.request
 
+from a3_research_agent.harness import state_paths
+
 os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
 
 from a3_research_agent.harness import history as history_tools
@@ -81,7 +83,8 @@ def request_model(request):
 
 
 def log(x):
-    with open("trajectory.jsonl", "a") as f:
+    pathlib.Path(state_paths.DIRECTORY).mkdir(exist_ok=True)
+    with open(state_paths.TRAJECTORY, "a") as f:
         f.write(json.dumps(x, ensure_ascii=False) + "\n")
 
 
@@ -322,7 +325,7 @@ def save_tool_result(call, result, journal, messages, visible_count):
     phase = "raw_result_journal"
     try:
         journal["results"][call["call_id"]] = result
-        context_manager.atomic("pending-calls.json", json.dumps(journal, ensure_ascii=False))
+        context_manager.atomic(state_paths.JOURNAL, json.dumps(journal, ensure_ascii=False))
         phase = "result_receipt"
         if call["name"] == "read":
             operational_state.record_page(call["call_id"], result)
@@ -334,7 +337,7 @@ def save_tool_result(call, result, journal, messages, visible_count):
         phase = "result_archival"
         bounded = context_manager.bound_tool_result(result, call)
         journal["results"][call["call_id"]] = bounded
-        context_manager.atomic("pending-calls.json", json.dumps(journal, ensure_ascii=False))
+        context_manager.atomic(state_paths.JOURNAL, json.dumps(journal, ensure_ascii=False))
         log(
             {
                 "tool": call["name"],
@@ -533,7 +536,7 @@ WAIT_CURSOR = None
 
 def save_manifest():
     files = {
-        "checkpoint.json",
+        state_paths.CHECKPOINT,
         "resume.json",
         "continuation.json",
     }
@@ -584,15 +587,15 @@ def operational_message():
 
 def checkpoint(messages):
     save_manifest()
-    context_manager.atomic("checkpoint.json", json.dumps(messages, ensure_ascii=False))
+    context_manager.atomic(state_paths.CHECKPOINT, json.dumps(messages, ensure_ascii=False))
 
 
 def checkpoint_hash():
-    return hashlib.sha256(pathlib.Path("checkpoint.json").read_bytes()).hexdigest()
+    return hashlib.sha256(pathlib.Path(state_paths.CHECKPOINT).read_bytes()).hexdigest()
 
 
 def recover_journal(messages):
-    p = pathlib.Path("pending-calls.json")
+    p = pathlib.Path(state_paths.JOURNAL)
     if not p.exists():
         context_manager.atomic(p, "null")
         return messages
@@ -642,7 +645,7 @@ def main() -> None:
         raise ValueError("Worker entry points were removed; use the single research Agent")
     INSTRUCTIONS = lifecycle.INSTRUCTIONS
     compactor = compaction.ForkCompactor(req, tools=list(tools))
-    messages = json.loads(pathlib.Path("checkpoint.json").read_text())
+    messages = json.loads(pathlib.Path(state_paths.CHECKPOINT).read_text())
     if not isinstance(messages, list) or any(not isinstance(item, dict) for item in messages):
         raise ValueError("Research checkpoint must be a message list")
     try:
@@ -667,7 +670,7 @@ def main() -> None:
             except Exception as e:  # noqa: BLE001 - preserve the checkpoint when Host budgets are unknown
                 log({"context_config_error": type(e).__name__, "state": "checkpoint preserved"})
                 context_manager.atomic(
-                    "context-failure.json",
+                    state_paths.CONTEXT_FAILURE,
                     json.dumps(
                         {
                             "error": "context_config_unavailable",
@@ -718,7 +721,7 @@ def main() -> None:
             empty = 0
             calls = [x for x in out if x.get("type") == "function_call"]
             journal = {"base_hash": checkpoint_hash(), "output": out, "results": {}}
-            context_manager.atomic("pending-calls.json", json.dumps(journal, ensure_ascii=False))
+            context_manager.atomic(state_paths.JOURNAL, json.dumps(journal, ensure_ascii=False))
             # All waits in this response use the pre-decision cursor: a tool result
             # is not yet a normal model decision observing the notification.
             WAIT_CURSOR = waiting.wait_cursor(messages)
@@ -732,7 +735,7 @@ def main() -> None:
                 save_tool_result(c, result, journal, messages, visible_messages)
             loop_phase = "checkpoint_publication"
             checkpoint(messages)
-            context_manager.atomic("pending-calls.json", "null")
+            context_manager.atomic(state_paths.JOURNAL, "null")
             if "--test" in sys.argv and calls:
                 break
             if not calls:
@@ -773,7 +776,7 @@ def main() -> None:
                 failure["context_error"] = str(e)[:500]
             log(failure)
             try:
-                context_manager.atomic("loop-failure.json", json.dumps(failure))
+                context_manager.atomic(state_paths.LOOP_FAILURE, json.dumps(failure))
             except OSError:
                 log({"failure_record_persistence": "unavailable"})
             break

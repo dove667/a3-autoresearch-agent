@@ -6,6 +6,7 @@ import json
 import re
 from pathlib import Path
 
+from a3_research_agent.harness import state_paths
 from a3_research_agent.host.inputs.feedback import HumanFeedback
 from a3_research_agent.host.inputs.versions import InputVersions, write_atomic
 from a3_research_agent.host.published_harness import COMMAND, native_source, project_for_run
@@ -31,10 +32,10 @@ def prepare_release(
     manifest = {
         "version": 1,
         "command": COMMAND.copy(),
-        "files": ["checkpoint.json"],
+        "files": [state_paths.CHECKPOINT],
         "harness_commit": commit,
     }
-    package_files = {"checkpoint.json": "[]", "run.json": encoded(manifest).decode()}
+    package_files = {state_paths.CHECKPOINT: "[]", "run.json": encoded(manifest).decode()}
     inputs = InputVersions(root, run).prepare_update()["contents"]
     inputs["initial-feedback.md"] = (
         "# 夜间研究交接\n\nVersion: 0.1.0\n\n"

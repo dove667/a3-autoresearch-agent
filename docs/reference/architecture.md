@@ -61,7 +61,9 @@ Controller 实例共用资源根目录和调度锁。独占模式持有整卡租
 
 上下文压缩目标覆盖下一次完整模型输入，包括固定指令、工具、运行状态、摘要和最近的完整工具回合。摘要输出空间根据压缩目标与实际模型窗口计算；必要压缩只有得到完整摘要后才继续。失败时保存 checkpoint 和诊断供恢复。详见[上下文与记忆](context-and-memory.md)。
 
-`memory/entries.jsonl` 保存 Agent 主动提炼的经验、适用条件及来源，由 `memory` 工具管理。`recall` 从 `workspace/history.jsonl` 等原始执行历史检索片段；`workspace/context-history/` 保存摘要来源和大工具结果。研究计划与自写 skills 同样保存在 `workspace/`。恢复、未来会话和维护发布共用这些目录。
+`memory/entries.jsonl` 保存 Agent 主动提炼的经验、适用条件及来源，由 `memory` 工具管理。`recall` 从 `workspace/.agent/history.jsonl` 等原始执行历史检索片段；`workspace/context-history/` 保存摘要来源和大工具结果。研究计划与自写 skills 同样保存在 `workspace/`。恢复、未来会话和维护发布共用这些目录。
+
+`workspace/.agent/` 集中保存 Harness 的 checkpoint、工具 journal、轨迹、操作台账、压缩事务和故障记录。研究脚本、计划、skills 与交接文件保留在工作区顶层，Host 恢复与离线发布使用同一份 `.agent/checkpoint.json` 和配对 journal。
 
 Host 从根目录 `skills/` 发现包含 `SKILL.md` 与 `assets/catalog-entry.json` 的完整方法包，随公共输入和发布包交付正文、引用文件及 helper，并分别记录版本和文件哈希。Agent 自写 skills 保存在研究工作区；未修改的部署技能沿用原 ID 更新并归档旧版；已有 Agent 局部修订时保留原内容，将新参考独立保存。Agent 使用多关键词检索并按需读取正文和附件。
 

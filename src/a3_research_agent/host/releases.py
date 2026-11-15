@@ -7,6 +7,7 @@ import time
 from collections.abc import Mapping
 from pathlib import Path
 
+from a3_research_agent.harness import state_paths
 from a3_research_agent.host.inputs.feedback import HumanFeedback
 from a3_research_agent.host.inputs.versions import InputVersions
 from a3_research_agent.host.models.settings import model_settings
@@ -35,17 +36,17 @@ def encoded(value) -> bytes:
 
 def checkpoint_boundary(workspace: Path) -> dict[str, bytes]:
     """Validate recovery structure; pending operations remain journaled, never executed."""
-    checkpoint = (workspace / "checkpoint.json").read_bytes()
+    checkpoint = (workspace / state_paths.CHECKPOINT).read_bytes()
     messages = json.loads(checkpoint)
     if not isinstance(messages, list) or any(not isinstance(row, dict) for row in messages):
         raise ValueError("Published release requires a message-list checkpoint")
     require_tool_results(messages)
-    boundary = {"checkpoint.json": checkpoint}
-    pending = workspace / "pending-calls.json"
+    boundary = {state_paths.CHECKPOINT: checkpoint}
+    pending = workspace / state_paths.JOURNAL
     if pending.is_file():
         raw = pending.read_bytes()
         journal = json.loads(raw)
-        boundary["pending-calls.json"] = raw
+        boundary[state_paths.JOURNAL] = raw
         if journal is not None:
             if (
                 not isinstance(journal, dict)
@@ -72,6 +73,7 @@ def checkpoint_boundary(workspace: Path) -> dict[str, bytes]:
 
 def archive_once(path: Path, content: bytes) -> None:
     if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
         write_durable(path, content.decode("utf-8"))
 
 
@@ -92,8 +94,8 @@ def apply_release(
     if (
         package.get("version") != 1
         or package.get("command") != COMMAND
-        or package.get("files") != ["checkpoint.json"]
-        or json.loads((directory / "package/checkpoint.json").read_text()) != []
+        or package.get("files") != [state_paths.CHECKPOINT]
+        or json.loads((directory / "package" / state_paths.CHECKPOINT).read_text()) != []
     ):
         raise ValueError("Published release must select the fixed source entry, not research state")
     source = native_source(root, commit)

@@ -13,6 +13,8 @@ import types
 
 import pytest
 
+from a3_research_agent.harness import state_paths
+
 SOURCE = pathlib.Path(__file__).resolve().parents[2] / "src/a3_research_agent/harness"
 
 
@@ -196,6 +198,7 @@ def test_execution_is_separate_from_result_publication(tmp_path, monkeypatch):
             maybe_spill=lambda *a, **k: (_ for _ in ()).throw(OSError())
         ),
         "context_manager": cm,
+        "state_paths": state_paths,
         "operational_state": types.SimpleNamespace(record_page=lambda *a: None),
     }
     exec(compile(agent_functions("dispatch_tool_call"), "isolated-agent", "exec"), ns)
@@ -209,6 +212,7 @@ def test_archive_failure_leaves_executed_raw_result_in_journal(tmp_path, monkeyp
     ns = {
         "json": json,
         "context_manager": cm,
+        "state_paths": state_paths,
         "operational_state": types.SimpleNamespace(record_page=lambda *a: None),
         "log": lambda *a: None,
         "history_tools": types.SimpleNamespace(append_history=lambda *a: None),
@@ -229,7 +233,7 @@ def test_archive_failure_leaves_executed_raw_result_in_journal(tmp_path, monkeyp
     messages = []
     with pytest.raises(ns["ToolResultPersistenceError"]):
         ns["save_tool_result"]({"call_id": "c", "name": "gateway"}, raw, journal, messages, 0)
-    assert json.loads(pathlib.Path("pending-calls.json").read_text())["results"]["c"] == raw
+    assert json.loads(pathlib.Path(".agent/pending-calls.json").read_text())["results"]["c"] == raw
     assert not messages
 
 
@@ -237,22 +241,25 @@ def test_recovery_publishes_persisted_result_without_reexecuting_tool(tmp_path, 
     monkeypatch.chdir(tmp_path)
     cm = load("context_manager")
     base = [{"role": "user", "content": "original task"}]
-    cm.atomic("checkpoint.json", json.dumps(base))
+    cm.atomic(".agent/checkpoint.json", json.dumps(base))
     call = {"type": "function_call", "call_id": "c", "name": "gateway", "arguments": "{}"}
     raw = {"job_id": "already-created", "status": "completed", "data": "x" * 100000}
     journal = {
-        "base_hash": hashlib.sha256(pathlib.Path("checkpoint.json").read_bytes()).hexdigest(),
+        "base_hash": hashlib.sha256(
+            pathlib.Path(".agent/checkpoint.json").read_bytes()
+        ).hexdigest(),
         "output": [call],
         "results": {"c": raw},
     }
-    cm.atomic("pending-calls.json", json.dumps(journal))
+    cm.atomic(".agent/pending-calls.json", json.dumps(journal))
     ns = {
         "json": json,
         "pathlib": pathlib,
         "hashlib": hashlib,
         "context_manager": cm,
+        "state_paths": state_paths,
         "save_manifest": lambda: None,
-        "checkpoint": lambda value: cm.atomic("checkpoint.json", json.dumps(value)),
+        "checkpoint": lambda value: cm.atomic(".agent/checkpoint.json", json.dumps(value)),
     }
     exec(
         compile(agent_functions("checkpoint_hash", "recover_journal"), "isolated-recovery", "exec"),
@@ -263,7 +270,7 @@ def test_recovery_publishes_persisted_result_without_reexecuting_tool(tmp_path, 
     original = json.loads(pathlib.Path(view["path"]).read_text())
     assert json.loads(original["output"]) == raw
     assert cm.paired(restored) and restored[-1]["call_id"] == "c"
-    assert json.loads(pathlib.Path("pending-calls.json").read_text()) is None
+    assert json.loads(pathlib.Path(".agent/pending-calls.json").read_text()) is None
     assert ns["recover_journal"](restored) == restored
 
 
@@ -339,7 +346,7 @@ def test_raw_read_journal_rebuilds_receipt_before_model_delivery(tmp_path, monke
     monkeypatch.chdir(tmp_path)
     cm, state = load("context_manager"), load("operational_state")
     base = [{"role": "user", "content": "task"}]
-    cm.atomic("checkpoint.json", json.dumps(base))
+    cm.atomic(".agent/checkpoint.json", json.dumps(base))
     page = {
         "path": "facts.txt",
         "sha256": "a" * 64,
@@ -350,11 +357,11 @@ def test_raw_read_journal_rebuilds_receipt_before_model_delivery(tmp_path, monke
     }
     call = {"type": "function_call", "call_id": "c", "name": "read", "arguments": "{}"}
     cm.atomic(
-        "pending-calls.json",
+        ".agent/pending-calls.json",
         json.dumps(
             {
                 "base_hash": hashlib.sha256(
-                    pathlib.Path("checkpoint.json").read_bytes()
+                    pathlib.Path(".agent/checkpoint.json").read_bytes()
                 ).hexdigest(),
                 "output": [call],
                 "results": {"c": page},
@@ -366,9 +373,10 @@ def test_raw_read_journal_rebuilds_receipt_before_model_delivery(tmp_path, monke
         "pathlib": pathlib,
         "hashlib": hashlib,
         "context_manager": cm,
+        "state_paths": state_paths,
         "operational_state": state,
         "save_manifest": lambda: None,
-        "checkpoint": lambda value: cm.atomic("checkpoint.json", json.dumps(value)),
+        "checkpoint": lambda value: cm.atomic(".agent/checkpoint.json", json.dumps(value)),
     }
     exec(
         compile(agent_functions("checkpoint_hash", "recover_journal"), "isolated-recovery", "exec"),

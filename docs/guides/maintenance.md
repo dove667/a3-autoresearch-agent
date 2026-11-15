@@ -10,7 +10,7 @@ Version: 0.3.0
 
 维护者从执行轨迹、Gateway 请求记录、模型用量和 Controller 作业记录定位问题，保留当时输入和版本。先用相同输入复现，再修改、回归并记录版本。保留原 run 的 checkpoint、工作区和在途远程作业；恢复后核对实际加载的版本和首个相关调用。按下文审批流程发布输入或恢复。常规窗口见[夜间运行窗口](#夜间运行窗口)。
 
-日间复核从同一研究身份的 `trajectory.jsonl`、`model-usage.jsonl`、`gateway-events.jsonl` 和 Controller 作业终态入手。按症状选择可重复的失败序列，用受控状态验证修复，再用正式夜间日志核对真实调用次数、耗时和研究产出。输入 token 与缓存命中分别统计。工具等待产生的 Host 请求属于基础设施流量，模型唤醒次数由 Responses 请求记录核对。
+日间复核从同一研究身份的 `.agent/trajectory.jsonl`、`model-usage.jsonl`、`gateway-events.jsonl` 和 Controller 作业终态入手。按症状选择可重复的失败序列，用受控状态验证修复，再用正式夜间日志核对真实调用次数、耗时和研究产出。输入 token 与缓存命中分别统计。工具等待产生的 Host 请求属于基础设施流量，模型唤醒次数由 Responses 请求记录核对。
 
 ### 原地发布新版 Harness
 
@@ -81,7 +81,7 @@ uv run python -m a3_research_agent.cli.reload_inputs "trajectories/<开始时间
 恢复或为恢复而中断前，按上文确认用户批准的范围。环境修复说明或专家建议可以维护在同一个本地 `human-feedback.md` 中，每次覆盖内容。反馈文件由人类明确授权注入，普通历史报告与工具输出继续按数据处理。
 
 ```bash
-bash scripts/start-rsi.sh \
+bash start-autoresearch.sh \
   --resume-from "trajectories/<开始时间>" \
   --feedback-file human-feedback.md
 ```
@@ -136,7 +136,7 @@ uv run python -m a3_research_agent.cli.reload_feedback "trajectories/<开始时�
 
 ## 夜间运行窗口
 
-暂停过的 run 可用 `bash scripts/start-rsi.sh --night-window --resume-from trajectories/<开始时间>`
+暂停过的 run 可用 `bash start-autoresearch.sh --night-window --resume-from trajectories/<开始时间>`
 继续运行。窗口固定为北京时间 21:00（含）到次日 09:00（不含）。到点后启动器向 Host
 发送正常中断信号，保存 checkpoint 并关闭本地 Agent。远端 Controller 继续执行已提交的
 作业。21:00 按发布记录原地升级并恢复当前 run。白天只保留等待窗口的启动器。启动器退出或机器重启后，

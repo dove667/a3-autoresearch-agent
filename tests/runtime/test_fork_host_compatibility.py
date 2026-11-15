@@ -19,6 +19,7 @@ SOURCE = pathlib.Path(__file__).resolve().parents[2] / "src/a3_research_agent/ha
 @pytest.fixture
 def modules(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
+    (tmp_path / ".agent").mkdir()
     loaded = {}
     canonical = {
         "context_manager": "a3_research_agent.harness.context.manager",
@@ -147,7 +148,8 @@ def test_initial_user_plus_continuous_tools_has_bounded_tail(modules):
 
 
 def test_stale_result_cannot_replace_new_task(modules):
-    pathlib.Path("compaction-result.json").write_text(
+    (pathlib.Path(".agent/compaction-result.json")).parent.mkdir(parents=True, exist_ok=True)
+    pathlib.Path(".agent/compaction-result.json").write_text(
         json.dumps(
             {
                 "applied": False,
@@ -168,9 +170,9 @@ def test_resume_history_reconciliation_is_idempotent(modules):
     original = tool_history(3, 10)
     recall.append_history(original[-1])
     recall.ensure_history(original)
-    first = pathlib.Path("history.jsonl").read_bytes()
+    first = pathlib.Path(".agent/history.jsonl").read_bytes()
     recall.ensure_history(original)
-    assert pathlib.Path("history.jsonl").read_bytes() == first
+    assert pathlib.Path(".agent/history.jsonl").read_bytes() == first
     assert all(message in recall.load_history() for message in original)
 
 
@@ -230,7 +232,8 @@ def test_replacement_replays_after_crash_before_checkpoint_and_acknowledges_afte
         }
 
     original = tool_history(10, 700)
-    pathlib.Path("checkpoint.json").write_text(json.dumps(original))
+    (pathlib.Path(".agent/checkpoint.json")).parent.mkdir(parents=True, exist_ok=True)
+    pathlib.Path(".agent/checkpoint.json").write_text(json.dumps(original))
     fork = module.ForkCompactor(provider, trigger_tokens=1000)
     fork.before_request(original)
     fork.wait(5)
@@ -241,7 +244,8 @@ def test_replacement_replays_after_crash_before_checkpoint_and_acknowledges_afte
     second, record = restarted.before_request(original)
     assert second == first and record["kind"] == "applied"
     count = len(calls)
-    pathlib.Path("checkpoint.json").write_text(json.dumps(first))
+    (pathlib.Path(".agent/checkpoint.json")).parent.mkdir(parents=True, exist_ok=True)
+    pathlib.Path(".agent/checkpoint.json").write_text(json.dumps(first))
     restarted.before_request(first)
     assert len(calls) == count
     assert json.loads(pathlib.Path(module.RESULT_PATH).read_text())["applied"] is True
@@ -313,7 +317,8 @@ def test_interrupted_fork_resumes_pure_summary_and_preserves_source(modules):
 def test_history_repairs_torn_tail_preserves_duplicate_occurrences_and_checks_sources(modules):
     recall = modules["recall"]
     repeated = {"role": "user", "content": "repeat the same observation"}
-    pathlib.Path("history.jsonl").write_text('{"partial":')
+    (pathlib.Path(".agent/history.jsonl")).parent.mkdir(parents=True, exist_ok=True)
+    pathlib.Path(".agent/history.jsonl").write_text('{"partial":')
     first = recall.ensure_history([repeated, repeated])
     assert first["corrupt_lines"] == 1 and first["appended"] == 2
     assert recall.ensure_history([repeated, repeated])["appended"] == 0

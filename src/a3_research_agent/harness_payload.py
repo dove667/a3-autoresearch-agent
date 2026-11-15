@@ -7,6 +7,7 @@ HARNESS_MODULES = (
     "__init__.py",
     "agent.py",
     "paths.py",
+    "state_paths.py",
     "skill_registry.py",
     "input_skills.py",
     "lifecycle.py",

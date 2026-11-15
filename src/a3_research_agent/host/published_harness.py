@@ -8,6 +8,7 @@ import tarfile
 import tempfile
 from pathlib import Path
 
+from a3_research_agent.harness import state_paths
 from a3_research_agent.host.inputs.versions import write_atomic
 from a3_research_agent.path_safety import workspace_path
 
@@ -83,7 +84,7 @@ def research_workspace(run: Path, session: str) -> Path:
 
 def pinned_resume(workspace: Path) -> tuple[list[str], dict[str, str]]:
     return COMMAND.copy(), {
-        "checkpoint.json": workspace_path(workspace, "checkpoint.json").read_text()
+        state_paths.CHECKPOINT: workspace_path(workspace, state_paths.CHECKPOINT).read_text()
     }
 
 

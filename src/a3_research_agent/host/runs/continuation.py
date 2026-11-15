@@ -9,6 +9,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from a3_research_agent.execution.exports.readonly import EXPORT_ID
+from a3_research_agent.harness import state_paths
 from a3_research_agent.host.published_harness import COMMAND, run_commit
 from a3_research_agent.host.sessions.packages import load_published_manifest, read_continuation
 from a3_research_agent.host.sessions.workspace import write_durable
@@ -43,16 +44,16 @@ def prepare_fresh_research(start: HarnessStart) -> tuple[HarnessStart, dict]:
     """Start an empty research context while preserving explicitly retained knowledge."""
     from a3_research_agent.host.runs.checkpoints import require_tool_results
 
-    content = start.files.get("checkpoint.json")
+    content = start.files.get(state_paths.CHECKPOINT)
     messages = json.loads(content) if isinstance(content, str) else None
     if not isinstance(messages, list) or not all(isinstance(item, dict) for item in messages):
         raise ValueError("Published Harness needs a message-list checkpoint")
     require_tool_results(messages)
-    if any(name != "checkpoint.json" and not _knowledge_name(name) for name in start.files):
+    if any(name != state_paths.CHECKPOINT and not _knowledge_name(name) for name in start.files):
         raise ValueError("Fresh research accepts only retained knowledge and a checkpoint")
     files = {
         **start.files,
-        "checkpoint.json": "[]",
+        state_paths.CHECKPOINT: "[]",
     }
     return replace(start, files=files), {
         "mode": "fresh",
@@ -122,7 +123,7 @@ def load_run_result(run: Path) -> HarnessStart:
     ):
         raise ValueError("Expected a ready retained result for the current published Harness")
     exports = _remote_exports(record.get("remote_exports"))
-    files = {"checkpoint.json": "[]", **_read_knowledge(run, record["knowledge"])}
+    files = {state_paths.CHECKPOINT: "[]", **_read_knowledge(run, record["knowledge"])}
     return HarnessStart(
         COMMAND.copy(),
         files,

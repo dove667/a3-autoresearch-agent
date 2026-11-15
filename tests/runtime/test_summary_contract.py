@@ -201,7 +201,7 @@ def test_failed_summary_blocks_compaction_instead_of_publishing_archive_notice(
     monkeypatch.chdir(tmp_path)
     local_config(monkeypatch)
     original = history()
-    cm.atomic("checkpoint.json", json.dumps(original))
+    cm.atomic(".agent/checkpoint.json", json.dumps(original))
     calls = []
     fork = compaction.ForkCompactor(
         lambda *args: calls.append(args) or {"status": "incomplete", "output": []}
@@ -211,9 +211,9 @@ def test_failed_summary_blocks_compaction_instead_of_publishing_archive_notice(
     with pytest.raises(cm.ContextError, match="summary|compaction"):
         fork.before_request(original)
     assert 1 < len(calls) <= 3
-    saved = json.loads((tmp_path / "compaction-result.json").read_text())
+    saved = json.loads((tmp_path / ".agent/compaction-result.json").read_text())
     assert saved["status"] in {"failed", "blocked"} and "replacement" not in saved
-    assert json.loads((tmp_path / "checkpoint.json").read_text()) == original
+    assert json.loads((tmp_path / ".agent/checkpoint.json").read_text()) == original
 
 
 def test_interrupted_fork_restarts_only_the_pure_summary(tmp_path, monkeypatch):
@@ -228,7 +228,7 @@ def test_interrupted_fork_restarts_only_the_pure_summary(tmp_path, monkeypatch):
         )
     )
     cm.atomic(
-        "compaction-result.json",
+        ".agent/compaction-result.json",
         json.dumps(
             {
                 "version": 2,
@@ -259,7 +259,7 @@ def test_unpublished_legacy_fallback_requires_a_complete_new_summary(tmp_path, m
         lambda *args: completed("Complete summary replaces the obsolete archive-only proposal.")
     )
     cm.atomic(
-        "compaction-result.json",
+        ".agent/compaction-result.json",
         json.dumps(
             {
                 "version": 2,

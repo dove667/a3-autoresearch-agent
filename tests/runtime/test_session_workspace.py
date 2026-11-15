@@ -47,7 +47,7 @@ def test_source_attachments_are_validated_before_delivery(tmp_path, kind):
     if kind == "hash":
         references[0]["sha256"] = "0" * 64
     elif kind == "root":
-        references[0]["path"] = "checkpoint.json"
+        references[0]["path"] = ".agent/checkpoint.json"
     elif kind == "traversal":
         references[0]["path"] = "research/../../outside"
     elif kind == "symlink":

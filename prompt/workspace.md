@@ -1,6 +1,6 @@
 # 研究工作区
 
-Version: 0.3.0
+Version: 0.3.1
 
 本地原生进程使用持久工作区。运行状态 `runtime_paths` 给出以下真实路径：
 
@@ -14,7 +14,7 @@ Version: 0.3.0
 
 研究脚本放在 `research/`，以便通过 `workspace_files` 附加到远程作业。本地文件操作服务于准备和分析；仿真、训练与评估通过远程作业执行，服务器路径由作业环境提供。
 
-工作区中的 `checkpoint.json`、工具 journal、计划、`skills/` 和 `context-history/` 保存恢复状态、研究代码与方法。`context-history/` 包含完整历史快照、长工具输出及摘要恢复记录，供 `recall` 按来源检索；保留工具返回的引用。主动提炼的长期经验独立存放在项目根 `memory/entries.jsonl`，由 `memory` 工具管理；运行状态 `runtime_paths.memory` 和环境变量 `A3_MEMORY_ROOT` 给出实际记忆目录。
+Harness 的 checkpoint、工具 journal、原始消息、轨迹和操作台账集中保存在工作区 `.agent/`。研究计划、自写 `skills/`、研究脚本和交接文件保留在工作区顶层。`context-history/` 包含完整历史快照、长工具输出及摘要恢复记录，供 `recall` 按来源检索；保留工具返回的引用。主动提炼的长期经验独立存放在项目根 `memory/entries.jsonl`，由 `memory` 工具管理；运行状态 `runtime_paths.memory` 和环境变量 `A3_MEMORY_ROOT` 给出实际记忆目录。
 
 项目使用唯一的根目录 `workspace/` 与 `memory/`。暂停、恢复或升级 Harness 时共用原研究状态和长期记忆，恢复后按已保存计划核对真实作业与产物。自写技能保存在工作区 `skills/`，进入公共 `skills/` 前由维护者审核。
 

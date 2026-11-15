@@ -1,0 +1,13 @@
+"""Workspace-relative files owned by the fixed Agent runtime."""
+
+DIRECTORY = ".agent"
+CHECKPOINT = f"{DIRECTORY}/checkpoint.json"
+JOURNAL = f"{DIRECTORY}/pending-calls.json"
+HISTORY = f"{DIRECTORY}/history.jsonl"
+TRAJECTORY = f"{DIRECTORY}/trajectory.jsonl"
+OPERATIONS = f"{DIRECTORY}/operational-state.json"
+COMPACTION_RESULT = f"{DIRECTORY}/compaction-result.json"
+COMPACTION_EPOCH = f"{DIRECTORY}/compaction-epoch.json"
+LOOP_FAILURE = f"{DIRECTORY}/loop-failure.json"
+CONTEXT_FAILURE = f"{DIRECTORY}/context-failure.json"
+PREFLIGHT = f"{DIRECTORY}/preflight"

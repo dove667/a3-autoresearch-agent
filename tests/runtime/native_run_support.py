@@ -31,11 +31,13 @@ def native_run(tmp_path: Path, *, name="run-current", actor="main", stopped=Fals
         source / "a3_research_agent/__init__.py",
         package / "__init__.py",
         package / "paths.py",
+        package / "state_paths.py",
         package / "agent.py",
     ):
         path.write_text("")
     checkpoint = [{"role": "user", "content": "existing research and observations"}]
-    (workspace / "checkpoint.json").write_text(json.dumps(checkpoint))
+    (workspace / ".agent/checkpoint.json").parent.mkdir(parents=True, exist_ok=True)
+    (workspace / ".agent/checkpoint.json").write_text(json.dumps(checkpoint))
     (workspace / "research").mkdir()
     (workspace / "research/lesson.md").write_text(
         '{"id":"lesson","text":"retain the confirmed finding"}\n'
@@ -46,7 +48,7 @@ def native_run(tmp_path: Path, *, name="run-current", actor="main", stopped=Fals
             {
                 "version": 1,
                 "command": COMMAND,
-                "files": ["checkpoint.json", "research/lesson.md", "research/train.py"],
+                "files": [".agent/checkpoint.json", "research/lesson.md", "research/train.py"],
             }
         )
     )

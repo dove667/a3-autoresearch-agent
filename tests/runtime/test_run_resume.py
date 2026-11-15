@@ -27,7 +27,7 @@ def test_native_resume_preserves_same_scope_and_checkpoint_without_writes(tmp_pa
     assert load_resume_state(run, store, state["model"]) == state
     assert all((run / name).read_bytes() == raw for name, raw in before.items())
     assert (
-        json.loads((workspace / "checkpoint.json").read_text())[0]["content"]
+        json.loads((workspace / ".agent/checkpoint.json").read_text())[0]["content"]
         == "existing research and observations"
     )
 
@@ -74,7 +74,7 @@ def test_relocated_trajectory_retains_resource_identity_and_research_workspace(t
 
     run, workspace, state, _, _ = native_run(tmp_path)
     startup = (run / "startup.json").read_bytes()
-    checkpoint = (workspace / "checkpoint.json").read_bytes()
+    checkpoint = (workspace / ".agent/checkpoint.json").read_bytes()
     relocated = run.with_name("2026-11-10_21-27-31-654793")
     run.rename(relocated)
     store = RunStateStore(relocated)
@@ -83,7 +83,7 @@ def test_relocated_trajectory_retains_resource_identity_and_research_workspace(t
     assert run_identity(relocated) == state["run_id"]
     assert research_workspace(relocated, state["gateway"]["main_owner"]) == workspace
     assert load_resume_state(relocated, store, state["model"]) == state
-    assert (workspace / "checkpoint.json").read_bytes() == checkpoint
+    assert (workspace / ".agent/checkpoint.json").read_bytes() == checkpoint
     assert (relocated / "startup.json").read_bytes() == startup
     assert state["gateway"]["jobs"] == {"main": ["owned-job"]}
 

@@ -19,7 +19,7 @@ def test_documented_continuation_uses_the_runnable_native_contract(tmp_path):
     (tmp_path / "continuation.json").write_text(json.dumps(manifest))
     for name in manifest["files"]:
         (tmp_path / name).parent.mkdir(parents=True, exist_ok=True)
-        (tmp_path / name).write_text("[]" if name == "checkpoint.json" else "")
+        (tmp_path / name).write_text("[]" if name == ".agent/checkpoint.json" else "")
     assert read_continuation(tmp_path) == manifest
 
 

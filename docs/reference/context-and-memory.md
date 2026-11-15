@@ -115,7 +115,7 @@ retry protocol, preserving the source snapshot and each attempt. Exhausted failu
 keep the checkpoint recoverable and block the decision that requires compaction.
 The runtime does not generate a no-summary archive fallback.
 
-Original messages and tool results remain in `history.jsonl` and verified source
+Original messages and tool results remain in `.agent/history.jsonl` and verified source
 snapshots. Large tool results are separately stored losslessly with bounded previews;
 remote text artifacts use character pages with source hashes. This result transport
 keeps the request bounded while preserving access to the actual observations.
@@ -233,13 +233,19 @@ reachability. Neither a process exit code nor a mock response proves those facts
 
 ## Durable operational memory and bounded analysis
 
+The fixed runtime stores its checkpoint, tool journal, history, trajectory,
+operational ledger, compaction transactions and failure records in `workspace/.agent/`.
+Research code, plans, skills and continuation declarations remain at the workspace
+root. `context-history/` and `.autorun-spill/` keep their original paths and hash-bound
+contents so archived source references remain usable after maintenance.
+
 The optional overlay now returns normal text reads as bounded character-page objects:
 `path`, whole-file `sha256`, `offset`, `end`, `total`, `eof`, and `content`.
 Offsets refer to decoded characters, not UTF-8 bytes. Pages are bounded by actual
 serialized call-output size. Hashing and character extraction stream the source
 without loading the full file into memory; hashing still reads the full source.
 Optional top-level JSON field selection rejects sources above 1 MiB with a paging
-notice, before parsing the object. `operational-state.json` records retrieved ranges separately from exact
+notice, before parsing the object. `.agent/operational-state.json` records retrieved ranges separately from exact
 page payloads included in a successful completed model request. Neither proves
 understanding. Sparse coverage is bounded with an explicit incompleteness marker;
 gaps are never merged into unread coverage. Views and receipts have finite caps.
@@ -248,7 +254,7 @@ The executed raw result is journaled before optional receipt/preview work. An
 archival failure is a persistence failure, not a claim that the operation failed.
 Recovery republishes saved results without executing the tool again, reconciling
 read receipts idempotently. If the outcome was never durably recorded, the journal
-keeps an explicit unknown outcome requiring inspection. `loop-failure.json` records
+keeps an explicit unknown outcome requiring inspection. `.agent/loop-failure.json` records
 the failure stage and safe context-budget diagnostics; an exit code alone is not
 completion evidence. Atomic writers use unique temporary files and verify reused
 content-addressed sources.
