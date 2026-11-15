@@ -40,7 +40,7 @@ Only add asynchronous execution after measured latency justifies it. Log observa
 
 [Knowledge insulation](https://www.pi.website/research/knowledge_insulation) is a representation/objective/gradient-flow design, not merely “freeze all VLM weights.” Reproduce only the parts explicitly supported by the selected implementation.
 
-**A3 π0.5 mismatch:** pinned code currently restricts benchmark task/prompt, and full scene alignment changes evaluation geometry. Reproducing the provider's own scene can diagnose a checkpoint but must be labeled separately. A fair phase-two candidate needs an adapter compatible with the fixed observation/action/task protocol; don't change the scene to claim a gain.
+**A3 π0.5 mismatch:** inspected code restricts benchmark task/prompt, and full scene alignment changes evaluation geometry. Reproducing the provider's own scene can diagnose a checkpoint but must be labeled separately. For a matched benchmark comparison, adapt the model to the saved observation, action, task and scene conditions.
 
 ## Task text throughout training and inference
 

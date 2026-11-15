@@ -37,12 +37,8 @@ def checkpoint_boundary(workspace: Path) -> dict[str, bytes]:
     """Validate recovery structure; pending operations remain journaled, never executed."""
     checkpoint = (workspace / "checkpoint.json").read_bytes()
     messages = json.loads(checkpoint)
-    if (
-        not isinstance(messages, list)
-        or not messages
-        or any(not isinstance(row, dict) for row in messages)
-    ):
-        raise ValueError("Published release requires a nonempty message checkpoint")
+    if not isinstance(messages, list) or any(not isinstance(row, dict) for row in messages):
+        raise ValueError("Published release requires a message-list checkpoint")
     require_tool_results(messages)
     boundary = {"checkpoint.json": checkpoint}
     pending = workspace / "pending-calls.json"
@@ -106,7 +102,7 @@ def apply_release(
     ).hexdigest()
     archive = run / ".host/release-upgrades" / identifier
     pending_path = run / ".host/pending-release.json"
-    with RunLease(run):
+    with RunLease(root / ".runtime/research-workspace"), RunLease(run):
         store = RunStateStore(run)
         state = store.load()
         if state.get("run_id") != run_identity(run) or state.get("status") != "suspended":
@@ -129,15 +125,11 @@ def apply_release(
             raise ValueError("Release requires the current nonclosed research identity")
         workspace = session_workspace(run / "sessions", actor)
         checkpoint_boundary(workspace)
-        current_inputs = InputVersions(root, run).prepare()
         contents = {
             name: (directory / "inputs" / name).read_text()
             for name in json.loads((directory / "manifest.json").read_text())["inputs"]
             if name != "initial-feedback.md"
         }
-        for name in ("goal.md", "acceptance.md", "protocol.md"):
-            if contents.get(name) != current_inputs["contents"][name]:
-                raise ValueError("Harness release must retain the current research task inputs")
         release_inputs = InputVersions.from_proposal(
             root,
             run,

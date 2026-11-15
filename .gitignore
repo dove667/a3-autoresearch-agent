@@ -17,6 +17,7 @@ __pycache__/
 /model-cache/
 /report/
 /reports/
+/experiments/
 build/
 dist/
 .DS_Store
@@ -34,5 +35,6 @@ operational-state.json
 /.superpowers/
 
 /workspace/
+/memory/
 
 /trajectories/

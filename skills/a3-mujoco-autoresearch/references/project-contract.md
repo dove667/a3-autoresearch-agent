@@ -1,8 +1,8 @@
 # Verified project contract
 
-Inspected 2026-11-02. Upstream A3 source: **6ff458b0b73b78a3ffd794e8b37fdf297a23af48**, [pinned tree](https://github.com/Eter0109/a3_dual_arm_sim/tree/6ff458b0b73b78a3ffd794e8b37fdf297a23af48). RSI source at authorship: 401edc4; phase-two protocol 0.3.0. Neither proves an old run used these versions. At execution record `/opt/a3/.git`, `/opt/a3/source-revision.json`, actual file/dirty hashes, frozen `/run/input` and installed packages.
+Inspected 2026-11-02. Upstream A3 source: **6ff458b0b73b78a3ffd794e8b37fdf297a23af48**, [pinned tree](https://github.com/Eter0109/a3_dual_arm_sim/tree/6ff458b0b73b78a3ffd794e8b37fdf297a23af48). Historical authorship used RSI source 401edc4 and its then-current evaluation protocol 0.3.0. For each experiment, record the actual A3 revision, deployed source hashes, dependencies and evaluation settings. Current full-grid conditions are in [benchmark evaluation](benchmark-evaluation.md).
 
-The supplied course PDF (`midterm(2).pdf`, three pages) motivates ACT, Diffusion/Flow, VLA, World Model and an autonomous Analyze→Hypothesize→Implement→Train→Evaluate→Reflect→Iterate loop. Its expert6000-step example is not the phase-two evaluation budget.
+The historical course brief motivates ACT, Diffusion/Flow, VLA, World Model and an autonomous Analyze→Hypothesize→Implement→Train→Evaluate→Reflect→Iterate loop. Its expert-rollout example is background material; benchmark horizons are recorded separately below.
 
 ## Environment and policy boundary
 
@@ -45,14 +45,14 @@ Checkpoint processors, statistics and model weights travel together. Auto-resolu
 
 Pinned single-cell benchmark supports `--policy expert|smolvla:<path>|act:<path>|pi05:<path>|module:factory`. The `evaluate_smolvla_grid_cli` **hardcodes SmolVLAPolicyAdapter**; do not invent a generic `--policy` flag. Other families need the common benchmark API or explicit single-cell runs preserving all conditions. A custom factory owns its parameters; built-in model CLI overrides don't configure arbitrary plugins.
 
-Single CLI resets one inference seed each episode; grid uses scenario seed per episode. Ensure paired evaluation implements the active protocol explicitly.
+Single CLI resets one inference seed each episode; grid uses scenario seed per episode. Set and record matching scene/inference seeds explicitly for paired comparisons.
 
 2×5 transfers 10 of 80 cookies with slot/boundary, release/stability/safety requirements;2×10 transfers 20 with column counts10/10 and different slot requirements. Capture actual success_conditions rather than hardcode a simplified “count equals capacity”. Final cookies_in_target and complete success are separate. Never report peak count as final count.
 
-Phase-two0.3.0 fixes source column 1,2×5 training-short instruction / 500 steps and2×10 short20-cookie instruction / 3200 steps,20 Hz. Six cells × 20 scenarios = 120 per fixed snapshot; development subsets permitted. Same snapshot includes processor/code/inference/routing, not just weights. Future run's actual protocol is authoritative. See [evaluation helper](evaluation-helper.md) for raw schemas, pairing and uncertainty.
+The full evaluation uses six cells and 120 episodes per fixed policy snapshot, including its processor, code, inference settings and task routing. Source column, task instructions, horizons and reporting are defined in [benchmark evaluation](benchmark-evaluation.md). The optional [evaluation helper](evaluation-helper.md) documents raw schemas, pairing and uncertainty analysis.
 
-Pi0.5 caveat: current benchmark code still requires task 2×5 and pi05_aligned prompt, despite README linking a dual-scene checkpoint. `--pi05-scene-mode full` changes robot/cookie/bin/camera arrangements and is a **different protocol**, not evidence of a fair phase-two gain. This is an integration gap, not proof the method family cannot work.
+In the inspected A3 revision, the Pi0.5 benchmark path requires task 2×5 and `pi05_aligned` prompt, despite the README linking a dual-scene checkpoint. `--pi05-scene-mode full` changes robot/cookie/bin/camera arrangements. Report that geometry separately and adapt the model to the saved benchmark conditions before comparing gains.
 
 ## Runtime facts to recheck
 
-Candidate workspace is writable; `/run/input` and `/opt/a3` read-only. Remote jobs use `/workspace`; use a verified Python module or absolute `/opt/a3/examples/...`, not assumed relative paths. Model/data caches may be read-only; jobs can be offline. Missing weights/tokenizers/backbones are concrete resource gaps, not permission to fetch. Use authorized persistent outputs for large artifacts, not small text APIs. Actual deployment/job limits and GPU allocation govern; example config values and published GPU estimates are not resource reservations.
+The local Agent uses the shared project `workspace/`; active long-term experience lives in `memory/entries.jsonl`. `runtime_paths` identifies current read-only inputs and A3 references. Remote process jobs resolve `A3_A3`, `A3_WORKSPACE`, `A3_OUTPUTS` and asset paths from their environment; Docker uses its declared mounts. Use verified module entrypoints or resolved source paths. Missing weights/tokenizers/backbones are concrete resource gaps for the operator. Keep large artifacts in authorized persistent outputs or exports. Actual deployment/job limits and GPU allocation govern execution.

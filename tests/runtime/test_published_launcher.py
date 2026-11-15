@@ -51,18 +51,20 @@ def configure(monkeypatch, root):
     monkeypatch.delenv("A3_NIGHT_WINDOW_TARGET", raising=False)
 
 
-def test_fresh_published_commit_launches_explicit_task_without_docker(published_run, monkeypatch):
+def test_fresh_published_commit_launches_research_without_docker(published_run, monkeypatch):
     root, _, _, _, commit, *_ = published_run
     calls = []
     configure(monkeypatch, root)
     monkeypatch.setattr(
         sys,
         "argv",
-        ["launch", "--harness-commit", commit, "--agent-inputs-dir", str(root / "task")],
+        ["launch", "--harness-commit", commit],
     )
     runtime_for(root, calls, monkeypatch)
     launch.launch_main()
-    _args, run, _, start = calls[-1]
+    args, run, _, start = calls[-1]
+    assert "SOUL.md" in args.input_proposal["contents"]
+    assert "goal.md" not in args.input_proposal["contents"]
     assert run.parent == root / "trajectories"
     assert start.harness_commit == commit and start.command == COMMAND
     assert start.files == {"checkpoint.json": "[]"}
@@ -121,7 +123,7 @@ def test_old_published_source_needs_a_release_before_any_run_is_created(publishe
     monkeypatch.setattr(
         sys,
         "argv",
-        ["launch", "--harness-commit", previous, "--agent-inputs-dir", str(root / "task")],
+        ["launch", "--harness-commit", previous],
     )
     with pytest.raises(SystemExit) as error:
         runtime_for(root, calls, monkeypatch)
@@ -129,39 +131,27 @@ def test_old_published_source_needs_a_release_before_any_run_is_created(publishe
     assert error.value.code == 2 and not calls
 
 
-def test_fresh_published_source_accepts_complete_custom_inputs(
-    published_run, tmp_path, monkeypatch
-):
+def test_retired_task_input_option_is_rejected_before_deployment(published_run, monkeypatch):
     root, _, _, _, commit, *_ = published_run
-    inputs = tmp_path / "custom-task"
-    inputs.mkdir()
-    (inputs / "protocol.md").write_text("Version: 1.0.0\n\nReport reproducible results.\n")
-    (inputs / "goal.md").write_text(
-        "Version: 1.0.0\n\nInvestigate the selected research question.\n"
-    )
-    (inputs / "acceptance.md").write_text(
-        "Version: 1.0.0\n\n## reproducible. Link source and result\n"
-    )
     calls = []
-    configure(monkeypatch, root)
     monkeypatch.setattr(
-        sys,
-        "argv",
-        [
-            "launch",
-            "--harness-commit",
-            commit,
-            "--agent-inputs-dir",
-            str(inputs),
-        ],
+        sys, "argv", ["launch", "--harness-commit", commit, "--agent-inputs-dir", "/old/task"]
     )
     runtime_for(root, calls, monkeypatch)
-    original = {path.name: path.read_bytes() for path in inputs.iterdir()}
-    launch.launch_main()
-    args, _, _, start = calls[-1]
-    assert args.custom_input_proposal["contents"]["goal.md"].startswith("Version: 1.0.0")
-    assert start.harness_commit == commit and json.loads(start.files["checkpoint.json"]) == []
-    assert original == {path.name: path.read_bytes() for path in inputs.iterdir()}
+    with pytest.raises(SystemExit) as error:
+        launch.launch_main()
+    assert error.value.code == 2 and not calls
+
+
+def test_invalid_current_prompt_is_rejected_before_deployment(published_run, monkeypatch):
+    root, _, _, _, commit, *_ = published_run
+    (root / "prompt/SOUL.md").write_text("Missing version")
+    calls = []
+    monkeypatch.setattr(sys, "argv", ["launch", "--harness-commit", commit])
+    runtime_for(root, calls, monkeypatch)
+    with pytest.raises(SystemExit) as error:
+        launch.launch_main()
+    assert error.value.code == 2 and not calls
 
 
 def test_retired_artifact_run_directory_is_rejected_before_deployment(published_run, monkeypatch):

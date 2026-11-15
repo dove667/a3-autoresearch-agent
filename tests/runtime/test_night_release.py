@@ -24,17 +24,15 @@ def release(tmp_path, monkeypatch):
     return anchor, handoff
 
 
-def test_release_freezes_current_phase_and_profile_and_requires_exact_digest(release):
+def test_release_freezes_current_prompts_and_requires_exact_digest(release):
     anchor, handoff = release
     assert (
         night_state_directory(anchor)
         == anchor.parent.parent / ".runtime/night-window" / anchor.name
     )
-    from task_input_support import task_inputs
-
     from a3_research_agent.host.inputs.versions import InputVersions
 
-    versions = InputVersions(ROOT, anchor, custom_dir=task_inputs(anchor / "task"))
+    versions = InputVersions(ROOT, anchor)
     versions.activate(versions.prepare(), "start")
     proposal = prepare_release(ROOT, handoff, commit="a" * 40, run=anchor)
     manifest = json.loads(proposal["package"]["run.json"])

@@ -1,6 +1,6 @@
 # Research skills
 
-Each package contains a `SKILL.md` entrypoint and a versioned `assets/catalog-entry.json`. Packages in this directory are reviewed deployment inputs.
+These reviewed methods support SOUL's long-term goal: improve A3 2×5 and 2×10 full-evaluation accuracy and success rate. Each package contains a `SKILL.md` entrypoint and a versioned `assets/catalog-entry.json`.
 
 | Package | Read when |
 | --- | --- |
@@ -11,8 +11,8 @@ Each package contains a `SKILL.md` entrypoint and a versioned `assets/catalog-en
 | [a3-training-progress](a3-training-progress/SKILL.md) | Inspecting large, growing or malformed training logs |
 | [a3-model-provenance](a3-model-provenance/SKILL.md) | Recording model identity, lineage, checkpoints and evaluation coverage |
 
-New tasks snapshot every complete package here. An offline Harness release refreshes them in an existing task's input revision. At initialization, the Agent installs frozen references into its writable workspace and can search and read them with `skills`. Installation preserves Agent revisions and uses a separate reference ID when a new deployed version differs.
+The Host snapshots every complete package here together with the three files in `prompt/`. An explicit input update or offline Harness release publishes changes. At initialization, the Agent installs frozen references into the shared `workspace/` and can search and read them with `skills`. Installation preserves Agent revisions and uses a separate reference ID when a new deployed version differs.
 
-Agent-created skills are saved in `workspace/<run>/<owner>/skills/`, including the catalog and revisions. Routine Harness upgrades retain that directory. For an explicitly new task, the selected retained knowledge manifest carries the declared skill files. Promote useful workspace lessons here after reviewing current applicability, consolidating overlaps and removing local paths and experiment-specific instructions. Increment the package version whenever its content or attachments change.
+Agent-created skills are saved in `workspace/skills/`, including the catalog and revisions. Active long-term experience is stored separately in `memory/entries.jsonl`. Future sessions and Harness upgrades reuse both directories. Promote useful workspace lessons here after reviewing current applicability, consolidating overlaps and removing local paths and experiment-specific instructions. Increment the package version whenever its content or attachments change.
 
-See [input management](../docs/agent-inputs.md) and [project structure](../docs/project-structure.md).
+See [input management](../docs/reference/agent-inputs.md) and [project structure](../docs/reference/storage-layout.md).

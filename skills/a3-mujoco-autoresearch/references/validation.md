@@ -1,12 +1,16 @@
-# Version 0.1.9 maintenance checks
+# Historical validation records
+
+The records below retain their original versions, test scope and source provenance. The optional evaluation helper keeps its historical analysis schema; current research goals and benchmark settings are described in SOUL and [benchmark evaluation](benchmark-evaluation.md).
+
+## Version 0.1.9 maintenance checks
 
 The current reference uses one research Agent and parallel independent remote jobs. Same-run research reads are shared while writes and management remain restricted. Scientific comparison values are unchanged; the helper accepts protocol 0.3.0–0.3.6 with matched version and digest requirements. Skill/catalog versions, changed Markdown link targets and whitespace were checked. Runtime and helper regression results belong to the current repository validation record; the older results below retain their original scope.
 
-# Historical validation: version 0.1.4
+## Version 0.1.4
 
 Prepared from repository `6bde3b5` on 2026-11-02. The helper accepts protocol 0.3.0 and reference-only 0.3.1, requires matching version and digests in a pair, rejects unknown versions and reports the actual input version. Tests show identical scientific outputs for identical fixtures under either supported version. This is offline helper evidence, not a new policy result or live skill adoption. Earlier integration evidence below is historical and was not rerun as a live Agent test. Full offline repository suite: 590 passed; Ruff, whitespace, skill metadata and relative links pass.
 
-# Validation record for version 0.1.0
+## Version 0.1.0
 
 Authored and checked 2026-11-02 against parent repository commit 401edc42b366703a6e2be4925fc947c1fcbad4e9. This record establishes offline package behavior, not A3 policy efficacy or live Agent adoption. Revalidate relevant checks after edits.
 

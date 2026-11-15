@@ -2,12 +2,12 @@
 
 Reviewed 2026-11-02. References are primary papers, author repositories, official framework documentation or the supplied project brief. Recommendations in this skill are original synthesis, not quotations or verified local improvements. Moving `main`/documentation/model-card URLs must be pinned again before reproducing a specific implementation.
 
-## Project authority
+## Project sources
 
-- Supplied `midterm(2).pdf`, three-page course brief: method families and research workflow; not the phase-two runtime contract.
+- Historical three-page course brief: method families and research workflow.
 - [A3 source snapshot6ff458b](https://github.com/Eter0109/a3_dual_arm_sim/tree/6ff458b0b73b78a3ffd794e8b37fdf297a23af48): contracts, adapters, dataset/training/evaluation surfaces inspected. This is not evidence of server deployment or local assets.
 - LeRobot 0.5.1, commit1396b9fab7aecddd10006c33c47a487ffdcb54b4: [ACT](https://github.com/huggingface/lerobot/blob/1396b9fab7aecddd10006c33c47a487ffdcb54b4/src/lerobot/policies/act/modeling_act.py), [SmolVLA](https://github.com/huggingface/lerobot/blob/1396b9fab7aecddd10006c33c47a487ffdcb54b4/src/lerobot/policies/smolvla/modeling_smolvla.py), [diffusion](https://github.com/huggingface/lerobot/tree/v0.5.1/src/lerobot/policies/diffusion).
-- RSI agent-inputs/phase-two/protocol.md 0.3.0 and SOUL.md 0.1.0 at source 401edc4. Active run snapshots always take precedence over this historical reference.
+- Historical authorship at RSI source 401edc4 used its then-current phase-two protocol 0.3.0 and SOUL.md 0.1.0. Current research follows SOUL and the saved conditions in [benchmark evaluation](benchmark-evaluation.md).
 
 ## Method mechanisms
 
@@ -26,7 +26,7 @@ Reviewed 2026-11-02. References are primary papers, author repositories, officia
 
 - AIDE: [2502.13138](https://arxiv.org/abs/2502.13138), [code](https://github.com/WecoAI/aideml).
 - MLAgentBench: [2310.03302](https://arxiv.org/abs/2310.03302), [code](https://github.com/snap-stanford/MLAgentBench).
-- Reliable RL evaluation: [2108.13264](https://arxiv.org/abs/2108.13264), [rliable](https://github.com/google-research/rliable). Aggregate metrics are not substitutes for the project's fixed G.
+- Reliable RL evaluation: [2108.13264](https://arxiv.org/abs/2108.13264), [rliable](https://github.com/google-research/rliable). Use paired uncertainty analysis alongside per-cell final-count ratios and native success rates.
 - [robomimic dataset contents](https://robomimic.github.io/docs/tutorials/dataset_contents.html), [sequence dataset](https://robomimic.github.io/docs/modules/dataset.html): transferable inspection concepts, not a requirement to migrate data format.
 - [PyTorch AMP](https://docs.pytorch.org/docs/stable/notes/amp_examples.html), [checkpointing](https://docs.pytorch.org/tutorials/beginner/saving_loading_models.html), [reproducibility](https://docs.pytorch.org/docs/stable/notes/randomness.html): pin local versions; exact repeatability across platforms not promised.
 - [MuJoCo simulation state](https://mujoco.readthedocs.io/en/stable/programming/simulation.html): integration state is more than qpos/qvel.
@@ -34,4 +34,4 @@ Reviewed 2026-11-02. References are primary papers, author repositories, officia
 
 ## What has not been established
 
-No policy was trained, downloaded or evaluated to author this package. No local hardware feasibility or performance superiority is claimed. F catalog compatibility and offline helper fixtures are separate validation claims documented in integration notes. This package imports no third-party implementation code; linked repositories remain under their own licenses. Future copied/adapted code must retain applicable license notices and provenance.
+No policy was trained, downloaded or evaluated to author this package. Historical catalog integration and offline helper fixtures are documented in [validation records](validation.md) with their original scope. This package imports no third-party implementation code; linked repositories remain under their own licenses. Future copied/adapted code must retain applicable license notices and provenance.

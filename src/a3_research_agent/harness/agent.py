@@ -10,11 +10,14 @@ import urllib.request
 
 os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
 
+from a3_research_agent.harness import history as history_tools
 from a3_research_agent.harness import (
     input_skills,
     job_preflight,
     job_tools,
     lifecycle,
+    long_term_memory,
+    operational_state,
     planning,
     research_web,
     skill_registry,
@@ -27,8 +30,6 @@ from a3_research_agent.harness import (
 )
 from a3_research_agent.harness.context import compaction
 from a3_research_agent.harness.context import manager as context_manager
-from a3_research_agent.harness.memory import recall as recall_tools
-from a3_research_agent.harness.memory import state as memory_state
 
 BASE = None
 TOKEN = None
@@ -146,9 +147,9 @@ def tool(name, a):
     if name == "skills":
         return skill_registry.dispatch(a)
     if name == "recall":
-        return recall_tools.recall_tool(a)
+        return history_tools.recall_tool(a)
     if name == "memory":
-        return recall_tools.memory_tool(a)
+        return long_term_memory.memory_tool(a)
     if name == "preflight":
         return job_preflight.dispatch(
             {
@@ -164,7 +165,7 @@ def tool(name, a):
     if name == "plan":
         return planning.dispatch(a)
     if name == "progress":
-        return memory_state.progress(a)
+        return operational_state.progress(a)
     if name == "gateway":
         path = a["path"]
         if not any(
@@ -183,7 +184,7 @@ def tool(name, a):
             return "path not allowed"
         result = req(a["method"], path, a.get("body"))
         try:
-            memory_state.record_gateway(a["method"], path, result)
+            operational_state.record_gateway(a["method"], path, result)
         except Exception:  # noqa: BLE001 — preserve the result of an already executed operation
             try:
                 log({"operational_receipt": "gateway_update_failed"})
@@ -197,6 +198,7 @@ def tool(name, a):
             runtime_paths.workspace_root(),
             runtime_paths.reference_root(),
             runtime_paths.input_root(),
+            runtime_paths.memory_root(),
         ]
         if not any(p == r or r in p.parents for r in roots):
             return "denied"
@@ -232,7 +234,7 @@ def tool(name, a):
             return select_json_fields(p.read_bytes(), a["fields"], str(p))
         offset = tool_contracts.integer(a.get("offset", 0), "offset", 0, 2**63 - 1)
         limit = tool_contracts.integer(a.get("limit", 4000), "limit", 1, 8000)
-        return memory_state.read_page(p, offset, limit)
+        return operational_state.read_page(p, offset, limit)
     if name == "wait":
         seconds = a.get("seconds", 5)
         if type(seconds) is not int or not 0 <= seconds <= 600:
@@ -323,10 +325,12 @@ def save_tool_result(call, result, journal, messages, visible_count):
         context_manager.atomic("pending-calls.json", json.dumps(journal, ensure_ascii=False))
         phase = "result_receipt"
         if call["name"] == "read":
-            memory_state.record_page(call["call_id"], result)
-            result = memory_state.visible_page_reference(result, messages[:visible_count]) or result
+            operational_state.record_page(call["call_id"], result)
+            result = (
+                operational_state.visible_page_reference(result, messages[:visible_count]) or result
+            )
         if call["name"] == "wait":
-            memory_state.record_wait(result)
+            operational_state.record_wait(result)
         phase = "result_archival"
         bounded = context_manager.bound_tool_result(result, call)
         journal["results"][call["call_id"]] = bounded
@@ -341,7 +345,7 @@ def save_tool_result(call, result, journal, messages, visible_count):
         )
         value = context_manager.output_message(bounded, call["call_id"])
         messages.append(value)
-        recall_tools.append_history(value)
+        history_tools.append_history(value)
     except Exception as error:
         raise ToolResultPersistenceError(phase) from error
 
@@ -386,7 +390,7 @@ def spec(name, props, required):
                 "use mode=raw for exact historical tool traffic."
             ),
             "memory": (
-                "Append a durable note to memory.jsonl (action=write) or read/list "
+                "Append a durable note to project memory/entries.jsonl (action=write) or read/list "
                 "entries (action=read|list). Search by keywords with action=search, key, "
                 "and optional kind/scope filters. Write concise notes with refs and applicability "
                 "in scope. Use supersedes with an earlier note ID when correcting it."
@@ -529,9 +533,7 @@ WAIT_CURSOR = None
 
 def save_manifest():
     files = {
-        "task.txt",
         "checkpoint.json",
-        "memory.jsonl",
         "resume.json",
         "continuation.json",
     }
@@ -568,13 +570,14 @@ def save_manifest():
 
 
 def operational_message():
-    state = memory_state.load()
-    value = memory_state.view(state)
+    state = operational_state.load()
+    value = operational_state.view(state)
     value["research_plan"] = planning.view(jobs=state.get("jobs", {}), compact=True)
     value["runtime_paths"] = {
         "workspace": str(runtime_paths.workspace_root()),
         "inputs": str(runtime_paths.input_root()),
         "reference": str(runtime_paths.reference_root()),
+        "memory": str(runtime_paths.memory_root()),
     }
     return {"role": "user", "content": json.dumps(value, ensure_ascii=False)}
 
@@ -613,9 +616,9 @@ def recover_journal(messages):
             },
         )
         if c.get("name") == "read":
-            memory_state.record_page(c["call_id"], value)
+            operational_state.record_page(c["call_id"], value)
         if c.get("name") == "wait":
-            memory_state.record_wait(value)
+            operational_state.record_wait(value)
         restored.append(
             {
                 "type": "function_call_output",
@@ -639,19 +642,13 @@ def main() -> None:
         raise ValueError("Worker entry points were removed; use the single research Agent")
     INSTRUCTIONS = lifecycle.INSTRUCTIONS
     compactor = compaction.ForkCompactor(req, tools=list(tools))
-    if os.path.exists("checkpoint.json") and "--resume" in sys.argv:
-        with open("checkpoint.json", encoding="utf-8") as stream:
-            messages = json.load(stream)
-    else:
-        with open("task.txt", encoding="utf-8") as stream:
-            messages = [{"role": "user", "content": stream.read()}]
-        if not pathlib.Path(recall_tools.HISTORY_PATH).exists():
-            recall_tools.append_history_many(messages)
+    messages = json.loads(pathlib.Path("checkpoint.json").read_text())
+    if not isinstance(messages, list) or any(not isinstance(item, dict) for item in messages):
+        raise ValueError("Research checkpoint must be a message list")
     try:
-        if pathlib.Path("checkpoint.json").exists():
-            messages = recover_journal(messages)
+        messages = recover_journal(messages)
         context_manager.restore_artifact_views(messages)
-        recall_tools.ensure_history(messages)
+        history_tools.ensure_history(messages)
         input_skills.install_input_skills()
         checkpoint(messages)
     except Exception as e:  # noqa: BLE001 - preserve recoverable state on unexpected failures
@@ -700,14 +697,14 @@ def main() -> None:
                 "tools": tools,
             }
             try:
-                req("POST", "/telemetry/observations", memory_state.counters(), timeout=2)
+                req("POST", "/telemetry/observations", operational_state.counters(), timeout=2)
             except Exception:  # noqa: BLE001 — optional telemetry never blocks research
                 log({"optional_telemetry": "unavailable"})
             log({"operational_view": state_reference})
             loop_phase = "model_request"
             resp = request_model(request)
             if resp.get("status") == "completed":
-                memory_state.mark_delivered(messages)
+                operational_state.mark_delivered(messages)
             log({"response": resp})
             out = resp.get("output", [])
             if not out:
@@ -727,7 +724,7 @@ def main() -> None:
             WAIT_CURSOR = waiting.wait_cursor(messages)
             visible_messages = len(messages)
             messages.extend(out)
-            recall_tools.append_history_many(out)
+            history_tools.append_history_many(out)
             for c in calls:
                 loop_phase = "tool_execution"
                 result = dispatch_tool_call(c)
@@ -739,9 +736,11 @@ def main() -> None:
             if "--test" in sys.argv and calls:
                 break
             if not calls:
-                if pathlib.Path("run-outcome.json").exists() and json.loads(
-                    pathlib.Path("run-outcome.json").read_text()
-                ).get("status") in ("complete", "blocked"):
+                if (
+                    pathlib.Path("run-outcome.json").exists()
+                    and json.loads(pathlib.Path("run-outcome.json").read_text()).get("status")
+                    == "blocked"
+                ):
                     break
                 messages.append(
                     {

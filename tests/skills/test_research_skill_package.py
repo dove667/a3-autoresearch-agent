@@ -2,7 +2,6 @@
 
 import json
 import re
-import shutil
 from pathlib import Path
 
 import pytest
@@ -23,17 +22,6 @@ PACKAGES = (
 )
 
 
-def task_directory(directory):
-    directory.mkdir()
-    for name, content in {
-        "goal.md": "Research this question",
-        "acceptance.md": "## result. Preserve evidence",
-        "protocol.md": "Record conditions and results",
-    }.items():
-        (directory / name).write_text("Version: 1.0.0\n\n" + content + "\n")
-    return directory
-
-
 @pytest.mark.parametrize("identifier", PACKAGES)
 def test_research_catalog_maps_to_readable_versioned_reference(identifier):
     package = ROOT / "skills" / identifier
@@ -49,7 +37,7 @@ def test_research_catalog_maps_to_readable_versioned_reference(identifier):
 
 
 def test_all_reviewed_skills_install_and_agent_edits_survive_resume(tmp_path, monkeypatch):
-    inputs = InputVersions(ROOT, tmp_path / "run", custom_dir=task_directory(tmp_path / "task"))
+    inputs = InputVersions(ROOT, tmp_path / "run")
     inputs.activate(inputs.prepare(), "start")
     workspace = tmp_path / "workspace"
     workspace.mkdir()
@@ -88,14 +76,12 @@ def test_all_reviewed_skills_install_and_agent_edits_survive_resume(tmp_path, mo
 
 
 def test_deployed_skill_is_frozen_discoverable_and_not_injected(tmp_path, monkeypatch):
-    source = task_directory(tmp_path / "task")
-    inputs = InputVersions(ROOT, tmp_path / "run", custom_dir=source)
+    inputs = InputVersions(ROOT, tmp_path / "run")
     proposal = inputs.prepare()
     inputs.activate(proposal, "start")
     relative = "skills/a3-mujoco-autoresearch/SKILL.md"
     assert inputs.contents[relative] == (ROOT / relative).read_text()
     assert inputs.contents[relative] not in inputs.model_instructions()[1]
-    shutil.rmtree(source)
     restored = InputVersions(ROOT, inputs.run)
     assert restored.prepare()["contents"][relative] == proposal["contents"][relative]
     workspace = tmp_path / "workspace"

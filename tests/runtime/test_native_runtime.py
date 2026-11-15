@@ -88,7 +88,7 @@ def test_native_runtime_rejects_arbitrary_commands_and_nonlocal_gateway(tmp_path
         ProcessRuntime.require_native_source(local.published_source)
 
 
-def test_native_run_has_one_process_and_owner_scoped_files(tmp_path, monkeypatch):
+def test_native_run_has_one_process_and_owner_scoped_access(tmp_path, monkeypatch):
     from a3_research_agent.host.sessions.workspace import SessionCapacityError
 
     local = runtime(tmp_path, monkeypatch)
@@ -139,7 +139,12 @@ def test_native_child_uses_fixed_source_scoped_env_and_keeps_logs(tmp_path, monk
         assert "host-secret" not in str(record)
         assert record["environment"]["A3_GATEWAY_TOKEN"] == "scoped-token"
         assert record["environment"]["A3_WORKSPACE"] == str(workspace)
+        assert workspace == tmp_path / "workspace"
+        assert record["environment"]["A3_MEMORY_ROOT"] == str(tmp_path / "memory")
+        assert (tmp_path / "memory").is_dir()
         assert record["environment"]["A3_INPUT_ROOT"] == str(local.inputs)
+        assert "A3_GOAL_FILE" not in record["environment"]
+        assert "A3_ACCEPTANCE_FILE" not in record["environment"]
         assert record["environment"]["A3_RUN_DIR"] == str(workspace / "results")
         assert local.console_path("main").is_relative_to(tmp_path / "runs/run-unit")
         assert not (local.root / "main/console.log").exists()
@@ -151,6 +156,20 @@ def test_native_child_uses_fixed_source_scoped_env_and_keeps_logs(tmp_path, monk
         assert local.records["main"]["self_stopped"] is True
     finally:
         local.close()
+
+
+def test_new_process_cannot_overwrite_the_shared_research_workspace(tmp_path, monkeypatch):
+    local = runtime(tmp_path, monkeypatch)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    checkpoint = workspace / "checkpoint.json"
+    checkpoint.write_text('[{"role":"user","content":"existing work"}]')
+    before = checkpoint.read_bytes()
+    with pytest.raises(ValueError, match="must be resumed"):
+        local.create("main", COMMAND, {"checkpoint.json": "[]"}, "token")
+    assert checkpoint.read_bytes() == before
+    assert not local.records
+    assert not (local.root / "main").exists()
 
 
 def test_native_artifact_and_schema_use_only_current_session_contract(tmp_path, monkeypatch):
@@ -206,6 +225,24 @@ def test_native_suspend_resume_retains_workspace_and_unknown_tool_journal(tmp_pa
             ]
             == "new-token"
         )
+    finally:
+        local.close()
+
+
+def test_native_suspend_resume_keeps_an_empty_initial_checkpoint(tmp_path, monkeypatch):
+    local = runtime(tmp_path, monkeypatch)
+    try:
+        workspace = launch(local, {"checkpoint.json": "[\n]\n", "pending-calls.json": "null"})
+        checkpoint = (workspace / "checkpoint.json").read_bytes()
+        local.suspend()
+        assert local.state(local.records["main"])["status"] == "exited"
+        assert (workspace / "checkpoint.json").read_bytes() == checkpoint
+        local.resume_sessions({"new-token": "main"}, "main")
+        wait_for(lambda: len((workspace / "starts.jsonl").read_text().splitlines()) == 2)
+        assert local.status("main", "main")["status"] == "running"
+        assert (workspace / "checkpoint.json").read_bytes() == checkpoint
+        assert (workspace / "pending-calls.json").read_text() == "null"
+        assert not (workspace / "task.txt").exists()
     finally:
         local.close()
 
@@ -352,7 +389,7 @@ def test_interrupted_tool_retains_journal_and_recovery_never_replays(tmp_path, m
     monkeypatch.setenv("A3_INPUT_ROOT", str(tmp_path / "inputs"))
     monkeypatch.setenv("A3_REFERENCE_ROOT", str(tmp_path / "reference"))
     monkeypatch.setattr(agent.sys, "argv", ["agent", "--resume"])
-    (tmp_path / "task.txt").write_text("research")
+    (tmp_path / "checkpoint.json").write_text("[]")
 
     class Compactor:
         def __init__(self, *args, **kwargs):

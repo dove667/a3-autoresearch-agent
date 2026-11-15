@@ -15,7 +15,7 @@ def test_current_session_link_resolves_only_to_its_research_directory(tmp_path):
     root = tmp_path / "trajectories/run-unit/sessions"
     directory = root / "main"
     directory.mkdir(parents=True)
-    target = tmp_path / "workspace/run-unit/main"
+    target = tmp_path / "workspace"
     target.mkdir(parents=True)
     (directory / "workspace").symlink_to(target, target_is_directory=True)
     assert session_workspace(root, "main") == target

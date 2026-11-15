@@ -7,7 +7,7 @@ import pytest
 
 
 def test_workspace_validation_is_a_leaf_and_rejects_symlinks(tmp_path):
-    from a3_research_agent.workspace.paths import workspace_path
+    from a3_research_agent.path_safety import workspace_path
 
     (tmp_path / "alias").symlink_to(tmp_path, target_is_directory=True)
     for name in ("../escape", "/absolute", "alias/file"):

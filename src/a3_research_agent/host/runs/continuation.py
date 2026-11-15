@@ -12,7 +12,7 @@ from a3_research_agent.execution.exports.readonly import EXPORT_ID
 from a3_research_agent.host.published_harness import COMMAND, run_commit
 from a3_research_agent.host.sessions.packages import load_published_manifest, read_continuation
 from a3_research_agent.host.sessions.workspace import write_durable
-from a3_research_agent.workspace.paths import workspace_path
+from a3_research_agent.path_safety import workspace_path
 
 
 @dataclass
@@ -39,8 +39,8 @@ class HarnessStart:
         return self.harness_commit
 
 
-def prepare_fresh_task(start: HarnessStart, task: str) -> tuple[HarnessStart, dict]:
-    """Seed an explicit new task from retained research knowledge and published code."""
+def prepare_fresh_research(start: HarnessStart) -> tuple[HarnessStart, dict]:
+    """Start an empty research context while preserving explicitly retained knowledge."""
     from a3_research_agent.host.runs.checkpoints import require_tool_results
 
     content = start.files.get("checkpoint.json")
@@ -49,16 +49,16 @@ def prepare_fresh_task(start: HarnessStart, task: str) -> tuple[HarnessStart, di
         raise ValueError("Published Harness needs a message-list checkpoint")
     require_tool_results(messages)
     if any(name != "checkpoint.json" and not _knowledge_name(name) for name in start.files):
-        raise ValueError("Fresh tasks accept only retained research knowledge and an empty seed")
+        raise ValueError("Fresh research accepts only retained knowledge and a checkpoint")
     files = {
         **start.files,
-        "checkpoint.json": json.dumps([{"role": "user", "content": task}], ensure_ascii=False),
+        "checkpoint.json": "[]",
     }
     return replace(start, files=files), {
         "mode": "fresh",
         "previous_message_count": len(messages),
         "source_checkpoint_sha256": hashlib.sha256(content.encode()).hexdigest(),
-        "initial_message_count": 1,
+        "initial_message_count": 0,
         "source_commit": start.harness_commit,
     }
 
@@ -155,7 +155,7 @@ def _remote_exports(identifiers):
 
 def _knowledge_name(name):
     parts = Path(name).parts
-    return name == "memory.jsonl" or bool(
+    return bool(
         parts
         and parts[0] in {"skills", "research"}
         and not any(part.startswith(".") for part in parts)

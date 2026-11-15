@@ -13,7 +13,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[2] / "src/a3_research_agent/harn
 def load(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     spec = importlib.util.spec_from_file_location(
-        "state_" + uuid.uuid4().hex, ROOT / "memory/state.py"
+        "state_" + uuid.uuid4().hex, ROOT / "operational_state.py"
     )
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -184,7 +184,7 @@ def test_receipt_failure_cannot_hide_successful_job_result(tmp_path, monkeypatch
         "lifecycle": lifecycle,
         "web_tools": SimpleNamespace(ROUTES={}),
         "skill_tools": SimpleNamespace(ROUTES={}),
-        "memory_state": SimpleNamespace(record_gateway=fail),
+        "operational_state": SimpleNamespace(record_gateway=fail),
         "req": request,
         "log": fail if diagnostic_fails else lambda value: None,
     }

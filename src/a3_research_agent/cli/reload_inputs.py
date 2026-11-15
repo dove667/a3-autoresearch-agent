@@ -12,11 +12,6 @@ from a3_research_agent.host.runs.state import RunStateStore
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("run", type=Path, help="Running experiment directory")
-    parser.add_argument(
-        "--agent-inputs-dir",
-        type=Path,
-        help="Complete replacement for a custom run; same file names",
-    )
     parser.add_argument("--confirm", help="Exact digest printed by the preview")
     args = parser.parse_args()
     state = RunStateStore(args.run.resolve()).load()
@@ -26,10 +21,7 @@ def main() -> None:
         headers={"Authorization": "Bearer " + state["operator_token"]},
         timeout=60,
     ) as client:
-        selection = (
-            {"source_dir": str(args.agent_inputs_dir.resolve())} if args.agent_inputs_dir else {}
-        )
-        response = client.get("/control/inputs", params=selection)
+        response = client.get("/control/inputs")
         response.raise_for_status()
         preview = response.json()
         print("警告：" + preview["warning"])
@@ -39,13 +31,16 @@ def main() -> None:
                 f"{name}: {old.get('version', 'unversioned')} -> {proposed['version']} "
                 f"sha256={proposed['sha256']}"
             )
+        removed = preview["current"].get("files", {}).keys() - preview["proposed"]["files"].keys()
+        for name in sorted(removed):
+            print(f"{name}: 从当前输入移除，历史版本保留")
         digest = preview["proposed"]["digest"]
         if args.confirm is None:
             print("仅预览，尚未更新。核对后增加 --confirm " + digest)
             return
         if args.confirm != digest:
             raise SystemExit("确认内容已过期；请重新预览后使用当前摘要")
-        response = client.post("/control/inputs", json={"confirm": args.confirm, **selection})
+        response = client.post("/control/inputs", json={"confirm": args.confirm})
         response.raise_for_status()
         print(json.dumps(response.json(), ensure_ascii=False, indent=2))
 

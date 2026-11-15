@@ -9,9 +9,11 @@ def test_native_roots_are_explicit_host_paths(tmp_path, monkeypatch):
     monkeypatch.setenv("A3_WORKSPACE", str(tmp_path / "work"))
     monkeypatch.setenv("A3_INPUT_ROOT", str(tmp_path / "inputs"))
     monkeypatch.setenv("A3_REFERENCE_ROOT", str(tmp_path / "reference"))
+    monkeypatch.setenv("A3_MEMORY_ROOT", str(tmp_path / "memory"))
     assert paths.workspace_root() == tmp_path / "work"
     assert paths.input_root() == tmp_path / "inputs"
     assert paths.reference_root() == tmp_path / "reference"
+    assert paths.memory_root() == tmp_path / "memory"
 
 
 def test_native_read_and_edit_use_host_workspace_paths(tmp_path, monkeypatch):

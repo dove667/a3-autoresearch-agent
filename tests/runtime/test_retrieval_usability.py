@@ -1,7 +1,9 @@
 import json
 
 from a3_research_agent.harness import agent, planning
-from a3_research_agent.harness.memory import recall, state
+from a3_research_agent.harness import history as recall
+from a3_research_agent.harness import long_term_memory as memory
+from a3_research_agent.harness import operational_state as state
 
 
 def test_recall_without_a_guessed_window_finds_older_observations(tmp_path, monkeypatch):
@@ -36,14 +38,14 @@ def test_recall_defaults_do_not_retrieve_prior_retrieval_echoes(tmp_path, monkey
 
 def test_empty_note_search_returns_current_source_linked_notes(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    old = recall.write_memory("obsolete decoder advice", refs=["old-report.json"])
-    new = recall.write_memory(
+    old = memory.write_memory("obsolete decoder advice", refs=["old-report.json"])
+    new = memory.write_memory(
         "decoder version must match", refs=["verified-report.json"], supersedes=old["id"]
     )
-    matches = recall.memory_tool({"action": "search"})
+    matches = memory.memory_tool({"action": "search"})
     assert [row["id"] for row in matches] == [new["id"]]
     assert matches[0]["refs"] == ["verified-report.json"]
-    assert "obsolete decoder advice" in recall.read_memory(old["id"])
+    assert "obsolete decoder advice" in memory.read_memory(old["id"])
 
 
 def test_wait_observes_submitted_job_without_requiring_plan_bookkeeping(tmp_path, monkeypatch):

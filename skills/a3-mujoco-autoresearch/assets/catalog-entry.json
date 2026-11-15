@@ -1,6 +1,6 @@
 {
   "id": "a3-mujoco-autoresearch",
-  "version": "0.1.16",
+  "version": "0.1.17",
   "status": "reference",
   "comparison_status": "compare-not-proven",
   "description": "A3 MuJoCo autoresearch and model training: ACT, Diffusion/Flow, VLA, world models, diagnostics and paired evaluation.",
@@ -24,17 +24,22 @@
     "language",
     "instruction"
   ],
-  "applicability": "Research planning and authorized execution for the declared A3 task. Recommendations are not local performance evidence. Read SKILL.md and selected references using the ordinary read tool. Helpers require an authorized job/execution tool, not skill_execute.",
+  "applicability": "Research planning and authorized execution to improve A3 2x5/2x10 full-evaluation accuracy and success rate. Read SKILL.md and selected references; use available authorized execution tools for helpers.",
   "local_source": "skills/a3-mujoco-autoresearch/SKILL.md",
   "provenance": "Externally authored baseline from primary-source research and inspected A3/LeRobot code on 2026-11-02; no third-party code copied and no policy training performed.",
   "evidence": [
     "skills/a3-mujoco-autoresearch/references/sources.md",
     "skills/a3-mujoco-autoresearch/references/integration.md",
     "skills/a3-mujoco-autoresearch/references/validation.md",
-    "skills/a3-mujoco-autoresearch/references/training-diagnostics.md"
+    "skills/a3-mujoco-autoresearch/references/training-diagnostics.md",
+    "skills/a3-mujoco-autoresearch/references/benchmark-evaluation.md"
   ],
   "evidence_status": "literature-and-source-inspected; offline-helper-tests; no-local-policy-comparison",
   "version_history": [
+    {
+      "version": "0.1.17",
+      "change": "Follow the SOUL long-term research goal; consolidate current benchmark conditions and remove separate task-input dependencies. Reuse the shared workspace and independent long-term memory; retain the optional helper historical schema."
+    },
     {
       "version": "0.1.16",
       "change": "Link consolidated Agent-authored operational skills and replace historical skill integration and identity assumptions with the current native single-Agent contract."

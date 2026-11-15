@@ -5,7 +5,7 @@ from pathlib import Path
 
 def checkout_root() -> Path | None:
     candidate = Path(__file__).resolve().parents[2]
-    if (candidate / "pyproject.toml").is_file() and (candidate / "agent-inputs").is_dir():
+    if (candidate / "pyproject.toml").is_file() and (candidate / "prompt").is_dir():
         return candidate
     return None
 

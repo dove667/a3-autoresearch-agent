@@ -26,11 +26,11 @@ def test_published_result_keeps_immutable_notes_and_research_without_old_context
     (workspace / "continuation.json").write_text(json.dumps(manifest))
     result = publish_run_result(run, workspace, "main")
     assert result["status"] == "ready" and result["harness_commit"] == COMMIT
-    before = (workspace / "memory.jsonl").read_text()
-    (workspace / "memory.jsonl").write_text("later edit")
+    before = (workspace / "research/lesson.md").read_text()
+    (workspace / "research/lesson.md").write_text("later edit")
     loaded = load_run_result(run)
     assert loaded.command == COMMAND and loaded.source_version == COMMIT
-    assert loaded.files["memory.jsonl"] == before
+    assert loaded.files["research/lesson.md"] == before
     assert loaded.files["skills/local/SKILL.md"] == "Reusable experiment method"
     assert loaded.files["research/train.py"] == 'print("research source")\n'
     assert loaded.files["checkpoint.json"] == "[]"
@@ -44,7 +44,7 @@ def test_published_result_keeps_immutable_notes_and_research_without_old_context
 def test_modified_knowledge_fails_without_overwriting_its_evidence(tmp_path):
     run, workspace, _, _, _ = native_run(tmp_path)
     result = publish_run_result(run, workspace, "main")
-    file = run / result["knowledge"]["directory"] / "memory.jsonl"
+    file = run / result["knowledge"]["directory"] / "research/lesson.md"
     file.write_text("corrupt")
     with pytest.raises(ValueError, match="knowledge content changed"):
         load_run_result(run)

@@ -5,8 +5,7 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
-from a3_research_agent.host.sessions.packages import read_continuation
-from a3_research_agent.workspace.paths import workspace_path
+from a3_research_agent.path_safety import workspace_path
 
 ACTIVE_STATES = {"running", "created", "restarting", "paused"}
 EXTERNAL_BLOCKERS = {"authentication", "permission", "unavailable_service", "missing_resource"}
@@ -26,24 +25,12 @@ def evidence_exists(workspace: Path, names: object) -> bool:
         return False
 
 
-def evaluate_outcome(workspace: Path, required_checks: tuple[str, ...]) -> dict:
-    """Validate a declared terminal record; substantive evidence still needs review."""
+def evaluate_outcome(workspace: Path) -> dict:
+    """Read progress or an actionable external blocker for continuous research."""
     try:
         outcome = json.loads(workspace_path(workspace, "run-outcome.json").read_text())
         if not isinstance(outcome, dict):
             raise TypeError("Outcome must be an object")
-        if outcome.get("status") == "complete":
-            checks = outcome.get("acceptance", {})
-            if not isinstance(checks, dict) or not required_checks:
-                raise ValueError("Missing required acceptance checks")
-            for key in required_checks:
-                check = checks.get(key, {})
-                if not isinstance(check, dict) or check.get("status") != "passed":
-                    raise ValueError(f"Acceptance {key} has not passed")
-                if not evidence_exists(workspace, check.get("evidence")):
-                    raise ValueError(f"Acceptance {key} needs reachable, nonempty evidence files")
-            read_continuation(workspace)
-            return outcome
         if outcome.get("status") == "blocked":
             blocker = outcome.get("external_blocker", {})
             if (
@@ -58,7 +45,7 @@ def evaluate_outcome(workspace: Path, required_checks: tuple[str, ...]) -> dict:
             ):
                 return outcome
             raise ValueError("Temporary capacity, waiting or incomplete work requires continuation")
-        return {"status": "continue", "reason": str(outcome.get("reason", "Work is incomplete"))}
+        return {"status": "continue", "reason": str(outcome.get("reason", "Research continues"))}
     except (OSError, ValueError, KeyError, TypeError) as error:
         return {"status": "continue", "reason": str(error)}
 
@@ -69,9 +56,8 @@ class RunSupervisor:
         *,
         run: Path,
         workspace: Path,
-        required_checks: tuple[str, ...] | Callable[[], tuple[str, ...]],
         sessions: Callable[[], list[dict]],
-        finalize: Callable[[], None] | None = None,
+        retain: Callable[[], None] | None = None,
         wait: Callable[[float], None] = time.sleep,
         result_workspace: Callable[[], Path] | None = None,
         input_manifest: Callable[[], dict] | None = None,
@@ -80,9 +66,8 @@ class RunSupervisor:
     ):
         self.run_directory = run
         self.workspace = workspace
-        self.required_checks = required_checks
         self.sessions = sessions
-        self.finalize = finalize
+        self.retain = retain
         self.wait = wait
         self.result_workspace = result_workspace
         self.input_manifest = input_manifest
@@ -121,7 +106,7 @@ class RunSupervisor:
         )
 
     def run(self) -> dict:
-        """Wait for research processes to stop, then check and preserve their result."""
+        """Observe the process until it stops, then preserve its progress."""
 
         sessions = self.sessions()
         while self.active(sessions):
@@ -129,30 +114,21 @@ class RunSupervisor:
             self.wait(15)
             sessions = self.sessions()
 
-        # Structural checks and snapshot publication happen only after execution ends.
-        # Their results never trigger another model call or enter a worker's context.
         if self.on_finishing is not None:
             self.on_finishing()
         if self.result_workspace is not None:
             self.workspace = self.result_workspace()
         manifest = self.input_manifest() if self.input_manifest is not None else None
-        required_checks = (
-            tuple(manifest["acceptance_checks"])
-            if manifest is not None
-            else self.required_checks()
-            if callable(self.required_checks)
-            else self.required_checks
-        )
-        outcome = evaluate_outcome(self.workspace, required_checks)
+        outcome = evaluate_outcome(self.workspace)
         if manifest is not None:
             outcome["input_manifest"] = manifest
         if outcome["status"] == "continue":
             outcome = {**outcome, "status": "incomplete"}
-        if outcome["status"] == "complete" and self.finalize is not None:
+        if self.retain is not None:
             try:
-                self.finalize()
+                self.retain()
             except (OSError, ValueError, RuntimeError) as error:
-                outcome = {"status": "archive_error", "error_type": type(error).__name__}
+                outcome["retention_error"] = type(error).__name__
         self.record("stopped", outcome, sessions)
         (self.run_directory / "outcome.json").write_text(
             json.dumps(outcome, ensure_ascii=False, indent=2)

@@ -14,23 +14,23 @@ Use existing job state and persistent memory to avoid duplicate submissions. Fai
 
 ## Closed-loop decisions and uncertainty
 
-Read the active protocol; its score and final-test rules supersede literature examples. Development subsets are legitimate and often cheaper than full grids. Freeze the final candidate before using final test. A selection set reused to tune models is development data regardless of its filename.
+Follow SOUL's long-term research goal and the saved [benchmark conditions](benchmark-evaluation.md). Use small development subsets for daily iteration and complete 120-episode evaluations for promising candidates. Fix the final candidate before using reserved comparison scenarios. A selection set reused to tune models becomes development evidence.
 
 Pair the same scenes and fixed external conditions. Identical random-seed integers across architectures don't imply identical sampled action noise. Report effect magnitude, uncertainty, failures and cost. Repeated candidate search biases the observed winner upward; don't convert a one-seed lucky win into a general law.
 
 A scenario bootstrap of one trained checkpoint addresses scenario variability, not training variability. Independent training seeds answer a different question. Do not count frames as independent episodes or repeated rollouts as independent training runs. A zero-width bootstrap from constant tiny samples does not demonstrate certainty. See [helper](evaluation-helper.md); multi-training-run hierarchy needs separate analysis.
 
-The complete phase-two metric is six-cell equal-weight normalized final count; original success remains separate. Good offline loss or final-count gain without complete success should be described precisely, not silently relabeled solved.
+Report final count, capacity-normalized count and native success separately for every cell. A six-cell equal-weight count summary is available for aggregate comparison. Record actual coverage and effects without turning a score or confidence interval into a fixed research completion threshold.
 
 Inspect real video/frames together with synchronized actions and states to compare grasp, transport, placement, stability and recovery. Anchor observations to steps and matched conditions; quantify the relevant behavior when feasible. Preserve a candidate with supported improvement in any useful capability, its weights/configuration and evidence, even when final aggregate score is unchanged. Keep uncertain visual signs as pending verification. Maintain several capability-specific candidates; aggregate-score improvement is not a prerequisite for retention. Report native benchmark results and behavioral improvements at their respective scopes, including tradeoffs.
 
 ## Research execution evidence
 
-Freeze the Policy, processor, data, deployed Harness version, protocol, configuration and training seed. Run independent experiments in parallel. Report Harness failures to maintainers with trace locations, actual impact and reproduction details. Policy inference compute, simulation time, model token cost, tool overhead and external waiting are separate measurements.
+Save the Policy, processor, adapter/routing, data, deployed Harness version, evaluation settings and training seed. Run independent experiments in parallel. Report Harness failures to maintainers with trace locations, actual impact and reproduction details. Policy inference compute, simulation time, model token cost, tool overhead and external waiting are separate measurements.
 
 ## Memory into skills
 
-Memory records what happened. Skills capture what can be reused, under which conditions. Save a conclusion with claim, evidence IDs, data/model/contract versions, applicability, uncertainty, counterexample and next discriminator. Search these before another run. Store large raw traces/checkpoints in authorized artifact storage, not the prompt.
+Use `memory` to save conclusions and verified lessons in `memory/entries.jsonl`, with applicability, evidence references, model/data versions, uncertainty and counterexamples. Use `recall` to inspect original observations from `workspace/` history. Skills capture reusable methods and live in `workspace/skills/`; shared future sessions and Harness upgrades retain these directories. Store large raw trajectories and checkpoints in authorized experiment/job storage and cite their locations.
 
 Use evidence labels consistently:
 
@@ -40,6 +40,6 @@ Use evidence labels consistently:
 - `local-rollout-tested`: an actual A3 rollout, not necessarily comparative improvement.
 - `paired-local-improvement`: matched evidence under stated conditions and uncertainty.
 
-Promote narrowly, e.g. “shorter execution prefix improved release on this checkpoint/data/scene set,” not “M=1 always best.” Retain counterexamples and retire obsolete advice. A new implementation invalidates stale helper evidence until relevant tests rerun. One generation audits its own new experiments and inherits prior confirmed conclusions; revisit ancestors only for a concrete contradiction, not a full historical archaeology requirement.
+Promote narrowly, e.g. “shorter execution prefix improved release on this checkpoint/data/scene set.” Retain counterexamples and retire obsolete advice. Recheck helper behavior when its relevant implementation changes. Reuse prior confirmed conclusions and revisit original evidence when a concrete contradiction matters.
 
-A useful handoff names the incumbent, frozen inputs, inherited conclusions, this generation's actual results/decisions, in-flight jobs, unresolved uncertainty and highest-value next actions. It does not require copying an ever-growing full dialogue to prove a skill works.
+A useful pause record names the incumbent, saved experiment settings, established conclusions, recent results/decisions, in-flight jobs, unresolved uncertainty and highest-value next actions. Continue the existing plan after restoration.

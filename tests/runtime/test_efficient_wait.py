@@ -441,7 +441,7 @@ def test_managed_wait_stays_inside_harness_across_timeouts_and_retries(tmp_path,
 
 
 def test_wait_receipt_closes_only_terminal_targets(tmp_path, monkeypatch):
-    from a3_research_agent.harness.memory import state
+    from a3_research_agent.harness import operational_state as state
 
     monkeypatch.chdir(tmp_path)
     a, b = "a" * 32, "b" * 32

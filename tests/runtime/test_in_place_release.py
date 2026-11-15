@@ -67,7 +67,7 @@ def published_run(tmp_path, monkeypatch, request):
     git("commit", "--quiet", "-am", "new published source")
     commit = git("rev-parse", "HEAD")
     git("update-ref", "refs/remotes/origin/main", commit)
-    shutil.copytree(ROOT / "agent-inputs", root / "agent-inputs")
+    shutil.copytree(ROOT / "prompt", root / "prompt")
     shutil.copytree(ROOT / "skills", root / "skills", ignore=shutil.ignore_patterns("__pycache__"))
     run = root / "trajectories/run-existing"
     run.mkdir(parents=True)
@@ -76,7 +76,7 @@ def published_run(tmp_path, monkeypatch, request):
     workspace.mkdir(parents=True)
     protected = {
         "checkpoint.json": '[{"role":"user","content":"existing task and observations"}]',
-        "memory.jsonl": '{"id":"learned","text":"actual research lesson"}\n',
+        "research/lesson.md": '{"id":"learned","text":"actual research lesson"}\n',
         "skills/index.json": '{"skills":[{"id":"learned-skill"}]}',
         "research/train.py": "print('preserve research')\n",
         "research-plan.json": '{"version":1,"revision":5,"steps":{}}',
@@ -124,15 +124,7 @@ def published_run(tmp_path, monkeypatch, request):
         },
     }
     RunStateStore(run).save(state)
-    task = root / "task"
-    task.mkdir()
-    for name, content in {
-        "goal.md": "Version: 1.0.0\n\nContinue the selected research question.\n",
-        "acceptance.md": "Version: 1.0.0\n\n## result. Preserve reproducible evidence\n",
-        "protocol.md": "Version: 1.0.0\n\nRecord configuration and data provenance.\n",
-    }.items():
-        (task / name).write_text(content)
-    inputs = InputVersions(root, run, custom_dir=task)
+    inputs = InputVersions(root, run)
     inputs.activate(inputs.prepare(), "start")
     (run / "startup.json").write_text(
         json.dumps(
@@ -194,6 +186,28 @@ def test_apply_release_keeps_run_owner_workspace_and_complete_research_state(pub
     before = len(calls)
     assert apply_release(run, release, proposal["digest"], environment=env) == outcome
     assert len(calls) == before
+
+
+def test_apply_release_preserves_an_empty_initial_checkpoint(published_run):
+    from a3_research_agent.host.releases import apply_release
+
+    _, run, workspace, _, commit, proposal, release, protected, env, _ = published_run
+    checkpoint = b"[\n]\n"
+    (workspace / "checkpoint.json").write_bytes(checkpoint)
+    (workspace / "pending-calls.json").write_text("null")
+    outcome = apply_release(run, release, proposal["digest"], environment=env)
+    assert outcome["status"] == "complete"
+    assert run_commit(run) == commit
+    assert (workspace / "checkpoint.json").read_bytes() == checkpoint
+    assert (workspace / "pending-calls.json").read_text() == "null"
+    archive = run / ".host/release-upgrades" / outcome["upgrade_id"]
+    assert (archive / "checkpoint.json").read_bytes() == checkpoint
+    assert all(
+        (workspace / name).read_text() == content
+        for name, content in protected.items()
+        if name not in {"checkpoint.json", "pending-calls.json"}
+    )
+    assert RunStateStore(run).load()["status"] == "suspended"
 
 
 def test_published_night_release_resumes_same_run_instead_of_making_a_fresh_task(
@@ -425,6 +439,7 @@ def test_real_fresh_published_host_saves_provenance_before_native_start(
     from a3_research_agent.host.runs.continuation import HarnessStart
 
     root, _, _, _, commit, _, _, _, env, _ = published_run
+    shutil.rmtree(root / "workspace")
     a3 = tmp_path / "a3-reference"
     a3.mkdir()
     (a3 / "README.md").write_text("Read-only simulation reference fixture.\n")
@@ -497,7 +512,7 @@ def test_real_fresh_published_host_saves_provenance_before_native_start(
                 verify_deployment=False,
                 run_harness=None,
                 harness_commit=commit,
-                custom_input_proposal=InputVersions(root, None, custom_dir=root / "task").prepare(),
+                input_proposal=InputVersions(root, None).prepare(),
             ),
             run,
             a3,
@@ -545,22 +560,6 @@ def test_plain_resume_rejects_changed_released_inference_settings(published_run,
     assert result["model_settings"] != {key: state[key] for key in result["model_settings"]}
 
 
-def test_release_cannot_replace_the_current_research_goal(published_run, tmp_path):
-    from a3_research_agent.cli.night_release import encoded
-    from a3_research_agent.host.releases import apply_release
-
-    _root, run, _, _, _, proposal, _, _, env, _ = published_run
-    proposal["inputs"]["goal.md"] = "Version: 2.0.0\nUnrelated task\n"
-    contents = {name: proposal[name] for name in ("package", "inputs")}
-    proposal["digest"] = hashlib.sha256(encoded(contents)).hexdigest()
-    publish_release(run, proposal, proposal["digest"])
-    release = night_state_directory(run) / "night-releases" / proposal["digest"]
-    before = RunStateStore(run).path.read_bytes()
-    with pytest.raises(ValueError, match="retain the current research task"):
-        apply_release(run, release, proposal["digest"], environment=env)
-    assert RunStateStore(run).path.read_bytes() == before
-
-
 def test_night_release_cli_derives_project_from_anchor_when_installed(
     published_run, tmp_path, monkeypatch, capsys
 ):
@@ -590,7 +589,7 @@ def test_release_after_trajectory_rename_keeps_workspace_mapping(published_run):
         name: (workspace / name).read_bytes()
         for name in (
             "checkpoint.json",
-            "memory.jsonl",
+            "research/lesson.md",
             "research/train.py",
             "trajectory.jsonl",
         )
@@ -608,7 +607,7 @@ def test_release_after_trajectory_rename_keeps_workspace_mapping(published_run):
     apply_release(relocated, directory, proposal["digest"], environment={"MODEL_NAME": "new/model"})
     marker = json.loads((relocated / MARKER).read_text())
     assert marker["run_id"] == original_identity
-    assert marker["workspace_root"] == f"workspace/{original_identity}"
+    assert "workspace_root" not in marker
     assert research_workspace(relocated, "candidate-main") == workspace
     for name, content in protected.items():
         assert (workspace / name).read_bytes() == content

@@ -73,7 +73,6 @@ class SessionStopRequest(BaseModel):
 class InputUpdateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     confirm: str = Field(pattern="^[0-9a-f]{64}$")
-    source_dir: str | None = Field(default=None, min_length=1, max_length=4096)
 
 
 class FeedbackPreviewRequest(BaseModel):

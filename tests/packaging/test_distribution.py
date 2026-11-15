@@ -95,7 +95,7 @@ def test_installed_wheel_runs_stdlib_controller_and_exports_complete_harness(
 import json, pathlib, sys
 sys.path.insert(0, sys.argv[1])
 import a3_research_agent
-from a3_research_agent.packaging.harness_payload import build_harness_payload
+from a3_research_agent.harness_payload import build_harness_payload
 from a3_research_agent.project import checkout_root
 files = build_harness_payload()
 print(json.dumps(dict(package=a3_research_agent.__file__, root=checkout_root(), files=sorted(files))))

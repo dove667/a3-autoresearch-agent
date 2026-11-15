@@ -14,9 +14,9 @@ import pathlib
 import threading
 import uuid
 
+from a3_research_agent.harness import history as history_tools
 from a3_research_agent.harness.context import manager as cm
 from a3_research_agent.harness.context import spill as spill_tools
-from a3_research_agent.harness.memory import recall as recall_tools
 
 RESULT_PATH = "compaction-result.json"
 EPOCH_PATH = "compaction-epoch.json"
@@ -175,7 +175,7 @@ class ForkCompactor:
         snapshot = json.loads(json.dumps(messages, ensure_ascii=False))
         if not cm.paired(snapshot):
             raise cm.ContextError("Unsafe compaction source")
-        recall_tools.ensure_history(snapshot)
+        history_tools.ensure_history(snapshot)
         source = cm.archive(snapshot, "snapshot")
         record = {
             "version": 2,
@@ -246,7 +246,7 @@ class ForkCompactor:
     def _tail(self, snapshot):
         return [
             message
-            for group in recall_tools.recent_rounds(snapshot, self.keep_rounds)
+            for group in history_tools.recent_rounds(snapshot, self.keep_rounds)
             for message in group
         ]
 

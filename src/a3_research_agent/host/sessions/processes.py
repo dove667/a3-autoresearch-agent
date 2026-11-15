@@ -12,9 +12,9 @@ import uuid
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from a3_research_agent.host.published_harness import COMMAND, research_workspace
+from a3_research_agent.host.published_harness import COMMAND, project_for_run, research_workspace
 from a3_research_agent.host.runs.directories import debug_directory
-from a3_research_agent.workspace.paths import workspace_path
+from a3_research_agent.path_safety import workspace_path
 
 from .workspace import (
     ACTIVE_STATES,
@@ -206,6 +206,8 @@ class ProcessRuntime:
         directories = {name: workspace / name for name in (".home", ".tmp", ".cache")}
         for directory in directories.values():
             directory.mkdir(exist_ok=True)
+        memory = workspace_path(project_for_run(self.root.parent), "memory").resolve()
+        memory.mkdir(exist_ok=True)
         return {
             "PATH": str(Path(self.python).parent) + os.pathsep + os.defpath,
             "HOME": str(directories[".home"]),
@@ -221,13 +223,12 @@ class ProcessRuntime:
             "A3_GATEWAY_URL": self.endpoint.rstrip("/"),
             "A3_GATEWAY_TOKEN": token,
             "A3_WORKSPACE": str(workspace),
+            "A3_MEMORY_ROOT": str(memory),
             "A3_INPUT_ROOT": str(inputs),
             "A3_REFERENCE_ROOT": str(self.public_a3.resolve()),
             "A3_HARNESS_ROOT": str(self.published_source.resolve()),
             "A3_PROJECT_ROOT": str(self.public_a3.resolve()),
             "A3_RUN_DIR": str(workspace / "results"),
-            "A3_GOAL_FILE": str(inputs / "goal.md"),
-            "A3_ACCEPTANCE_FILE": str(inputs / "acceptance.md"),
             "A3_DEPLOYMENT_FILE": str(inputs / "deployment.json"),
         }
 
@@ -256,16 +257,20 @@ class ProcessRuntime:
                 if state["status"] in ACTIVE_STATES:
                     raise RuntimeError("Stop the previous local process before restarting it")
             directory = workspace_path(self.root, owner)
-            directory.mkdir(parents=True, exist_ok=reuse)
             link = directory / "workspace"
             expected = research_workspace(self.root.parent, owner)
             if workspace is None:
                 workspace = expected
-                workspace.mkdir(parents=True, exist_ok=reuse)
+                workspace.mkdir(parents=True, exist_ok=True)
             else:
                 workspace = Path(workspace).resolve(strict=True)
                 if workspace != expected.resolve(strict=True):
                     raise ValueError("Session requires its current Host-managed research workspace")
+            if not reuse and any(workspace.iterdir()):
+                raise ValueError(
+                    "Existing research workspace must be resumed before starting a process"
+                )
+            directory.mkdir(parents=True, exist_ok=reuse)
             if not reuse:
                 link.symlink_to(workspace, target_is_directory=True)
             elif link.resolve(strict=True) != workspace.resolve(strict=True):
@@ -454,12 +459,10 @@ class ProcessRuntime:
                 return
             workspace = session_workspace(self.root, main_owner)
             checkpoint = json.loads((workspace / "checkpoint.json").read_text())
-            if (
-                not isinstance(checkpoint, list)
-                or not checkpoint
-                or not all(isinstance(item, dict) for item in checkpoint)
+            if not isinstance(checkpoint, list) or not all(
+                isinstance(item, dict) for item in checkpoint
             ):
-                raise ValueError("Published Harness requires a nonempty message checkpoint")
+                raise ValueError("Published Harness requires a message-list checkpoint")
             require_tool_results(checkpoint)
             self.create(
                 main_owner,

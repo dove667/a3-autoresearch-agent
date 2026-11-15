@@ -149,7 +149,7 @@ def test_bad_catalog_is_preserved(tmp_path):
 
 def test_harness_dispatch_and_payload_include_skill_manager(tmp_path, monkeypatch):
     from a3_research_agent.harness import agent
-    from a3_research_agent.packaging.harness_payload import build_harness_payload
+    from a3_research_agent.harness_payload import build_harness_payload
 
     monkeypatch.chdir(tmp_path)
     assert "a3_research_agent/harness/skill_registry.py" in build_harness_payload()

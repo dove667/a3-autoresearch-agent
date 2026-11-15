@@ -1,32 +1,30 @@
 # 项目文档
 
-Agent 自主研究 Policy、采集、训练与评估；维护者依据原始轨迹更新 Harness。常规 Harness 使用本地原生进程，远程 Controller 管理计算作业，日常升级继续使用原研究工作区。
+Agent 持续研究 Policy、采集、训练与评估，提高 A3 2×5、2×10 全量评测的准确率与通过率；维护者依据原始轨迹更新 Harness。常规 Harness 使用本地原生进程，远程 Controller 管理计算作业，日常升级继续使用原研究工作区。
 
-## 安装、运行与维护
+## 使用指南 · `guides/`
 
-- [环境配置](setup.md)：Python 环境、模型服务、认证与部署参数。
-- [使用教程](tutorial.md)：首次 published 启动、恢复、原地发布、夜间窗口与常用工具。
-- [系统架构](architecture.md)：Host、Harness、Controller、身份与数据流。
-- [目录职责](project-structure.md)：发布源码、研究工作区、原始轨迹与升级档案。
-- [操作者监督](operator-supervision.md)：维护发布、人类反馈与输入更新。
-- [Agent 输入版本](agent-inputs.md)：目标、协议、skills 的完整快照与版本维护。
+- [环境配置](guides/setup.md)：Python 环境、模型服务、认证与部署参数。
+- [启动与恢复](guides/usage.md)：首次运行、原地升级、夜间窗口与常用工具。
+- [维护与发布](guides/maintenance.md)：暂停、发布、人类反馈与输入更新。
 
-## Harness 能力
+## 机制与接口 · `reference/`
 
-- [上下文与长期记忆](context-reliability.md)：完整摘要、总 token 目标、原始历史检索与持久经验。
-- [单 Agent 研究流程](research-orchestration.md)：独立作业并行、研究记录与维护职责。
-- [执行接口](../agent-inputs/shared/execution.md)：具体工具参数与 Host API。
-- [GPU 与操作遥测](operational-telemetry.md)：可观测状态、延迟与资源记录。
-- [视觉诊断](visual-diagnostics.md)：视频、图像与过程证据检查。
+- [系统架构](reference/architecture.md)：Harness、Host、Controller 的职责与实验数据流。
+- [目录职责](reference/storage-layout.md)：源码、工作区、轨迹、实验记录与展示网页。
+- [Agent 输入](reference/agent-inputs.md)：三个 prompt 的分工、版本快照与 skills 发布。
+- [上下文与长期记忆](reference/context-and-memory.md)：完整摘要、总 token 目标、原始历史检索与持久经验。
+- [远程进程后端](reference/remote-process.md)：服务器队列、资源准入、路径、等待与恢复。
+- [远程 Docker 后端](reference/remote-docker.md)：容器构建、隔离、Controller 协议与资产封存。
+- [episode 执行器](reference/episode-executor.md)：并发、完成台账与结果复用。
+- [运行遥测](reference/telemetry.md)：可观测状态、延迟与资源记录。
+- [视觉诊断](reference/visual-diagnostics.md)：图像、同步轨迹与过程证据。
 
-## 远程执行与科研输入
+## Agent 提示词与方法
 
-- [远程进程后端](process-backend.md)：服务器队列、资源准入、路径、等待与恢复。
-- [远程部署](remote-execution.md)：Controller 与执行环境准备。
-- [episode 执行器](episode-executor.md)：并发、完成台账与结果复用。
-- [只读资产与执行边界](../agent-inputs/shared/execution.md#远程资产输出与额度)。
-- [研究 skill](../skills/a3-mujoco-autoresearch/SKILL.md)：实验方法、诊断与经验复用。
+- [长期行为原则](../prompt/SOUL.md)、[执行约定](../prompt/execution.md)、[工作区说明](../prompt/workspace.md)保存在根目录 `prompt/`。
+- [研究 skills](../skills/README.md)提供可按需检索的研究方法。
 
-## 路线与历史材料
+## 历史材料 · `history/`
 
-[开发路线](roadmap.md)记录当前机制与研究方向。`plans/`、`reviews/` 和 [archive/](../archive/README.md) 中的旧阶段输入保留相应时期的设计与验收条件；当前启动流程以本页链接的教程和执行接口为准。第三方源码归属见 [third_party/README](../third_party/README.md)。
+[历史文档](history/README.md)集中保存设计、实施计划和审查记录。旧阶段提示词原文保存在根目录 [archive/](../archive/README.md)。第三方源码归属见 [third_party/README](../third_party/README.md)。

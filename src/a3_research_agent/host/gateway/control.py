@@ -1,10 +1,9 @@
 """Control Gateway behavior on the shared runtime instance."""
 
 import secrets
-from pathlib import Path
 from typing import Annotated
 
-from fastapi import Header, HTTPException, Query
+from fastapi import Header, HTTPException, Request
 
 from .schemas import (
     FeedbackPreviewRequest,
@@ -19,29 +18,27 @@ class ControlRoutes:
         if not self.operator_token or not secrets.compare_digest(supplied, self.operator_token):
             raise HTTPException(403, "Host operator authorization required")
 
-    def prepare_inputs(self, source_dir: str | None = None):
+    def prepare_inputs(self):
         if self.input_versions is None:
             raise HTTPException(503, "Versioned Agent inputs are not configured")
         try:
-            return (
-                self.input_versions.prepare_directory(Path(source_dir))
-                if source_dir is not None
-                else self.input_versions.prepare()
-            )
+            return self.input_versions.prepare_update()
         except (OSError, ValueError) as error:
             raise HTTPException(422, str(error)) from None
 
     def preview_inputs(
         self,
+        request: Request,
         authorization: Annotated[str | None, Header()] = None,
-        source_dir: str | None = Query(default=None, min_length=1, max_length=4096),
     ):
         self.require_operator(authorization)
-        proposal = self.prepare_inputs(source_dir)
+        if request.query_params:
+            raise HTTPException(422, "Input previews use the current repository prompts")
+        proposal = self.prepare_inputs()
         return {
             "current": self.input_versions.manifest,
             "proposed": {key: proposal[key] for key in ("digest", "files")},
-            "warning": "热加载会更新本轮目标、验收和Prompt。已发出的请求仍使用原版本；后续请求使用新版。需确认预览内容摘要后执行。",
+            "warning": "更新会发布仓库中当前版本的提示词与方法包。已发出的请求使用原版本，后续请求使用新版；确认预览摘要后执行。",
         }
 
     def reload_inputs(
@@ -52,7 +49,7 @@ class ControlRoutes:
             raise HTTPException(503, "Versioned Agent inputs are not configured")
         with self.input_versions.lock:
             self.accepting_resources()
-            proposal = self.prepare_inputs(body.source_dir)
+            proposal = self.prepare_inputs()
             if not secrets.compare_digest(body.confirm, proposal["digest"]):
                 raise HTTPException(409, "Preview changed; inspect and confirm the current digest")
             try:

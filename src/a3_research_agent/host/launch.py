@@ -17,7 +17,7 @@ import uvicorn
 
 from a3_research_agent.host.gateway.app import create_app
 from a3_research_agent.host.inputs.feedback import MAX_FEEDBACK_BYTES, HumanFeedback
-from a3_research_agent.host.inputs.task_preparation import input_hashes, prepare_task_start
+from a3_research_agent.host.inputs.research_preparation import input_hashes, prepare_research_start
 from a3_research_agent.host.inputs.versions import InputVersions
 from a3_research_agent.host.models.settings import model_settings, require_release_model
 from a3_research_agent.host.models.upstream import configured_upstream
@@ -79,7 +79,7 @@ def launch_run(args, run: Path, a3: Path, start) -> None:
         None,
         None,
     )
-    proposed_inputs = getattr(args, "custom_input_proposal", None)
+    proposed_inputs = getattr(args, "input_proposal", None)
     if proposed_inputs:
         input_versions = InputVersions.from_proposal(root, run, proposed_inputs)
     else:
@@ -124,12 +124,7 @@ def launch_run(args, run: Path, a3: Path, start) -> None:
     input_versions.activate(proposed_inputs, "resume" if resuming else "start")
     task_context = None
     if package:
-        start, task_context = prepare_task_start(
-            start,
-            input_versions.contents["goal.md"],
-            initial_feedback=getattr(args, "initial_feedback", None),
-            initial_feedback_source=getattr(args, "initial_feedback_file", None),
-        )
+        start, task_context = prepare_research_start(start)
         package = (start.command, start.files)
     forward_model = configured_upstream(litellm.responses)
     store.update(
@@ -268,7 +263,6 @@ def launch_run(args, run: Path, a3: Path, start) -> None:
                 )
                 + "\n"
             )
-    normal_finish = False
     try:
         if package:
             command, files = package
@@ -309,16 +303,14 @@ def launch_run(args, run: Path, a3: Path, start) -> None:
             actor = app.state.result_location()
             return (run / "sessions" / actor / "workspace").resolve()
 
-        def save_completed_result():
+        def retain_research():
             actor = app.state.result_location()
-            selected = publish_run_result(
+            publish_run_result(
                 run,
                 result_workspace(),
                 actor,
                 validate_exports=lambda identifiers: app.state.validate_exports(actor, identifiers),
             )
-            if selected["status"] != "ready":
-                raise ValueError("Completed run needs a runnable retained snapshot")
 
         if resuming:
             session_runtime.resume_sessions(saved["gateway"]["sessions"], actor)
@@ -342,42 +334,28 @@ def launch_run(args, run: Path, a3: Path, start) -> None:
         with httpx.Client(
             base_url=endpoint, headers={"Authorization": "Bearer " + token}, timeout=90
         ) as client:
-            outcome = RunSupervisor(
+            RunSupervisor(
                 run=run,
                 log_directory=debug_directory(run),
                 workspace=result_workspace(),
-                required_checks=input_versions.acceptance_checks,
                 sessions=lambda: supervised_sessions(client),
-                finalize=save_completed_result,
+                retain=retain_research,
                 result_workspace=result_workspace,
                 input_manifest=lambda: input_versions.manifest,
                 on_finishing=app.state.begin_shutdown,
             ).run()
-        normal_finish = outcome["status"] == "complete"
     except KeyboardInterrupt:
         print("Run interrupted; preserving identities and resources for --resume-from", flush=True)
     finally:
         app.state.begin_shutdown()
         cleanup_errors = []
         try:
-            if not normal_finish:
-                try:
-                    session_runtime.suspend()
-                except (OSError, ValueError, RuntimeError):
-                    cleanup_errors.append("research suspension")
-                app.state.save_checkpoint()
-                store.update(status="suspended")
-            else:
-                for label, cleanup in (
-                    ("gateway resources", app.state.close_resources),
-                    ("research sessions", session_runtime.close),
-                    ("peer fixtures", fixtures.close),
-                ):
-                    try:
-                        cleanup()
-                    except Exception:  # noqa: BLE001
-                        cleanup_errors.append(label)
-                store.update(status="completed")
+            try:
+                session_runtime.suspend()
+            except (OSError, ValueError, RuntimeError):
+                cleanup_errors.append("research suspension")
+            app.state.save_checkpoint()
+            store.update(status="suspended")
             if cleanup_errors:
                 (run / "cleanup-errors.json").write_text(json.dumps(cleanup_errors))
                 print("Cleanup requires review: " + ", ".join(cleanup_errors), flush=True)

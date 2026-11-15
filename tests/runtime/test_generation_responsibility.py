@@ -2,15 +2,13 @@
 
 from pathlib import Path
 
-from task_input_support import task_inputs
-
 from a3_research_agent.host.inputs.versions import InputVersions
 
 ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_published_research_contract(tmp_path):
-    versions = InputVersions(ROOT, tmp_path / "run", custom_dir=task_inputs(tmp_path / "task"))
+    versions = InputVersions(ROOT, tmp_path / "run")
     versions.activate(versions.prepare(), "start")
     instructions = versions.model_instructions()[1]
     for requirement in (
@@ -24,7 +22,7 @@ def test_published_research_contract(tmp_path):
 
 
 def test_research_web_is_an_explicit_optional_service():
-    execution = (ROOT / "agent-inputs/shared/execution.md").read_text()
+    execution = (ROOT / "prompt/execution.md").read_text()
     assert "Host 默认关闭网页网关，部署方启用并接入工具后使用" in execution
     assert "缺失注册或后端故障交给维护者" in execution
     for endpoint in ("/web/status", "/web/search", "/web/fetch"):

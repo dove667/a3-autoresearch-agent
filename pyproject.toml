@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "a3-research-agent"
 version = "0.1.0"
-description = "A self-evolving research agent for the A3 dual-arm simulation project"
+description = "Autonomous policy research for the A3 dual-arm simulation project"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [

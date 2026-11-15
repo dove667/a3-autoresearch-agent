@@ -14,9 +14,10 @@ import time
 
 import pytest
 
+from a3_research_agent.harness import history as recall
+from a3_research_agent.harness import long_term_memory as memory
 from a3_research_agent.harness.context import compaction, spill
 from a3_research_agent.harness.context import manager as cm
-from a3_research_agent.harness.memory import recall
 
 SECTIONS = compaction.SECTION_TITLES
 GOOD_SUMMARY = "\n".join(f"## {title}\n- point" for title in SECTIONS)
@@ -334,14 +335,14 @@ def test_summary_failure_preserves_original_history_instead_of_building_recall_c
         compactor = compaction.ForkCompactor(Gateway(fail=True), tools=[], trigger_tokens=1000)
         messages = history()
         recall.append_history_many(messages)
-        recall.write_memory("已确认 2x10 任务需 3200 步，原因是回合长度", kind="fact")
+        memory.write_memory("已确认 2x10 任务需 3200 步，原因是回合长度", kind="fact")
         cm.atomic("checkpoint.json", json.dumps(messages))
         compactor.before_request(messages)
         compactor.wait(timeout=10)
         with pytest.raises(cm.ContextError, match="compaction"):
             compactor.before_request(messages)
         assert json.loads(pathlib.Path("checkpoint.json").read_text()) == messages
-        assert "已确认 2x10 任务需 3200 步" in recall.read_memory()
+        assert "已确认 2x10 任务需 3200 步" in memory.read_memory()
         assert "replacement" not in json.loads(pathlib.Path(compaction.RESULT_PATH).read_text())
 
 
@@ -373,21 +374,21 @@ def test_recall_needs_keywords():
 
 def test_memory_write_then_read_and_list():
     with workspace():
-        entry = recall.write_memory("baseline smolvla 2x5 = 4.2", kind="result")
+        entry = memory.write_memory("baseline smolvla 2x5 = 4.2", kind="result")
         assert entry["id"] and entry["kind"] == "result"
-        detail = recall.read_memory(entry["id"][:6])
+        detail = memory.read_memory(entry["id"][:6])
         assert "baseline smolvla 2x5 = 4.2" in detail
-        listing = recall.read_memory()
+        listing = memory.read_memory()
         assert entry["id"] in listing
 
 
 def test_memory_tool_dispatch_and_empty_write():
     with workspace():
-        assert json.loads(json.dumps(recall.memory_tool({"action": "write", "content": "note A"})))[
+        assert json.loads(json.dumps(memory.memory_tool({"action": "write", "content": "note A"})))[
             "id"
         ]
-        assert "note A" in recall.memory_tool({"action": "read", "key": "note A"})
-        assert "error" in recall.memory_tool({"action": "write", "content": "  "})
+        assert "note A" in memory.memory_tool({"action": "read", "key": "note A"})
+        assert "error" in memory.memory_tool({"action": "write", "content": "  "})
 
 
 if __name__ == "__main__":

@@ -6,7 +6,7 @@ import shutil
 from pathlib import Path
 
 import pytest
-from task_input_support import deployment_source, task_inputs
+from input_source_support import deployment_source
 
 from a3_research_agent.cli.night_release import (
     night_state_directory,
@@ -14,7 +14,7 @@ from a3_research_agent.cli.night_release import (
     publish_release,
 )
 from a3_research_agent.harness import input_skills, skill_registry
-from a3_research_agent.host.inputs.versions import SHARED_INPUT_SOURCES, InputVersions
+from a3_research_agent.host.inputs.versions import PROMPT_SOURCES, InputVersions
 
 ROOT = Path(__file__).resolve().parents[2]
 SKILL = "skills/a3-mujoco-autoresearch"
@@ -23,7 +23,7 @@ SKILL = "skills/a3-mujoco-autoresearch"
 def test_preset_snapshot_installs_research_references_without_prompt_injection(
     tmp_path, monkeypatch
 ):
-    versions = InputVersions(ROOT, tmp_path / "run", custom_dir=task_inputs(tmp_path / "task"))
+    versions = InputVersions(ROOT, tmp_path / "run")
     manifest = versions.activate(versions.prepare(), "start")
     catalog_version = json.loads((ROOT / SKILL / "assets/catalog-entry.json").read_text())[
         "version"
@@ -62,7 +62,7 @@ def test_published_release_carries_the_same_research_skill_tree(tmp_path, monkey
     handoff = tmp_path / "handoff.md"
     handoff.write_text("## 已核对结论\n\n已有实验已保存。\n\n## 待办\n\n继续研究。\n")
     anchor = tmp_path / "project/trajectories/run-original"
-    current = InputVersions(ROOT, anchor, custom_dir=task_inputs(tmp_path / "task"))
+    current = InputVersions(ROOT, anchor)
     current.activate(current.prepare(), "start")
     proposal = prepare_release(ROOT, handoff, commit="a" * 40, run=anchor)
     assert f"{SKILL}/SKILL.md" in proposal["inputs"]
@@ -109,7 +109,7 @@ def test_new_reviewed_package_is_discovered_without_a_runtime_allowlist(tmp_path
             }
         )
     )
-    versions = InputVersions(root, tmp_path / "run", custom_dir=task_inputs(tmp_path / "task"))
+    versions = InputVersions(root, tmp_path / "run")
     proposal = versions.prepare()
     assert proposal["contents"]["skills/learned-method/SKILL.md"] == "# Reusable learned method\n"
     assert proposal["files"]["skills/learned-method/SKILL.md"]["version"] == "0.1.0"
@@ -121,13 +121,13 @@ def test_incomplete_new_package_is_rejected_instead_of_silently_omitted(tmp_path
     package.mkdir()
     (package / "SKILL.md").write_text("# Unregistered method\n")
     with pytest.raises(ValueError, match="incomplete"):
-        InputVersions(root, None, custom_dir=task_inputs(tmp_path / "task"))
+        InputVersions(root, None)
 
 
 @pytest.mark.parametrize("change", ["edit", "add", "remove"])
 def test_skill_tree_change_requires_a_new_package_version(tmp_path, change):
     root = tmp_path / "repo"
-    for relative in SHARED_INPUT_SOURCES.values():
+    for relative in PROMPT_SOURCES.values():
         target = root / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes((ROOT / relative).read_bytes())
@@ -136,7 +136,7 @@ def test_skill_tree_change_requires_a_new_package_version(tmp_path, change):
     catalog = json.loads(catalog_path.read_text())
     catalog["version"] = "1.2.3"
     catalog_path.write_text(json.dumps(catalog))
-    versions = InputVersions(root, tmp_path / "run", custom_dir=task_inputs(tmp_path / "task"))
+    versions = InputVersions(root, tmp_path / "run")
     versions.activate(versions.prepare(), "start")
     reference = root / SKILL / "references/training-diagnostics.md"
     if change == "edit":
@@ -146,11 +146,11 @@ def test_skill_tree_change_requires_a_new_package_version(tmp_path, change):
     else:
         reference.unlink()
     with pytest.raises(ValueError, match="version increment"):
-        InputVersions(root, versions.run).prepare_shared_update()
+        InputVersions(root, versions.run).prepare_update()
     catalog = json.loads(catalog_path.read_text())
     catalog["version"] = "1.2.4"
     catalog_path.write_text(json.dumps(catalog))
-    upgraded = InputVersions(root, versions.run).prepare_shared_update()
+    upgraded = InputVersions(root, versions.run).prepare_update()
     assert upgraded["files"][f"{SKILL}/SKILL.md"]["version"] == "1.2.4"
 
 
@@ -159,17 +159,17 @@ def test_preset_skill_symlink_is_rejected_before_snapshotting(tmp_path):
     (root / "skills").mkdir(parents=True)
     (root / SKILL).symlink_to(ROOT / SKILL, target_is_directory=True)
     with pytest.raises(ValueError, match="symlinks"):
-        InputVersions(root, None, custom_dir=task_inputs(tmp_path / "task"))
+        InputVersions(root, None)
 
 
 def test_existing_preset_instance_rediscovers_new_versioned_reference_files(tmp_path):
     root = tmp_path / "repo"
-    for relative in SHARED_INPUT_SOURCES.values():
+    for relative in PROMPT_SOURCES.values():
         target = root / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes((ROOT / relative).read_bytes())
     shutil.copytree(ROOT / SKILL, root / SKILL, ignore=shutil.ignore_patterns("__pycache__"))
-    versions = InputVersions(root, tmp_path / "run", custom_dir=task_inputs(tmp_path / "task"))
+    versions = InputVersions(root, tmp_path / "run")
     first = versions.activate(versions.prepare(), "start")
     added = root / SKILL / "references/new-workflow.md"
     added.write_text("A newly deployed research workflow.")
@@ -177,7 +177,7 @@ def test_existing_preset_instance_rediscovers_new_versioned_reference_files(tmp_
     catalog = json.loads(catalog_path.read_text())
     catalog["version"] = "1.2.4"
     catalog_path.write_text(json.dumps(catalog))
-    proposal = versions.prepare_shared_update()
+    proposal = versions.prepare_update()
     name = f"{SKILL}/references/new-workflow.md"
     assert name not in first["files"]
     assert proposal["contents"][name] == added.read_text()

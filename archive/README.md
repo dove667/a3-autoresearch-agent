@@ -2,4 +2,4 @@
 
 `agent-inputs/` 保留早期阶段实验的目标、验收、专项指令和构建提示词。文件按原版本归档，供复核历史实验；当前启动器不加载这些目录。
 
-当前通用输入见根目录的 [agent-inputs](../agent-inputs/README.md)。新研究任务通过显式输入目录提供自己的目标、验收与协议，使用方法见[教程](../docs/tutorial.md)。
+当前通用输入见根目录的 [输入管理](../docs/reference/agent-inputs.md)。新研究任务通过显式输入目录提供自己的目标、验收与协议，使用方法见[教程](../docs/guides/usage.md)。

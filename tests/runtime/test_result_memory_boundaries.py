@@ -23,9 +23,9 @@ def load(name):
         / (
             {
                 "context_manager": "context/manager.py",
-                "memory_state": "memory/state.py",
+                "operational_state": "operational_state.py",
                 "spill": "context/spill.py",
-                "recall": "memory/recall.py",
+                "recall": "history.py",
             }[name]
         ),
     )
@@ -196,7 +196,7 @@ def test_execution_is_separate_from_result_publication(tmp_path, monkeypatch):
             maybe_spill=lambda *a, **k: (_ for _ in ()).throw(OSError())
         ),
         "context_manager": cm,
-        "memory_state": types.SimpleNamespace(record_page=lambda *a: None),
+        "operational_state": types.SimpleNamespace(record_page=lambda *a: None),
     }
     exec(compile(agent_functions("dispatch_tool_call"), "isolated-agent", "exec"), ns)
     assert ns["dispatch_tool_call"]({"call_id": "c", "name": "gateway", "arguments": "{}"}) == raw
@@ -209,9 +209,9 @@ def test_archive_failure_leaves_executed_raw_result_in_journal(tmp_path, monkeyp
     ns = {
         "json": json,
         "context_manager": cm,
-        "memory_state": types.SimpleNamespace(record_page=lambda *a: None),
+        "operational_state": types.SimpleNamespace(record_page=lambda *a: None),
         "log": lambda *a: None,
-        "recall_tools": types.SimpleNamespace(append_history=lambda *a: None),
+        "history_tools": types.SimpleNamespace(append_history=lambda *a: None),
     }
     exec(
         compile(
@@ -306,7 +306,7 @@ def test_irreducible_envelope_is_a_bounded_failure_not_lost_calls(tmp_path, monk
 
 def test_binary_read_reports_type_without_generic_execution_failure(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    state = load("memory_state")
+    state = load("operational_state")
     raw = b"\x89PNG\xff\0" * 20
     pathlib.Path("image.bin").write_bytes(raw)
     page = state.read_page("image.bin")
@@ -316,7 +316,7 @@ def test_binary_read_reports_type_without_generic_execution_failure(tmp_path, mo
 
 def test_read_receipt_recovery_is_idempotent_and_can_mark_delivery(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    state = load("memory_state")
+    state = load("operational_state")
     page = {
         "path": "facts.txt",
         "sha256": "a" * 64,
@@ -337,7 +337,7 @@ def test_read_receipt_recovery_is_idempotent_and_can_mark_delivery(tmp_path, mon
 
 def test_raw_read_journal_rebuilds_receipt_before_model_delivery(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    cm, state = load("context_manager"), load("memory_state")
+    cm, state = load("context_manager"), load("operational_state")
     base = [{"role": "user", "content": "task"}]
     cm.atomic("checkpoint.json", json.dumps(base))
     page = {
@@ -366,7 +366,7 @@ def test_raw_read_journal_rebuilds_receipt_before_model_delivery(tmp_path, monke
         "pathlib": pathlib,
         "hashlib": hashlib,
         "context_manager": cm,
-        "memory_state": state,
+        "operational_state": state,
         "save_manifest": lambda: None,
         "checkpoint": lambda value: cm.atomic("checkpoint.json", json.dumps(value)),
     }
@@ -401,7 +401,7 @@ def test_decoded_artifact_recovery_regenerates_missing_derived_file(tmp_path, mo
 
 def test_text_paging_streams_source_and_bounds_final_escaped_envelope(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    state = load("memory_state")
+    state = load("operational_state")
     text = '中文🙂\0\\"' * 10000
     pathlib.Path("large.txt").write_text(text)
     monkeypatch.setattr(

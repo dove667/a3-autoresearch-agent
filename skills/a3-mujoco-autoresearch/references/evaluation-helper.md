@@ -2,13 +2,15 @@
 
 Run `python skills/a3-mujoco-autoresearch/scripts/compare_evaluations.py baseline.json candidate.json` only through an available authorized execution tool. It reads files and prints JSON; no simulator, model, network, GPU or source-file modification. Default bootstrap uses 10,000 deterministic paired resamples; `--bootstrap-seed` and `--bootstrap-repeats` control analysis only, not experimental seeds.
 
+This optional helper retains a fixed historical analysis schema. Its `protocol_version` and `protocol_sha256` fields identify the saved comparison settings used by that schema; they do not require a separate Agent input file. Record current settings with the experiment and map verified values explicitly when using the helper. [Benchmark evaluation](benchmark-evaluation.md) defines the full grid and reporting; helper output adds analysis without a research completion threshold.
+
 ## Explicit normalized schema
 
 Each input has:
 
 - `schema`: `a3-paired-evaluation-v1`
 - `protocol_version`: `0.3.0` through `0.3.6`; baseline and candidate must use the same version and protocol digest
-- `protocol_sha256`: digest of the actual saved scientific protocol.
+- `protocol_sha256`: digest of the actual saved evaluation settings represented by this historical schema.
 - `conditions_sha256`: digest of a canonical, independently checked manifest of A3 version, physics/randomization/success config, observation/control interface, task prompts, scene/source settings, dataset split, seed plan and external evaluation conditions. Exclude the policy treatment itself; preserve it separately. Same digest is necessary but does not prove the manifest truthful.
 - `policy_snapshot_sha256`: digest of the full policy snapshot manifest (weights, processor, code, inference settings and declared task routing), not only a weights filename.
 - `split`: `development` or `final-test`.

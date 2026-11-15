@@ -1,11 +1,10 @@
-"""Only the current research identity receives the selected task instructions."""
+"""Only the current research identity receives the current research instructions."""
 
 from copy import deepcopy
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-from task_input_support import task_inputs
 
 from a3_research_agent.host.gateway.app import create_app
 from a3_research_agent.host.inputs.versions import InputVersions
@@ -14,11 +13,11 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 @pytest.mark.parametrize("versioned", [False, True])
-def test_only_current_main_receives_task_instructions(tmp_path, versioned):
+def test_only_current_main_receives_research_instructions(tmp_path, versioned):
     calls = []
-    inputs, expected = None, "EXPLICIT TASK CONTRACT"
+    inputs, expected = None, "EXPLICIT RESEARCH PRINCIPLES"
     if versioned:
-        inputs = InputVersions(ROOT, tmp_path / "run", custom_dir=task_inputs(tmp_path / "task"))
+        inputs = InputVersions(ROOT, tmp_path / "run")
         inputs.activate(inputs.prepare(), "start")
         expected = inputs.model_instructions()[1]
     client = TestClient(

@@ -1,6 +1,6 @@
 {
   "id": "a3-policy-integration",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "status": "reference",
   "description": "Use when an A3 policy adapter, checkpoint, task condition or generated episode runner changes, or a policy appears to ignore the task instruction.",
   "keywords": [

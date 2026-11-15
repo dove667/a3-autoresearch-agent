@@ -8,7 +8,6 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from a3_research_agent.host.inputs.task_preparation import prepare_custom_task
 from a3_research_agent.host.inputs.versions import InputVersions
 from a3_research_agent.host.launch import launch_run
 from a3_research_agent.host.models.settings import model_settings
@@ -36,7 +35,7 @@ def launch_main() -> None:
     parser.add_argument(
         "--run-harness",
         type=Path,
-        help="Start a new task from an explicitly selected published run/package directory",
+        help="Start research from an explicitly selected published run/package directory",
     )
     parser.add_argument(
         "--harness-commit",
@@ -46,11 +45,6 @@ def launch_main() -> None:
         "--feedback-file",
         type=Path,
         help="On resume, explicitly add a human feedback file before the next main model call",
-    )
-    parser.add_argument(
-        "--agent-inputs-dir",
-        type=Path,
-        help="Complete custom Agent input directory for a new published task",
     )
     parser.add_argument(
         "--project-root",
@@ -68,25 +62,8 @@ def launch_main() -> None:
         parser.error("Select --harness-commit <published SHA> or --resume-from <published run>")
     if args.feedback_file and not args.resume_from:
         parser.error("--feedback-file requires --resume-from")
-    if args.agent_inputs_dir and (args.resume_from or args.check):
-        parser.error("--agent-inputs-dir selects a new research task")
-    if not args.resume_from and not args.check and not args.agent_inputs_dir:
-        parser.error(
-            "New research tasks require --agent-inputs-dir with goal.md, acceptance.md and protocol.md"
-        )
-    args.custom_input_proposal = None
-    args.initial_feedback = None
+    args.input_proposal = None
     try:
-        if args.agent_inputs_dir:
-            # Pure validation/snapshot before environment, SSH or run creation.
-            args.custom_input_proposal = InputVersions(
-                root,
-                None,
-                custom_dir=args.agent_inputs_dir,
-            ).prepare()
-            args.initial_feedback = args.custom_input_proposal["contents"].get(
-                "initial-feedback.md"
-            )
         from a3_research_agent.host.published_harness import (
             COMMAND,
             native_source,
@@ -117,10 +94,9 @@ def launch_main() -> None:
         )
         if selected:
             native_source(root, selected)
-        if args.custom_input_proposal:
-            prepare_custom_task(
-                start, args.custom_input_proposal["contents"]["goal.md"], args.initial_feedback
-            )
+        if not args.resume_from and not args.check:
+            # Freeze the current prompts before deployment checks or run creation.
+            args.input_proposal = InputVersions(root, None).prepare()
     except (ValueError, OSError) as error:
         parser.error(str(error))
     load_dotenv(os.environ.get("A3_RSI_ENV_FILE", root / ".env"), override=True)
@@ -200,7 +176,7 @@ def launch_main() -> None:
         return
     run_root = root / "trajectories"
     run = args.resume_from.resolve() if args.resume_from else create_run_directory(run_root)
-    with RunLease(run):
+    with RunLease(root / ".runtime/research-workspace"), RunLease(run):
         launch_run(args, run, a3, start)
 
 

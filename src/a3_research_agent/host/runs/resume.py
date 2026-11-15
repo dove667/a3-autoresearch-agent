@@ -18,7 +18,7 @@ from a3_research_agent.host.sessions.workspace import (
     session_workspace,
     write_durable,
 )
-from a3_research_agent.workspace.paths import workspace_path
+from a3_research_agent.path_safety import workspace_path
 
 
 def load_resume_state(run: Path, store: RunStateStore, model: str) -> dict:
@@ -104,7 +104,7 @@ def preflight_blocked_resume(
     ):
         raise ValueError("Blocked resume requires the confirmed stopped, nonclosed current main")
     workspace = session_workspace(run / "sessions", actor)
-    outcome = evaluate_outcome(workspace, ())
+    outcome = evaluate_outcome(workspace)
     supervision = json.loads(workspace_path(run, "supervision.json").read_text())
     host_outcome = json.loads(workspace_path(run, "outcome.json").read_text())
     prior_attempt = None

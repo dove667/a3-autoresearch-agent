@@ -9,17 +9,16 @@ from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
 
-SHARED_INPUT_SOURCES = {
-    "SOUL.md": "agent-inputs/SOUL.md",
-    "execution.md": "agent-inputs/shared/execution.md",
-    "workspace-instructions.md": "agent-inputs/shared/workspace.md",
+PROMPT_SOURCES = {
+    "SOUL.md": "prompt/SOUL.md",
+    "execution.md": "prompt/execution.md",
+    "workspace-instructions.md": "prompt/workspace.md",
 }
-TASK_INPUTS = {"goal.md", "acceptance.md", "protocol.md"}
 
 
 def deployment_input_sources(source_root: Path) -> dict[str, str]:
-    """Add declared reference packages without changing the required task contract."""
-    sources = dict(SHARED_INPUT_SOURCES)
+    """Select the current prompts and complete reviewed method packages."""
+    sources = dict(PROMPT_SOURCES)
     root = source_root / "skills"
     if root.is_symlink():
         raise ValueError("Deployed skill references cannot be symlinks")
@@ -132,81 +131,41 @@ def write_atomic(path: Path, content: bytes) -> None:
 
 
 class InputVersions:
-    def __init__(self, source_root: Path, run: Path | None, *, custom_dir: Path | None = None):
+    def __init__(self, source_root: Path, run: Path | None):
         self.source_root, self.run = source_root, run
-        self.custom_dir = custom_dir
+        self.snapshot_directory = None
         self.frozen_manifest = None
         self.provided = None
         self.lock = threading.RLock()
         self.manifest, self.contents = {}, {}
         saved = run / "inputs/input-manifest.json" if run else None
         if saved and saved.is_file():
-            if custom_dir is not None:
-                raise ValueError("Cannot replace task inputs on resume; preview an explicit update")
             self.frozen_manifest = json.loads(saved.read_text())
             revision = self.frozen_manifest.get("revision", "")
             if not re.fullmatch(r"revision-\d{4,}", revision):
                 raise ValueError("Invalid recorded input revision")
-            self.custom_dir = run / "input-revisions" / revision
+            self.snapshot_directory = run / "input-revisions" / revision
             self.sources = {name: name for name in self.frozen_manifest["files"]}
         else:
             if run and (run / "startup.json").is_file():
                 raise ValueError("Recorded runs require their current input manifest")
-            if custom_dir is None:
-                raise ValueError("New research tasks require an explicit Agent input directory")
-            self.sources = self._task_sources(custom_dir)
-
-    def _task_sources(self, directory: Path) -> dict[str, str]:
-        if not directory.is_dir() or directory.is_symlink():
-            raise ValueError("Agent input directory must be a real directory")
-        names = []
-        reserved = {"input-manifest.json", "manifest.json", "deployment.json", "history"}
-        shared = deployment_input_sources(self.source_root)
-        for path in sorted(directory.rglob("*")):
-            name = path.relative_to(directory).as_posix()
-            if path.is_symlink():
-                raise ValueError(f"Agent inputs cannot contain symlinks: {name}")
-            if path.is_file():
-                if (
-                    path.relative_to(directory).parts[0] in reserved
-                    or name in shared
-                    or name.startswith("skills/")
-                ):
-                    raise ValueError(f"Reserved Agent input path: {name}")
-                names.append(name)
-        if missing := TASK_INPUTS - set(names):
-            raise ValueError(
-                f"Incomplete Agent input directory; missing: {', '.join(sorted(missing))}"
-            )
-        return {name: str(directory.resolve() / name) for name in names}
+            self.sources = deployment_input_sources(source_root)
 
     @classmethod
     def from_proposal(cls, source_root: Path, run: Path, proposal: dict):
         instance = cls.__new__(cls)
         instance.source_root, instance.run = source_root, run
-        instance.custom_dir, instance.frozen_manifest = None, None
+        instance.snapshot_directory, instance.frozen_manifest = None, None
         instance.sources = {name: record["source"] for name, record in proposal["files"].items()}
         instance.provided = deepcopy(proposal)
         instance.lock = threading.RLock()
         instance.manifest, instance.contents = {}, {}
         return instance
 
-    def prepare_directory(self, directory: Path) -> dict:
-        candidate = InputVersions(self.source_root, None, custom_dir=directory)
+    def prepare_update(self) -> dict:
+        """Preview the repository's complete current prompts and method packages."""
+        candidate = InputVersions(self.source_root, None)
         candidate.run = self.run
-        return candidate.prepare()
-
-    def prepare_shared_update(self) -> dict:
-        proposal = self.prepare()
-        sources = deployment_input_sources(self.source_root)
-        for name in list(proposal["contents"]):
-            if name in SHARED_INPUT_SOURCES or name.startswith("skills/"):
-                proposal["contents"].pop(name)
-                proposal["files"].pop(name)
-        for name, source in sources.items():
-            proposal["contents"][name] = (self.source_root / source).read_bytes().decode("utf-8")
-            proposal["files"][name] = {"source": source}
-        candidate = InputVersions.from_proposal(self.source_root, self.run, proposal)
         return candidate.prepare()
 
     def prepare(self) -> dict:
@@ -217,19 +176,16 @@ class InputVersions:
             elif self.frozen_manifest:
                 selected = {}
                 for name in self.sources:
-                    path = self.custom_dir / name
+                    path = self.snapshot_directory / name
                     if path.is_symlink() or any(
                         parent.is_symlink()
                         for parent in path.parents
-                        if parent != self.custom_dir.parent
+                        if parent != self.snapshot_directory.parent
                     ):
                         raise ValueError(f"Unsafe recorded input: {name}")
                     selected[name] = path.read_bytes().decode("utf-8")
             else:
-                self.sources = {
-                    **self._task_sources(self.custom_dir),
-                    **deployment_input_sources(self.source_root),
-                }
+                self.sources = deployment_input_sources(self.source_root)
                 selected = {}
                 for name, source in self.sources.items():
                     path = Path(source) if Path(source).is_absolute() else self.source_root / source
@@ -241,7 +197,7 @@ class InputVersions:
                 text = selected[name]
                 data = text.encode("utf-8")
                 match = VERSION.search(text)
-                if not match and name in TASK_INPUTS | SHARED_INPUT_SOURCES.keys():
+                if not match and name in PROMPT_SOURCES:
                     raise ValueError(f"Missing semantic version in {relative}")
                 contents[name] = text
                 files[name] = {
@@ -252,7 +208,7 @@ class InputVersions:
                 if self.frozen_manifest:
                     old = self.frozen_manifest["files"][name]
                     if old["sha256"] != files[name]["sha256"]:
-                        raise ValueError(f"Recorded custom input snapshot changed: {name}")
+                        raise ValueError(f"Recorded input snapshot changed: {name}")
                     files[name] = dict(old)
             for name, version in skill_input_versions(contents).items():
                 if not self.frozen_manifest:
@@ -292,11 +248,6 @@ class InputVersions:
                         and old.get("sha256") != item["sha256"]
                     ):
                         raise ValueError(f"{name} changed without a version increment")
-            checks = re.findall(
-                r"^## ([A-Za-z][A-Za-z0-9_-]*)\.(?:\s|$)", contents["acceptance.md"], re.MULTILINE
-            )
-            if not checks or len(checks) != len(set(checks)):
-                raise ValueError("Task acceptance needs unique ## check_id. headings")
             digest = hashlib.sha256(json.dumps(files, sort_keys=True).encode()).hexdigest()
             return {
                 "digest": digest,
@@ -328,11 +279,6 @@ class InputVersions:
                 "status": "active",
                 "generation": index,
                 "execution_index": execution_index(proposal["contents"]["execution.md"]),
-                "acceptance_checks": re.findall(
-                    r"^## ([A-Za-z][A-Za-z0-9_-]*)\.(?:\s|$)",
-                    proposal["contents"]["acceptance.md"],
-                    re.MULTILINE,
-                ),
             }
             manifest_bytes = (json.dumps(manifest, ensure_ascii=False, indent=2) + "\n").encode()
             targets = [self.run / "inputs"]
@@ -399,7 +345,7 @@ class InputVersions:
                 raise
             self.manifest = manifest
             self.contents = dict(proposal["contents"])
-            self.custom_dir = directory
+            self.snapshot_directory = directory
             self.frozen_manifest = deepcopy(manifest)
             self.provided = None
             self.sources = {name: name for name in manifest["files"]}
@@ -410,28 +356,10 @@ class InputVersions:
             manifest = deepcopy(self.manifest)
             instructions = (
                 f"当前 Agent 输入：{manifest['revision']}，generation={manifest['generation']}，status={manifest['status']}，内容标识 {manifest['digest']}。\n"
-                "当前研究目标、验收和协议以以下版本化任务输入为准；"
-                "历史上下文中的旧版内容保留供追溯。\n"
+                "SOUL 定义持续研究目标与行为原则。历史输入保留供追溯，当前运行使用本次版本。\n"
                 "详细接口按需读取：A3_INPUT_ROOT 下 input-manifest.json 的 execution_index 给出 execution.md 章节字符 offset/end 和完整 SHA256，配合 read 的 fields 及分页；不要通读全部接口作为每轮前置步骤。"
                 "本请求已给出当前输入标识；同一已验证 revision 的已读内容无需重复读取或每轮再查 manifest。"
                 "连续读取多个输入文件时，前后必须都是status=active且revision与generation相同；"
-                "status=updating时等待，标识变化后重新读取。\n\n"
-                + "SOUL 提供长期角色原则；goal、acceptance、protocol 定义当前研究任务。\n"
-                + self.contents["SOUL.md"]
-                + "\n\n"
-                + self.contents["goal.md"]
-                + "\n\n"
-                + self.contents["acceptance.md"]
-                + ("\n\n" + self.contents["protocol.md"] if "protocol.md" in self.contents else "")
+                "status=updating时等待，标识变化后重新读取。\n\n" + self.contents["SOUL.md"]
             )
             return manifest, instructions
-
-    def acceptance_checks(self) -> tuple[str, ...]:
-        with self.lock:
-            return tuple(
-                re.findall(
-                    r"^## ([A-Za-z][A-Za-z0-9_-]*)\.(?:\s|$)",
-                    self.contents["acceptance.md"],
-                    re.MULTILINE,
-                )
-            )

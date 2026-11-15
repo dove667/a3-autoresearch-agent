@@ -33,7 +33,7 @@ def test_plan_tracks_dependencies_evidence_and_job_results(tmp_path, monkeypatch
         ]
         == "plan_validation"
     )
-    agent.memory_state.record_gateway("POST", "/jobs", {"job_id": job, "status": "queued"})
+    agent.operational_state.record_gateway("POST", "/jobs", {"job_id": job, "status": "queued"})
     result = call(
         "plan",
         action="update",
@@ -43,7 +43,7 @@ def test_plan_tracks_dependencies_evidence_and_job_results(tmp_path, monkeypatch
         ],
     )
     assert result["ready"] == ["audit"]
-    agent.memory_state.record_wait(
+    agent.operational_state.record_wait(
         {
             "reason": "state_changed",
             "changes": {
@@ -102,7 +102,7 @@ def test_memory_search_preserves_sources_and_superseded_notes(tmp_path, monkeypa
     }
     new = call("memory", **corrected)
     assert call("memory", **corrected) == new
-    assert len((tmp_path / "memory.jsonl").read_text().splitlines()) == 2
+    assert len((tmp_path / "memory/entries.jsonl").read_text().splitlines()) == 2
     assert [row["id"] for row in call("memory", action="search", key="DAgger checkpoint")] == [
         new["id"]
     ]
@@ -132,7 +132,7 @@ def test_recall_defaults_to_evidence_and_can_search_raw_calls(tmp_path, monkeypa
         },
         {"type": "function_call_output", "call_id": "2", "output": '["checkpoint query echo"]'},
     ]
-    agent.recall_tools.append_history_many(rows)
+    agent.history_tools.append_history_many(rows)
     query = {"keywords": ["checkpoint"], "n": 2, "m": 1}
     evidence = call("recall", **query)
     assert len(evidence) == 1 and "missing decoder" in evidence[0]

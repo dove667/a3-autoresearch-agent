@@ -1,24 +1,24 @@
-"""SOUL and explicit task contracts are versioned, frozen and forwarded once."""
+"""SOUL is versioned, frozen and forwarded once."""
 
 import hashlib
 import json
 
 import pytest
 from fastapi.testclient import TestClient
-from task_input_support import deployment_source, task_inputs
+from input_source_support import deployment_source
 
 from a3_research_agent.host.gateway.app import create_app
 from a3_research_agent.host.inputs.versions import InputVersions
 
 
-def test_soul_is_snapshotted_hashed_and_forwarded_with_current_task(tmp_path):
+def test_soul_is_snapshotted_hashed_and_forwarded_with_current_research(tmp_path):
     root = deployment_source(tmp_path / "source")
     run = tmp_path / "run"
-    inputs = InputVersions(root, run, custom_dir=task_inputs(tmp_path / "task"))
+    inputs = InputVersions(root, run)
     manifest = inputs.activate(inputs.prepare(), "start")
-    soul = (root / "agent-inputs/SOUL.md").read_bytes()
+    soul = (root / "prompt/SOUL.md").read_bytes()
     assert manifest["files"]["SOUL.md"] == {
-        "source": "agent-inputs/SOUL.md",
+        "source": "prompt/SOUL.md",
         "version": "1.0.0",
         "sha256": hashlib.sha256(soul).hexdigest(),
     }
@@ -41,8 +41,7 @@ def test_soul_is_snapshotted_hashed_and_forwarded_with_current_task(tmp_path):
     )
     assert response.status_code == 200
     instructions = calls[-1]["instructions"]
-    for name in ("SOUL.md", "goal.md", "acceptance.md", "protocol.md"):
-        assert instructions.count(inputs.contents[name]) == 1
+    assert instructions.count(inputs.contents["SOUL.md"]) == 1
     assert "EXECUTION REFERENCE UNIQUE" not in instructions
     assert "SKILL REFERENCE UNIQUE" not in instructions
     usage = json.loads((tmp_path / "usage.jsonl").read_text())
@@ -52,15 +51,15 @@ def test_soul_is_snapshotted_hashed_and_forwarded_with_current_task(tmp_path):
 def test_shared_update_is_explicit_and_preserves_original_revision(tmp_path):
     root = deployment_source(tmp_path / "source")
     run = tmp_path / "run"
-    inputs = InputVersions(root, run, custom_dir=task_inputs(tmp_path / "task"))
+    inputs = InputVersions(root, run)
     original = inputs.activate(inputs.prepare(), "start")
     archived = run / "input-revisions" / original["revision"] / "SOUL.md"
     before = archived.read_bytes()
-    source = root / "agent-inputs/SOUL.md"
+    source = root / "prompt/SOUL.md"
     source.write_text("Version: 1.0.1\nUpdated SOUL principles\n")
     restored = InputVersions(root, run)
     assert restored.prepare()["digest"] == original["digest"]
-    proposal = restored.prepare_shared_update()
+    proposal = restored.prepare_update()
     assert proposal["digest"] != original["digest"]
     current = restored.activate(proposal, "hot_reload")
     assert current["files"]["SOUL.md"]["version"] == "1.0.1"
@@ -68,5 +67,5 @@ def test_shared_update_is_explicit_and_preserves_original_revision(tmp_path):
     assert archived.read_bytes() == before
     source.write_text("Version: 1.0.1\nChanged without version increment\n")
     with pytest.raises(ValueError, match="version increment"):
-        restored.prepare_shared_update()
+        restored.prepare_update()
     assert archived.read_bytes() == before

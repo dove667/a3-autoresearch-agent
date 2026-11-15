@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from a3_research_agent.packaging.harness_payload import build_harness_payload
+from a3_research_agent.harness_payload import build_harness_payload
 
 ROOT = Path(__file__).resolve().parents[2]
 

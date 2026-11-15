@@ -85,14 +85,13 @@ def test_schema_exposes_actual_bounded_parameters():
 
 
 def test_input_header_names_the_canonical_manifest_path(tmp_path):
-    from task_input_support import deployment_source, task_inputs
+    from input_source_support import deployment_source
 
     from a3_research_agent.host.inputs.versions import InputVersions
 
     v = InputVersions(
         deployment_source(tmp_path / "source"),
         tmp_path / "run",
-        custom_dir=task_inputs(tmp_path / "task"),
     )
     v.activate(v.prepare(), "start")
     assert "A3_INPUT_ROOT 下 input-manifest.json" in v.model_instructions()[1]
@@ -103,7 +102,7 @@ def test_real_progress_validation_does_not_mutate_state(tmp_path, monkeypatch):
 
     monkeypatch.chdir(tmp_path)
     spec = importlib.util.spec_from_file_location(
-        "real_progress_validation", ROOT / "memory/state.py"
+        "real_progress_validation", ROOT / "operational_state.py"
     )
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)

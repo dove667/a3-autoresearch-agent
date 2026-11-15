@@ -21,3 +21,7 @@ def input_root():
 
 def reference_root():
     return _root("A3_REFERENCE_ROOT")
+
+
+def memory_root():
+    return _root("A3_MEMORY_ROOT")

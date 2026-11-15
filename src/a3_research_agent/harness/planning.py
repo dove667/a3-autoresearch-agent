@@ -4,8 +4,8 @@ import json
 import re
 from pathlib import Path
 
+from a3_research_agent.harness import operational_state as operational
 from a3_research_agent.harness.context import manager
-from a3_research_agent.harness.memory import state as operational
 
 PATH = Path("research-plan.json")
 STATUSES = ("pending", "active", "blocked", "done", "skipped")

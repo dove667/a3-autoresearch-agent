@@ -2,16 +2,16 @@
 name: a3-mujoco-autoresearch
 description: Develop and improve learned policies for the A3 dual-arm MuJoCo cookie-packing project. Use for method selection, ACT/Diffusion/Flow/VLA/world-model experiments, data and training diagnostics, paired closed-loop evaluation, and reusable research experience. Applies to research planning or authorized execution, not permission to start training or change the benchmark.
 metadata:
-  version: 0.1.16
+  version: 0.1.17
 ---
 
 # A3 MuJoCo autoresearch
 
-Turn robot-learning knowledge into **testable A3 experiments and reusable capability**, not a paper list. This is an externally authored baseline skill; its method recommendations are not evidence of local performance. Use it to act autonomously within the current task and refine it when real results justify changes.
+Turn robot-learning knowledge into **testable A3 experiments and reusable capability**. Follow SOUL's long-term goal: improve A3 2×5 and 2×10 full-evaluation accuracy and success rate. Refine this baseline skill when actual research results justify changes.
 
-## Start with the actual task
+## Start with current research
 
-Read the current run's goal, acceptance, protocol and feedback, then [project contract](references/project-contract.md). Verify the deployed A3 revision and model/data interfaces before applying a recipe. Repository templates and paper results are not the run's execution state. This skill neither replaces those inputs nor expands permissions.
+Read SOUL, the saved research plan and relevant feedback, then [project contract](references/project-contract.md). Use [benchmark evaluation](references/benchmark-evaluation.md) for the full evaluation grid and saved comparison conditions. Verify the deployed A3 revision and model/data interfaces before applying a recipe.
 
 For each next action, identify the limiting uncertainty: a broken adapter, insufficient data coverage, open-loop drift, underfitting, inference latency, or data-pipeline overhead. Choose an experiment that can distinguish explanations. Autonomously compare training, data improvement, and Policy deployment changes by their expected performance or information benefit, total time/compute and validation cost, risk and dependencies. A cheap interface test or deployment ablation is useful when it resolves a consequential uncertainty; cheapness alone does not justify repeating it instead of a more valuable training or data experiment. No direction or section order is a default optimum. Training need not be the expensive stage: if collection or closed-loop simulation dominates, optimize the measured pipeline bottleneck and reuse valid data/results rather than repeatedly recollecting or reevaluating.
 
@@ -31,7 +31,7 @@ For a concrete adapter or instruction-delivery repair, read `a3-policy-integrati
 
 The current Agent implements, trains, evaluates and fixes its own scripts. Do not create ordinary `/sessions` workers or delegate research to an orchestrator. Use the deployed Harness. Save reproduction details for tool, context, scheduling or recovery failures for the maintainers. Preserve scientific evidence, memory, resource limits and explicit cross-run asset grants.
 
-Fix ordinary script and adapter failures within the current task and verify the repair. Report specific missing infrastructure permissions, services or resources to the operator.
+Fix ordinary script and adapter failures within the current research and verify the repair. Report specific missing infrastructure permissions, services or resources to the operator.
 
 ## Schedule independent episodes
 
@@ -69,7 +69,7 @@ For a concrete grasp, transfer, placement or stagnation question, prefer existin
 
 ## Preserve behavioral progress and explore model families
 
-Keep candidates with demonstrated improvements in grasping, transport, placement, stability or recovery, even when aggregate score or complete success is unchanged. Inspect real video/frames with synchronized action/state traces and matched task conditions; report the specific capability, coverage, uncertainty and tradeoffs. Preserve weights/checkpoints, configuration and evidence for each useful capability. Keep uncertain visual improvements as candidates for targeted verification. Maintain several useful alternatives rather than discarding every model that does not beat one scalar baseline. Native benchmark metrics remain reported under the active protocol.
+Keep candidates with demonstrated improvements in grasping, transport, placement, stability or recovery, even when aggregate score or complete success is unchanged. Inspect real video/frames with synchronized action/state traces and matched task conditions; report the specific capability, coverage, uncertainty and tradeoffs. Preserve weights/checkpoints, configuration and evidence for each useful capability. Keep uncertain visual improvements as candidates for targeted verification. Maintain useful alternatives and report native benchmark metrics with their actual evaluation conditions.
 
 Inventory the actually trainable policy families, prior attempts and missing prerequisites. Give unexplored supported families meaningful data, training budgets and closed-loop diagnostics before repeatedly fine-tuning the same checkpoint. Tiny plumbing tests do not reject an algorithm family. Submit independent ready experiments within fixed quotas and reuse valid data, recordings and evaluations. See [research workflow](references/experiment-workflow.md) for candidate retention and process comparisons.
 
@@ -84,11 +84,11 @@ Inventory the actually trainable policy families, prior attempts and missing pre
 
 Run independent Policy experiments in parallel when resources permit. Record the deployed Harness version and keep scientific conditions comparable.
 
-## Evaluate without moving the target
+## Evaluate model progress
 
-Read the active task protocol for its development subsets, formal grid, paired scenarios, step limits, control frequency and task instructions. Record the complete conditions with the same policy snapshot before a comparison. Keep final-test scenarios reserved for their declared use.
+Use [benchmark evaluation](references/benchmark-evaluation.md) for development subsets and the complete six-cell, 120-episode grid. Record scenarios, step limits, control frequency, task instructions and the full policy snapshot before a comparison. Use small subsets for daily iteration and complete evaluations for promising candidates; preserve a separate final comparison set.
 
-Use [evaluation helper](references/evaluation-helper.md) for strict offline comparison of **explicitly normalized** reports. It validates keys and scientific comparability, reports cell results, computes full-grid G only for complete balanced coverage, and resamples paired scenario seeds together. It does not run simulation, authenticate provenance, certify acceptance, or decide whether to adopt a candidate.
+The optional [evaluation helper](references/evaluation-helper.md) compares **explicitly normalized** reports. It validates keys and declared conditions, reports cell results and paired uncertainty, and can compute the historical full-grid scalar. Its schema is an analysis format. Select candidates from actual results and continue research; no fixed score or confidence threshold ends the project.
 
 ## Improve this skill from evidence
 
@@ -98,4 +98,4 @@ When retained or handed off, include this entrypoint, referenced files and helpe
 
 ## Research access
 
-Use the current research identity's workspace and Host-authorized jobs and exports. Keep source provenance when reusing data or results. Request an explicit grant for cross-run assets. Report missing access through the operator rather than reaching into another identity's files or credentials.
+Use the shared project `workspace/`, `memory/entries.jsonl` and Host-authorized jobs and exports. Keep source provenance when reusing data or results, and report missing access through the operator. Future sessions and maintenance releases reuse these directories; remote job management still checks the recorded research identity.

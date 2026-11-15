@@ -29,7 +29,7 @@ def test_agent_import_does_not_read_credentials_or_start_loop(tmp_path):
 
 
 def test_exported_sources_can_reproduce_payload_without_checkout(tmp_path):
-    from a3_research_agent.packaging.harness_payload import build_harness_payload
+    from a3_research_agent.harness_payload import build_harness_payload
 
     files = build_harness_payload()
     for name, content in files.items():
@@ -39,7 +39,7 @@ def test_exported_sources_can_reproduce_payload_without_checkout(tmp_path):
     script = """
 import json
 from a3_research_agent.harness.agent import tools
-from a3_research_agent.packaging.harness_payload import build_harness_payload
+from a3_research_agent.harness_payload import build_harness_payload
 print(json.dumps({"files": build_harness_payload(), "tools": [x["name"] for x in tools]}))
 """
     result = subprocess.run(

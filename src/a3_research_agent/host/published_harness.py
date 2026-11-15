@@ -9,7 +9,7 @@ import tempfile
 from pathlib import Path
 
 from a3_research_agent.host.inputs.versions import write_atomic
-from a3_research_agent.workspace.paths import workspace_path
+from a3_research_agent.path_safety import workspace_path
 
 COMMAND = ["python", "-P", "-m", "a3_research_agent.harness.agent", "--resume"]
 MARKER = ".host/research-workspace.json"
@@ -24,8 +24,10 @@ def project_for_run(run: Path) -> Path:
 def run_metadata(run: Path) -> dict:
     marker = workspace_path(run, MARKER)
     metadata = json.loads(marker.read_text()) if marker.is_file() else {}
-    if not isinstance(metadata, dict) or (
-        "run_id" in metadata and not isinstance(metadata["run_id"], str)
+    if (
+        not isinstance(metadata, dict)
+        or set(metadata) - {"commit", "run_id"}
+        or ("run_id" in metadata and not isinstance(metadata["run_id"], str))
     ):
         raise ValueError("Invalid research workspace metadata")
     return metadata
@@ -57,7 +59,7 @@ def pin_run(run: Path, commit: str) -> None:
         raise ValueError("Cannot change a run's pinned Harness")
     metadata = run_metadata(run)
     metadata.update(commit=commit, run_id=run_identity(run))
-    metadata.setdefault("workspace_root", f"workspace/{run_identity(run)}")
+    metadata.pop("workspace_root", None)
     write_atomic(workspace_path(run, MARKER), json.dumps(metadata).encode())
 
 
@@ -67,23 +69,16 @@ def replace_run_pin(run: Path, previous: str, commit: str) -> None:
         raise ValueError("Published Harness pin changed during release")
     if not re.fullmatch(r"[a-f0-9]{40}", commit):
         raise ValueError("Invalid published Harness release commit")
-    write_atomic(
-        workspace_path(run, MARKER), json.dumps({**run_metadata(run), "commit": commit}).encode()
-    )
+    metadata = {**run_metadata(run), "commit": commit}
+    metadata.pop("workspace_root", None)
+    write_atomic(workspace_path(run, MARKER), json.dumps(metadata).encode())
 
 
 def research_workspace(run: Path, session: str) -> Path:
     if not re.fullmatch(r"[a-zA-Z0-9_-]{1,100}", session):
         raise ValueError("Invalid research workspace identity")
-    root = project_for_run(run)
-    base = run_metadata(run).get("workspace_root", f"workspace/{run_identity(run)}")
-    if (
-        not isinstance(base, str)
-        or len(Path(base).parts) != 2
-        or Path(base).parts[0] != "workspace"
-    ):
-        raise ValueError("Invalid persistent research workspace root")
-    return workspace_path(root, f"{base}/{session}")
+    run_metadata(run)
+    return workspace_path(project_for_run(run), "workspace")
 
 
 def pinned_resume(workspace: Path) -> tuple[list[str], dict[str, str]]:

@@ -1,39 +1,35 @@
-"""Task selection is explicit and independent of historical stage prompts."""
+"""Continuous research uses the current prompts independently of old stage files."""
 
 from pathlib import Path
 
-import pytest
-from task_input_support import task_inputs
+from input_source_support import deployment_source
 
 from a3_research_agent.host.inputs.versions import InputVersions
 
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def test_task_inputs_add_only_current_shared_runtime_guidance(tmp_path):
-    directory = task_inputs(tmp_path / "task")
+def test_current_inputs_have_no_phase_or_task_selection(tmp_path):
     run = tmp_path / "run"
-    versions = InputVersions(ROOT, run, custom_dir=directory)
+    versions = InputVersions(ROOT, run)
     proposal = versions.prepare()
     assert {"SOUL.md", "execution.md", "workspace-instructions.md"} <= proposal["contents"].keys()
     assert not any(
-        "phase-" in name or name in {"bootstrap.yaml", "readiness-task.md"}
+        "phase-" in name
+        or name
+        in {"bootstrap.yaml", "readiness-task.md", "goal.md", "acceptance.md", "protocol.md"}
         for name in proposal["contents"]
     )
     manifest = versions.activate(proposal, "start")
-    assert "phase" not in manifest and "task_profile" not in manifest
+    assert not {"phase", "task_profile", "acceptance_checks"} & manifest.keys()
     assert InputVersions(ROOT, run).prepare()["digest"] == proposal["digest"]
-    assert versions.acceptance_checks() == ("result",)
 
 
-@pytest.mark.parametrize("missing", ["goal.md", "acceptance.md", "protocol.md"])
-def test_new_task_requires_complete_explicit_inputs(tmp_path, missing):
-    directory = task_inputs(tmp_path / "task")
-    (directory / missing).unlink()
-    with pytest.raises(ValueError, match="missing"):
-        InputVersions(ROOT, None, custom_dir=directory)
-
-
-def test_new_task_has_no_implicit_historical_goal():
-    with pytest.raises(ValueError, match="explicit"):
-        InputVersions(ROOT, None)
+def test_new_research_needs_only_three_prompts_and_complete_skills(tmp_path):
+    root = deployment_source(tmp_path / "source")
+    contents = InputVersions(root, None).prepare()["contents"]
+    assert {"SOUL.md", "execution.md", "workspace-instructions.md"} <= contents.keys()
+    assert all(
+        name.startswith("skills/")
+        for name in contents.keys() - {"SOUL.md", "execution.md", "workspace-instructions.md"}
+    )

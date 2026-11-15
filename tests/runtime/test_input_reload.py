@@ -1,22 +1,20 @@
-"""Only the Host operator can apply a previewed task-input replacement."""
+"""Only the Host operator can apply previewed repository prompt updates."""
 
 import threading
-from pathlib import Path
 
 from fastapi.testclient import TestClient
-from task_input_support import task_inputs
+from input_source_support import deployment_source
 
 from a3_research_agent.host.gateway.app import create_app
 from a3_research_agent.host.inputs.versions import InputVersions
 
-ROOT = Path(__file__).resolve().parents[2]
 AGENT = {"Authorization": "Bearer agent"}
 OPERATOR = {"Authorization": "Bearer operator"}
 
 
 def setup(tmp_path, forward=None):
-    task = task_inputs(tmp_path / "task")
-    versions = InputVersions(ROOT, tmp_path / "run", custom_dir=task)
+    root = deployment_source(tmp_path / "source")
+    versions = InputVersions(root, tmp_path / "run")
     versions.activate(versions.prepare(), "start")
     calls = []
     client = TestClient(
@@ -31,21 +29,21 @@ def setup(tmp_path, forward=None):
             operator_token="operator",
         )
     )
-    return task, versions, client, calls
+    return root, versions, client, calls
 
 
-def preview(client, task):
-    response = client.get("/control/inputs", headers=OPERATOR, params={"source_dir": str(task)})
+def preview(client):
+    response = client.get("/control/inputs", headers=OPERATOR)
     assert response.status_code == 200
     return response.json()["proposed"]["digest"]
 
 
 def test_only_operator_can_apply_exact_preview_and_saved_context_is_preserved(tmp_path):
-    task, versions, client, calls = setup(tmp_path)
+    source_root, versions, client, calls = setup(tmp_path)
     assert client.get("/control/inputs", headers=AGENT).status_code == 403
-    (task / "goal.md").write_text("Version: 1.0.1\nUpdated research goal\n")
-    digest = preview(client, task)
-    body = {"confirm": digest, "source_dir": str(task)}
+    (source_root / "prompt/SOUL.md").write_text("Version: 1.0.1\nUpdated research goal\n")
+    digest = preview(client)
+    body = {"confirm": digest}
     assert client.post("/control/inputs", headers=AGENT, json=body).status_code == 403
     assert (
         client.post(
@@ -63,13 +61,11 @@ def test_only_operator_can_apply_exact_preview_and_saved_context_is_preserved(tm
 
 
 def test_mutation_after_preview_invalidates_confirmation(tmp_path):
-    task, _, client, _ = setup(tmp_path)
-    digest = preview(client, task)
-    (task / "goal.md").write_text("Version: 1.0.1\nChanged after preview\n")
+    source_root, _, client, _ = setup(tmp_path)
+    digest = preview(client)
+    (source_root / "prompt/SOUL.md").write_text("Version: 1.0.1\nChanged after preview\n")
     assert (
-        client.post(
-            "/control/inputs", headers=OPERATOR, json={"confirm": digest, "source_dir": str(task)}
-        ).status_code
+        client.post("/control/inputs", headers=OPERATOR, json={"confirm": digest}).status_code
         == 409
     )
 
@@ -85,7 +81,7 @@ def test_inflight_request_keeps_original_snapshot_and_next_call_gets_update(tmp_
             assert release.wait(5)
         return {"output": []}
 
-    task, versions, client, _ = setup(tmp_path, forward)
+    source_root, versions, client, _ = setup(tmp_path, forward)
     responses = []
     thread = threading.Thread(
         target=lambda: responses.append(
@@ -96,13 +92,13 @@ def test_inflight_request_keeps_original_snapshot_and_next_call_gets_update(tmp_
     assert entered.wait(5)
     before = versions.manifest["revision"]
     try:
-        (task / "goal.md").write_text("Version: 1.0.1\nUpdated question\n")
-        digest = preview(client, task)
+        (source_root / "prompt/SOUL.md").write_text("Version: 1.0.1\nUpdated question\n")
+        digest = preview(client)
         assert (
             client.post(
                 "/control/inputs",
                 headers=OPERATOR,
-                json={"confirm": digest, "source_dir": str(task)},
+                json={"confirm": digest},
             ).status_code
             == 200
         )
@@ -112,3 +108,22 @@ def test_inflight_request_keeps_original_snapshot_and_next_call_gets_update(tmp_
     assert responses[0].headers["X-A3-Input-Revision"] == before
     assert client.post("/v1/responses", headers=AGENT, json={"input": "work"}).status_code == 200
     assert "Updated question" not in received[0] and "Updated question" in received[1]
+
+
+def test_removed_custom_source_is_rejected_instead_of_ignored(tmp_path):
+    _, _, client, _ = setup(tmp_path)
+    assert (
+        client.get(
+            "/control/inputs", headers=OPERATOR, params={"source_dir": "/old/task"}
+        ).status_code
+        == 422
+    )
+    digest = preview(client)
+    assert (
+        client.post(
+            "/control/inputs",
+            headers=OPERATOR,
+            json={"confirm": digest, "source_dir": "/old/task"},
+        ).status_code
+        == 422
+    )

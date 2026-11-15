@@ -22,7 +22,7 @@ def modules(tmp_path, monkeypatch):
     loaded = {}
     canonical = {
         "context_manager": "a3_research_agent.harness.context.manager",
-        "recall": "a3_research_agent.harness.memory.recall",
+        "recall": "a3_research_agent.harness.history",
         "spill": "a3_research_agent.harness.context.spill",
         "compaction": "a3_research_agent.harness.context.compaction",
     }

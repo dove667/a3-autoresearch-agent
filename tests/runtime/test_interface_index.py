@@ -4,7 +4,7 @@ import hashlib
 import json
 from pathlib import Path
 
-from task_input_support import deployment_source, task_inputs
+from input_source_support import deployment_source
 
 from a3_research_agent.host.inputs.versions import InputVersions, execution_index
 
@@ -14,8 +14,8 @@ ROOT = Path(__file__).resolve().parents[2]
 def test_execution_sections_preserve_original_bytes_and_character_offsets(tmp_path):
     root = deployment_source(tmp_path / "source")
     text = "Version: 9.0.0\r\n前言🌍\r\n## Alpha\r\n参数α\r\n### nested\r\nbody\r\n## Beta\r\nend"
-    (root / "agent-inputs/shared/execution.md").write_bytes(text.encode())
-    inputs = InputVersions(root, tmp_path / "run", custom_dir=task_inputs(tmp_path / "task"))
+    (root / "prompt/execution.md").write_bytes(text.encode())
+    inputs = InputVersions(root, tmp_path / "run")
     manifest = inputs.activate(inputs.prepare(), "start")
     index = manifest["execution_index"]
     assert index["unit"] == "characters"
@@ -38,7 +38,7 @@ def test_many_long_headings_have_bounded_index_and_lossless_source_identity():
 
 
 def test_real_runtime_reference_is_mounted_without_repeating_its_body(tmp_path):
-    inputs = InputVersions(ROOT, tmp_path / "run", custom_dir=task_inputs(tmp_path / "task"))
+    inputs = InputVersions(ROOT, tmp_path / "run")
     inputs.activate(inputs.prepare(), "start")
     prompt = inputs.model_instructions()[1]
     assert inputs.contents["execution.md"] not in prompt

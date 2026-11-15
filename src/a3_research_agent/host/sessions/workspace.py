@@ -7,7 +7,7 @@ import stat
 from pathlib import Path, PurePosixPath
 
 from a3_research_agent.host.published_harness import research_workspace
-from a3_research_agent.workspace.paths import workspace_path
+from a3_research_agent.path_safety import workspace_path
 
 ACTIVE_STATES = {"created", "running"}
 MAX_ACTIVE_SESSIONS = 1

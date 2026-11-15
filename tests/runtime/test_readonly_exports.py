@@ -229,7 +229,7 @@ def test_retained_declaration_carries_only_validated_export_references(tmp_path)
 
     from a3_research_agent.host.runs.continuation import (
         load_run_result,
-        prepare_fresh_task,
+        prepare_fresh_research,
         publish_run_result,
     )
 
@@ -253,7 +253,7 @@ def test_retained_declaration_carries_only_validated_export_references(tmp_path)
     start = load_run_result(run)
     assert start.remote_exports == [identifier]
     assert start.source_owner == "main"
-    fresh, _ = prepare_fresh_task(start, "new task")
+    fresh, _ = prepare_fresh_research(start)
     assert fresh.remote_exports == [identifier]
 
 

@@ -9,7 +9,7 @@ from pathlib import Path
 from a3_research_agent.host.inputs.feedback import HumanFeedback
 from a3_research_agent.host.inputs.versions import InputVersions, write_atomic
 from a3_research_agent.host.published_harness import COMMAND, native_source, project_for_run
-from a3_research_agent.workspace.paths import workspace_path
+from a3_research_agent.path_safety import workspace_path
 
 
 def encoded(data):
@@ -23,7 +23,7 @@ def prepare_release(
     commit: str,
     run: Path,
 ) -> dict:
-    """Freeze a published source pin, current task inputs, and reviewed release note."""
+    """Freeze a published source pin, research prompts, and reviewed release note."""
     native_source(root, commit)
     note = HumanFeedback.validate_content(handoff.read_bytes())
     if not re.fullmatch(r"\s*## 已核对结论\n\s*\S[\s\S]*?\n## 待办\n\s*\S[\s\S]*", note):
@@ -35,7 +35,7 @@ def prepare_release(
         "harness_commit": commit,
     }
     package_files = {"checkpoint.json": "[]", "run.json": encoded(manifest).decode()}
-    inputs = InputVersions(root, run).prepare_shared_update()["contents"]
+    inputs = InputVersions(root, run).prepare_update()["contents"]
     inputs["initial-feedback.md"] = (
         "# 夜间研究交接\n\nVersion: 0.1.0\n\n"
         "以下是经操作者核对的研究状态。工具、接口和权限以当前部署为准。\n\n" + note
