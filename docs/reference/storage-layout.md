@@ -1,120 +1,106 @@
 # 目录职责与产物管理
 
-固定实现进入 Git；研究工作区、执行轨迹、实验记录、部署配置和展示网页留在本地。
+源码和提示词进入 Git；研究文件、对话状态、长期经验、调试记录与展示网页按用途分别保存。
 
 ```text
 .
 ├── src/a3_research_agent/
-│   ├── harness/           模型循环、工具、上下文、记忆与 skills
-│   ├── host/              发布、Gateway、进程、输入与运行记录
-│   ├── execution/         Controller、作业、GPU 调度和远程镜像
-│   ├── cli/               启动和操作者命令
+│   ├── harness/           模型循环、工具、计划、上下文与知识管理
+│   ├── host/              发布、Gateway、身份、进程与恢复
+│   ├── execution/         Controller、作业、GPU 调度和执行后端
+│   ├── cli/               用户和操作者命令
 │   ├── harness_payload.py 发布源码载荷清单
 │   └── path_safety.py     文件路径与访问范围校验
-├── prompt/                平铺的 SOUL、执行约定与工作区说明
-├── archive/               历史阶段提示词
-├── skills/                经审核的完整研究方法包
-├── tests/                 固定实现的回归与打包检查
-├── start-autoresearch.sh   根目录启动入口
-├── docs/                  安装、使用、架构与接口说明
+├── prompt/                SOUL、执行约定与工作区说明
+├── skills/                全项目唯一技能库
+├── workspace/             Agent 自由读写的研究区，Git 忽略
+├── memory/                由 memory 工具管理的长期经验，Git 忽略
+├── trajectories/          模型执行与恢复记录，Git 忽略
+├── runs/                  Host 调试与维护测试原始输出，Git 忽略
+├── .runtime/              Host 状态、技能修改历史和源码缓存，Git 忽略
+├── web-cache/             共享网页缓存，Git 忽略
+├── reports/               用于展示的网页工程，Git 忽略
+├── archive/               历史提示词原文
+├── tests/                 实现与打包检查
+├── docs/                  指南、机制与历史设计
 ├── third_party/           固定版本的第三方 submodule
-├── workspace/             唯一研究工作区，Git 忽略
-├── memory/                主动长期经验及证据引用，Git 忽略
-├── trajectories/          按开始时间归档的模型执行记录，Git 忽略
-├── experiments/           已整理的实验结果与分析证据，Git 忽略
-├── runs/                  调试日志、维护验证与构建记录，Git 忽略
-├── .runtime/              Host 状态与可重建源码缓存，Git 忽略
-├── web-cache/             共享网页内容缓存，Git 忽略
-├── reports/               面向展示的网页报告工程，Git 忽略
-├── .env.example           公共部署模板
+├── start-autoresearch.sh   启动入口
+├── .env.example           公共配置模板
 └── .env                   本机配置，Git 忽略
 ```
 
 ## 源码边界
 
-`host/source_snapshots.py` 准备只读源码快照，`host/remote_client.py` 封装 SSH Controller 调用。`host/launch.py` 装配并启动服务，`host/gateway/` 按模型、作业、会话、网络与操作者控制分组，所有路由共用同一身份注册表、锁和 checkpoint。
+`harness/` 实现模型决策循环、工具参数校验、研究文件操作、计划、上下文和知识工具。Agent 通过文件工具准备代码，通过远程作业执行研究；工具集不提供本地 Bash 或 Python 命令执行。
 
-`host/sessions/processes.py` 只处理本地原生进程生命周期；`host/sessions/workspace.py` 提供当前工作区和受限文件操作。`host/runs/` 管理运行状态、checkpoint 配对、恢复与保留结果；`host/releases.py` 处理暂停期间的原地发布事务。
+`host/launch.py` 装配服务，`host/gateway/` 负责身份、认证、模型和作业转发。`host/sessions/processes.py` 管理本地原生进程，`host/sessions/workspace.py` 提供受限文件访问；`host/runs/` 和 `host/releases.py` 管理恢复与发布事务。`host/source_snapshots.py` 准备只读源码，`host/remote_client.py` 封装 SSH 调用。
 
-`execution/controller/` 使用标准库实现作业入口，`execution/scheduling/` 负责资源准入，`execution/images/` 保存远程容器构建资源。远程 Controller 从 `src/a3_research_agent/execution/controller/__main__.py` 或安装后的命令运行。所有 Python 导入使用 `a3_research_agent.*`。
+`execution/controller/` 使用标准库管理远程作业；`execution/scheduling/` 负责资源准入，`execution/images/` 保存远程容器构建资源。所有 Python 导入使用 `a3_research_agent.*`。
 
-根目录 `skills/` 的每个方法包通过 `SKILL.md` 和 `assets/catalog-entry.json` 声明正文、附件与版本。Host 发现所有完整包并交付部署输入；工作区 `skills/` 保存 Agent 自写内容与局部修订，安装新参考版本时保留这些内容。
+`harness/history.py` 检索原始执行历史，`harness/long_term_memory.py` 管理主动长期经验，`harness/operational_state.py` 记录读取和操作进度。`path_safety.py` 提供路径校验，`harness_payload.py` 声明发布源码。
 
-Harness 通过 Gateway 请求模型、计算和外部网络。工具参数校验、文件预处理和结果展示归属 `harness/`；身份、认证和转发归属 Host；计算资源与作业状态归属 Controller。
-
-`harness/history.py` 检索原始执行历史，`harness/long_term_memory.py` 管理主动长期经验，`harness/operational_state.py` 记录读取进度和操作状态。`path_safety.py` 提供共用路径校验，`harness_payload.py` 声明发布需要的源码文件。
-
-## 研究与运行目录
+## 研究文件与机器状态
 
 ```text
 workspace/
-├── .agent/                Harness 私有运行状态
-│   ├── checkpoint.json    模型上下文
-│   ├── pending-calls.json 工具调用 journal
-│   ├── history.jsonl      原始模型消息与工具结果
-│   ├── trajectory.jsonl   循环与请求轨迹
-│   └── …                  操作台账、压缩事务、故障与预检回执
-├── research/              Agent 编写的研究脚本与分析
-├── results/               Agent 本地研究输出，A3_RUN_DIR
-├── skills/                工作区 skills
-├── context-history/       上下文摘要绑定的原文快照与工具归档
-├── research-plan.json     研究路线、里程碑与作业引用
-├── progress.md            研究进展
-├── continuation.json      后续研究声明
-├── resume.json            当前入口声明
-└── run-outcome.json       Agent 保存的研究状态
+├── research/              Agent 编写的研究代码
+├── experiments/           可继续使用的实验配置、分析与工作材料
+├── results/               本地研究输出
+└── …                      Agent 自行保存的研究文件与笔记
 
 memory/
 └── entries.jsonl          主动长期经验、适用条件、修正与来源
 
 trajectories/<开始时间>/
+├── conversation/
+│   ├── research-plan.json 研究路线、里程碑与作业引用
+│   ├── continuation.json 程序生成的研究文件清单
+│   ├── resume.json       程序生成的恢复清单
+│   ├── run-outcome.json  受控保存的研究状态
+│   ├── checkpoint.json    当前模型上下文
+│   ├── pending-calls.json 工具调用 journal
+│   ├── history.jsonl      原始模型消息与工具结果
+│   ├── trajectory.jsonl   模型循环与请求轨迹
+│   ├── operational-state.json
+│   ├── compaction-*.json  压缩状态与事务
+│   ├── preflight/         预检回执
+│   ├── context-history/   摘要与工具结果引用的原文
+│   └── .autorun-spill/    大工具结果归档
+├── inputs/                当前三个 prompt 的快照
+├── input-revisions/       不可变输入版本
+├── .host/                 私有控制状态、锁与发布事务
+├── sessions/              会话登记与共享 workspace 链接
+├── source-code/           历史源码归档（如有）
 ├── startup.json           原始发布输入与启动选择
-├── inputs/                当前部署方输入
-├── input-revisions/       输入的完整历史版本
-├── input-events.jsonl     输入版本事件
-├── sessions/<session-id>/ 原生会话记录及 workspace 链接
-├── .host/                 私有状态、锁与发布事务
-├── fixtures/              隔离检查记录
-├── retained-knowledge/    可选的不可变研究知识快照
-├── retained.json          固定发布源码与选定知识引用
-├── supervision.json       Host 监督状态
-└── model-usage.jsonl       模型原始请求、返回与调用记录
+├── model-usage.jsonl      模型原始请求、返回与用量
+└── …                      输入事件、可选知识快照与恢复记录
 ```
 
-所有未来会话、恢复和 Harness 升级共用根目录 `workspace/` 与 `memory/`。Host 独立保存 run、研究身份与远程作业的归属映射，工作区保持单个活动研究进程使用。
+所有会话、恢复和 Harness 升级共用根目录 `workspace/`。一次只有一个研究进程使用它。普通文件工具在这里自由读写研究材料；输入目录、A3 参考源码和当前 run 的 `conversation/` 只读。根 `skills/` 与 `memory/` 通过专用工具访问。
 
-`memory/entries.jsonl` 保存 Agent 主动选择、提炼和修正的长期经验，通过 `memory` 工具按条件检索；`workspace/.agent/history.jsonl` 保留原始消息与工具观测，通过 `recall` 定点核对来源。`workspace/skills/` 保存可复用的方法。恢复时继续读取已有文件。
+Host 用 `A3_STATE_ROOT` 指定当前 run 的 `conversation/`，并在 `runtime_paths.state` 提供实际路径。`harness/state_paths.py` 统一定位 checkpoint、journal、压缩事务和操作台账；恢复继续读取原状态。`context-history/...`、`.autorun-spill/...` 等逻辑相对来源引用以该路径为基准，原文与内容哈希保持稳定，可通过普通文件工具只读核对。
 
-工作区中的 `context-history/` 由上下文管理器在需要保存原文快照或大工具结果时写入。源码仓库根目录无需同名空目录。
+Host 管理全部程序元数据。`plan` 保存研究计划，`progress` 保存操作进展；`progress(action="outcome", status="continue"|"blocked", reason=..., external_blocker=...)` 记录研究状态。恢复与接续清单由程序生成，`files` 只列出工作区研究文件。
 
-`.agent/` 的文件位置由 `harness/state_paths.py` 统一声明。checkpoint 与 journal 一起保留，压缩事务和操作台账跟随原工作区恢复。原文归档 `context-history/` 与 `.autorun-spill/` 保留现有路径及内容哈希，研究文件中的来源引用继续有效。
+`memory` 保存 Agent 主动提炼的跨会话经验；`recall` 检索原始消息和工具观测；`skills` 管理可复用方法及附件。普通 `read`、`write`、`edit` 不直接接触根技能库和长期记忆；当前会话状态允许 `read`、`list`、`search_files` 只读访问。
 
-`runs/<开始时间>/` 保存 Host 标准输出、控制台、会话生命周期和 Gateway 诊断日志；`runs/checks/<检查主题>/` 统一保存测试和维护验证的原始输出。科学结果、数据分析与实验对照整理到 `experiments/<日期_主题>/`，保留参数、逐回合原始结果、模型或数据校验值及作业引用，并注明材料来自自主研究 Agent 还是独立操作的实验。
+研究参数、逐回合结果、模型或数据摘要、录像与研究代码留在工作区或远程作业中，并记录原始 job 与来源。旧源码只作为历史快照保存，当前研究继续使用 `workspace/research/`。
 
-运行目录按 Host 本地开始时间命名为 `YYYY-MM-DD_HH-MM-SS-ffffff`，重名时原子追加序号。`trajectories/latest-run.txt` 只帮助定位最近运行。恢复显式指定原 run，首次启动显式指定已发布 Harness 提交。
-
-`.host/research-workspace.json` 保存固定的 `run_id` 和 Harness 提交，`sessions/<session-id>/workspace` 指向根目录共享工作区。Host 用原始身份查询和管理远程作业，checkpoint、长期记忆和研究代码持续保留。
-
-研究工作区独立于 Harness 源码缓存。`.runtime/published-harness/v2/<commit>/` 保存固定发布源码；原地升级继续使用同一研究目录。升级边界保存在 `.host/release-upgrades/`，事件保存在 `.host/release-events.jsonl`。私有状态、认证和锁不作为研究产物分享。
-
-## 其他产物
+## 调试、发布与远程数据
 
 | 路径 | 用途 |
 | --- | --- |
-| `workspace/` | 当前研究代码、上下文、计划、自写 skills 与原始历史 |
-| `memory/entries.jsonl` | Agent 主动积累的长期经验 |
-| `runs/` | 按开始时间保存的 Host 调试日志；`checks/` 集中测试与维护验证输出 |
+| `runs/<开始时间>/` | Host 控制台、Gateway 与会话诊断日志 |
+| `runs/checks/<检查主题>/` | 测试和维护验证的原始输出 |
+| `.runtime/skill-revisions/` | 技能修改前的完整包历史 |
 | `.runtime/night-window/` | 夜间调度与发布选择 |
-| `.runtime/published-harness/v2/<commit>/` | 可重建的固定 Harness 源码缓存 |
-| `.runtime/project-job-index.json` | 项目历史远程作业索引 |
-| `web-cache/` | 可复用的网页内容与请求缓存 |
-| `remote-runtime/` | 执行端示例根目录：作业、租约、显存预算与导出授权 |
-| `models/`、`datasets/`、`model-cache/` | 可选权重、数据及下载缓存，位置由执行端配置 |
-| `experiments/<日期_主题>/` | 实验结果、配置、分析与证据引用 |
-| `reports/` | 面向展示的网页及其工程文件 |
+| `.runtime/published-harness/v2/<commit>/` | 固定 Harness 源码缓存 |
+| `.runtime/project-job-index.json` | 历史远程作业索引 |
+| `web-cache/` | 可复用的公共网页内容 |
+| `reports/` | 面向展示的网页工程 |
+| `remote-runtime/` | 执行端示例根目录：作业、租约、预算与导出授权 |
+| `models/`、`datasets/`、`model-cache/` | 由执行端配置的权重、数据和缓存 |
 
-所有 Controller 必须共用配置的执行端资源根目录；切换源码版本不创建另一套 GPU 锁。远程数据和导出快照留在执行端，`retained.json` 只保存选定引用。
+维护测试输出集中到 `runs/checks/`，持久工作约定更新本地 `AGENTS.md`。部署参数由 `.env` 配置，见[环境配置](../guides/setup.md)。
 
-历史档案保留用于复核。旧 builder、本地容器和旧生成 Harness 格式不进入当前启动路径。需要继续的研究由维护者离线整理为当前原生 schema，并保留整理前的记录和校验清单。
-
-部署参数从 `.env.example` 复制配置，读取规则见[环境配置](../guides/setup.md)。Agent 输入版本与文件清单见[输入管理](agent-inputs.md)。实验与展示目录保持 Git 忽略，公开文档只引用仓库内可获得的说明。
+所有 Controller 共用配置的执行端资源根目录，源码升级继续使用原 GPU 调度锁和作业记录。大文件与只读 exports 留在执行端。原地升级边界保存在 `.host/release-upgrades/`，事件保存在 `.host/release-events.jsonl`。

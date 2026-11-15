@@ -1,4 +1,4 @@
-"""Continuous research snapshots only current prompts and reviewed skills."""
+"""Continuous research snapshots only current prompts."""
 
 import hashlib
 import shutil

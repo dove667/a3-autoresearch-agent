@@ -4,12 +4,15 @@ import base64
 import hashlib
 import json
 import re
-from pathlib import Path
 
 from a3_research_agent.harness import state_paths
 from a3_research_agent.harness.context.manager import atomic
 
-RECEIPTS = Path(state_paths.PREFLIGHT)
+
+def receipts_root():
+    return state_paths.path(state_paths.PREFLIGHT)
+
+
 REPORT = "a3-preflight.json"
 JOB_ID = re.compile(r"[0-9a-f]{32}")
 
@@ -78,13 +81,13 @@ def dispatch(arguments, request):
     if action == "check":
         result = request("POST", "/jobs", cpu_request(job))
         if identifier := submitted_id(result):
-            atomic(RECEIPTS / f"{identifier}.json", json.dumps({"fingerprint": fingerprint}))
+            atomic(receipts_root() / f"{identifier}.json", json.dumps({"fingerprint": fingerprint}))
         return result
 
     identifier = arguments.get("preflight_id")
     if not isinstance(identifier, str) or not JOB_ID.fullmatch(identifier):
         return {"error": "preflight_id_required"}
-    path = RECEIPTS / f"{identifier}.json"
+    path = receipts_root() / f"{identifier}.json"
     if not path.is_file():
         return {"error": "unknown_preflight"}
     receipt = json.loads(path.read_text())

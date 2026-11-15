@@ -74,19 +74,19 @@ def test_closed_claim_survives_reload_without_becoming_acceptance(tmp_path, monk
     restored = load(tmp_path, monkeypatch)
     value = restored.view()["items"]["check"]
     assert value["status"] == "closed" and "not validated" in value["authority"]
-    assert not (tmp_path / "run-outcome.json").exists()
-    assert list((tmp_path / "context-history").glob("progress-item*")) == []
+    assert not (tmp_path / "conversation/run-outcome.json").exists()
+    assert list((tmp_path / "conversation/context-history").glob("progress-item*")) == []
     restored.progress({"action": "update", "id": "check", "status": "waiting", "evidence": []})
-    assert list((tmp_path / "context-history").glob("progress-item*"))
+    assert list((tmp_path / "conversation/context-history").glob("progress-item*"))
 
 
 def test_corrupt_state_fails_closed_and_snapshot_remains(tmp_path, monkeypatch):
     m = load(tmp_path, monkeypatch)
-    m.PATH.parent.mkdir()
-    m.PATH.write_text("broken")
+    m.state_file().parent.mkdir()
+    m.state_file().write_text("broken")
     with pytest.raises(ValueError):
         m.view()
-    assert m.PATH.read_text() == "broken"
+    assert m.state_file().read_text() == "broken"
 
 
 @pytest.mark.parametrize("args", [{"offset": -1}, {"limit": 0}, {"limit": True}, {"limit": 9000}])

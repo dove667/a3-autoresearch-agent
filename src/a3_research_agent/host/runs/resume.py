@@ -10,7 +10,12 @@ from copy import deepcopy
 from pathlib import Path
 
 from a3_research_agent.harness import state_paths
-from a3_research_agent.host.published_harness import COMMAND, run_commit, run_identity
+from a3_research_agent.host.published_harness import (
+    COMMAND,
+    conversation_root,
+    run_commit,
+    run_identity,
+)
 from a3_research_agent.host.runs.directories import debug_directory
 from a3_research_agent.host.runs.state import RunStateStore
 from a3_research_agent.host.sessions.workspace import (
@@ -105,7 +110,7 @@ def preflight_blocked_resume(
     ):
         raise ValueError("Blocked resume requires the confirmed stopped, nonclosed current main")
     workspace = session_workspace(run / "sessions", actor)
-    outcome = evaluate_outcome(workspace)
+    outcome = evaluate_outcome(workspace, conversation_root(run))
     supervision = json.loads(workspace_path(run, "supervision.json").read_text())
     host_outcome = json.loads(workspace_path(run, "outcome.json").read_text())
     prior_attempt = None
@@ -121,7 +126,7 @@ def preflight_blocked_resume(
     commit = run_commit(run)
     if commit is None or state.get("harness_commit") != commit or record.get("command") != COMMAND:
         raise ValueError("Blocked resume requires the fixed current published Harness")
-    checkpoint_text = workspace_path(workspace, state_paths.CHECKPOINT).read_text()
+    checkpoint_text = state_paths.path(state_paths.CHECKPOINT, conversation_root(run)).read_text()
     messages = json.loads(checkpoint_text)
     if (
         not isinstance(messages, list)
@@ -132,7 +137,9 @@ def preflight_blocked_resume(
     _validate_blocked_checkpoint(messages)
     snapshots = {
         "session.json": record_text,
-        "run-outcome.json": workspace_path(workspace, "run-outcome.json").read_text(),
+        "run-outcome.json": state_paths.path(
+            state_paths.OUTCOME, conversation_root(run)
+        ).read_text(),
         "outcome.json": workspace_path(run, "outcome.json").read_text(),
         "supervision.json": workspace_path(run, "supervision.json").read_text(),
     }
@@ -154,12 +161,12 @@ def preflight_blocked_resume(
 
 def _feedback_retry(run, workspace, actor, feedback, host_outcome, supervision):
     """Only reopen the stopped result of a verified prior blocked restart, with new notice."""
-    from a3_research_agent.host.runs.supervisor import EXTERNAL_BLOCKERS, evidence_exists
+    from a3_research_agent.harness.research_status import EXTERNAL_BLOCKERS, evidence_exists
 
     error = (
         "Self-stopped main needs valid blocked evidence or an audited resume with explicit feedback"
     )
-    current = json.loads(workspace_path(workspace, "run-outcome.json").read_text())
+    current = json.loads(state_paths.path(state_paths.OUTCOME, conversation_root(run)).read_text())
     previous = current.get("previous_terminal")
     if (
         not feedback
@@ -310,7 +317,7 @@ def begin_blocked_resume(
         },
         indent=2,
     )
-    write(plan["workspace"] / "run-outcome.json", continuing)
+    write(state_paths.path(state_paths.OUTCOME, conversation_root(run)), continuing)
     write(run / "outcome.json", continuing)
     restarted = deepcopy(record)
     restarted.update(

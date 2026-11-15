@@ -30,7 +30,7 @@ Save the Policy, processor, adapter/routing, data, deployed Harness version, eva
 
 ## Memory into skills
 
-Use `memory` to save conclusions and verified lessons in `memory/entries.jsonl`, with applicability, evidence references, model/data versions, uncertainty and counterexamples. Use `recall` to inspect original observations from `workspace/` history. Skills capture reusable methods and live in `workspace/skills/`; shared future sessions and Harness upgrades retain these directories. Store large raw trajectories and checkpoints in authorized experiment/job storage and cite their locations.
+Use `memory` to save conclusions and verified lessons in `memory/entries.jsonl`, with applicability, evidence references, model/data versions, uncertainty and counterexamples. Use `recall` to inspect original observations in the current trajectory conversation store. Skills capture reusable methods in the root `skills/` library; use the controlled skills tool to discover, read and update bodies or attachments. Shared future sessions and Harness upgrades preserve the library and long-term memory. Store large raw trajectories and checkpoints in authorized experiment/job storage and cite their locations.
 
 Use evidence labels consistently:
 

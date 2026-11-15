@@ -2,7 +2,7 @@
 name: a3-mujoco-autoresearch
 description: Develop and improve learned policies for the A3 dual-arm MuJoCo cookie-packing project. Use for method selection, ACT/Diffusion/Flow/VLA/world-model experiments, data and training diagnostics, paired closed-loop evaluation, and reusable research experience. Applies to research planning or authorized execution, not permission to start training or change the benchmark.
 metadata:
-  version: 0.1.17
+  version: 0.1.18
 ---
 
 # A3 MuJoCo autoresearch
@@ -94,7 +94,7 @@ The optional [evaluation helper](references/evaluation-helper.md) compares **exp
 
 Promote a method into a locally validated recipe only after linking actual code/config/data versions and evidence. Keep evidence levels distinct: `literature`, `implementation-inspected`, `offline-helper-tested`, `local-rollout-tested`, and `paired-local-improvement`. Add applicability, counterexamples and invalidation conditions; amend or retire stale advice rather than append contradictory rules. Preserve raw evidence outside the skill and reference it. Do not turn a single seed's gain into a universal hyperparameter.
 
-When retained or handed off, include this entrypoint, referenced files and helper code, plus the skill catalog and dependency declarations. Follow the current [integration contract](references/integration.md). Read `a3-model-provenance` with the skills tool to link checkpoints, aliases, conditions and results.
+Use the single root skill library through the controlled skills tool: search summaries, read a relevant body, then read only the needed resources. Preserve methods and their attachments with the tool’s versioned save and archive operations. Follow the current [integration contract](references/integration.md). Read `a3-model-provenance` with the skills tool to link checkpoints, aliases, conditions and results.
 
 ## Research access
 

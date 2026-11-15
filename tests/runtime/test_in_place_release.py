@@ -23,6 +23,22 @@ from a3_research_agent.host.runs.state import RunLease, RunStateStore
 ROOT = Path(__file__).resolve().parents[2]
 
 
+def fixture_file(run, workspace, name):
+    root = (
+        run / "conversation"
+        if name
+        in {
+            "checkpoint.json",
+            "pending-calls.json",
+            "operational-state.json",
+            "trajectory.jsonl",
+            "research-plan.json",
+        }
+        else workspace
+    )
+    return root / name
+
+
 @pytest.fixture
 def published_run(tmp_path, monkeypatch, request):
     for key in list(os.environ):
@@ -63,7 +79,9 @@ def published_run(tmp_path, monkeypatch, request):
         "from pathlib import Path\nPath('native-started.txt').write_text('new published source')\n"
     )
     (source / "harness/paths.py").write_text("NATIVE_PATHS = True\n")
-    (source / "harness/state_paths.py").write_text('CHECKPOINT = ".agent/checkpoint.json"\n')
+    (source / "harness/state_paths.py").write_text(
+        'LAYOUT_VERSION = 1\nCHECKPOINT = "checkpoint.json"\n'
+    )
     git("add", "src")
     git("commit", "--quiet", "-am", "new published source")
     commit = git("rev-parse", "HEAD")
@@ -76,17 +94,16 @@ def published_run(tmp_path, monkeypatch, request):
     workspace = research_workspace(run, actor)
     workspace.mkdir(parents=True)
     protected = {
-        ".agent/checkpoint.json": '[{"role":"user","content":"existing task and observations"}]',
+        "checkpoint.json": '[{"role":"user","content":"existing task and observations"}]',
         "research/lesson.md": '{"id":"learned","text":"actual research lesson"}\n',
-        "skills/index.json": '{"skills":[{"id":"learned-skill"}]}',
         "research/train.py": "print('preserve research')\n",
         "research-plan.json": '{"version":1,"revision":5,"steps":{}}',
-        ".agent/operational-state.json": '{"version":1,"jobs":{"existing-job":{"status":"running"}}}',
-        ".agent/trajectory.jsonl": '{"original":"evidence"}\n',
-        ".agent/pending-calls.json": "null",
+        "operational-state.json": '{"version":1,"jobs":{"existing-job":{"status":"running"}}}',
+        "trajectory.jsonl": '{"original":"evidence"}\n',
+        "pending-calls.json": "null",
     }
     for name, text in protected.items():
-        path = workspace / name
+        path = fixture_file(run, workspace, name)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text)
     pin_run(run, previous)
@@ -169,7 +186,9 @@ def test_apply_release_keeps_run_owner_workspace_and_complete_research_state(pub
     assert outcome["status"] == "complete"
     assert run_commit(run) == commit
     assert (run / "startup.json").read_bytes() == original_startup
-    assert all((workspace / name).read_text() == text for name, text in protected.items())
+    assert all(
+        fixture_file(run, workspace, name).read_text() == text for name, text in protected.items()
+    )
     saved = RunStateStore(run).load()
     assert saved["status"] == "suspended" and saved["model"] == "new/model"
     assert saved["gateway"]["main_owner"] == "candidate-main"
@@ -178,7 +197,7 @@ def test_apply_release_keeps_run_owner_workspace_and_complete_research_state(pub
     with pytest.raises(ValueError, match="model"):
         load_resume_state(run, RunStateStore(run), "old/model")
     archive = run / ".host/release-upgrades" / outcome["upgrade_id"]
-    assert (archive / ".agent/checkpoint.json").read_text() == protected[".agent/checkpoint.json"]
+    assert (archive / "checkpoint.json").read_text() == protected["checkpoint.json"]
     assert json.loads((archive / "state-before.json").read_text())["model"] == "old/model"
     assert json.loads((archive / "pin-before.json").read_text())["commit"] == previous
     assert not (run / ".host/pending-release.json").exists()
@@ -194,21 +213,21 @@ def test_apply_release_preserves_an_empty_initial_checkpoint(published_run):
 
     _, run, workspace, _, commit, proposal, release, protected, env, _ = published_run
     checkpoint = b"[\n]\n"
-    (workspace / ".agent/checkpoint.json").parent.mkdir(parents=True, exist_ok=True)
-    (workspace / ".agent/checkpoint.json").write_bytes(checkpoint)
-    (workspace / ".agent/pending-calls.json").parent.mkdir(parents=True, exist_ok=True)
-    (workspace / ".agent/pending-calls.json").write_text("null")
+    (run / "conversation/checkpoint.json").parent.mkdir(parents=True, exist_ok=True)
+    (run / "conversation/checkpoint.json").write_bytes(checkpoint)
+    (run / "conversation/pending-calls.json").parent.mkdir(parents=True, exist_ok=True)
+    (run / "conversation/pending-calls.json").write_text("null")
     outcome = apply_release(run, release, proposal["digest"], environment=env)
     assert outcome["status"] == "complete"
     assert run_commit(run) == commit
-    assert (workspace / ".agent/checkpoint.json").read_bytes() == checkpoint
-    assert (workspace / ".agent/pending-calls.json").read_text() == "null"
+    assert (run / "conversation/checkpoint.json").read_bytes() == checkpoint
+    assert (run / "conversation/pending-calls.json").read_text() == "null"
     archive = run / ".host/release-upgrades" / outcome["upgrade_id"]
-    assert (archive / ".agent/checkpoint.json").read_bytes() == checkpoint
+    assert (archive / "checkpoint.json").read_bytes() == checkpoint
     assert all(
-        (workspace / name).read_text() == content
+        fixture_file(run, workspace, name).read_text() == content
         for name, content in protected.items()
-        if name not in {".agent/checkpoint.json", ".agent/pending-calls.json"}
+        if name not in {"checkpoint.json", "pending-calls.json"}
     )
     assert RunStateStore(run).load()["status"] == "suspended"
 
@@ -216,7 +235,7 @@ def test_apply_release_preserves_an_empty_initial_checkpoint(published_run):
 def test_published_night_release_resumes_same_run_instead_of_making_a_fresh_task(
     published_run, monkeypatch
 ):
-    _, run, workspace, _, commit, proposal, _, protected, env, _ = published_run
+    _, run, _workspace, _, commit, proposal, _, protected, env, _ = published_run
     for name, value in env.items():
         monkeypatch.setenv(name, value)
     command = ["python", "-m", "launch", "--resume-from", str(run)]
@@ -225,7 +244,7 @@ def test_published_night_release_resumes_same_run_instead_of_making_a_fresh_task
     assert selected == command and target == run and extra == {}
     assert schedule.select() == (command, run, {})
     assert run_commit(run) == commit
-    assert (workspace / ".agent/checkpoint.json").read_text() == protected[".agent/checkpoint.json"]
+    assert (run / "conversation/checkpoint.json").read_text() == protected["checkpoint.json"]
     assert json.loads(schedule.state.read_text())["release"] == proposal["digest"]
 
 
@@ -234,7 +253,7 @@ def test_release_refuses_a_live_run_or_unreconciled_checkpoint_before_container_
 ):
     from a3_research_agent.host.releases import apply_release
 
-    _, run, workspace, _, _, proposal, release, _, env, calls = published_run
+    _, run, _workspace, _, _, proposal, release, _, env, calls = published_run
     with RunLease(run), pytest.raises(RuntimeError, match="Host"):
         apply_release(run, release, proposal["digest"], environment=env)
     assert not calls
@@ -242,8 +261,8 @@ def test_release_refuses_a_live_run_or_unreconciled_checkpoint_before_container_
     with pytest.raises(ValueError, match="suspended"):
         apply_release(run, release, proposal["digest"], environment=env)
     RunStateStore(run).update(status="suspended")
-    (workspace / ".agent/checkpoint.json").parent.mkdir(parents=True, exist_ok=True)
-    (workspace / ".agent/checkpoint.json").write_text(
+    (run / "conversation/checkpoint.json").parent.mkdir(parents=True, exist_ok=True)
+    (run / "conversation/checkpoint.json").write_text(
         json.dumps(
             [
                 {"type": "function_call", "call_id": "uncertain", "name": "gateway"},
@@ -258,10 +277,10 @@ def test_release_refuses_a_live_run_or_unreconciled_checkpoint_before_container_
 def test_release_keeps_an_unfinished_journal_without_replaying_its_tool(published_run):
     from a3_research_agent.host.releases import apply_release
 
-    _, run, workspace, _, _, proposal, release, _, env, calls = published_run
+    _, run, _workspace, _, _, proposal, release, _, env, calls = published_run
     journal = {
         "base_hash": hashlib.sha256(
-            (workspace / ".agent/checkpoint.json").read_bytes()
+            (run / "conversation/checkpoint.json").read_bytes()
         ).hexdigest(),
         "output": [
             {
@@ -273,10 +292,10 @@ def test_release_keeps_an_unfinished_journal_without_replaying_its_tool(publishe
         ],
         "results": {},
     }
-    (workspace / ".agent/pending-calls.json").parent.mkdir(parents=True, exist_ok=True)
-    (workspace / ".agent/pending-calls.json").write_text(json.dumps(journal))
+    (run / "conversation/pending-calls.json").parent.mkdir(parents=True, exist_ok=True)
+    (run / "conversation/pending-calls.json").write_text(json.dumps(journal))
     apply_release(run, release, proposal["digest"], environment=env)
-    assert json.loads((workspace / ".agent/pending-calls.json").read_text()) == journal
+    assert json.loads((run / "conversation/pending-calls.json").read_text()) == journal
     assert not any(call[0] in {"start", "create", "unpause"} for call in calls)
 
 
@@ -288,7 +307,7 @@ def test_interrupted_apply_fences_resume_and_retries_without_a_second_input_revi
     from a3_research_agent.host import launch as bootstrap
     from a3_research_agent.host import releases
 
-    root, run, workspace, _, commit, proposal, release, protected, env, _ = published_run
+    root, run, _workspace, _, commit, proposal, release, protected, env, _ = published_run
     replace = releases.replace_run_pin
     monkeypatch.setattr(
         releases, "replace_run_pin", lambda *args: (_ for _ in ()).throw(OSError("interrupted pin"))
@@ -302,7 +321,7 @@ def test_interrupted_apply_fences_resume_and_retries_without_a_second_input_revi
     monkeypatch.setattr(releases, "replace_run_pin", replace)
     result = releases.apply_release(run, release, proposal["digest"], environment=env)
     assert result["commit"] == commit and result["input_revision"] == revision
-    assert (workspace / ".agent/checkpoint.json").read_text() == protected[".agent/checkpoint.json"]
+    assert (run / "conversation/checkpoint.json").read_text() == protected["checkpoint.json"]
     feedback = json.loads((run / ".host/human-feedback/state.json").read_text())
     assert len(feedback["records"]) == 1
 
@@ -389,7 +408,9 @@ def test_real_native_host_resume_executes_new_source_in_the_same_workspace(
     assert record["backend"] == "process" and record["version"] == 1
     assert record["owner"] == "candidate-main"
     assert (run / "startup.json").read_bytes() == original_startup
-    assert all((workspace / name).read_text() == text for name, text in protected.items())
+    assert all(
+        fixture_file(run, workspace, name).read_text() == text for name, text in protected.items()
+    )
     assert RunStateStore(run).load()["status"] == "suspended"
     deployment = json.loads((run / "inputs/deployment.json").read_text())
     assert deployment["harness_commit"] == commit and deployment["local_execution"] == "process"
@@ -494,7 +515,7 @@ def test_real_fresh_published_host_saves_provenance_before_native_start(
             return {"status": "incomplete"}
 
     monkeypatch.setattr(bootstrap, "RunSupervisor", Supervisor)
-    start = HarnessStart(COMMAND.copy(), {".agent/checkpoint.json": "[]"}, harness_commit=commit)
+    start = HarnessStart(COMMAND.copy(), {"checkpoint.json": "[]"}, harness_commit=commit)
     original_write = bootstrap.write_durable
     creates = []
     original_create = bootstrap.ProcessRuntime.create
@@ -593,12 +614,12 @@ def test_release_after_trajectory_rename_keeps_workspace_mapping(published_run):
 
     root, run, workspace, _, commit, *_ = published_run
     protected = {
-        name: (workspace / name).read_bytes()
+        name: fixture_file(run, workspace, name).read_bytes()
         for name in (
-            ".agent/checkpoint.json",
+            "checkpoint.json",
             "research/lesson.md",
             "research/train.py",
-            ".agent/trajectory.jsonl",
+            "trajectory.jsonl",
         )
     }
     original_identity = run_identity(run)
@@ -617,4 +638,4 @@ def test_release_after_trajectory_rename_keeps_workspace_mapping(published_run):
     assert "workspace_root" not in marker
     assert research_workspace(relocated, "candidate-main") == workspace
     for name, content in protected.items():
-        assert (workspace / name).read_bytes() == content
+        assert fixture_file(relocated, workspace, name).read_bytes() == content

@@ -15,6 +15,7 @@ SOURCE = pathlib.Path(__file__).resolve().parents[2] / "src/a3_research_agent/ha
 
 
 def load_context():
+    state_paths.state_root().mkdir(parents=True, exist_ok=True)
     spec = importlib.util.spec_from_file_location(
         "context_" + uuid.uuid4().hex, SOURCE / "context/manager.py"
     )
@@ -139,7 +140,7 @@ def test_corrupted_summary_record_does_not_allow_repeat_dispatch(tmp_path, monke
     monkeypatch.chdir(tmp_path)
     context = load_context()
     context.prepare(messages(), [], lambda *a: completed())
-    path = next(context.ROOT.glob("summary-request-*.json"))
+    path = next(context.archive_root().glob("summary-request-*.json"))
     state = json.loads(path.read_text())
     state["fingerprint"] = "damaged"
     path.write_text(json.dumps(state))
@@ -172,18 +173,13 @@ def agent_functions(context):
 
 def initial_state(tmp_path):
     old = [{"role": "user", "content": "last committed state"}]
-    (tmp_path / ".agent/checkpoint.json").parent.mkdir(parents=True, exist_ok=True)
-    (tmp_path / ".agent/checkpoint.json").write_text(json.dumps(old))
-    (tmp_path / ".agent/pending-calls.json").parent.mkdir(parents=True, exist_ok=True)
-    (tmp_path / ".agent/pending-calls.json").write_text("null")
-    names = [
-        ".agent/checkpoint.json",
-        ".agent/pending-calls.json",
-        "resume.json",
-        "continuation.json",
-    ]
+    (tmp_path / "conversation/checkpoint.json").parent.mkdir(parents=True, exist_ok=True)
+    (tmp_path / "conversation/checkpoint.json").write_text(json.dumps(old))
+    (tmp_path / "conversation/pending-calls.json").parent.mkdir(parents=True, exist_ok=True)
+    (tmp_path / "conversation/pending-calls.json").write_text("null")
+    names = []
     for name in ["resume.json", "continuation.json"]:
-        (tmp_path / name).write_text(
+        state_paths.path(name).write_text(
             json.dumps({"command": ["python", "agent.py", "--resume"], "files": names})
         )
     (tmp_path / "new-history.json").write_text("new archive contents")
@@ -206,9 +202,9 @@ def test_manifest_failure_leaves_last_committed_checkpoint_usable(tmp_path, monk
     monkeypatch.setattr(os, "replace", fail_manifest)
     with pytest.raises(OSError):
         functions["checkpoint"]([{"role": "user", "content": "Source: new-history.json"}])
-    assert json.loads((tmp_path / ".agent/checkpoint.json").read_text()) == old
+    assert json.loads((tmp_path / "conversation/checkpoint.json").read_text()) == old
     for name in ["resume.json", "continuation.json"]:
-        manifest = json.loads((tmp_path / name).read_text())
+        manifest = json.loads(state_paths.path(name).read_text())
         assert all((tmp_path / p).is_file() for p in manifest["files"])
 
 
@@ -217,14 +213,14 @@ def test_clearing_resolved_journal_does_not_invalidate_resume_manifest(tmp_path,
     context = load_context()
     functions = agent_functions(context)
     old = initial_state(tmp_path)
-    (tmp_path / ".agent/pending-calls.json").parent.mkdir(parents=True, exist_ok=True)
-    (tmp_path / ".agent/pending-calls.json").write_text(
+    (tmp_path / "conversation/pending-calls.json").parent.mkdir(parents=True, exist_ok=True)
+    (tmp_path / "conversation/pending-calls.json").write_text(
         json.dumps({"base_hash": "earlier-checkpoint", "output": [], "results": {}})
     )
     assert functions["recover_journal"](old) == old
-    manifest = json.loads((tmp_path / "resume.json").read_text())
+    manifest = json.loads((tmp_path / "conversation/resume.json").read_text())
     assert all((tmp_path / p).is_file() for p in manifest["files"])
-    assert json.loads((tmp_path / ".agent/pending-calls.json").read_text()) is None
+    assert json.loads((tmp_path / "conversation/pending-calls.json").read_text()) is None
 
 
 def test_manifest_flush_failure_does_not_publish_new_checkpoint(tmp_path, monkeypatch):
@@ -235,7 +231,7 @@ def test_manifest_flush_failure_does_not_publish_new_checkpoint(tmp_path, monkey
     fsync = os.fsync
 
     def fail_manifest_flush(descriptor):
-        temporaries = list(tmp_path.glob(".resume.json-*.tmp"))
+        temporaries = list(state_paths.state_root().glob(".resume.json-*.tmp"))
         if any(p.stat().st_ino == os.fstat(descriptor).st_ino for p in temporaries):
             raise OSError("controlled manifest flush failure")
         return fsync(descriptor)
@@ -243,7 +239,7 @@ def test_manifest_flush_failure_does_not_publish_new_checkpoint(tmp_path, monkey
     monkeypatch.setattr(os, "fsync", fail_manifest_flush)
     with pytest.raises(OSError):
         functions["checkpoint"]([{"role": "user", "content": "Source: new-history.json"}])
-    assert json.loads((tmp_path / ".agent/checkpoint.json").read_text()) == old
+    assert json.loads((tmp_path / "conversation/checkpoint.json").read_text()) == old
 
 
 def test_summary_headroom_does_not_recursively_split_a_feasible_plan(tmp_path, monkeypatch):
@@ -278,7 +274,9 @@ def test_oversized_summary_is_diagnosed_and_restart_is_bounded(tmp_path, monkeyp
         with pytest.raises(context.ContextError):
             context.prepare(messages(50000), [], provider)
     assert len(calls) <= 8
-    failure_records = list((tmp_path / "context-history").glob("summary-failure-*.json"))
+    failure_records = list(
+        (tmp_path / "conversation/context-history").glob("summary-failure-*.json")
+    )
     assert any(
         json.loads(p.read_text())["reason"] == "summary_text_exceeds_token_budget"
         for p in failure_records
@@ -300,7 +298,7 @@ def test_large_output_archival_alone_avoids_summary_and_keeps_original(tmp_path,
     result = context.fit_tool_outputs(original, context.decision_budget([]))
     assert context.paired(result)
     reference = json.loads(result[-1]["output"])["path"]
-    assert json.loads(pathlib.Path(reference).read_text()) == original[-1]
+    assert json.loads(state_paths.path(reference).read_text()) == original[-1]
 
 
 def test_token_mode_uses_host_reserve_and_archive_fast_path(tmp_path, monkeypatch):
@@ -477,7 +475,7 @@ def test_complete_utf8_summary_can_exceed_old_byte_limit(tmp_path, monkeypatch):
     result, _ = context.prepare(messages(), [], provider)
     assert "汉" * 2100 in result[0]["content"]
     assert len(calls) == 1
-    assert json.loads(pathlib.Path(calls[0]["source"]).read_text()) == messages()
+    assert json.loads(state_paths.path(calls[0]["source"]).read_text()) == messages()
 
 
 def test_failed_summary_remains_failed_after_restart(tmp_path, monkeypatch):
@@ -507,7 +505,7 @@ def test_persistently_overlong_summary_still_blocks_with_original_evidence(tmp_p
             context.prepare(original, [], invalid)
     assert len(calls) <= 8
     assert len(calls) == 1
-    assert json.loads(pathlib.Path(calls[0]["source"]).read_text()) == original
+    assert json.loads(state_paths.path(calls[0]["source"]).read_text()) == original
 
 
 def test_unconsumed_tool_result_fits_alone_and_reaches_next_decision(tmp_path, monkeypatch):
@@ -558,7 +556,7 @@ def test_oversized_result_archive_has_bounded_preview_and_lossless_source(tmp_pa
     view = json.loads(result[-1]["output"])
     assert "START-FACT" in view["preview"] and "END-FACT" in view["preview"]
     assert view["preview_complete"] is False
-    assert json.loads(pathlib.Path(view["path"]).read_text()) == original[-1]
+    assert json.loads(state_paths.path(view["path"]).read_text()) == original[-1]
     assert len(result[-1]["output"].encode()) < 12000
 
 
@@ -580,7 +578,7 @@ def test_repeated_read_compact_cycles_deliver_new_observation_without_closing_ta
         state, _ = context.prepare(state, [], lambda *args: completed())
         assert state[-1]["output"] == fact
         assert context.paired(state)
-    assert not (tmp_path / "run-outcome.json").exists()
+    assert not (tmp_path / "conversation/run-outcome.json").exists()
     assert not (tmp_path / "decision.json").exists()
 
 
@@ -588,7 +586,7 @@ def test_checkpoint_publication_preserves_declared_handoff_metadata(tmp_path, mo
     monkeypatch.chdir(tmp_path)
     context = load_context()
     for name in ["resume.json", "continuation.json"]:
-        (tmp_path / name).write_text(
+        state_paths.path(name).write_text(
             json.dumps(
                 {
                     "command": ["python", "agent.py", "--resume"],
@@ -600,7 +598,7 @@ def test_checkpoint_publication_preserves_declared_handoff_metadata(tmp_path, mo
         )
     agent_functions(context)["save_manifest"]()
     for name in ["resume.json", "continuation.json"]:
-        saved = json.loads((tmp_path / name).read_text())
+        saved = json.loads(state_paths.path(name).read_text())
         assert saved["remote_exports"] == ["export-example"]
         assert saved["provenance"] == {"scope": "untested research state"}
 
@@ -608,10 +606,10 @@ def test_checkpoint_publication_preserves_declared_handoff_metadata(tmp_path, mo
 def test_invalid_existing_manifest_does_not_silently_reset_handoff_state(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     context = load_context()
-    (tmp_path / "continuation.json").write_text("{bad")
+    (tmp_path / "conversation/continuation.json").write_text("{bad")
     with pytest.raises(ValueError):
         agent_functions(context)["save_manifest"]()
-    assert (tmp_path / "continuation.json").read_text() == "{bad"
+    assert (tmp_path / "conversation/continuation.json").read_text() == "{bad"
 
 
 def test_protected_batch_does_not_carry_avoidable_old_tail(tmp_path, monkeypatch):
@@ -654,7 +652,7 @@ def test_summary_does_not_spend_calls_on_opaque_provider_ciphertext(tmp_path, mo
     )
     assert len(requests) == 1
     assert "OPAQUE-CIPHER-SENTINEL" not in json.dumps(requests)
-    assert json.loads(pathlib.Path(record["source"]).read_text()) == original
+    assert json.loads(state_paths.path(record["source"]).read_text()) == original
     assert result
 
 
@@ -691,28 +689,28 @@ def test_control_character_preview_is_bounded_without_mutating_archive(tmp_path,
     original = {"type": "function_call_output", "call_id": "x", "output": "\x00😀" * 20000}
     view = context.archived_output(original, 2048)
     assert context.size(view) <= 2048
-    assert json.loads(pathlib.Path(json.loads(view["output"])["path"]).read_text()) == original
+    assert json.loads(state_paths.path(json.loads(view["output"])["path"]).read_text()) == original
 
 
 @pytest.mark.parametrize("broken", ["{bad", "[]"])
 def test_invalid_second_manifest_keeps_both_manifests_and_checkpoint(tmp_path, monkeypatch, broken):
     monkeypatch.chdir(tmp_path)
     context = load_context()
-    (tmp_path / "resume.json").write_text(
+    (tmp_path / "conversation/resume.json").write_text(
         json.dumps({"files": [], "remote_exports": ["export-kept"]})
     )
-    (tmp_path / "continuation.json").write_text(broken)
-    (tmp_path / ".agent/checkpoint.json").parent.mkdir(parents=True, exist_ok=True)
-    (tmp_path / ".agent/checkpoint.json").write_text(
+    (tmp_path / "conversation/continuation.json").write_text(broken)
+    (tmp_path / "conversation/checkpoint.json").parent.mkdir(parents=True, exist_ok=True)
+    (tmp_path / "conversation/checkpoint.json").write_text(
         '[{"role":"user","content":"last valid state"}]'
     )
     before = {
-        name: (tmp_path / name).read_bytes()
-        for name in ["resume.json", "continuation.json", ".agent/checkpoint.json"]
+        name: state_paths.path(name).read_bytes()
+        for name in ["resume.json", "continuation.json", "checkpoint.json"]
     }
     with pytest.raises((ValueError, TypeError)):
         agent_functions(context)["checkpoint"]([{"role": "user", "content": "new state"}])
-    assert all((tmp_path / name).read_bytes() == raw for name, raw in before.items())
+    assert all(state_paths.path(name).read_bytes() == raw for name, raw in before.items())
 
 
 def test_changed_reserve_reuses_same_full_transcript_answer(tmp_path, monkeypatch):

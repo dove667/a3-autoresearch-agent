@@ -38,7 +38,7 @@ def wait_cursor(messages):
 
 
 def active_jobs():
-    state = pathlib.Path(state_paths.OPERATIONS)
+    state = state_paths.path(state_paths.OPERATIONS)
     if not state.exists():
         return []
     return sorted(

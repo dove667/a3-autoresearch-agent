@@ -15,14 +15,16 @@ SNIPPET_WINDOW = 100
 SNIPPET_LIMIT = 30
 
 
-def append_history(message, path=HISTORY_PATH):
+def append_history(message, path=None):
     """Persist one model-visible message verbatim, forever."""
     if not isinstance(message, dict):
         return None
-    return jsonl_store.append_record(path, message)
+    return jsonl_store.append_record(
+        state_paths.path(HISTORY_PATH) if path is None else path, message
+    )
 
 
-def append_history_many(messages, path=HISTORY_PATH):
+def append_history_many(messages, path=None):
     written = 0
     for message in messages or []:
         if append_history(message, path) is not None:
@@ -30,15 +32,21 @@ def append_history_many(messages, path=HISTORY_PATH):
     return written
 
 
-def load_history(path=HISTORY_PATH):
-    return [row for row in jsonl_store.load_records(path) if row.get("type") != "corrupt_line"]
+def load_history(path=None):
+    return [
+        row
+        for row in jsonl_store.load_records(
+            state_paths.path(HISTORY_PATH) if path is None else path
+        )
+        if row.get("type") != "corrupt_line"
+    ]
 
 
 def _archive_matches(path, expected):
-    """Read only workspace files, never symlinked archive components."""
+    """Verify logical sources in the state store without following archive symlinks."""
     if path.is_absolute():
         return False
-    current = pathlib.Path.cwd()
+    current = state_paths.state_root()
     for part in path.parts:
         if part in {"", ".", ".."}:
             return False
@@ -133,7 +141,7 @@ def _verify_control_sources(messages):
     return len(references)
 
 
-def ensure_history(messages, path=HISTORY_PATH):
+def ensure_history(messages, path=None):
     """Reconcile recovered raw messages without duplicating existing occurrences.
 
     Recovery can add tool outputs absent from the append-only log. Index the
@@ -154,7 +162,7 @@ def ensure_history(messages, path=HISTORY_PATH):
         # reconciliation must not load every historical tool result into memory.
         wanted = {identity(message) for message in messages}
         existing, corrupt_lines = Counter(), 0
-        target = pathlib.Path(path)
+        target = state_paths.path(HISTORY_PATH) if path is None else pathlib.Path(path)
         if target.exists():
             with target.open(encoding="utf-8") as stream:
                 for line in stream:
@@ -311,7 +319,7 @@ def recall(
     m=None,
     *,
     messages=None,
-    path=HISTORY_PATH,
+    path=None,
     window=SNIPPET_WINDOW,
     limit=SNIPPET_LIMIT,
     mode="evidence",
@@ -335,7 +343,7 @@ def recall(
         if messages is not None:
             yield from messages
             return
-        target = pathlib.Path(path)
+        target = state_paths.path(HISTORY_PATH) if path is None else pathlib.Path(path)
         if target.is_file():
             with target.open(encoding="utf-8") as stream:
                 for line in stream:
@@ -350,7 +358,7 @@ def recall(
     # loading the lifetime transcript and every parsed tool result into memory.
     total_rounds = sum(1 for _ in iter_rounds(source()))
     if not total_rounds:
-        return [".agent/history.jsonl 中没有可用历史（尚无记录或被清空）"]
+        return ["history.jsonl 中没有可用历史（尚无记录或被清空）"]
     n_int, m_int = sorted(
         (bounds[0] if bounds[0] is not None else total_rounds, bounds[1] or 1), reverse=True
     )

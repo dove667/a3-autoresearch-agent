@@ -61,7 +61,7 @@ def launch(local, extra_files=None):
     local.create(
         "main",
         COMMAND,
-        {".agent/checkpoint.json": '[{"role":"user","content":"task"}]', **(extra_files or {})},
+        {"checkpoint.json": '[{"role":"user","content":"task"}]', **(extra_files or {})},
         "scoped-token",
     )
     workspace = (local.root / "main/workspace").resolve()
@@ -99,11 +99,21 @@ def test_native_run_has_one_process_and_owner_scoped_access(tmp_path, monkeypatc
             local.create("other", COMMAND, {}, "other-token")
         assert not (local.root / "other").exists()
         with pytest.raises(PermissionError):
-            local.artifact("other", "main", ".agent/checkpoint.json")
+            local.artifact("other", "main", "conversation/checkpoint.json")
         with pytest.raises(PermissionError):
             local.read_workspace_files("other", [])
     finally:
         local.close()
+
+
+def test_old_workspace_state_layout_requires_a_maintenance_release(tmp_path, monkeypatch):
+    local = runtime(tmp_path, monkeypatch)
+    (local.published_source / "a3_research_agent/harness/state_paths.py").write_text(
+        'CHECKPOINT = "checkpoint.json"\n'
+    )
+    with pytest.raises(ValueError, match="state layout"):
+        local.require_native_source(local.published_source)
+    assert not local.records
 
 
 def test_native_natural_exit_is_archived_without_deleting_research(tmp_path, monkeypatch):
@@ -114,14 +124,14 @@ def test_native_natural_exit_is_archived_without_deleting_research(tmp_path, mon
         "print('finished', flush=True)\n"
     )
     local.create(
-        "main", COMMAND, {".agent/checkpoint.json": '[{"role":"user","content":"task"}]'}, "token"
+        "main", COMMAND, {"checkpoint.json": '[{"role":"user","content":"task"}]'}, "token"
     )
     wait_for(lambda: local.status("main", "main")["status"] == "exited")
     local.reap_exited()
     record = local.records["main"]
     assert exit_archived(record) and record["terminal_state"]["exit_code"] == 0
     assert "finished" in local.status("main", "main")["output"]
-    assert (local.root / "main/workspace/.agent/checkpoint.json").is_file()
+    assert (local.state_root / "checkpoint.json").is_file()
     local.close()
 
 
@@ -141,6 +151,9 @@ def test_native_child_uses_fixed_source_scoped_env_and_keeps_logs(tmp_path, monk
         assert record["environment"]["A3_GATEWAY_TOKEN"] == "scoped-token"
         assert record["environment"]["A3_WORKSPACE"] == str(workspace)
         assert workspace == tmp_path / "workspace"
+        assert record["environment"]["A3_STATE_ROOT"] == str(local.state_root)
+        assert not (workspace / "checkpoint.json").exists()
+        assert not (workspace / ".agent").exists()
         assert record["environment"]["A3_MEMORY_ROOT"] == str(tmp_path / "memory")
         assert (tmp_path / "memory").is_dir()
         assert record["environment"]["A3_INPUT_ROOT"] == str(local.inputs)
@@ -159,16 +172,16 @@ def test_native_child_uses_fixed_source_scoped_env_and_keeps_logs(tmp_path, monk
         local.close()
 
 
-def test_new_process_cannot_overwrite_the_shared_research_workspace(tmp_path, monkeypatch):
+def test_new_process_cannot_overwrite_the_existing_conversation_checkpoint(tmp_path, monkeypatch):
     local = runtime(tmp_path, monkeypatch)
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    checkpoint = workspace / ".agent/checkpoint.json"
+    checkpoint = local.state_root / "checkpoint.json"
     checkpoint.parent.mkdir()
     checkpoint.write_text('[{"role":"user","content":"existing work"}]')
     before = checkpoint.read_bytes()
     with pytest.raises(ValueError, match="must be resumed"):
-        local.create("main", COMMAND, {".agent/checkpoint.json": "[]"}, "token")
+        local.create("main", COMMAND, {"checkpoint.json": "[]"}, "token")
     assert checkpoint.read_bytes() == before
     assert not local.records
     assert not (local.root / "main").exists()
@@ -212,16 +225,16 @@ def test_native_suspend_resume_retains_workspace_and_unknown_tool_journal(tmp_pa
     try:
         workspace = launch(local)
         unknown = '{"base_hash":"old","output":[{"type":"function_call","call_id":"pending"}],"results":{}}'
-        (workspace / ".agent/pending-calls.json").parent.mkdir(parents=True, exist_ok=True)
-        (workspace / ".agent/pending-calls.json").write_text(unknown)
+        (local.state_root / "pending-calls.json").parent.mkdir(parents=True, exist_ok=True)
+        (local.state_root / "pending-calls.json").write_text(unknown)
         local.suspend()
         assert (workspace / "interrupted.json").is_file()
         assert local.state(local.records["main"])["status"] == "exited"
         local.resume_sessions({"new-token": "main"}, "main")
         wait_for(lambda: len((workspace / "starts.jsonl").read_text().splitlines()) == 2)
-        assert (workspace / ".agent/pending-calls.json").read_text() == unknown
+        assert (local.state_root / "pending-calls.json").read_text() == unknown
         assert (
-            workspace / ".agent/checkpoint.json"
+            local.state_root / "checkpoint.json"
         ).read_text() == '[{"role":"user","content":"task"}]'
         assert local.status("main", "main")["status"] == "running"
         assert (
@@ -237,18 +250,17 @@ def test_native_suspend_resume_retains_workspace_and_unknown_tool_journal(tmp_pa
 def test_native_suspend_resume_keeps_an_empty_initial_checkpoint(tmp_path, monkeypatch):
     local = runtime(tmp_path, monkeypatch)
     try:
-        workspace = launch(
-            local, {".agent/checkpoint.json": "[\n]\n", ".agent/pending-calls.json": "null"}
-        )
-        checkpoint = (workspace / ".agent/checkpoint.json").read_bytes()
+        workspace = launch(local, {"checkpoint.json": "[\n]\n"})
+        (local.state_root / "pending-calls.json").write_text("null")
+        checkpoint = (local.state_root / "checkpoint.json").read_bytes()
         local.suspend()
         assert local.state(local.records["main"])["status"] == "exited"
-        assert (workspace / ".agent/checkpoint.json").read_bytes() == checkpoint
+        assert (local.state_root / "checkpoint.json").read_bytes() == checkpoint
         local.resume_sessions({"new-token": "main"}, "main")
         wait_for(lambda: len((workspace / "starts.jsonl").read_text().splitlines()) == 2)
         assert local.status("main", "main")["status"] == "running"
-        assert (workspace / ".agent/checkpoint.json").read_bytes() == checkpoint
-        assert (workspace / ".agent/pending-calls.json").read_text() == "null"
+        assert (local.state_root / "checkpoint.json").read_bytes() == checkpoint
+        assert (local.state_root / "pending-calls.json").read_text() == "null"
         assert not (workspace / "task.txt").exists()
     finally:
         local.close()
@@ -396,8 +408,8 @@ def test_interrupted_tool_retains_journal_and_recovery_never_replays(tmp_path, m
     monkeypatch.setenv("A3_INPUT_ROOT", str(tmp_path / "inputs"))
     monkeypatch.setenv("A3_REFERENCE_ROOT", str(tmp_path / "reference"))
     monkeypatch.setattr(agent.sys, "argv", ["agent", "--resume"])
-    (tmp_path / ".agent/checkpoint.json").parent.mkdir(parents=True, exist_ok=True)
-    (tmp_path / ".agent/checkpoint.json").write_text("[]")
+    (tmp_path / "conversation/checkpoint.json").parent.mkdir(parents=True, exist_ok=True)
+    (tmp_path / "conversation/checkpoint.json").write_text("[]")
 
     class Compactor:
         def __init__(self, *args, **kwargs):
@@ -438,8 +450,8 @@ def test_interrupted_tool_retains_journal_and_recovery_never_replays(tmp_path, m
 
     monkeypatch.setattr(agent, "tool", interrupted)
     agent.main()
-    before = json.loads((tmp_path / ".agent/checkpoint.json").read_text())
-    journal = json.loads((tmp_path / ".agent/pending-calls.json").read_text())
+    before = json.loads((tmp_path / "conversation/checkpoint.json").read_text())
+    journal = json.loads((tmp_path / "conversation/pending-calls.json").read_text())
     assert journal["results"] == {} and journal["output"][0]["call_id"] == "one"
     restored = agent.recover_journal(before)
     assert executed == ["submitted"]

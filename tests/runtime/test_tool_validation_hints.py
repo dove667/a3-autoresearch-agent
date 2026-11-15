@@ -28,7 +28,10 @@ def functions():
             for x in n.targets
         )
     ]
+    from a3_research_agent.harness import research_status
+
     ns = {
+        "research_status": research_status,
         "json": __import__("json"),
         "web_tools": None,
         "skill_tools": None,
@@ -117,7 +120,7 @@ def test_real_progress_validation_does_not_mutate_state(tmp_path, monkeypatch):
         }
     )
     assert result["code"] == "progress_bounds"
-    assert not module.PATH.exists()
+    assert not module.state_file().exists()
 
 
 def test_whitelist_is_exact_and_scoped_to_the_expected_tool():

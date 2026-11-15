@@ -8,11 +8,11 @@ from a3_research_agent.host.sessions.workspace import ArtifactTooLargeError, rea
 
 
 def test_large_trace_can_be_read_in_bounded_byte_pages(tmp_path):
-    (tmp_path / ".agent").mkdir()
-    with (tmp_path / ".agent/trajectory.jsonl").open("wb") as stream:
+    (tmp_path / "conversation").mkdir()
+    with (tmp_path / "conversation/trajectory.jsonl").open("wb") as stream:
         stream.seek(32 * 1024 * 1024)
         stream.write(b"last-result")
-    page = read_artifact(tmp_path, ".agent/trajectory.jsonl", 32 * 1024 * 1024 - 2, 16)
+    page = read_artifact(tmp_path / "conversation", "trajectory.jsonl", 32 * 1024 * 1024 - 2, 16)
     assert base64.b64decode(page["data"]) == b"\0\0last-result"
     assert page["offset"] == 33554430
     assert page["next_offset"] == page["size_bytes"] == 33554443
@@ -20,11 +20,11 @@ def test_large_trace_can_be_read_in_bounded_byte_pages(tmp_path):
 
 
 def test_large_unpaged_artifact_requires_explicit_page(tmp_path):
-    (tmp_path / ".agent").mkdir()
-    with (tmp_path / ".agent/trajectory.jsonl").open("wb") as stream:
+    (tmp_path / "conversation").mkdir()
+    with (tmp_path / "conversation/trajectory.jsonl").open("wb") as stream:
         stream.truncate(32 * 1024 * 1024 + 1)
     with pytest.raises(ArtifactTooLargeError) as caught:
-        read_artifact(tmp_path, ".agent/trajectory.jsonl")
+        read_artifact(tmp_path / "conversation", "trajectory.jsonl")
     assert caught.value.size_bytes == 33554433
 
 

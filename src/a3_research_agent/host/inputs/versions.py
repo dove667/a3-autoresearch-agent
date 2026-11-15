@@ -17,70 +17,8 @@ PROMPT_SOURCES = {
 
 
 def deployment_input_sources(source_root: Path) -> dict[str, str]:
-    """Select the current prompts and complete reviewed method packages."""
-    sources = dict(PROMPT_SOURCES)
-    root = source_root / "skills"
-    if root.is_symlink():
-        raise ValueError("Deployed skill references cannot be symlinks")
-    if not root.is_dir():
-        raise ValueError("Missing deployed skill reference directory")
-    directories = []
-    for directory in sorted(root.iterdir()):
-        if directory.name.startswith(".") or directory.name == "__pycache__":
-            continue
-        if directory.is_symlink():
-            raise ValueError("Deployed skill references cannot be symlinks")
-        if directory.is_dir():
-            if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", directory.name):
-                raise ValueError("Invalid deployed skill reference name")
-            directories.append(directory)
-    if not directories:
-        raise ValueError("No deployed skill references")
-    for directory in directories:
-        identifier = directory.name
-        selected = []
-        for path in sorted(directory.rglob("*")):
-            relative = path.relative_to(source_root)
-            if any(part.startswith(".") or part == "__pycache__" for part in relative.parts):
-                continue
-            if path.is_symlink():
-                raise ValueError("Deployed skill references cannot be symlinks")
-            if path.is_file() and path.suffix in {".md", ".json", ".py"}:
-                if path.stat().st_size > 1024 * 1024:
-                    raise ValueError("Deployed skill reference exceeds file size bound")
-                selected.append(relative.as_posix())
-        required = {
-            f"skills/{identifier}/SKILL.md",
-            f"skills/{identifier}/assets/catalog-entry.json",
-        }
-        if not required <= set(selected) or len(selected) > 128:
-            raise ValueError("Deployed skill reference tree is incomplete or oversized")
-        sources.update({name: name for name in selected})
-    return sources
-
-
-def skill_input_versions(contents: dict[str, str]) -> dict[str, str]:
-    """Version a complete skill tree by its catalog, with separate per-file hashes."""
-    versions = {}
-    for name, text in contents.items():
-        if not name.startswith("skills/") or not name.endswith("/assets/catalog-entry.json"):
-            continue
-        catalog = json.loads(text)
-        if not isinstance(catalog, dict):
-            raise TypeError("Skill reference catalog must be an object")
-        prefix = name.removesuffix("assets/catalog-entry.json")
-        identifier = prefix.split("/")[1]
-        version = catalog.get("version")
-        if (
-            catalog.get("id") != identifier
-            or catalog.get("local_source") != prefix + "SKILL.md"
-            or not isinstance(version, str)
-            or not re.fullmatch(r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)", version)
-            or prefix + "SKILL.md" not in contents
-        ):
-            raise ValueError("Invalid versioned skill reference catalog")
-        versions.update({path: version for path in contents if path.startswith(prefix)})
-    return versions
+    """Select fixed prompts; skills remain live in their separate project library."""
+    return dict(PROMPT_SOURCES)
 
 
 def execution_index(text: str) -> dict:
@@ -163,7 +101,7 @@ class InputVersions:
         return instance
 
     def prepare_update(self) -> dict:
-        """Preview the repository's complete current prompts and method packages."""
+        """Preview the repository's current prompts."""
         candidate = InputVersions(self.source_root, None)
         candidate.run = self.run
         return candidate.prepare()
@@ -210,9 +148,6 @@ class InputVersions:
                     if old["sha256"] != files[name]["sha256"]:
                         raise ValueError(f"Recorded input snapshot changed: {name}")
                     files[name] = dict(old)
-            for name, version in skill_input_versions(contents).items():
-                if not self.frozen_manifest:
-                    files[name]["version"] = version
             previous_manifests = (
                 (self.run / "input-revisions").glob("*/manifest.json") if self.run else ()
             )
@@ -220,26 +155,6 @@ class InputVersions:
                 saved = json.loads(previous.read_text())
                 if saved.get("status") != "active":
                     continue
-                for name, item in files.items():
-                    if not name.startswith("skills/") or not name.endswith(
-                        "/assets/catalog-entry.json"
-                    ):
-                        continue
-                    if saved["files"].get(name, {}).get("version") != item["version"]:
-                        continue
-                    prefix = name.removesuffix("assets/catalog-entry.json")
-                    old_tree = {
-                        path: record["sha256"]
-                        for path, record in saved["files"].items()
-                        if path.startswith(prefix)
-                    }
-                    new_tree = {
-                        path: record["sha256"]
-                        for path, record in files.items()
-                        if path.startswith(prefix)
-                    }
-                    if old_tree != new_tree:
-                        raise ValueError(f"{prefix} changed without a version increment")
                 for name, item in files.items():
                     old = saved["files"].get(name, {})
                     if (

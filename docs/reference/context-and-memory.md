@@ -49,7 +49,7 @@ plan step. Program-level waiting handles queueing and running jobs without
 model polling. The Agent verifies the step's criterion before recording evidence
 and marking it done. The plan tracks Agent claims and observed job states.
 
-Same-run resume reads `research-plan.json` from the existing workspace. A published
+Same-run resume reads `research-plan.json` from the current conversation state. A published
 night release preserves that plan and carries the operator-reviewed handoff in its
 input bundle. The Agent updates its route from new evidence while retaining prior
 decisions, job references and results.
@@ -64,7 +64,7 @@ current notes with their source references. Existing free-text notes stay
 readable and searchable. The Agent chooses which findings to record and checks
 their applicability before reuse.
 
-Use `recall` for original observations retained in the shared `workspace/` history. Without `n`/`m`, it searches the available
+Use `recall` for original observations retained in the current run's `conversation/history.jsonl`. Without `n`/`m`, it searches the available
 original history; an explicit round window retains its existing meaning. Search
 streams rounds and keeps bounded ranked snippets. Its default evidence mode ranks matching
 snippets and excludes tool arguments and prior retrieval responses. Use
@@ -115,7 +115,7 @@ retry protocol, preserving the source snapshot and each attempt. Exhausted failu
 keep the checkpoint recoverable and block the decision that requires compaction.
 The runtime does not generate a no-summary archive fallback.
 
-Original messages and tool results remain in `.agent/history.jsonl` and verified source
+Original messages and tool results remain in `conversation/history.jsonl` and verified source
 snapshots. Large tool results are separately stored losslessly with bounded previews;
 remote text artifacts use character pages with source hashes. This result transport
 keeps the request bounded while preserving access to the actual observations.
@@ -130,7 +130,7 @@ historical source and checkpoints retain their original versions.
 
 ## Deliver observations before compacting them
 
-The overlay prepares context **before** the next model decision. The final complete
+The Harness prepares context **before** the next model decision. The final complete
 tool-call/result batch is therefore a new observation, not already-read history.
 If that batch fits with working-memory headroom, it remains intact while older
 history is archived or summarized. A lower compression target does not justify
@@ -180,8 +180,7 @@ Maintainers validate changes to the main Harness during a maintenance window. Or
 `context-history/snapshot-<SHA256>.json` source reference and the requested output
 allocation in `max_output_tokens`. It cannot receive client
 instructions, tools, model selection or credentials. The Host supplies concise
-source/uncertainty/correction instructions rather than repeating the whole task
-instructions. The output grants no authority and never executes tools. The current
+source, uncertainty and correction instructions for this history transformation. The output grants no authority and never executes tools. The current
 SOUL continues to govern normal research decisions.
 
 Summary metadata binds operator-feedback IDs and hashes. It does not copy every
@@ -215,8 +214,9 @@ submitted again. These measures are not a multi-file power-loss transaction or a
 promise of perfect semantic summaries. Persistent provider/storage/budget failures
 can still require an explicit operator repair.
 
-Enumerate the copied helper and every required file in `run.json`, `resume.json`
-and `continuation.json`. The ordinary entry remains `python -m a3_research_agent.harness.agent --resume`.
+The runtime generates `resume.json` and `continuation.json` in the current
+conversation state. Their `files` lists identify workspace research files. The
+ordinary entry remains `python -m a3_research_agent.harness.agent --resume`.
 Continue research through `--resume-from` on the original run; retain historical
 evaluations with their original model, dataset and settings. For a paused process, editing disk
 modules does not reload already imported Python code. Any later authorized update
@@ -233,19 +233,31 @@ reachability. Neither a process exit code nor a mock response proves those facts
 
 ## Durable operational memory and bounded analysis
 
-The fixed runtime stores its checkpoint, tool journal, history, trajectory,
-operational ledger, compaction transactions and failure records in `workspace/.agent/`.
-Research code, plans, skills and continuation declarations remain at the workspace
-root. `context-history/` and `.autorun-spill/` keep their original paths and hash-bound
-contents so archived source references remain usable after maintenance.
+The Host sets `A3_STATE_ROOT` to `trajectories/<run>/conversation/`. The fixed
+runtime stores its plan, resume/continuation manifests, outcome, checkpoint, tool
+journal, history, trajectory, operational ledger, compaction transactions, preflight
+receipts and failure records there. Research code, experiment working material and
+freely written notes stay in the shared `workspace/`. Skills use the single root
+`skills/` library.
 
-The optional overlay now returns normal text reads as bounded character-page objects:
+The `plan` and `progress` tools maintain program metadata. The Agent records its
+research status with `progress(action="outcome", status="continue"|"blocked",
+reason=..., external_blocker=...)`. The runtime saves `run-outcome.json` and generates
+the resume and continuation file lists; the Agent works through the corresponding
+tools.
+
+`context-history/` and `.autorun-spill/` are logical source references relative to
+`runtime_paths.state`. Their contents and hashes remain unchanged. Ordinary file
+tools can read/list/search the current conversation directory but cannot write or
+edit it. Skills and long-term memory use their dedicated tools.
+
+The runtime returns normal text reads as bounded character-page objects:
 `path`, whole-file `sha256`, `offset`, `end`, `total`, `eof`, and `content`.
 Offsets refer to decoded characters, not UTF-8 bytes. Pages are bounded by actual
 serialized call-output size. Hashing and character extraction stream the source
 without loading the full file into memory; hashing still reads the full source.
 Optional top-level JSON field selection rejects sources above 1 MiB with a paging
-notice, before parsing the object. `.agent/operational-state.json` records retrieved ranges separately from exact
+notice, before parsing the object. `conversation/operational-state.json` records retrieved ranges separately from exact
 page payloads included in a successful completed model request. Neither proves
 understanding. Sparse coverage is bounded with an explicit incompleteness marker;
 gaps are never merged into unread coverage. Views and receipts have finite caps.
@@ -254,7 +266,7 @@ The executed raw result is journaled before optional receipt/preview work. An
 archival failure is a persistence failure, not a claim that the operation failed.
 Recovery republishes saved results without executing the tool again, reconciling
 read receipts idempotently. If the outcome was never durably recorded, the journal
-keeps an explicit unknown outcome requiring inspection. `.agent/loop-failure.json` records
+keeps an explicit unknown outcome requiring inspection. `conversation/loop-failure.json` records
 the failure stage and safe context-budget diagnostics; an exit code alone is not
 completion evidence. Atomic writers use unique temporary files and verify reused
 content-addressed sources.
@@ -268,11 +280,12 @@ workspace-relative evidence references; research decisions remain Agent-authored
 Missing/large/changed evidence is uncertain, not automatically passed or reopened.
 Current operational facts are attached as a bounded ephemeral frame on each normal
 decision, outside rolling summaries and the saved model history. Its estimated
-cost is reserved before compression. The exact frame is archived, references and
-new modules enter ordinary resume/continuation manifests, and a corrupt sidecar
-fails closed rather than silently resetting it. One previous sidecar and separate
+cost is reserved before compression. The exact frame is archived with its source
+references; resume/continuation lists are generated from workspace research files.
+A corrupt sidecar fails closed rather than silently resetting it. One previous sidecar and separate
 progress-item archives bound redundant storage while preserving task changes.
 
-Resume, future sessions and maintenance releases use the same project-level
-`workspace/` and `memory/`. The operational ledger, skills, lessons, research source
-and original history remain available.
+Resume and maintenance releases preserve the current conversation state. Future
+sessions share research files in `workspace/`, the root skill library and active
+long-term experience in `memory/entries.jsonl`. Operational records remain with
+the run that produced them.

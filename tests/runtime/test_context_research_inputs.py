@@ -18,7 +18,7 @@ def test_new_research_preserves_knowledge_and_starts_an_empty_model_context(tmp_
     source = HarnessStart(
         COMMAND.copy(),
         {
-            ".agent/checkpoint.json": json.dumps([{"role": "user", "content": "previous task"}]),
+            "checkpoint.json": json.dumps([{"role": "user", "content": "previous task"}]),
             "research/lesson.md": "Verified reusable lesson\n",
             "research/manifest.json": '{"observations":3}',
         },
@@ -27,7 +27,7 @@ def test_new_research_preserves_knowledge_and_starts_an_empty_model_context(tmp_
     )
     before = dict(source.files)
     fresh, context = prepare_research_start(source)
-    assert json.loads(fresh.files[".agent/checkpoint.json"]) == []
+    assert json.loads(fresh.files["checkpoint.json"]) == []
     assert "task.txt" not in fresh.files
     assert json.loads(fresh.files["run-outcome.json"])["status"] == "continue"
     assert context["initial_message_count"] == 0

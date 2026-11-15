@@ -82,10 +82,8 @@ def research_workspace(run: Path, session: str) -> Path:
     return workspace_path(project_for_run(run), "workspace")
 
 
-def pinned_resume(workspace: Path) -> tuple[list[str], dict[str, str]]:
-    return COMMAND.copy(), {
-        state_paths.CHECKPOINT: workspace_path(workspace, state_paths.CHECKPOINT).read_text()
-    }
+def conversation_root(run: Path) -> Path:
+    return state_paths.state_root(workspace_path(run, "conversation"))
 
 
 def native_source(root: Path, commit: str) -> Path:

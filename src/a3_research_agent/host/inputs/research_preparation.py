@@ -27,9 +27,7 @@ def prepare_research_start(start):
     fresh, context = prepare_fresh_research(start)
     fresh.files.update(
         {
-            state_paths.TRAJECTORY: "",
-            "progress.md": "# Research progress\n",
-            "run-outcome.json": json.dumps({"status": "continue", "reason": "Research continues"}),
+            state_paths.OUTCOME: json.dumps({"status": "continue", "reason": "Research continues"}),
         }
     )
     context["source_run"] = str(start.previous_run.resolve()) if start.previous_run else None

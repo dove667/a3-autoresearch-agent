@@ -1,3 +1,5 @@
+from a3_research_agent.harness import state_paths
+
 """A single full-history summary gets enough output space to complete."""
 
 import json
@@ -78,7 +80,7 @@ def test_summary_can_complete_beyond_one_thousand_tokens(tmp_path, monkeypatch, 
     assert len(calls) == 1
     assert 1536 <= calls[0]["max_output_tokens"] <= 32000
     assert json.loads(calls[0]["input"][0]["content"])["transcript"] == json.dumps(original)
-    assert json.loads((tmp_path / source).read_text()) == original
+    assert json.loads(state_paths.path(source).read_text()) == original
 
 
 def test_small_default_reserve_does_not_cap_summary_generation(tmp_path):

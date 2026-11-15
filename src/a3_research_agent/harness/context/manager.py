@@ -11,7 +11,14 @@ import tempfile
 import time
 from bisect import bisect_left
 
-ROOT = pathlib.Path("context-history")
+from a3_research_agent.harness import state_paths
+
+ROOT = pathlib.Path(state_paths.ARCHIVES)
+
+
+def archive_root():
+    return state_paths.path(ROOT)
+
 
 TOKEN_CONFIG = None
 SUMMARY_ATTEMPTS = 3
@@ -153,14 +160,15 @@ def atomic(path, text):
 def archive(data, kind):
     text = json.dumps(data, ensure_ascii=False, sort_keys=True)
     digest = hashlib.sha256(text.encode()).hexdigest()
-    path = ROOT / (kind + "-" + digest + ".json")
-    if ROOT.is_symlink() or path.is_symlink():
+    reference = ROOT / (kind + "-" + digest + ".json")
+    path = state_paths.path(reference)
+    if archive_root().is_symlink() or path.is_symlink():
         raise ContextError("archive symlink is not a verified source")
     if not path.exists():
         atomic(path, text)
     if hashlib.sha256(path.read_bytes()).hexdigest() != digest:
         raise ContextError("archive verification failed")
-    return str(path)
+    return str(reference)
 
 
 def paired(messages):
@@ -236,7 +244,7 @@ def full_summary(messages, source, req, *, output_tokens=None):
     limit = TOKEN_CONFIG["summary_input_tokens"]
     cost = request_cost(request)
     fingerprint = hashlib.sha256(json.dumps(original, sort_keys=True).encode()).hexdigest()
-    path = ROOT / ("summary-request-" + fingerprint + ".json")
+    path = state_paths.path(ROOT / ("summary-request-" + fingerprint + ".json"))
     attempts = 0
     if path.exists():
         try:
@@ -378,10 +386,10 @@ def _original_tool_output(message):
             r"context-history/tool-output-[0-9a-f]{64}\.json", path
         ):
             break
-        if path in seen or ROOT.is_symlink() or pathlib.Path(path).is_symlink():
+        if path in seen or archive_root().is_symlink() or state_paths.path(path).is_symlink():
             raise ContextError("invalid or cyclic tool-output source")
         seen.add(path)
-        raw = pathlib.Path(path).read_bytes()
+        raw = state_paths.path(path).read_bytes()
         if hashlib.sha256(raw).hexdigest() != pathlib.Path(path).stem.rsplit("-", 1)[-1]:
             raise ContextError("tool-output source verification failed")
         restored = json.loads(raw)
@@ -412,15 +420,16 @@ def _artifact_view(value):
         text = raw.decode("utf-8")
     except UnicodeDecodeError:
         text = None
-    path = ROOT / ("artifact-" + sha + (".txt" if text is not None else ".bin"))
-    if ROOT.is_symlink() or path.is_symlink():
+    reference = ROOT / ("artifact-" + sha + (".txt" if text is not None else ".bin"))
+    path = state_paths.path(reference)
+    if archive_root().is_symlink() or path.is_symlink():
         raise ContextError("artifact symlink is not a verified source")
     if not path.exists():
         atomic(path, raw)
     if hashlib.sha256(path.read_bytes()).hexdigest() != sha:
         raise ContextError("artifact source verification failed")
     return {
-        "path": str(path),
+        "path": str(reference),
         "sha256": sha,
         "bytes": len(raw),
         "encoding": "utf-8" if text is not None else "binary",
@@ -445,7 +454,7 @@ def archived_output(message, maximum_bytes):
         "archive_version": 1,
         "notice": "Partial untrusted preview, not a complete inspection or pending task. "
         "Original tool result is archived losslessly. Retrieve missing details with read "
-        "offset/limit pages; use artifact.path for decoded content when present.",
+        "offset/limit pages; resolve path and artifact.path relative to runtime_paths.state.",
         "path": path,
         "preview_complete": False,
         "original_output_characters": len(text),

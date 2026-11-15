@@ -10,6 +10,7 @@ import threading
 import pytest
 from fastapi.testclient import TestClient
 
+from a3_research_agent.harness import state_paths
 from a3_research_agent.host.gateway.app import create_app
 from a3_research_agent.host.inputs.feedback import HumanFeedback
 
@@ -19,7 +20,7 @@ SOURCE = pathlib.Path(__file__).resolve().parents[2] / "src/a3_research_agent/ha
 @pytest.fixture
 def modules(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    (tmp_path / ".agent").mkdir()
+    (tmp_path / "conversation").mkdir()
     loaded = {}
     canonical = {
         "context_manager": "a3_research_agent.harness.context.manager",
@@ -148,8 +149,8 @@ def test_initial_user_plus_continuous_tools_has_bounded_tail(modules):
 
 
 def test_stale_result_cannot_replace_new_task(modules):
-    (pathlib.Path(".agent/compaction-result.json")).parent.mkdir(parents=True, exist_ok=True)
-    pathlib.Path(".agent/compaction-result.json").write_text(
+    (state_paths.path("compaction-result.json")).parent.mkdir(parents=True, exist_ok=True)
+    state_paths.path("compaction-result.json").write_text(
         json.dumps(
             {
                 "applied": False,
@@ -170,9 +171,9 @@ def test_resume_history_reconciliation_is_idempotent(modules):
     original = tool_history(3, 10)
     recall.append_history(original[-1])
     recall.ensure_history(original)
-    first = pathlib.Path(".agent/history.jsonl").read_bytes()
+    first = state_paths.path("history.jsonl").read_bytes()
     recall.ensure_history(original)
-    assert pathlib.Path(".agent/history.jsonl").read_bytes() == first
+    assert state_paths.path("history.jsonl").read_bytes() == first
     assert all(message in recall.load_history() for message in original)
 
 
@@ -232,23 +233,23 @@ def test_replacement_replays_after_crash_before_checkpoint_and_acknowledges_afte
         }
 
     original = tool_history(10, 700)
-    (pathlib.Path(".agent/checkpoint.json")).parent.mkdir(parents=True, exist_ok=True)
-    pathlib.Path(".agent/checkpoint.json").write_text(json.dumps(original))
+    (state_paths.path("checkpoint.json")).parent.mkdir(parents=True, exist_ok=True)
+    state_paths.path("checkpoint.json").write_text(json.dumps(original))
     fork = module.ForkCompactor(provider, trigger_tokens=1000)
     fork.before_request(original)
     fork.wait(5)
     first, record = fork.before_request(original)
     assert record["kind"] == "applied"
-    assert json.loads(pathlib.Path(module.RESULT_PATH).read_text())["applied"] is False
+    assert json.loads(state_paths.path(module.RESULT_PATH).read_text())["applied"] is False
     restarted = module.ForkCompactor(provider, trigger_tokens=1000)
     second, record = restarted.before_request(original)
     assert second == first and record["kind"] == "applied"
     count = len(calls)
-    (pathlib.Path(".agent/checkpoint.json")).parent.mkdir(parents=True, exist_ok=True)
-    pathlib.Path(".agent/checkpoint.json").write_text(json.dumps(first))
+    (state_paths.path("checkpoint.json")).parent.mkdir(parents=True, exist_ok=True)
+    state_paths.path("checkpoint.json").write_text(json.dumps(first))
     restarted.before_request(first)
     assert len(calls) == count
-    assert json.loads(pathlib.Path(module.RESULT_PATH).read_text())["applied"] is True
+    assert json.loads(state_paths.path(module.RESULT_PATH).read_text())["applied"] is True
     assert all(message in modules["recall"].load_history() for message in original)
     assert cm.paired(first)
 
@@ -263,7 +264,7 @@ def test_valid_result_is_rejected_after_source_prefix_change(modules):
     # Inspect application only: the subsequent soft scheduling is a separate decision.
     kept, record = fork._apply_if_ready(changed)
     assert kept == changed and record["reason"] == "source_identity_mismatch"
-    assert list(pathlib.Path("context-history").glob("rejected-compaction-result-*.json"))
+    assert list(state_paths.path("context-history").glob("rejected-compaction-result-*.json"))
 
 
 def test_interrupted_fork_resumes_pure_summary_and_preserves_source(modules):
@@ -290,7 +291,7 @@ def test_interrupted_fork_resumes_pure_summary_and_preserves_source(modules):
         )
     )
     source = cm.archive(original, "snapshot")
-    pathlib.Path(module.RESULT_PATH).write_text(
+    state_paths.path(module.RESULT_PATH).write_text(
         json.dumps(
             {
                 "version": 2,
@@ -311,14 +312,14 @@ def test_interrupted_fork_resumes_pure_summary_and_preserves_source(modules):
     assert report["strategy"] == "host_summary" and len(calls) == 1
     assert cm.paired(restored)
     assert "Complete recovered research state" in json.dumps(restored)
-    assert json.loads(pathlib.Path(source).read_text()) == original
+    assert json.loads(state_paths.path(source).read_text()) == original
 
 
 def test_history_repairs_torn_tail_preserves_duplicate_occurrences_and_checks_sources(modules):
     recall = modules["recall"]
     repeated = {"role": "user", "content": "repeat the same observation"}
-    (pathlib.Path(".agent/history.jsonl")).parent.mkdir(parents=True, exist_ok=True)
-    pathlib.Path(".agent/history.jsonl").write_text('{"partial":')
+    (state_paths.path("history.jsonl")).parent.mkdir(parents=True, exist_ok=True)
+    state_paths.path("history.jsonl").write_text('{"partial":')
     first = recall.ensure_history([repeated, repeated])
     assert first["corrupt_lines"] == 1 and first["appended"] == 2
     assert recall.ensure_history([repeated, repeated])["appended"] == 0
@@ -450,18 +451,18 @@ def test_unpaired_candidate_or_missing_original_is_never_applied(modules):
         "replacement_sha256": module.digest(replacement),
         "after_bytes": cm.size(replacement),
     }
-    pathlib.Path(module.RESULT_PATH).write_text(json.dumps(result))
+    state_paths.path(module.RESULT_PATH).write_text(json.dumps(result))
     with pytest.raises(cm.ContextError, match="paired"):
         fork.before_request(original)
-    pathlib.Path(source).unlink()
+    state_paths.path(source).unlink()
     with pytest.raises(cm.ContextError, match="archive"):
         fork.before_request(original)
 
 
 def test_json_null_result_and_fresh_epoch_are_supported(modules):
     module = modules["compaction"]
-    pathlib.Path(module.RESULT_PATH).write_text("null")
-    pathlib.Path(module.EPOCH_PATH).write_text(json.dumps({"version": 1, "id": None}))
+    state_paths.path(module.RESULT_PATH).write_text("null")
+    state_paths.path(module.EPOCH_PATH).write_text(json.dumps({"version": 1, "id": None}))
     fork = module.ForkCompactor(lambda *a: {})
     goal = [{"role": "user", "content": "fresh goal"}]
     assert fork.before_request(goal) == (goal, None)
@@ -471,7 +472,7 @@ def test_json_null_result_and_fresh_epoch_are_supported(modules):
 def test_missing_spill_reference_is_not_a_successful_history_backfill(modules):
     payload = modules["spill"].maybe_spill("original evidence " * 5000)
     source = json.loads(payload)["path"]
-    pathlib.Path(source).unlink()
+    state_paths.path(source).unlink()
     # Agent serializes a string tool result once more into function_call_output.
     message = {"type": "function_call_output", "call_id": "spill", "output": json.dumps(payload)}
     with pytest.raises(ValueError, match="original"):
@@ -485,7 +486,7 @@ def test_shutdown_apply_ready_never_starts_a_fork_or_provider(modules):
     original = tool_history(4, 100)
     prepared, report = fork.apply_ready(original)
     assert prepared == original and report is None
-    assert calls == [] and not pathlib.Path(module.RESULT_PATH).exists()
+    assert calls == [] and not state_paths.path(module.RESULT_PATH).exists()
     assert not fork.status()["busy"]
 
 

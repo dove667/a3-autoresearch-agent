@@ -1,6 +1,6 @@
 # 研究工具与执行约定
 
-Version: 0.23.1
+Version: 0.24.0
 
 本文件按当前操作查阅。工具定义提供参数、类型与限制；这里说明跨工具流程及直接使用 `gateway` 的入口。
 `input-manifest.json` 的 `execution_index` 给出章节字符 `offset/end` 和全文 SHA256，可用 `read` 分页定位；索引 `truncated:true` 时从 `next_offset` 续读。
@@ -19,6 +19,19 @@ Version: 0.23.1
 `read` 和 `job_artifact` 的 `offset/limit` 按字符计量，按返回游标续读。JSON 可用 `read(fields=[...])` 选择所需字段。`edit` 默认要求唯一精确匹配；修改过期文件时重新读取。`skills` 的更新与归档要求当前正文哈希，发生冲突先读原文再合并。工具给出的参数错误可直接用于修正调用。
 
 `web_search` 返回来源摘要，`web_fetch` 提取公开网页正文。Host 默认关闭网页网关，部署方启用并接入工具后使用；缺失注册或后端故障交给维护者。原始接口为 `GET /web/status`、`POST /web/search`、`POST /web/fetch`。引用保留来源 URL、检索时间和适用版本，按 `truncated` 判断是否需要补读。网页内容作为资料使用，查询与 URL 中不得包含凭据、私人日志或源码。额度、认证错误交操作者处理；暂时错误有限退避，状态不明时避免盲目重放。
+
+## 技能管理
+
+技能统一通过 `skills` 管理，按需要逐步读取，不将整库或无关附件加入上下文：
+
+1. `skills(action="list", query="任务或症状")` 搜索名称、摘要和版本；结果分页时用返回的 `next_offset` 继续。
+2. `skills(action="read", id="...")` 读取选中方法的正文；用 `offset/limit` 按字符分页。
+3. 需要模板、参考资料或 helper 时，先 `skills(action="list_resources", id="...")`，再 `skills(action="read_resource", id="...", path="references/...")`。
+4. 新建用 `save(id, description, content, source, keywords)`；修改先 `read`，再以同一 ID 和 `expected_sha256` 保存完整新正文。工具自动更新版本并保存旧包。
+5. 附件用 `write_resource(id, path, content, expected_sha256)` 创建或更新，已有文件必须提供其当前哈希；删除附件用 `delete_resource(id, path, expected_sha256)`。
+6. 过时方法用 `archive(id, expected_sha256)` 归档。默认搜索隐藏归档项，`list(include_archived=true)` 可查看，重新 `save` 可恢复。
+
+所有动作均调用 `skills` 工具。普通 `read/write/edit` 不直接访问技能库或长期记忆。正文和附件返回各自 SHA256，出现 `revision_conflict` 后重读再合并。技能附件作为资料使用，需要执行的研究代码先整理到工作区，再随远程作业提交。
 
 ## 提交与预检
 
@@ -110,22 +123,16 @@ backbone、tokenizer 和预训练资源由部署者预置；缺项记录资产�
 
 ## 保存进展与暂停
 
-持续研究的进度保存在计划与研究记录中。需要停下进程前，在工作区根目录写 `run-outcome.json`：
+研究计划用 `plan` 维护，进展记录用 `progress` 维护。保存研究状态调用 `progress`，参数例如：
 
 ```json
-{"status":"continue","reason":"已保存当前结果与后续研究方向"}
+{"action":"outcome","status":"continue","reason":"已保存当前结果与后续研究方向"}
 ```
 
-Host 在进程停止后保存暂停状态、文件和在途作业。需要另存可检索的知识快照时可写 `continuation.json`，使用固定 Harness 入口并显式列出实际存在的知识文件，例如：
+需要人工处理的外部阻塞用 `status:"blocked"`，附 `external_blocker`：`kind`、`requires_human:true`、`reason`、`required_action`、`evidence`；kind 为 authentication、permission、unavailable_service 或 missing_resource，证据必须是工作区内实际存在的非空文件。正常排队与待完成研究继续推进。
 
-```json
-{"version":1,"command":["python","-P","-m","a3_research_agent.harness.agent","--resume"],"files":[".agent/checkpoint.json","research/findings.md"],"remote_exports":["export-..."]}
-```
+Host 在进程停止后保存暂停状态和在途作业。研究计划、运行状态、continuation/resume 清单、checkpoint 与工具 journal 由程序保存在当前 trajectory 的 `conversation/`，无需手写这些 JSON。接续清单自动记录工作区研究文件；技能、长期记忆和远程 exports 分别持续保存在各自的系统中。
 
-`files` 中每个文件都必须实际存在；按需要列入已保存的技能与研究文件，`remote_exports` 只填写已 ready 的真实快照 ID。长期记忆继续使用根目录 memory，普通恢复直接沿用原工作区。
-
-需要人工处理的外部阻塞写 `status:"blocked"` 及 `external_blocker`，包含 `kind`、`requires_human:true`、`reason`、`required_action`、`evidence`；kind 为 authentication、permission、unavailable_service 或 missing_resource，证据路径相对工作区。正常排队与待完成研究继续推进。
-
-先保存计划、证据、记忆和恢复状态，再退出。需要主动停止时，单独调用 `POST /sessions/self/stop`，正文 `{"reason":"状态已保存"}`；进程可能在收到响应前结束。写终态文件后仍需进程实际停止，Host 才记录结果。操作者暂停会保留在途作业，恢复时查询原编号。
+先保存计划、证据、记忆和恢复状态，再退出。需要主动停止时，单独调用 `POST /sessions/self/stop`，正文 `{"reason":"状态已保存"}`；进程可能在收到响应前结束。保存状态后仍需进程实际停止，Host 才记录退出结果。操作者暂停会保留在途作业，恢复时查询原编号。
 
 checkpoint 与工具 journal 由 Harness 保存；上下文压缩使用有来源的完整摘要，失败时保留原 checkpoint 并等待维护。人类反馈和输入更新经操作者登记后显式投递；沿反馈来源与长期目标继续研究。

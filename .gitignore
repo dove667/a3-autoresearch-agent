@@ -17,20 +17,11 @@ __pycache__/
 /model-cache/
 /report/
 /reports/
-/experiments/
 build/
 dist/
 .DS_Store
 .vscode/
 /human-feedback.md
-
-# Recovery-harness runtime artefacts (workspace state, never source)
-history.jsonl
-memory.jsonl
-compaction-result.json
-operational-state.json
-/context-history/
-/.autorun-spill/
 
 /.superpowers/
 
@@ -38,3 +29,6 @@ operational-state.json
 /memory/
 
 /trajectories/
+
+/skills/.registry.lock
+/skills/**/.skill-*

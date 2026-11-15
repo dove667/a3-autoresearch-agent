@@ -18,12 +18,12 @@ def test_published_result_keeps_immutable_notes_and_research_without_old_context
     run, workspace, _, _, _ = native_run(tmp_path)
     (workspace / "skills/local").mkdir(parents=True)
     (workspace / "skills/local/SKILL.md").write_text("Reusable experiment method")
-    manifest = json.loads((workspace / "continuation.json").read_text())
+    manifest = json.loads((run / "conversation/continuation.json").read_text())
     manifest["files"].append("skills/local/SKILL.md")
-    for name in ("research-plan.json", ".agent/operational-state.json", ".agent/history.jsonl"):
+    for name in ("research-plan.json", "operational-state.json", "history.jsonl"):
         (workspace / name).write_text('{"old_task":"retained in the source run"}')
         manifest["files"].append(name)
-    (workspace / "continuation.json").write_text(json.dumps(manifest))
+    (run / "conversation/continuation.json").write_text(json.dumps(manifest))
     result = publish_run_result(run, workspace, "main")
     assert result["status"] == "ready" and result["harness_commit"] == COMMIT
     before = (workspace / "research/lesson.md").read_text()
@@ -31,13 +31,12 @@ def test_published_result_keeps_immutable_notes_and_research_without_old_context
     loaded = load_run_result(run)
     assert loaded.command == COMMAND and loaded.source_version == COMMIT
     assert loaded.files["research/lesson.md"] == before
-    assert loaded.files["skills/local/SKILL.md"] == "Reusable experiment method"
+    assert "skills/local/SKILL.md" not in loaded.files
     assert loaded.files["research/train.py"] == 'print("research source")\n'
-    assert loaded.files[".agent/checkpoint.json"] == "[]"
-    assert ".agent/trajectory.jsonl" not in loaded.files
+    assert loaded.files["checkpoint.json"] == "[]"
+    assert "trajectory.jsonl" not in loaded.files
     assert (
-        not {"research-plan.json", ".agent/operational-state.json", ".agent/history.jsonl"}
-        & loaded.files.keys()
+        not {"research-plan.json", "operational-state.json", "history.jsonl"} & loaded.files.keys()
     )
     assert loaded.previous_run == run
 
@@ -54,7 +53,7 @@ def test_modified_knowledge_fails_without_overwriting_its_evidence(tmp_path):
 
 def test_unselected_and_missing_results_are_not_guessed(tmp_path):
     run, workspace, _, _, _ = native_run(tmp_path)
-    (workspace / "continuation.json").unlink()
+    (run / "conversation/continuation.json").unlink()
     assert publish_run_result(run, workspace, "main")["status"] == "missing"
     with pytest.raises(ValueError, match="retained result"):
         load_run_result(run)
@@ -68,10 +67,10 @@ def test_only_current_published_seed_manifest_is_accepted(tmp_path, mutation):
         "version": 1,
         "harness_commit": COMMIT,
         "command": COMMAND,
-        "files": [".agent/checkpoint.json"],
+        "files": ["checkpoint.json"],
     }
-    (directory / ".agent/checkpoint.json").parent.mkdir(parents=True, exist_ok=True)
-    (directory / ".agent/checkpoint.json").write_text("[]")
+    (directory / "checkpoint.json").parent.mkdir(parents=True, exist_ok=True)
+    (directory / "checkpoint.json").write_text("[]")
     if mutation == "version":
         manifest.pop("version")
     elif mutation == "command":
@@ -86,17 +85,17 @@ def test_only_current_published_seed_manifest_is_accepted(tmp_path, mutation):
 
 
 def test_published_seed_resolves_fixed_command_and_empty_context(tmp_path):
-    (tmp_path / ".agent/checkpoint.json").parent.mkdir(parents=True, exist_ok=True)
-    (tmp_path / ".agent/checkpoint.json").write_text("[]\n")
+    (tmp_path / "checkpoint.json").parent.mkdir(parents=True, exist_ok=True)
+    (tmp_path / "checkpoint.json").write_text("[]\n")
     (tmp_path / "run.json").write_text(
         json.dumps(
             {
                 "version": 1,
                 "harness_commit": COMMIT,
                 "command": COMMAND,
-                "files": [".agent/checkpoint.json"],
+                "files": ["checkpoint.json"],
             }
         )
     )
     start = resolve_harness_start(tmp_path)
-    assert start.harness_commit == COMMIT and start.files == {".agent/checkpoint.json": "[]"}
+    assert start.harness_commit == COMMIT and start.files == {"checkpoint.json": "[]"}

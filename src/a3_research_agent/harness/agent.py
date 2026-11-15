@@ -8,13 +8,12 @@ import time
 import urllib.error
 import urllib.request
 
-from a3_research_agent.harness import state_paths
+from a3_research_agent.harness import research_status, state_paths
 
 os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
 
 from a3_research_agent.harness import history as history_tools
 from a3_research_agent.harness import (
-    input_skills,
     job_preflight,
     job_tools,
     lifecycle,
@@ -83,8 +82,8 @@ def request_model(request):
 
 
 def log(x):
-    pathlib.Path(state_paths.DIRECTORY).mkdir(exist_ok=True)
-    with open(state_paths.TRAJECTORY, "a") as f:
+    state_paths.state_root().mkdir(parents=True, exist_ok=True)
+    with open(state_paths.path(state_paths.TRAJECTORY), "a") as f:
         f.write(json.dumps(x, ensure_ascii=False) + "\n")
 
 
@@ -138,7 +137,7 @@ def tool(name, a):
             ),
         )
     if name in workspace_tools.NAMES:
-        return workspace_tools.dispatch(name, a, protected=(planning.PATH, job_preflight.RECEIPTS))
+        return workspace_tools.dispatch(name, a)
     if name in research_web.NAMES:
         return research_web.dispatch(
             name,
@@ -168,6 +167,8 @@ def tool(name, a):
     if name == "plan":
         return planning.dispatch(a)
     if name == "progress":
+        if a.get("action") == "outcome":
+            return research_status.update(a)
         return operational_state.progress(a)
     if name == "gateway":
         path = a["path"]
@@ -201,17 +202,13 @@ def tool(name, a):
             runtime_paths.workspace_root(),
             runtime_paths.reference_root(),
             runtime_paths.input_root(),
-            runtime_paths.memory_root(),
+            state_paths.state_root(),
         ]
         if not any(p == r or r in p.parents for r in roots):
             return "denied"
         if name == "write":
             if not (p == roots[0] or roots[0] in p.parents):
                 return "read only"
-            if p == planning.PATH.resolve():
-                return {"error": "use_plan_tool"}
-            if p.is_relative_to(job_preflight.RECEIPTS.resolve()):
-                return {"error": "use_preflight_tool"}
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_text(a["content"])
             return "written"
@@ -325,7 +322,9 @@ def save_tool_result(call, result, journal, messages, visible_count):
     phase = "raw_result_journal"
     try:
         journal["results"][call["call_id"]] = result
-        context_manager.atomic(state_paths.JOURNAL, json.dumps(journal, ensure_ascii=False))
+        context_manager.atomic(
+            state_paths.path(state_paths.JOURNAL), json.dumps(journal, ensure_ascii=False)
+        )
         phase = "result_receipt"
         if call["name"] == "read":
             operational_state.record_page(call["call_id"], result)
@@ -337,7 +336,9 @@ def save_tool_result(call, result, journal, messages, visible_count):
         phase = "result_archival"
         bounded = context_manager.bound_tool_result(result, call)
         journal["results"][call["call_id"]] = bounded
-        context_manager.atomic(state_paths.JOURNAL, json.dumps(journal, ensure_ascii=False))
+        context_manager.atomic(
+            state_paths.path(state_paths.JOURNAL), json.dumps(journal, ensure_ascii=False)
+        )
         log(
             {
                 "tool": call["name"],
@@ -382,7 +383,13 @@ def spec(name, props, required):
                 "completion use action=submit with the same job and preflight_id."
             ),
             "plan": "Show or update the persistent research plan. Update with the current revision and patch steps by stable ID. Each new step needs task and criterion. Use depends_on for real prerequisites, jobs for submitted Controller IDs, progress for counts or blockers, and evidence when done. Give reason for route changes or archiving done/skipped steps. Show can select a single ID. Ready steps are included in the decision context; use wait when submitted work must finish.",
-            "progress": "List or explicitly update bounded operational items with evidence references. These are your claims, not validated scientific acceptance; closed items remain recorded across summaries.",
+            "progress": (
+                "Use list/update for operational items and workspace evidence. Use action=outcome "
+                "with status=continue and reason to save research progress, or status=blocked with "
+                "external_blocker (kind, requires_human=true, reason, required_action, evidence) "
+                "when operator action is needed. Metadata is saved outside workspace. Closed "
+                "items remain recorded across summaries."
+            ),
             "wait": "Wait until an owned job finishes, fails or is cancelled, or an operator notification arrives. Queued and running jobs stay in program-level wait. With no jobs, seconds is a finite 0..600 delay.",
             "recall": (
                 "Search original history by keyword; by default search all available history. "
@@ -481,9 +488,28 @@ tools = (
         spec(
             "progress",
             {
-                "action": {"type": "string", "enum": ["list", "update"]},
+                "action": {"type": "string", "enum": ["list", "update", "outcome"]},
                 "id": {"type": "string", "minLength": 1, "maxLength": 80},
-                "status": {"type": "string", "enum": ["open", "waiting", "closed"]},
+                "status": {
+                    "type": "string",
+                    "enum": ["open", "waiting", "closed", "continue", "blocked"],
+                },
+                "reason": {"type": "string", "maxLength": 1000},
+                "external_blocker": {
+                    "type": "object",
+                    "properties": {
+                        "kind": {
+                            "type": "string",
+                            "enum": sorted(research_status.EXTERNAL_BLOCKERS),
+                        },
+                        "requires_human": {"type": "boolean"},
+                        "reason": {"type": "string", "maxLength": 1000},
+                        "required_action": {"type": "string", "maxLength": 1000},
+                        "evidence": strings(8),
+                    },
+                    "required": ["kind", "requires_human", "reason", "required_action", "evidence"],
+                    "additionalProperties": False,
+                },
                 "note": {"type": "string", "maxLength": 400},
                 "evidence": {
                     "type": "array",
@@ -535,15 +561,11 @@ WAIT_CURSOR = None
 
 
 def save_manifest():
-    files = {
-        state_paths.CHECKPOINT,
-        "resume.json",
-        "continuation.json",
-    }
+    files = set()
     manifests = {}
-    for manifest in ("resume.json", "continuation.json"):
+    for manifest in (state_paths.RESUME, state_paths.CONTINUATION):
         try:
-            data = json.loads(pathlib.Path(manifest).read_text())
+            data = json.loads(state_paths.path(manifest).read_text())
         except FileNotFoundError:
             data = {}
         if not isinstance(data, dict):
@@ -554,22 +576,21 @@ def save_manifest():
         if (
             path.is_file()
             and not path.is_symlink()
+            and not path.resolve().is_relative_to(state_paths.state_root())
             and "__pycache__" not in path.parts
             and not path.name.endswith(".tmp")
         ):
             files.add(path.as_posix())
-    files = sorted(
-        p for p in files if pathlib.Path(p).is_file() or p in ("resume.json", "continuation.json")
-    )
+    files = sorted(p for p in files if pathlib.Path(p).is_file())
     for filename, command in [
-        ("resume.json", ["python", "-P", "-m", "a3_research_agent.harness.agent", "--resume"]),
+        (state_paths.RESUME, ["python", "-P", "-m", "a3_research_agent.harness.agent", "--resume"]),
         (
-            "continuation.json",
+            state_paths.CONTINUATION,
             ["python", "-P", "-m", "a3_research_agent.harness.agent", "--resume"],
         ),
     ]:
         data = {**manifests[filename], "version": 1, "command": command, "files": files}
-        context_manager.atomic(filename, json.dumps(data))
+        context_manager.atomic(state_paths.path(filename), json.dumps(data))
 
 
 def operational_message():
@@ -578,24 +599,28 @@ def operational_message():
     value["research_plan"] = planning.view(jobs=state.get("jobs", {}), compact=True)
     value["runtime_paths"] = {
         "workspace": str(runtime_paths.workspace_root()),
+        "state": str(state_paths.state_root()),
         "inputs": str(runtime_paths.input_root()),
         "reference": str(runtime_paths.reference_root()),
         "memory": str(runtime_paths.memory_root()),
+        "skills": str(runtime_paths.skills_root()),
     }
     return {"role": "user", "content": json.dumps(value, ensure_ascii=False)}
 
 
 def checkpoint(messages):
     save_manifest()
-    context_manager.atomic(state_paths.CHECKPOINT, json.dumps(messages, ensure_ascii=False))
+    context_manager.atomic(
+        state_paths.path(state_paths.CHECKPOINT), json.dumps(messages, ensure_ascii=False)
+    )
 
 
 def checkpoint_hash():
-    return hashlib.sha256(pathlib.Path(state_paths.CHECKPOINT).read_bytes()).hexdigest()
+    return hashlib.sha256(state_paths.path(state_paths.CHECKPOINT).read_bytes()).hexdigest()
 
 
 def recover_journal(messages):
-    p = pathlib.Path(state_paths.JOURNAL)
+    p = state_paths.path(state_paths.JOURNAL)
     if not p.exists():
         context_manager.atomic(p, "null")
         return messages
@@ -645,14 +670,13 @@ def main() -> None:
         raise ValueError("Worker entry points were removed; use the single research Agent")
     INSTRUCTIONS = lifecycle.INSTRUCTIONS
     compactor = compaction.ForkCompactor(req, tools=list(tools))
-    messages = json.loads(pathlib.Path(state_paths.CHECKPOINT).read_text())
+    messages = json.loads(state_paths.path(state_paths.CHECKPOINT).read_text())
     if not isinstance(messages, list) or any(not isinstance(item, dict) for item in messages):
         raise ValueError("Research checkpoint must be a message list")
     try:
         messages = recover_journal(messages)
         context_manager.restore_artifact_views(messages)
         history_tools.ensure_history(messages)
-        input_skills.install_input_skills()
         checkpoint(messages)
     except Exception as e:  # noqa: BLE001 - preserve recoverable state on unexpected failures
         log({"recovery_error": str(e)})
@@ -670,7 +694,7 @@ def main() -> None:
             except Exception as e:  # noqa: BLE001 - preserve the checkpoint when Host budgets are unknown
                 log({"context_config_error": type(e).__name__, "state": "checkpoint preserved"})
                 context_manager.atomic(
-                    state_paths.CONTEXT_FAILURE,
+                    state_paths.path(state_paths.CONTEXT_FAILURE),
                     json.dumps(
                         {
                             "error": "context_config_unavailable",
@@ -721,7 +745,9 @@ def main() -> None:
             empty = 0
             calls = [x for x in out if x.get("type") == "function_call"]
             journal = {"base_hash": checkpoint_hash(), "output": out, "results": {}}
-            context_manager.atomic(state_paths.JOURNAL, json.dumps(journal, ensure_ascii=False))
+            context_manager.atomic(
+                state_paths.path(state_paths.JOURNAL), json.dumps(journal, ensure_ascii=False)
+            )
             # All waits in this response use the pre-decision cursor: a tool result
             # is not yet a normal model decision observing the notification.
             WAIT_CURSOR = waiting.wait_cursor(messages)
@@ -735,13 +761,13 @@ def main() -> None:
                 save_tool_result(c, result, journal, messages, visible_messages)
             loop_phase = "checkpoint_publication"
             checkpoint(messages)
-            context_manager.atomic(state_paths.JOURNAL, "null")
+            context_manager.atomic(state_paths.path(state_paths.JOURNAL), "null")
             if "--test" in sys.argv and calls:
                 break
             if not calls:
                 if (
-                    pathlib.Path("run-outcome.json").exists()
-                    and json.loads(pathlib.Path("run-outcome.json").read_text()).get("status")
+                    state_paths.path(state_paths.OUTCOME).exists()
+                    and json.loads(state_paths.path(state_paths.OUTCOME).read_text()).get("status")
                     == "blocked"
                 ):
                     break
@@ -776,7 +802,9 @@ def main() -> None:
                 failure["context_error"] = str(e)[:500]
             log(failure)
             try:
-                context_manager.atomic(state_paths.LOOP_FAILURE, json.dumps(failure))
+                context_manager.atomic(
+                    state_paths.path(state_paths.LOOP_FAILURE), json.dumps(failure)
+                )
             except OSError:
                 log({"failure_record_persistence": "unavailable"})
             break

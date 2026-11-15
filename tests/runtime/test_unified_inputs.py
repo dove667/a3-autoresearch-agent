@@ -25,11 +25,8 @@ def test_current_inputs_have_no_phase_or_task_selection(tmp_path):
     assert InputVersions(ROOT, run).prepare()["digest"] == proposal["digest"]
 
 
-def test_new_research_needs_only_three_prompts_and_complete_skills(tmp_path):
+def test_new_research_needs_only_three_prompts(tmp_path):
     root = deployment_source(tmp_path / "source")
     contents = InputVersions(root, None).prepare()["contents"]
     assert {"SOUL.md", "execution.md", "workspace-instructions.md"} <= contents.keys()
-    assert all(
-        name.startswith("skills/")
-        for name in contents.keys() - {"SOUL.md", "execution.md", "workspace-instructions.md"}
-    )
+    assert set(contents) == {"SOUL.md", "execution.md", "workspace-instructions.md"}

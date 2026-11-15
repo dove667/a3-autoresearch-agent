@@ -25,3 +25,16 @@ def reference_root():
 
 def memory_root():
     return _root("A3_MEMORY_ROOT")
+
+
+def skills_root():
+    return _root("A3_SKILLS_ROOT")
+
+
+def skills_history_root():
+    value = os.environ.get("A3_SKILLS_HISTORY_ROOT")
+    return (
+        _root("A3_SKILLS_HISTORY_ROOT")
+        if value
+        else skills_root().parent / ".runtime/skill-revisions"
+    )

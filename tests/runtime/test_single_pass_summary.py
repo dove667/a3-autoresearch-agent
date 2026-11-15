@@ -1,3 +1,5 @@
+from a3_research_agent.harness import state_paths
+
 """One full-transcript request; test callbacks do not assess summary quality."""
 
 import json
@@ -63,7 +65,7 @@ def test_400k_transcript_is_sent_whole_once_and_replayed_without_provider(tmp_pa
         original, [], lambda *a: pytest.fail("replayed provider request"), budget_limit=32000
     )
     assert replay == result
-    assert json.loads((tmp_path / record["source"]).read_text()) == original
+    assert json.loads(state_paths.path(record["source"]).read_text()) == original
 
 
 def test_summary_gateway_accepts_over_500k_characters_within_token_window(tmp_path):
@@ -139,4 +141,4 @@ def test_uncertain_pure_summary_has_bounded_retries_without_touching_original(
     with pytest.raises(cm.ContextError, match="bounded attempts"):
         cm.full_summary(original, source, timeout)
     assert len(calls) == 3
-    assert json.loads((tmp_path / source).read_text()) == original
+    assert json.loads(state_paths.path(source).read_text()) == original

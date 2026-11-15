@@ -5,7 +5,7 @@ import os
 import tempfile
 from pathlib import Path
 
-from . import paths
+from . import paths, state_paths
 from .tool_contracts import ToolInputError, arguments, boolean, definition, fail, integer, text
 
 MAX_FILE_BYTES = 1024 * 1024
@@ -228,7 +228,11 @@ def dispatch(name, args, *, workspace=None, readonly_roots=None, protected=()):
     readonly = [
         Path(p).resolve()
         for p in (
-            ((paths.reference_root(), paths.input_root()) if name == "search_files" else ())
+            (
+                (paths.reference_root(), paths.input_root(), state_paths.state_root())
+                if name == "search_files"
+                else ()
+            )
             if readonly_roots is None
             else readonly_roots
         )

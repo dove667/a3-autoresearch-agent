@@ -80,7 +80,7 @@ def test_plan_tracks_dependencies_evidence_and_job_results(tmp_path, monkeypatch
     view = json.loads(agent.operational_message()["content"])
     assert view["runtime_paths"]["inputs"] == str(tmp_path)
     assert "1000 unique eligible" in json.dumps(view)
-    assert list((tmp_path / "context-history").glob("plan-revision-*"))
+    assert list((tmp_path / "conversation/context-history").glob("plan-revision-*"))
 
 
 def test_memory_search_preserves_sources_and_superseded_notes(tmp_path, monkeypatch):

@@ -27,7 +27,7 @@ git fetch origin
 bash start-autoresearch.sh --harness-commit <已发布提交SHA>
 ```
 
-Host 验证固定提交，将 Harness 缓存在 `.runtime/published-harness/v2/<commit>/`，并使用项目根目录唯一的 `workspace/` 与 `memory/`。模型通过具体工具编写研究脚本、提交作业、读取结果与记录经验。研究源码和产物留在该工作区，运行中的 Harness 源码从已发布版本加载。
+Host 验证固定提交，将 Harness 缓存在 `.runtime/published-harness/v2/<commit>/`，研究文件使用项目根目录唯一的 `workspace/`，技能使用根 `skills/`，主动经验由 `memory` 工具管理。模型通过具体工具编写研究脚本、提交作业、读取结果与记录经验。研究源码和产物留在该工作区，运行中的 Harness 源码从已发布版本加载。
 
 一次 **run** 保存主身份、轨迹和持续研究状态；同一 run 可以跨多次进程启动和 Harness 维护发布。一次 **job** 是远程采集、训练或评估命令，拥有持久编号和实际执行状态。
 
@@ -45,7 +45,7 @@ uv run mini
 bash start-autoresearch.sh --resume-from "trajectories/<开始时间>"
 ```
 
-恢复使用同一个 run 和主身份，继续根目录 `workspace/` 中的对话、checkpoint、skills、计划与作业台账，以及 `memory/entries.jsonl` 中的长期经验。原生进程中断时保留工具 journal；已保存的结果在恢复时重新交付，结果未知的调用先检查实际状态。
+恢复使用同一个 run 和主身份，接续 `trajectories/<开始时间>/conversation/` 中的计划、运行状态、对话、checkpoint 和调用 journal，继续 `workspace/` 的研究文件、根 `skills/` 和长期经验。原生进程中断时保留工具 journal；已保存的结果在恢复时重新交付，结果未知的调用先检查实际状态。
 
 远程作业在本地 Agent 暂停期间可以继续运行。恢复后通过原 job ID 接回状态与产物，按既有结果推进研究。普通恢复沿用原模型与适配器；明确维护发布时可更新部署配置并记录前值。
 
@@ -70,7 +70,7 @@ uv run python -m a3_research_agent.cli.apply_release "trajectories/<开始时间
   "<冻结发布目录>" --digest <发布摘要>
 ```
 
-升级取得原 run 排他锁，归档旧源码指针、配置、输入和 checkpoint 边界，再更新发布版本。主身份、研究目录、对话、记忆、skills、计划和作业状态原地保留。交接正文以独立反馈记录登记，更新的三个 prompt 和 skills 进入新的 input revision。模型、数据和评测设置随实验记录保留，便于比较各轮结果。事务中断后使用同一发布摘要继续处理；普通恢复会先检查未完成事务。
+升级取得原 run 排他锁，归档旧源码指针、配置、输入和 checkpoint 边界，再更新发布版本。主身份、研究目录、对话、记忆、skills、计划和作业状态原地保留。交接正文以独立反馈记录登记，更新的三个 prompt 进入新的 input revision；技能库独立保留版本、哈希和修改历史。模型、数据和评测设置随实验记录保留，便于比较各轮结果。事务中断后使用同一发布摘要继续处理；普通恢复会先检查未完成事务。
 
 发布、输入热加载及人类反馈的完整操作约定见[操作者监督](maintenance.md)。
 
@@ -96,22 +96,30 @@ nohup bash start-autoresearch.sh --night-window --resume-from "trajectories/<开
 
 `job_submit` 接受命令参数数组、源码路径和资产引用。工具自动计算本地源码哈希；训练数据与权重使用只读 exports。独立且输入就绪的任务可先并行提交，再用 `wait` 等待终态或操作者通知。Controller 负责排队、GPU 分配与生命周期。
 
-`job_status` 和 `job_list` 查询实际状态，`job_artifact` 按字符分页读取结果并返回文件哈希。`search_files` 查找源码与记录，`edit` 做精确局部修改。预检、技能与联网工具同样提供具体参数定义，详细契约见[执行接口](../../prompt/execution.md)。
+`job_status` 和 `job_list` 查询实际状态，`job_artifact` 按字符分页读取结果并返回文件哈希。`search_files` 查找源码与可读记录，`edit` 精确修改工作区研究文件。预检、技能与联网工具同样提供具体参数定义，详细契约见[执行接口](../../prompt/execution.md)。
+
+文件工具在 `workspace/` 自由读写，输入、A3 参考源码和当前会话状态只读；根技能库和长期记忆分别通过 `skills`、`memory` 操作。Agent 工具不提供本地 Bash 或 Python，研究脚本通过远程 jobs 执行。
 
 采集与评估通过[episode 执行器](../reference/episode-executor.md)管理完成台账和并发。作业脚本从环境读取 `A3_OUTPUTS`、`A3_EPISODE_EXECUTOR` 及资产路径，避免沿用另一后端的路径。
 
-计划由 `plan` 保存；长期经验由 `memory` 保存；`recall` 从原始历史检索观测。部署的研究 skill 与 Agent 自己保存的 skill 均通过 `skills` 发现和读取。工作上下文达到压缩门槛后必须生成完整摘要，32k 等目标预算覆盖整个下一轮输入；机制见[上下文与记忆](../reference/context-and-memory.md)。
+计划由 `plan` 保存；操作进展与研究状态由 `progress` 保存。恢复和接续清单由程序生成，`files` 只列出工作区研究文件。这些元数据统一保存在当前 `conversation/`，Agent 使用对应工具更新。
+
+长期经验由 `memory` 保存；`recall` 从原始历史检索观测。根 `skills/` 是唯一技能库，通过 `skills` 先看目录摘要，再读正文和所需附件；同一工具也负责更新正文、附件和归档。工作上下文达到压缩门槛后必须生成完整摘要，32k 等目标预算覆盖整个下一轮输入；机制见[上下文与记忆](../reference/context-and-memory.md)。
 
 ## 持续研究与暂停
 
-长期目标直接写在 `prompt/SOUL.md`：持续提高 A3 2×5、2×10 全量评测的准确率与通过率。Agent 根据证据调整假设、数据、模型和研究路线，记录模型版本、数据清单、种子与评测设置，持续比较结果。全量评测用于衡量研究进展，由操作者决定暂停和恢复。日常 Harness 维护沿用原 run 和工作区。
+长期目标直接写在 `prompt/SOUL.md`：持续提高 A3 2×5、2×10 全量评测的入盒准确率与通过率。Agent 根据证据调整假设、数据、模型和研究路线，记录模型版本、数据清单、种子与评测设置，持续比较结果。全量评测用于衡量研究进展，由操作者决定暂停和恢复。日常 Harness 维护沿用原 run 和工作区。
+
+Agent 用 `progress(action="outcome", status="continue", reason=...)` 保存继续研究的状态；需人工处理的外部阻塞使用 `status="blocked"` 并附 `external_blocker`。Host 保存相应元数据，研究文件继续留在工作区。
 
 ## 查找状态与产物
 
 - `trajectories/<开始时间>/`：输入版本、Host 事件、模型用量与会话登记。
-- `workspace/`：研究代码、checkpoint、skills、计划和原始消息／工具历史。
+- `workspace/`：研究代码、实验工作材料和自由笔记。
+- `trajectories/<开始时间>/conversation/`：计划、接续清单、研究状态、checkpoint、journal、原始消息和压缩状态。
+- `skills/`：由 `skills` 工具管理的唯一方法库。
 - `memory/entries.jsonl`：Agent 主动整理的长期经验、适用条件和证据引用。
 - `trajectories/<开始时间>/.host/release-upgrades/`：原地升级事务和旧状态边界。
 - 执行端配置的运行根目录：持久 job 元数据、日志、输出与只读 exports。
 
-排查时先读取 `.agent/loop-failure.json`、`.agent/pending-calls.json`、Gateway 事件和对应 job 的实际状态。提交结果未知时沿返回的 job ID 查询；源码或依赖错误由 Agent 修复，Controller、认证和部署问题交给维护者。目录职责见[项目结构](../reference/storage-layout.md)。
+排查时核对当前 `runtime_paths.state` 下的 `loop-failure.json`、`pending-calls.json`、Gateway 事件和对应 job 的实际状态。提交结果未知时沿返回的 job ID 查询；源码或依赖错误由 Agent 修复，Controller、认证和部署问题交给维护者。目录职责见[项目结构](../reference/storage-layout.md)。

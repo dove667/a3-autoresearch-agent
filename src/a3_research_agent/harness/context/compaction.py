@@ -73,14 +73,18 @@ class ForkCompactor:
         self.req, self.tools = req, list(tools or [])
         self.trigger_tokens = trigger_tokens
         self.keep_rounds = max(1, int(keep_rounds))
-        self.result_path = pathlib.Path(result_path)
+        self.result_path = (
+            state_paths.path(result_path)
+            if not pathlib.Path(result_path).is_absolute()
+            else pathlib.Path(result_path)
+        )
         self.hard_wait_seconds = max(0, min(float(hard_wait_seconds), 300))
         self._thread, self._lock = None, threading.Lock()
         self.last_error, self._last_after_bytes = None, 0
         self._last_after_tokens = 0
 
     def _epoch(self):
-        path = pathlib.Path(EPOCH_PATH)
+        path = state_paths.path(EPOCH_PATH)
         value = json.loads(path.read_text()) if path.exists() else {"version": 1, "id": None}
         if value.get("version") != 1:
             raise cm.ContextError("Invalid compaction epoch; explicit recovery required")
@@ -307,7 +311,7 @@ class ForkCompactor:
             and digest(messages[: len(replacement)]) == active["replacement_sha256"]
         ):
             self._restore_trigger_baseline(result, messages)
-            checkpoint = pathlib.Path(state_paths.CHECKPOINT)
+            checkpoint = state_paths.path(state_paths.CHECKPOINT)
             if checkpoint.exists():
                 saved = json.loads(checkpoint.read_text())
                 if (
@@ -334,7 +338,7 @@ class ForkCompactor:
             )
             return messages, {"kind": "apply_skipped", "reason": "source_identity_mismatch"}
         try:
-            archived = json.loads(pathlib.Path(active["source"]).read_text())
+            archived = json.loads(state_paths.path(active["source"]).read_text())
         except (KeyError, OSError, ValueError) as error:
             raise cm.ContextError("Compaction source archive missing or invalid") from error
         if digest(archived) != active["prefix_sha256"]:

@@ -1,6 +1,6 @@
 # 系统架构
 
-夜间由单个研究 Agent 持续推进 Policy、采集、训练、评估与分析，提高 A3 2×5、2×10 全量评测的准确率与通过率。白天由维护者依据原始轨迹改进 Harness，验证后发布源码版本。启动与升级步骤见[使用教程](../guides/usage.md)，文件归属见[目录职责](storage-layout.md)。
+夜间由单个研究 Agent 持续推进 Policy、采集、训练、评估与分析，提高 A3 2×5、2×10 全量评测的入盒准确率与通过率。白天由维护者依据原始轨迹改进 Harness，验证后发布源码版本。启动与升级步骤见[使用教程](../guides/usage.md)，文件归属见[目录职责](storage-layout.md)。
 
 ## 三个组件的职责
 
@@ -25,19 +25,19 @@ flowchart LR
     Job -->|状态与产物| Controller
 ```
 
-本地研究进程直接使用宿主账号运行。Host 将模型认证和 SSH 配置留在自身进程，研究进程只获得本轮 Gateway 令牌及运行所需环境。原生执行采用账号的文件权限；可访问范围应通过专用账号和部署目录管理。远程可选择 `process` 或 Docker，详细资源契约见[进程后端](remote-process.md)。
+本地 Harness 作为原生进程运行，Host 保管模型认证和 SSH 配置。模型通过文件工具读写唯一的 `workspace/`，只读当前输入、A3 参考和当前会话状态；技能和长期经验通过专用工具访问。工具集不暴露本地 Bash 或 Python 执行，研究命令交给远程作业。远程可选择 `process` 或 Docker，详细资源契约见[进程后端](remote-process.md)。
 
 ## 发布、工作区与恢复
 
-操作者从明确的 Git commit 发布 Harness。固定源码缓存在 `.runtime/published-harness/v2/<commit>/`，研究文件保存于根目录唯一的 `workspace/`，主动长期经验独立保存在 `memory/entries.jsonl`，模型执行记录按开始时间归档到 `trajectories/YYYY-MM-DD_HH-MM-SS-ffffff/`。私有 workspace 映射固定资源身份与研究目录。每轮只运行一个研究 Agent。
+操作者从明确的 Git commit 发布 Harness。固定源码缓存在 `.runtime/published-harness/v2/<commit>/`，研究文件保存于根目录唯一的 `workspace/`；机器对话状态保存在 `trajectories/<开始时间>/conversation/`；根 `skills/` 与 `memory/entries.jsonl` 分别保存技能和主动长期经验。私有 workspace 映射固定资源身份与研究目录。每轮只运行一个研究 Agent。
 
 Host 的 `launch.py` 负责启动装配；`sessions/processes.py` 负责创建、观察、停止及恢复原生进程；`sessions/workspace.py` 负责工作区定位、受限文件读取和持久写入。进程以 PID、启动标识和实际命令核对身份，避免停止其他进程。
 
 `--resume-from` 恢复同一 run、身份、工作区、checkpoint、工具 journal 与在途作业。普通恢复要求原发布版本和完整模型配置一致。Host 私有状态和会话记录使用明确的原生 schema；不支持旧 builder 或本地容器记录。
 
-维护者通过离线发布事务升级暂停的 run。升级保留研究目录、模型上下文、计划、长期记忆、自写 skills 与作业归属，同时归档旧版本、输入和 checkpoint 边界。事务可以在中断后继续；具体入口见[操作者监督](../guides/maintenance.md)。
+维护者通过离线发布事务升级暂停的 run。升级保留研究目录、模型上下文、计划、长期记忆、技能库与作业归属，同时归档旧版本、输入和 checkpoint 边界。事务可以在中断后继续；具体入口见[操作者监督](../guides/maintenance.md)。
 
-研究 Agent 正常退出后，Host 保存控制台与退出记录。研究进程停止后，Host 保存暂停状态，保留文件与在途远程作业供恢复。`run-outcome.json` 可记录继续研究的进度或需人工处理的外部阻塞。可选的 retained 知识快照保存选定材料与来源。
+研究进程停止后，Host 保存控制台、退出记录与暂停状态，保留研究文件和在途远程作业。Agent 通过 `progress(action="outcome", ...)` 记录继续研究的进展或需人工处理的阻塞，程序保存到当前 `conversation/run-outcome.json`。可选的 retained 知识快照保存选定材料与来源。
 
 ## 一次实验怎样执行
 
@@ -61,11 +61,11 @@ Controller 实例共用资源根目录和调度锁。独占模式持有整卡租
 
 上下文压缩目标覆盖下一次完整模型输入，包括固定指令、工具、运行状态、摘要和最近的完整工具回合。摘要输出空间根据压缩目标与实际模型窗口计算；必要压缩只有得到完整摘要后才继续。失败时保存 checkpoint 和诊断供恢复。详见[上下文与记忆](context-and-memory.md)。
 
-`memory/entries.jsonl` 保存 Agent 主动提炼的经验、适用条件及来源，由 `memory` 工具管理。`recall` 从 `workspace/.agent/history.jsonl` 等原始执行历史检索片段；`workspace/context-history/` 保存摘要来源和大工具结果。研究计划与自写 skills 同样保存在 `workspace/`。恢复、未来会话和维护发布共用这些目录。
+`memory` 管理主动经验、适用条件与来源；`recall` 检索原始执行历史。Host 用 `A3_STATE_ROOT` 指定当前 `conversation/`，其中保存 `history.jsonl`、`context-history/` 和大工具结果。逻辑归档引用以 `runtime_paths.state` 为基准，保留原文哈希，可通过普通文件工具只读核对。
 
-`workspace/.agent/` 集中保存 Harness 的 checkpoint、工具 journal、轨迹、操作台账、压缩事务和故障记录。研究脚本、计划、skills 与交接文件保留在工作区顶层，Host 恢复与离线发布使用同一份 `.agent/checkpoint.json` 和配对 journal。
+`conversation/` 集中保存研究计划、接续与恢复清单、运行状态、checkpoint、工具 journal、轨迹、操作台账、压缩事务和故障记录。`plan` 与 `progress` 维护这些状态，恢复清单由程序生成。`workspace/` 保存研究代码、实验工作材料和自由笔记。Host 恢复与离线发布继续使用原会话状态和研究文件。
 
-Host 从根目录 `skills/` 发现包含 `SKILL.md` 与 `assets/catalog-entry.json` 的完整方法包，随公共输入和发布包交付正文、引用文件及 helper，并分别记录版本和文件哈希。Agent 自写 skills 保存在研究工作区；未修改的部署技能沿用原 ID 更新并归档旧版；已有 Agent 局部修订时保留原内容，将新参考独立保存。Agent 使用多关键词检索并按需读取正文和附件。
+根 `skills/` 是唯一技能库，所有技能使用相同工具权限。`skills` 先返回摘要，再按需读取正文和附件；修改使用当前哈希，自动递增包版本并把完整旧包归档到 `.runtime/skill-revisions/`。技能库独立于三个 prompt 的发布快照。
 
 研究目标和行为原则集中在 `prompt/SOUL.md`。`prompt/execution.md` 与 `prompt/workspace.md` 按需提供执行和路径说明，方法 skill 按研究问题检索。
 
@@ -75,7 +75,7 @@ Gateway 保存模型用量、请求开始与结束、错误层和耗时；Harnes
 
 Host 保存进程停止状态、恢复信息和研究记录。Agent 持续比较模型在全量评测中的表现，由操作者暂停和恢复研究。各次实验保留模型、数据、评测设置与原始证据。
 
-三个 prompt 和研究 skills 按版本装载。运行期间只有操作者可以预览并确认输入或反馈更新，规则见[输入管理](agent-inputs.md)与[操作者监督](../guides/maintenance.md)。
+三个 prompt 通过 input revision 装载，技能库独立记录版本和修改历史。运行期间只有操作者可以预览并确认输入或反馈更新，规则见[输入管理](agent-inputs.md)与[操作者监督](../guides/maintenance.md)。
 
 ## 维护重点
 

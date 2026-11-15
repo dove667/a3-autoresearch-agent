@@ -16,12 +16,14 @@ import os
 import pathlib
 import re
 
+from a3_research_agent.harness import state_paths
+
 DEFAULT_SPILL_BYTES = 50_000
 HEAD_CHARS = 2000
 SPILL_DIR = ".autorun-spill"
 NOTICE = (
     "Tool result exceeded the inline budget and is stored losslessly on disk. "
-    "This is a bounded head, not the complete result. Read the path with `read` "
+    "This is a bounded head, not the complete result. Read the path by joining it to `runtime_paths.state` and using `read` "
     "using small offset/limit pages when you need the rest; never assume the "
     "missing bytes confirm your hypothesis."
 )
@@ -44,14 +46,14 @@ def byte_length(text):
     return len(text.encode("utf-8"))
 
 
-def maybe_spill(text, *, max_bytes=None, directory=SPILL_DIR, label="result"):
+def maybe_spill(text, *, max_bytes=None, directory=None, label="result"):
     """Return ``text`` unchanged, or a bounded reference payload when too large."""
     if not isinstance(text, str):
         return text
     limit = inline_limit(max_bytes)
     if limit <= 0 or byte_length(json.dumps(text, ensure_ascii=False)) <= limit:
         return text
-    root = pathlib.Path(directory)
+    root = state_paths.path(SPILL_DIR) if directory is None else pathlib.Path(directory)
     root.mkdir(parents=True, exist_ok=True)
     digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
     label = re.sub(r"[^A-Za-z0-9_.-]", "_", str(label))[:64] or "result"
@@ -66,7 +68,7 @@ def maybe_spill(text, *, max_bytes=None, directory=SPILL_DIR, label="result"):
         raise ContextError("spill source corrupt; verification failed")
     payload = {
         "spilled": True,
-        "path": str(path),
+        "path": str(pathlib.Path(SPILL_DIR) / path.name) if directory is None else str(path),
         "bytes": byte_length(text),
         "inline_limit_bytes": limit,
         "head": text[:HEAD_CHARS],

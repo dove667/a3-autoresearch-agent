@@ -38,7 +38,7 @@ class ControlRoutes:
         return {
             "current": self.input_versions.manifest,
             "proposed": {key: proposal[key] for key in ("digest", "files")},
-            "warning": "更新会发布仓库中当前版本的提示词与方法包。已发出的请求使用原版本，后续请求使用新版；确认预览摘要后执行。",
+            "warning": "更新会发布仓库中当前版本的提示词。已发出的请求使用原版本，后续请求使用新版；确认预览摘要后执行。",
         }
 
     def reload_inputs(

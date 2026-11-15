@@ -1,21 +1,17 @@
-# Skill discovery and retention
+# Skill discovery and controlled updates
 
-The Host snapshots complete reviewed packages from the repository's `skills/` directory together with the three files in `prompt/`. SOUL provides the long-term A3 research goal. Each skill package has a `SKILL.md` entrypoint and `assets/catalog-entry.json`; the catalog provides its identity and semantic version. Every delivered file receives that version and its own SHA256.
+The project uses one root `skills/` library. Every method has the same management interface and permissions, with its source recorded as provenance. Packages contain `SKILL.md`, `assets/catalog-entry.json` and optional resources. The Host configures `A3_SKILLS_ROOT`; no package is installed into the research workspace or frozen with the three prompts.
 
-## Read and refine
+## Read only what the question needs
 
-At Agent initialization, `install_input_skills` installs each frozen tree into the shared project `workspace/` and registers it in `workspace/skills/index.json`. Discover relevant entries with `skills(action="list", query="...")`, then use `skills(action="read", id="...")` for the actual body. Read only the references needed for the research question with the ordinary file tool.
+Start with `skills(action="list", query="...")` to inspect names, summaries and versions. Select a matching method with `skills(action="read", id="...")`. Both discovery and text reads support paging.
 
-Use `skills(action="save", ...)` to register an Agent-created or improved text skill with its applicability, sources and keywords. Updating an existing entry requires the current body SHA256 from `read`. The tool saves revisions and updates the catalog. `archive` hides an entry from default discovery while keeping its history readable.
+Use `list_resources` to find relevant references, templates or helpers, then `read_resource` with the skill ID and resource path. These are actions of the same `skills` tool. Ordinary file tools do not access the library. Keep unrelated bodies and attachments out of context.
 
-The registry manages text. Execute a helper script only through an authorized job tool, after inspecting its actual interface and dependencies. Binary datasets and weights use authorized exports.
+## Create, revise and archive
 
-## Keep knowledge across maintenance
+`save` creates a method from its ID, description, content, source and optional keywords. Read an existing body before changing it and provide its returned `expected_sha256`. Resource updates use the resource's own hash: `write_resource` creates or replaces text attachments, and `delete_resource` removes them. A missing attachment can be created without a hash; replacing or deleting an existing one requires its current hash.
 
-Future sessions and Harness upgrades use the same root `workspace/` and `memory/entries.jsonl`. The skill catalog, bodies, attachments and revisions stay in `workspace/skills/`. Installing an unchanged deployed tree preserves the Agent's local edits. A changed deployed package receives a separate reference identity when the original ID already exists; the Agent can compare and reconcile it.
+`archive` hides an outdated method from ordinary discovery while preserving the package. Use `list(include_archived=true)` to find it, and `save` to restore it. All mutations increment the package version and preserve the previous complete package under Host-managed `.runtime/skill-revisions/`. Re-read after a revision conflict before merging changes.
 
-Publishing a repository change takes effect through an explicit input update or an offline Harness release. Skill snapshots record the catalog, bodies, necessary references and helpers; ordinary recovery continues using the installed knowledge.
-
-Promote reusable workspace lessons into the repository after reviewing current interfaces, consolidating overlapping guidance and removing local paths and experiment-specific instructions. Increment the catalog and frontmatter version for any change to a package or its attachments.
-
-Use the skills tool to discover other installed research skills. The repository package index and input management documentation describe publication and snapshots.
+Skills and `memory/entries.jsonl` persist independently of Harness releases. Save specific findings through `memory`, and reusable methods through `skills`. Inspect helpers before adapting them into `workspace/research/` and submitting them to a remote job. Skill access does not execute code or expand file permissions.

@@ -5,49 +5,15 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
-from a3_research_agent.path_safety import workspace_path
+from a3_research_agent.harness.research_status import read_outcome
+from a3_research_agent.host.published_harness import conversation_root
 
 ACTIVE_STATES = {"running", "created", "restarting", "paused"}
-EXTERNAL_BLOCKERS = {"authentication", "permission", "unavailable_service", "missing_resource"}
 
 
-def evidence_exists(workspace: Path, names: object) -> bool:
-    if not isinstance(names, list) or not names:
-        return False
-    try:
-        return all(
-            isinstance(name, str)
-            and (path := workspace_path(workspace, name)).is_file()
-            and path.stat().st_size > 0
-            for name in names
-        )
-    except (OSError, ValueError):
-        return False
-
-
-def evaluate_outcome(workspace: Path) -> dict:
-    """Read progress or an actionable external blocker for continuous research."""
-    try:
-        outcome = json.loads(workspace_path(workspace, "run-outcome.json").read_text())
-        if not isinstance(outcome, dict):
-            raise TypeError("Outcome must be an object")
-        if outcome.get("status") == "blocked":
-            blocker = outcome.get("external_blocker", {})
-            if (
-                isinstance(blocker, dict)
-                and blocker.get("kind") in EXTERNAL_BLOCKERS
-                and blocker.get("requires_human") is True
-                and isinstance(blocker.get("reason"), str)
-                and blocker["reason"].strip()
-                and isinstance(blocker.get("required_action"), str)
-                and blocker["required_action"].strip()
-                and evidence_exists(workspace, blocker.get("evidence"))
-            ):
-                return outcome
-            raise ValueError("Temporary capacity, waiting or incomplete work requires continuation")
-        return {"status": "continue", "reason": str(outcome.get("reason", "Research continues"))}
-    except (OSError, ValueError, KeyError, TypeError) as error:
-        return {"status": "continue", "reason": str(error)}
+def evaluate_outcome(workspace: Path, state_root: Path) -> dict:
+    """Read the saved outcome through the shared research status contract."""
+    return read_outcome(workspace, state_root)
 
 
 class RunSupervisor:
@@ -119,7 +85,7 @@ class RunSupervisor:
         if self.result_workspace is not None:
             self.workspace = self.result_workspace()
         manifest = self.input_manifest() if self.input_manifest is not None else None
-        outcome = evaluate_outcome(self.workspace)
+        outcome = evaluate_outcome(self.workspace, conversation_root(self.run_directory))
         if manifest is not None:
             outcome["input_manifest"] = manifest
         if outcome["status"] == "continue":

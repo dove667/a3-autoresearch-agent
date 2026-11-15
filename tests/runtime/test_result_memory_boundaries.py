@@ -63,9 +63,9 @@ def test_ingress_bounds_serialized_envelope_and_retains_exact_result(tmp_path, m
     assert cm.size(message) <= 12000
     view = json.loads(message["output"])
     assert view["preview_complete"] is False
-    original = json.loads(pathlib.Path(view["path"]).read_text())
+    original = json.loads(state_paths.path(view["path"]).read_text())
     assert original == output(result)
-    assert hashlib.sha256(pathlib.Path(view["path"]).read_bytes()).hexdigest() in view["path"]
+    assert hashlib.sha256(state_paths.path(view["path"]).read_bytes()).hexdigest() in view["path"]
 
 
 @pytest.mark.parametrize("result", [None, False, 12, 1.5, "small", {"status": "completed"}])
@@ -90,10 +90,10 @@ def test_base64_artifact_has_verified_local_representation(tmp_path, monkeypatch
     message = cm.archived_output(output(result), 6000)
     view = json.loads(message["output"])
     artifact = view["artifact"]
-    assert pathlib.Path(artifact["path"]).read_bytes() == raw
+    assert state_paths.path(artifact["path"]).read_bytes() == raw
     assert artifact["sha256"] == hashlib.sha256(raw).hexdigest()
     assert artifact["encoding"] == encoding
-    assert pathlib.Path(artifact["path"]).parent == pathlib.Path("context-history")
+    assert state_paths.path(artifact["path"]).parent == state_paths.path("context-history")
     assert "base64" not in view.get("preview", "")
     assert cm.size(message) <= 6000
 
@@ -105,7 +105,9 @@ def test_reducing_an_archived_preview_does_not_archive_the_pointer(tmp_path, mon
     first = cm.archived_output(original, 6000)
     second = cm.archived_output(first, 2500)
     assert json.loads(first["output"])["path"] == json.loads(second["output"])["path"]
-    assert json.loads(pathlib.Path(json.loads(second["output"])["path"]).read_text()) == original
+    assert (
+        json.loads(state_paths.path(json.loads(second["output"])["path"]).read_text()) == original
+    )
     assert cm.size(second) <= 2500
 
 
@@ -169,7 +171,7 @@ def test_corrupt_legacy_spill_is_not_reused(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     spill = load("spill")
     first = json.loads(spill.maybe_spill("x" * 60000))
-    pathlib.Path(first["path"]).write_text("TRUNCATED")
+    state_paths.path(first["path"]).write_text("TRUNCATED")
     with pytest.raises(Exception, match="corrupt|verification"):
         spill.maybe_spill("x" * 60000)
 
@@ -233,7 +235,7 @@ def test_archive_failure_leaves_executed_raw_result_in_journal(tmp_path, monkeyp
     messages = []
     with pytest.raises(ns["ToolResultPersistenceError"]):
         ns["save_tool_result"]({"call_id": "c", "name": "gateway"}, raw, journal, messages, 0)
-    assert json.loads(pathlib.Path(".agent/pending-calls.json").read_text())["results"]["c"] == raw
+    assert json.loads(state_paths.path("pending-calls.json").read_text())["results"]["c"] == raw
     assert not messages
 
 
@@ -241,17 +243,15 @@ def test_recovery_publishes_persisted_result_without_reexecuting_tool(tmp_path, 
     monkeypatch.chdir(tmp_path)
     cm = load("context_manager")
     base = [{"role": "user", "content": "original task"}]
-    cm.atomic(".agent/checkpoint.json", json.dumps(base))
+    cm.atomic(state_paths.path("checkpoint.json"), json.dumps(base))
     call = {"type": "function_call", "call_id": "c", "name": "gateway", "arguments": "{}"}
     raw = {"job_id": "already-created", "status": "completed", "data": "x" * 100000}
     journal = {
-        "base_hash": hashlib.sha256(
-            pathlib.Path(".agent/checkpoint.json").read_bytes()
-        ).hexdigest(),
+        "base_hash": hashlib.sha256(state_paths.path("checkpoint.json").read_bytes()).hexdigest(),
         "output": [call],
         "results": {"c": raw},
     }
-    cm.atomic(".agent/pending-calls.json", json.dumps(journal))
+    cm.atomic(state_paths.path("pending-calls.json"), json.dumps(journal))
     ns = {
         "json": json,
         "pathlib": pathlib,
@@ -259,7 +259,9 @@ def test_recovery_publishes_persisted_result_without_reexecuting_tool(tmp_path, 
         "context_manager": cm,
         "state_paths": state_paths,
         "save_manifest": lambda: None,
-        "checkpoint": lambda value: cm.atomic(".agent/checkpoint.json", json.dumps(value)),
+        "checkpoint": lambda value: cm.atomic(
+            state_paths.path("checkpoint.json"), json.dumps(value)
+        ),
     }
     exec(
         compile(agent_functions("checkpoint_hash", "recover_journal"), "isolated-recovery", "exec"),
@@ -267,10 +269,10 @@ def test_recovery_publishes_persisted_result_without_reexecuting_tool(tmp_path, 
     )
     restored = ns["recover_journal"](base)
     view = json.loads(restored[-1]["output"])
-    original = json.loads(pathlib.Path(view["path"]).read_text())
+    original = json.loads(state_paths.path(view["path"]).read_text())
     assert json.loads(original["output"]) == raw
     assert cm.paired(restored) and restored[-1]["call_id"] == "c"
-    assert json.loads(pathlib.Path(".agent/pending-calls.json").read_text()) is None
+    assert json.loads(state_paths.path("pending-calls.json").read_text()) is None
     assert ns["recover_journal"](restored) == restored
 
 
@@ -280,7 +282,7 @@ def test_invalid_base64_is_preserved_as_an_explicit_decode_failure(tmp_path, mon
     original = output({"encoding": "base64", "data": "%bad%", "path": "metadata.json"})
     view = json.loads(cm.archived_output(original, 4000)["output"])
     assert view["artifact"]["error"] == "invalid_base64"
-    assert json.loads(pathlib.Path(view["path"]).read_text()) == original
+    assert json.loads(state_paths.path(view["path"]).read_text()) == original
 
 
 def test_corrupt_decoded_artifact_does_not_get_a_success_reference(tmp_path, monkeypatch):
@@ -288,7 +290,7 @@ def test_corrupt_decoded_artifact_does_not_get_a_success_reference(tmp_path, mon
     cm = load("context_manager")
     original = output({"encoding": "base64", "data": base64.b64encode(b"facts").decode()})
     view = json.loads(cm.archived_output(original, 4000)["output"])
-    pathlib.Path(view["artifact"]["path"]).write_text("changed")
+    state_paths.path(view["artifact"]["path"]).write_text("changed")
     with pytest.raises(cm.ContextError, match="verification"):
         cm.archived_output(original, 4000)
 
@@ -346,7 +348,7 @@ def test_raw_read_journal_rebuilds_receipt_before_model_delivery(tmp_path, monke
     monkeypatch.chdir(tmp_path)
     cm, state = load("context_manager"), load("operational_state")
     base = [{"role": "user", "content": "task"}]
-    cm.atomic(".agent/checkpoint.json", json.dumps(base))
+    cm.atomic(state_paths.path("checkpoint.json"), json.dumps(base))
     page = {
         "path": "facts.txt",
         "sha256": "a" * 64,
@@ -357,11 +359,11 @@ def test_raw_read_journal_rebuilds_receipt_before_model_delivery(tmp_path, monke
     }
     call = {"type": "function_call", "call_id": "c", "name": "read", "arguments": "{}"}
     cm.atomic(
-        ".agent/pending-calls.json",
+        state_paths.path("pending-calls.json"),
         json.dumps(
             {
                 "base_hash": hashlib.sha256(
-                    pathlib.Path(".agent/checkpoint.json").read_bytes()
+                    state_paths.path("checkpoint.json").read_bytes()
                 ).hexdigest(),
                 "output": [call],
                 "results": {"c": page},
@@ -376,7 +378,9 @@ def test_raw_read_journal_rebuilds_receipt_before_model_delivery(tmp_path, monke
         "state_paths": state_paths,
         "operational_state": state,
         "save_manifest": lambda: None,
-        "checkpoint": lambda value: cm.atomic(".agent/checkpoint.json", json.dumps(value)),
+        "checkpoint": lambda value: cm.atomic(
+            state_paths.path("checkpoint.json"), json.dumps(value)
+        ),
     }
     exec(
         compile(agent_functions("checkpoint_hash", "recover_journal"), "isolated-recovery", "exec"),
@@ -395,7 +399,7 @@ def test_decoded_artifact_recovery_regenerates_missing_derived_file(tmp_path, mo
         output({"encoding": "base64", "data": base64.b64encode(b"facts").decode()}), 4000
     )
     view = json.loads(message["output"])
-    path = pathlib.Path(view["artifact"]["path"])
+    path = state_paths.path(view["artifact"]["path"])
     path.unlink()
     with pytest.raises(ValueError, match="archive"):
         load("recall")._verify_control_sources([message])

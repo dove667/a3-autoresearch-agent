@@ -1,5 +1,6 @@
 """Run only the maintainer-published Harness as a credential-scoped local process."""
 
+import ast
 import json
 import os
 import re
@@ -13,7 +14,12 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from a3_research_agent.harness import state_paths
-from a3_research_agent.host.published_harness import COMMAND, project_for_run, research_workspace
+from a3_research_agent.host.published_harness import (
+    COMMAND,
+    conversation_root,
+    project_for_run,
+    research_workspace,
+)
 from a3_research_agent.host.runs.directories import debug_directory
 from a3_research_agent.path_safety import workspace_path
 
@@ -78,6 +84,7 @@ class ProcessRuntime:
         self.root, self.inputs = Path(root), Path(inputs)
         if self.root.name != "sessions":
             raise ValueError("Session metadata must use the current run/sessions layout")
+        self.state_root = conversation_root(self.root.parent)
         self.public_a3, self.endpoint = Path(public_a3), endpoint
         self.logs = debug_directory(self.root.parent)
         self.python = str(Path(python or sys.executable).absolute())
@@ -129,6 +136,8 @@ class ProcessRuntime:
 
     def artifact(self, owner, session_id, name, offset=0, limit=None):
         self.owned(owner, session_id)
+        if name.startswith("conversation/"):
+            return read_artifact(self.state_root, name.removeprefix("conversation/"), offset, limit)
         return read_artifact(session_workspace(self.root, session_id), name, offset, limit)
 
     @staticmethod
@@ -140,6 +149,21 @@ class ProcessRuntime:
         ):
             raise ValueError(
                 "Published Harness source is incomplete; expected agent.py, paths.py and state_paths.py"
+            )
+        layout = ast.parse((source / "a3_research_agent/harness/state_paths.py").read_text())
+        if not any(
+            isinstance(node, ast.Assign)
+            and any(
+                isinstance(target, ast.Name) and target.id == "LAYOUT_VERSION"
+                for target in node.targets
+            )
+            and isinstance(node.value, ast.Constant)
+            and type(node.value.value) is int
+            and node.value.value == state_paths.LAYOUT_VERSION
+            for node in layout.body
+        ):
+            raise ValueError(
+                "Published Harness state layout requires a current maintenance release"
             )
         return source
 
@@ -204,9 +228,9 @@ class ProcessRuntime:
                     self.save_record(record)
 
     def environment(self, workspace, inputs, token):
-        directories = {name: workspace / name for name in (".home", ".tmp", ".cache")}
+        directories = {name: self.state_root / name for name in (".home", ".tmp", ".cache")}
         for directory in directories.values():
-            directory.mkdir(exist_ok=True)
+            directory.mkdir(parents=True, exist_ok=True)
         memory = workspace_path(project_for_run(self.root.parent), "memory").resolve()
         memory.mkdir(exist_ok=True)
         return {
@@ -224,6 +248,15 @@ class ProcessRuntime:
             "A3_GATEWAY_URL": self.endpoint.rstrip("/"),
             "A3_GATEWAY_TOKEN": token,
             "A3_WORKSPACE": str(workspace),
+            "A3_STATE_ROOT": str(self.state_root),
+            "A3_SKILLS_ROOT": str(
+                workspace_path(project_for_run(self.root.parent), "skills").resolve()
+            ),
+            "A3_SKILLS_HISTORY_ROOT": str(
+                workspace_path(
+                    project_for_run(self.root.parent), ".runtime/skill-revisions"
+                ).resolve()
+            ),
             "A3_MEMORY_ROOT": str(memory),
             "A3_INPUT_ROOT": str(inputs),
             "A3_REFERENCE_ROOT": str(self.public_a3.resolve()),
@@ -271,6 +304,10 @@ class ProcessRuntime:
                 raise ValueError(
                     "Existing research workspace must be resumed before starting a process"
                 )
+            if not reuse and self.state_root.exists() and any(self.state_root.iterdir()):
+                raise ValueError(
+                    "Existing conversation state must be resumed before starting a process"
+                )
             directory.mkdir(parents=True, exist_ok=reuse)
             if not reuse:
                 link.symlink_to(workspace, target_is_directory=True)
@@ -279,7 +316,16 @@ class ProcessRuntime:
             workspace = workspace.resolve()
             if source.is_relative_to(workspace) or workspace.is_relative_to(source):
                 raise ValueError("Published source must be separate from writable research files")
-            write_workspace_files(workspace, files)
+            state_names = {state_paths.CHECKPOINT, state_paths.OUTCOME}
+            state_files = {name: value for name, value in files.items() if name in state_names}
+            research_files = {
+                name: value for name, value in files.items() if name not in state_names
+            }
+            if reuse and state_files:
+                raise ValueError("Resume must preserve the existing conversation checkpoint")
+            self.state_root.mkdir(parents=True, exist_ok=True)
+            write_workspace_files(self.state_root, state_files)
+            write_workspace_files(workspace, research_files)
             selected_inputs = Path(inputs or self.inputs).resolve(strict=True)
             environment = self.environment(workspace, selected_inputs, token)
             launches = list(previous.get("previous_launches", [])) if previous else []
@@ -459,7 +505,9 @@ class ProcessRuntime:
                     )
                 return
             workspace = session_workspace(self.root, main_owner)
-            checkpoint = json.loads((workspace / state_paths.CHECKPOINT).read_text())
+            checkpoint = json.loads(
+                state_paths.path(state_paths.CHECKPOINT, self.state_root).read_text()
+            )
             if not isinstance(checkpoint, list) or not all(
                 isinstance(item, dict) for item in checkpoint
             ):

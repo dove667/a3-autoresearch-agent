@@ -1,13 +1,17 @@
-"""Workspace-local research plan and its view of observed remote work."""
+"""Persistent research planning and its view of observed remote work."""
 
 import json
 import re
-from pathlib import Path
 
 from a3_research_agent.harness import operational_state as operational
+from a3_research_agent.harness import state_paths
 from a3_research_agent.harness.context import manager
 
-PATH = Path("research-plan.json")
+
+def plan_file():
+    return state_paths.path(state_paths.PLAN)
+
+
 STATUSES = ("pending", "active", "blocked", "done", "skipped")
 ID = re.compile(r"[A-Za-z0-9_-]{1,48}")
 JOB_ID = re.compile(r"[0-9a-f]{32}")
@@ -15,9 +19,9 @@ MAX_STEPS = 20
 
 
 def load():
-    if not PATH.exists():
+    if not plan_file().exists():
         return {"version": 1, "revision": 0, "goal": "", "reason": "", "steps": {}}
-    plan = json.loads(PATH.read_text())
+    plan = json.loads(plan_file().read_text())
     if plan.get("version") != 1:
         raise ValueError("Unsupported research plan version")
     return plan
@@ -201,6 +205,6 @@ def dispatch(arguments):
         if plan["revision"]:
             manager.archive(plan, "plan-revision")
         proposed["revision"] += 1
-        manager.atomic(PATH, json.dumps(proposed, ensure_ascii=False))
+        manager.atomic(plan_file(), json.dumps(proposed, ensure_ascii=False))
         plan = proposed
     return view(plan, compact=True)

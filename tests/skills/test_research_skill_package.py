@@ -1,17 +1,16 @@
-"""Published research skills remain complete, frozen and discoverable."""
+"""All project skills are directly discoverable and equally editable."""
 
 import json
 import re
+import shutil
 from pathlib import Path
 
 import pytest
 import yaml
 
-from a3_research_agent.harness import input_skills, skill_registry
-from a3_research_agent.host.inputs.versions import InputVersions
+from a3_research_agent.harness import skill_registry
 
 ROOT = Path(__file__).resolve().parents[2]
-PACKAGE = ROOT / "skills/a3-mujoco-autoresearch"
 PACKAGES = (
     "a3-mujoco-autoresearch",
     "a3-policy-integration",
@@ -30,69 +29,66 @@ def test_research_catalog_maps_to_readable_versioned_reference(identifier):
     frontmatter = yaml.safe_load(body.split("---", 2)[1])
     assert entry["id"] == frontmatter["name"] == package.name
     assert entry["version"] == frontmatter["metadata"]["version"]
-    assert entry["status"] == "reference"
     for target in re.findall(r"\]\(([^)]+)\)", body):
         if "://" not in target:
             assert (package / target.partition("#")[0]).is_file(), target
 
 
-def test_all_reviewed_skills_install_and_agent_edits_survive_resume(tmp_path, monkeypatch):
-    inputs = InputVersions(ROOT, tmp_path / "run")
-    inputs.activate(inputs.prepare(), "start")
-    workspace = tmp_path / "workspace"
-    workspace.mkdir()
-    monkeypatch.chdir(workspace)
-    input_skills.install_input_skills(inputs.run / "inputs")
+def test_every_existing_project_package_is_discoverable_and_editable(tmp_path, monkeypatch):
+    library = tmp_path / "skills"
+    shutil.copytree(ROOT / "skills", library)
+    monkeypatch.setenv("A3_SKILLS_ROOT", str(library))
+    monkeypatch.setenv("A3_SKILLS_HISTORY_ROOT", str(tmp_path / "history"))
     listing = skill_registry.dispatch({"action": "list"})
     assert {entry["id"] for entry in listing["skills"]} == set(PACKAGES)
     for identifier in PACKAGES:
         content, offset = "", 0
         while True:
-            entry = skill_registry.dispatch(
+            page = skill_registry.dispatch(
                 {"action": "read", "id": identifier, "limit": 8000, "offset": offset}
             )
-            content += entry["content"]
-            if entry["eof"]:
+            assert "error" not in page, (identifier, page)
+            content += page["content"]
+            if page["eof"]:
                 break
-            offset = entry["end"]
-        assert content == (ROOT / "skills" / identifier / "SKILL.md").read_text()
-    original = skill_registry.dispatch({"action": "read", "id": "a3-job-recovery"})
-    saved = skill_registry.dispatch(
-        {
-            "action": "save",
-            "id": "a3-job-recovery",
-            "description": "Local repair lesson",
-            "content": "Keep the original job ID until its outcome is reconciled.",
-            "source": "Local diagnostic fixture",
-            "expected_sha256": original["sha256"],
-        }
-    )
-    assert "error" not in saved
-    input_skills.install_input_skills(inputs.run / "inputs")
-    assert (
-        skill_registry.dispatch({"action": "read", "id": "a3-job-recovery"})["sha256"]
-        == saved["sha256"]
-    )
-
-
-def test_deployed_skill_is_frozen_discoverable_and_not_injected(tmp_path, monkeypatch):
-    inputs = InputVersions(ROOT, tmp_path / "run")
-    proposal = inputs.prepare()
-    inputs.activate(proposal, "start")
-    relative = "skills/a3-mujoco-autoresearch/SKILL.md"
-    assert inputs.contents[relative] == (ROOT / relative).read_text()
-    assert inputs.contents[relative] not in inputs.model_instructions()[1]
-    restored = InputVersions(ROOT, inputs.run)
-    assert restored.prepare()["contents"][relative] == proposal["contents"][relative]
+            offset = page["end"]
+        assert content == (library / identifier / "SKILL.md").read_text()
+        edited = skill_registry.dispatch(
+            {
+                "action": "save",
+                "id": identifier,
+                "description": "Reviewed method",
+                "content": content + "\nFixture clarification.\n",
+                "source": "Fixture research evidence",
+                "expected_sha256": page["sha256"],
+            }
+        )
+        assert "error" not in edited, (identifier, edited)
+        assert edited["version"] != page["version"]
+        assert (library / identifier / "SKILL.md").read_text().endswith("Fixture clarification.\n")
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     monkeypatch.chdir(workspace)
-    input_skills.install_input_skills(inputs.run / "inputs")
-    listing = skill_registry.dispatch({"action": "list", "query": "mujoco research"})
-    assert "a3-mujoco-autoresearch" in {item["id"] for item in listing["skills"]}
-    assert (
-        skill_registry.dispatch({"action": "read", "id": "a3-mujoco-autoresearch", "limit": 8000})[
-            "sha256"
-        ]
-        == inputs.manifest["files"][relative]["sha256"]
+    assert skill_registry.dispatch({"action": "list"})["total"] == 6
+    assert not (workspace / "skills").exists()
+
+
+def test_resources_are_read_only_when_explicitly_requested(tmp_path):
+    library = tmp_path / "skills"
+    shutil.copytree(ROOT / "skills", library)
+    files = skill_registry.dispatch(
+        {"action": "list_resources", "id": "a3-mujoco-autoresearch"}, root=library
     )
+    resource = "references/training-diagnostics.md"
+    assert resource in {entry["path"] for entry in files["resources"]}
+    assert "Training diagnostics" not in str(files)
+    page = skill_registry.dispatch(
+        {
+            "action": "read_resource",
+            "id": "a3-mujoco-autoresearch",
+            "path": resource,
+            "limit": 8000,
+        },
+        root=library,
+    )
+    assert page["content"] == (library / "a3-mujoco-autoresearch" / resource).read_text()[:8000]

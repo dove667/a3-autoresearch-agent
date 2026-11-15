@@ -10,7 +10,7 @@ from pathlib import Path
 
 from a3_research_agent.execution.exports.readonly import EXPORT_ID
 from a3_research_agent.harness import state_paths
-from a3_research_agent.host.published_harness import COMMAND, run_commit
+from a3_research_agent.host.published_harness import COMMAND, conversation_root, run_commit
 from a3_research_agent.host.sessions.packages import load_published_manifest, read_continuation
 from a3_research_agent.host.sessions.workspace import write_durable
 from a3_research_agent.path_safety import workspace_path
@@ -157,9 +157,7 @@ def _remote_exports(identifiers):
 def _knowledge_name(name):
     parts = Path(name).parts
     return bool(
-        parts
-        and parts[0] in {"skills", "research"}
-        and not any(part.startswith(".") for part in parts)
+        parts and parts[0] == "research" and not any(part.startswith(".") for part in parts)
     )
 
 
@@ -231,12 +229,12 @@ def publish_run_result(
     validate_exports: Callable | None = None,
 ) -> dict:
     """Save the selected published source and immutable research knowledge."""
-    declaration = workspace / "continuation.json"
+    declaration = state_paths.path(state_paths.CONTINUATION, conversation_root(run))
     if declaration.is_file():
         commit = run_commit(run)
         if commit is None:
             raise ValueError("Result retention requires a published Harness pin")
-        manifest = read_continuation(workspace)
+        manifest = read_continuation(workspace, conversation_root(run))
         remote_exports = _remote_exports(manifest.get("remote_exports", []))
         if remote_exports:
             if validate_exports is None:

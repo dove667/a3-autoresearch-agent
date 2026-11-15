@@ -7,6 +7,12 @@ import pytest
 from a3_research_agent.host.runs.supervisor import RunSupervisor, evaluate_outcome
 
 
+def outcome_path(root):
+    path = root / "conversation/run-outcome.json"
+    path.parent.mkdir(exist_ok=True)
+    return path
+
+
 def test_research_is_observed_until_exit_without_feedback_or_relaunch(tmp_path):
     child = {"session_id": "main", "status": "running"}
     waits, retained = [], []
@@ -14,7 +20,7 @@ def test_research_is_observed_until_exit_without_feedback_or_relaunch(tmp_path):
     def wait(seconds):
         waits.append(seconds)
         if len(waits) == 160:
-            (tmp_path / "run-outcome.json").write_text('{"status":"complete"}')
+            outcome_path(tmp_path).write_text('{"status":"complete"}')
             child["status"] = "exited"
 
     result = RunSupervisor(
@@ -46,7 +52,7 @@ def test_supervisor_records_changes_instead_of_identical_heartbeats(tmp_path):
 @pytest.mark.parametrize("declaration", [None, {"status": "continue"}, {"status": "complete"}])
 def test_no_declaration_can_finish_the_long_term_goal(tmp_path, declaration):
     if declaration is not None:
-        (tmp_path / "run-outcome.json").write_text(json.dumps(declaration))
+        outcome_path(tmp_path).write_text(json.dumps(declaration))
     result = RunSupervisor(run=tmp_path, workspace=tmp_path, sessions=list).run()
     assert result["status"] == "incomplete"
 
@@ -63,11 +69,11 @@ def test_genuine_external_blocker_requires_action_and_evidence(tmp_path):
             "evidence": ["auth-failure.txt"],
         },
     }
-    (tmp_path / "run-outcome.json").write_text(json.dumps(outcome))
-    assert evaluate_outcome(tmp_path)["status"] == "blocked"
+    outcome_path(tmp_path).write_text(json.dumps(outcome))
+    assert evaluate_outcome(tmp_path, tmp_path / "conversation")["status"] == "blocked"
     outcome["external_blocker"]["required_action"] = ""
-    (tmp_path / "run-outcome.json").write_text(json.dumps(outcome))
-    assert evaluate_outcome(tmp_path)["status"] == "continue"
+    outcome_path(tmp_path).write_text(json.dumps(outcome))
+    assert evaluate_outcome(tmp_path, tmp_path / "conversation")["status"] == "continue"
 
 
 def test_snapshot_failure_preserves_a_resumable_outcome(tmp_path):
@@ -98,7 +104,7 @@ def test_final_record_uses_current_inputs_after_closing_updates(tmp_path):
 
 
 def test_running_milestone_never_stops_the_process(tmp_path):
-    (tmp_path / "run-outcome.json").write_text(
+    outcome_path(tmp_path).write_text(
         '{"status":"continue","reason":"Milestone saved; next experiment pending"}'
     )
     child = {"session_id": "main", "status": "running"}

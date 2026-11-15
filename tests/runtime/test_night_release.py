@@ -38,14 +38,14 @@ def test_release_freezes_current_prompts_and_requires_exact_digest(release):
     manifest = json.loads(proposal["package"]["run.json"])
     assert manifest["version"] == 1
     assert "phase" not in manifest and "task_profile" not in manifest
-    assert set(proposal["package"]) == {"run.json", ".agent/checkpoint.json"}
+    assert set(proposal["package"]) == {"run.json", "checkpoint.json"}
     with pytest.raises(ValueError, match="digest"):
         publish_release(anchor, proposal, "stale")
     publish_release(anchor, proposal, proposal["digest"])
     directory = night_state_directory(anchor) / "night-releases" / proposal["digest"]
     NightSchedule.verify(directory, proposal["digest"])
-    (directory / "package/.agent/checkpoint.json").parent.mkdir(parents=True, exist_ok=True)
-    (directory / "package/.agent/checkpoint.json").write_text("changed")
+    (directory / "package/checkpoint.json").parent.mkdir(parents=True, exist_ok=True)
+    (directory / "package/checkpoint.json").write_text("changed")
     with pytest.raises(ValueError, match="digest"):
         NightSchedule.verify(directory, proposal["digest"])
 

@@ -16,6 +16,7 @@ import pytest
 
 from a3_research_agent.harness import history as recall
 from a3_research_agent.harness import long_term_memory as memory
+from a3_research_agent.harness import state_paths
 from a3_research_agent.harness.context import compaction, spill
 from a3_research_agent.harness.context import manager as cm
 
@@ -34,7 +35,7 @@ def test_ready_fork_bounds_new_tail_and_replays_publication_without_model(shutdo
         calls = len(gateway.calls)
         messages += tool_pair("new-artifact", json.dumps({"data": "x" * 200000}))
         original = json.loads(json.dumps(messages))
-        cm.atomic(".agent/checkpoint.json", json.dumps(messages))
+        cm.atomic(state_paths.path("checkpoint.json"), json.dumps(messages))
         method = fork.apply_ready if shutdown else fork.before_request
         candidate, record = method(messages)
         assert record["kind"] == "applied" and cm.paired(candidate)
@@ -44,32 +45,30 @@ def test_ready_fork_bounds_new_tail_and_replays_publication_without_model(shutdo
         restarted = compaction.ForkCompactor(gateway)
         again, _ = restarted.before_request(messages)
         assert again == candidate
-        cm.atomic(".agent/checkpoint.json", json.dumps(candidate))
+        cm.atomic(state_paths.path("checkpoint.json"), json.dumps(candidate))
         # Crash after checkpoint publication, before acknowledgment: never reapply tail.
         final = compaction.ForkCompactor(gateway)
         acknowledged, _ = final.apply_ready(candidate)
         assert acknowledged == candidate
         assert len(gateway.calls) == calls
-        assert (
-            json.loads(pathlib.Path(".agent/compaction-result.json").read_text())["applied"] is True
-        )
+        assert json.loads(state_paths.path("compaction-result.json").read_text())["applied"] is True
 
 
 def test_failed_compaction_preserves_oversized_fresh_batch_and_checkpoint():
     with workspace():
         messages = history(rounds=4, filler=500)
         messages += tool_pair("fresh", json.dumps(["x" * 100000]))
-        cm.atomic(".agent/checkpoint.json", json.dumps(messages))
+        cm.atomic(state_paths.path("checkpoint.json"), json.dumps(messages))
         gateway = Gateway(fail=True)
         fork = compaction.ForkCompactor(gateway)
         fork.start(messages)
         fork.wait(5)
         with pytest.raises(cm.ContextError, match="compaction"):
             fork.before_request(messages)
-        assert json.loads(pathlib.Path(".agent/checkpoint.json").read_text()) == messages
-        saved = json.loads(pathlib.Path(".agent/compaction-result.json").read_text())
+        assert json.loads(state_paths.path("checkpoint.json").read_text()) == messages
+        saved = json.loads(state_paths.path("compaction-result.json").read_text())
         assert "replacement" not in saved
-        assert json.loads(pathlib.Path(saved["source"]).read_text()) == messages
+        assert json.loads(state_paths.path(saved["source"]).read_text()) == messages
 
 
 def test_hard_wait_timeout_keeps_running_prefix_identity(monkeypatch):
@@ -112,7 +111,7 @@ def test_interrupted_fork_fallback_uses_current_operational_reserve(monkeypatch)
             original += [{"role": "user", "content": "u" * 900}] + tool_pair(str(i), "r" * 100)
         fork = compaction.ForkCompactor(Gateway())
         cm.atomic(
-            ".agent/compaction-result.json",
+            state_paths.path("compaction-result.json"),
             json.dumps(
                 {
                     "version": 2,
@@ -216,7 +215,7 @@ def history(rounds=6, filler=900, completed_last=True):
 
 
 def test_spill_replaces_oversized_result():
-    with workspace() as root:
+    with workspace():
         payload = "x" * 60000
         value = spill.maybe_spill(payload, max_bytes=50000)
         assert isinstance(value, str) and value != payload
@@ -225,8 +224,11 @@ def test_spill_replaces_oversized_result():
         assert body["bytes"] == 60000
         assert body["head_complete"] is False
         assert body["head"] == payload[: spill.HEAD_CHARS]
-        assert pathlib.Path(body["path"]).read_text(encoding="utf-8") == payload
-        assert pathlib.Path(body["path"]).resolve().parent == (root / spill.SPILL_DIR).resolve()
+        assert state_paths.path(body["path"]).read_text(encoding="utf-8") == payload
+        assert (
+            state_paths.path(body["path"]).resolve().parent
+            == state_paths.path(spill.SPILL_DIR).resolve()
+        )
 
 
 def test_spill_keeps_small_result():
@@ -326,7 +328,7 @@ def test_unpaired_result_is_skipped_not_forced():
         messages = history(completed_last=False)
         with pytest.raises(cm.ContextError, match="tool call/result"):
             compactor.before_request(messages)
-        assert not pathlib.Path(compaction.RESULT_PATH).exists()
+        assert not state_paths.path(compaction.RESULT_PATH).exists()
 
 
 # ---------------------------------------------------------------- fallback ---
@@ -338,14 +340,14 @@ def test_summary_failure_preserves_original_history_instead_of_building_recall_c
         messages = history()
         recall.append_history_many(messages)
         memory.write_memory("已确认 2x10 任务需 3200 步，原因是回合长度", kind="fact")
-        cm.atomic(".agent/checkpoint.json", json.dumps(messages))
+        cm.atomic(state_paths.path("checkpoint.json"), json.dumps(messages))
         compactor.before_request(messages)
         compactor.wait(timeout=10)
         with pytest.raises(cm.ContextError, match="compaction"):
             compactor.before_request(messages)
-        assert json.loads(pathlib.Path(".agent/checkpoint.json").read_text()) == messages
+        assert json.loads(state_paths.path("checkpoint.json").read_text()) == messages
         assert "已确认 2x10 任务需 3200 步" in memory.read_memory()
-        assert "replacement" not in json.loads(pathlib.Path(compaction.RESULT_PATH).read_text())
+        assert "replacement" not in json.loads(state_paths.path(compaction.RESULT_PATH).read_text())
 
 
 # ------------------------------------------------------------------ recall ---
@@ -464,8 +466,8 @@ def test_restart_recomputes_token_hysteresis_from_saved_replacement(monkeypatch)
             "replacement": replacement,
             "replacement_sha256": compaction.digest(replacement),
         }
-        (pathlib.Path(".agent/compaction-result.json")).parent.mkdir(parents=True, exist_ok=True)
-        pathlib.Path(".agent/compaction-result.json").write_text(json.dumps(saved))
+        (state_paths.path("compaction-result.json")).parent.mkdir(parents=True, exist_ok=True)
+        state_paths.path("compaction-result.json").write_text(json.dumps(saved))
         restarted = compaction.ForkCompactor(Gateway())
         started = []
         monkeypatch.setattr(restarted, "start", lambda *args, **kwargs: started.append(True))
@@ -498,12 +500,12 @@ def test_published_tail_hysteresis_survives_ack_and_restart(monkeypatch):
             "after_bytes": cm.size(replacement),
             "strategy": "host_summary",
         }
-        (pathlib.Path(".agent/compaction-result.json")).parent.mkdir(parents=True, exist_ok=True)
-        pathlib.Path(".agent/compaction-result.json").write_text(json.dumps(saved))
+        (state_paths.path("compaction-result.json")).parent.mkdir(parents=True, exist_ok=True)
+        state_paths.path("compaction-result.json").write_text(json.dumps(saved))
         applied, record = fork.before_request(original + tail)
         assert record["kind"] == "applied"
         expected = cm.message_cost(applied)
-        cm.atomic(".agent/checkpoint.json", json.dumps(applied))
+        cm.atomic(state_paths.path("checkpoint.json"), json.dumps(applied))
         for compactor in (
             fork,
             compaction.ForkCompactor(Gateway()),

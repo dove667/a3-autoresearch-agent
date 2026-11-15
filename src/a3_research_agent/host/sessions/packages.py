@@ -57,15 +57,13 @@ def load_published_manifest(directory: Path) -> tuple[str, list[str], dict[str, 
     return commit, COMMAND.copy(), {state_paths.CHECKPOINT: "[]"}
 
 
-def read_continuation(workspace: Path) -> dict:
-    manifest = json.loads(workspace_path(workspace, "continuation.json").read_text())
+def read_continuation(workspace: Path, state_root: Path) -> dict:
+    manifest = json.loads(state_paths.path(state_paths.CONTINUATION, state_root).read_text())
     names = declared_files(manifest)
-    if state_paths.CHECKPOINT not in names:
-        raise ValueError("Continuation must declare its native checkpoint")
     for name in names:
         if not workspace_path(workspace, name).is_file():
             raise ValueError(f"Continuation file is unavailable: {name}")
-    messages = json.loads(workspace_path(workspace, state_paths.CHECKPOINT).read_text())
+    messages = json.loads(state_paths.path(state_paths.CHECKPOINT, state_root).read_text())
     if not isinstance(messages, list) or not all(isinstance(item, dict) for item in messages):
         raise ValueError("Published Harness checkpoint must be a message list")
     require_tool_results(messages)

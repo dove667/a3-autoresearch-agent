@@ -14,6 +14,7 @@ from a3_research_agent.host.models.settings import model_settings
 from a3_research_agent.host.published_harness import (
     COMMAND,
     MARKER,
+    conversation_root,
     native_source,
     project_for_run,
     replace_run_pin,
@@ -34,15 +35,15 @@ def encoded(value) -> bytes:
     return json.dumps(value, ensure_ascii=False, sort_keys=True).encode()
 
 
-def checkpoint_boundary(workspace: Path) -> dict[str, bytes]:
+def checkpoint_boundary(state_root: Path) -> dict[str, bytes]:
     """Validate recovery structure; pending operations remain journaled, never executed."""
-    checkpoint = (workspace / state_paths.CHECKPOINT).read_bytes()
+    checkpoint = state_paths.path(state_paths.CHECKPOINT, state_root).read_bytes()
     messages = json.loads(checkpoint)
     if not isinstance(messages, list) or any(not isinstance(row, dict) for row in messages):
         raise ValueError("Published release requires a message-list checkpoint")
     require_tool_results(messages)
     boundary = {state_paths.CHECKPOINT: checkpoint}
-    pending = workspace / state_paths.JOURNAL
+    pending = state_paths.path(state_paths.JOURNAL, state_root)
     if pending.is_file():
         raw = pending.read_bytes()
         journal = json.loads(raw)
@@ -125,8 +126,8 @@ def apply_release(
         child = state["gateway"].get("session_records", {}).get(actor)
         if actor == run_identity(run) or not child or child.get("closed"):
             raise ValueError("Release requires the current nonclosed research identity")
-        workspace = session_workspace(run / "sessions", actor)
-        checkpoint_boundary(workspace)
+        session_workspace(run / "sessions", actor)
+        checkpoint_boundary(conversation_root(run))
         contents = {
             name: (directory / "inputs" / name).read_text()
             for name in json.loads((directory / "manifest.json").read_text())["inputs"]
@@ -187,7 +188,7 @@ def apply_release(
             ):
                 raise ValueError("Release requires all other research sessions to be stopped")
         runtime.prepare_release_restart(actor)
-        boundary = checkpoint_boundary(workspace)
+        boundary = checkpoint_boundary(conversation_root(run))
         for name, raw in boundary.items():
             target = archive / name
             if target.exists() and target.read_bytes() != raw:

@@ -1,6 +1,6 @@
 {
   "id": "a3-mujoco-autoresearch",
-  "version": "0.1.17",
+  "version": "0.1.18",
   "status": "reference",
   "comparison_status": "compare-not-proven",
   "description": "A3 MuJoCo autoresearch and model training: ACT, Diffusion/Flow, VLA, world models, diagnostics and paired evaluation.",
@@ -95,6 +95,10 @@
     {
       "version": "0.1.11",
       "change": "Require explicit task conditions in actual training and inference action computation, with consistent ACT embeddings or VLA/pi text processing and real-path validation."
+    },
+    {
+      "version": "0.1.18",
+      "change": "Use the single controlled skill library and trajectory-based original history; remove workspace installation and duplicated skill copies."
     }
   ]
 }

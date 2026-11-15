@@ -22,25 +22,25 @@ def blocked(tmp_path):
             "evidence": ["service-error.json"],
         },
     }
-    for path in (workspace / "run-outcome.json", run / "outcome.json"):
+    for path in (run / "conversation/run-outcome.json", run / "outcome.json"):
         path.write_text(json.dumps(outcome))
     (run / "supervision.json").write_text(json.dumps({"phase": "stopped", "outcome": outcome}))
     return run, workspace, state, store, runtime
 
 
 def test_explicit_native_blocked_resume_preserves_checkpoint_and_scope(tmp_path):
-    run, workspace, state, store, runtime = blocked(tmp_path)
-    original = (workspace / ".agent/checkpoint.json").read_bytes()
+    run, _workspace, state, store, runtime = blocked(tmp_path)
+    original = (run / "conversation/checkpoint.json").read_bytes()
     plan = resume.preflight_blocked_resume(run, state)
     attempt = resume.begin_blocked_resume(run, state, store, runtime, plan, {"revision": "current"})
-    assert (workspace / ".agent/checkpoint.json").read_bytes() == original
+    assert (run / "conversation/checkpoint.json").read_bytes() == original
     token = state["gateway"]["session_records"]["main"]["token"]
     assert token != "main-token" and state["gateway"]["sessions"][token] == "main"
     assert state["gateway"]["sessions"]["root-token"] == run.name
     assert "main-token" not in state["gateway"]["sessions"]
     assert runtime.records["main"]["self_stopped"] is False
     assert json.loads((attempt / "run-outcome.json").read_text())["status"] == "blocked"
-    assert json.loads((workspace / "run-outcome.json").read_text())["status"] == "continue"
+    assert json.loads((run / "conversation/run-outcome.json").read_text())["status"] == "continue"
     with pytest.raises(ValueError, match="pending"):
         resume.preflight_blocked_resume(run, store.load())
     resume.finish_blocked_resume(attempt)
@@ -76,21 +76,21 @@ def test_native_blocked_preflight_rejects_invalid_state_without_writes(tmp_path,
     elif change == "evidence":
         (workspace / "service-error.json").unlink()
     elif change == "checkpoint":
-        (workspace / ".agent/checkpoint.json").parent.mkdir(parents=True, exist_ok=True)
-        (workspace / ".agent/checkpoint.json").write_text("{}")
+        (run / "conversation/checkpoint.json").parent.mkdir(parents=True, exist_ok=True)
+        (run / "conversation/checkpoint.json").write_text("{}")
     elif change == "pending_call":
-        (workspace / ".agent/checkpoint.json").parent.mkdir(parents=True, exist_ok=True)
-        (workspace / ".agent/checkpoint.json").write_text(
+        (run / "conversation/checkpoint.json").parent.mkdir(parents=True, exist_ok=True)
+        (run / "conversation/checkpoint.json").write_text(
             '[{"type":"function_call","call_id":"x"}]'
         )
     elif change == "duplicate_call":
-        (workspace / ".agent/checkpoint.json").parent.mkdir(parents=True, exist_ok=True)
-        (workspace / ".agent/checkpoint.json").write_text(
+        (run / "conversation/checkpoint.json").parent.mkdir(parents=True, exist_ok=True)
+        (run / "conversation/checkpoint.json").write_text(
             '[{"type":"function_call","call_id":"x"},{"type":"function_call","call_id":"x"},{"type":"function_call_output","call_id":"x"}]'
         )
     elif change == "orphan_result":
-        (workspace / ".agent/checkpoint.json").parent.mkdir(parents=True, exist_ok=True)
-        (workspace / ".agent/checkpoint.json").write_text(
+        (run / "conversation/checkpoint.json").parent.mkdir(parents=True, exist_ok=True)
+        (run / "conversation/checkpoint.json").write_text(
             '[{"type":"function_call_output","call_id":"x"}]'
         )
     elif change == "pin":
@@ -105,13 +105,13 @@ def test_native_blocked_preflight_rejects_invalid_state_without_writes(tmp_path,
 def test_partial_authorization_write_failure_keeps_pending_fence_and_credentials(
     tmp_path, monkeypatch
 ):
-    run, workspace, state, store, runtime = blocked(tmp_path)
+    run, _workspace, state, store, runtime = blocked(tmp_path)
     before = copy.deepcopy(state)
     plan = resume.preflight_blocked_resume(run, state)
     write = resume.write_durable
 
     def fail(path, content):
-        if path == workspace / "run-outcome.json":
+        if path == run / "conversation/run-outcome.json":
             raise OSError("controlled disk failure")
         return write(path, content)
 
