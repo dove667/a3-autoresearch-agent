@@ -21,7 +21,7 @@ def runtime_for(root, calls, monkeypatch):
     monkeypatch.setattr(
         launch, "remote_call", lambda *args: {"status": "ok", "protocol_version": 1}
     )
-    monkeypatch.setattr(launch, "git", lambda *args: "source-commit")
+    monkeypatch.setattr(launch, "reference_commit", lambda *args: "source-commit")
     monkeypatch.setattr(launch, "launch_run", lambda *args: calls.append(args))
 
 
@@ -46,7 +46,6 @@ def configure(monkeypatch, root):
     }
     for name, value in values.items():
         monkeypatch.setenv(name, value)
-    monkeypatch.delenv("A3_NIGHT_WINDOW_RUN_ID", raising=False)
     monkeypatch.delenv("A3_NIGHT_WINDOW_CHILD", raising=False)
     monkeypatch.delenv("A3_NIGHT_WINDOW_TARGET", raising=False)
 

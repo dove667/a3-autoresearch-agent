@@ -3,11 +3,11 @@ from pathlib import Path
 
 import pytest
 
-from a3_research_agent.cli.night_release import (
-    NightSchedule,
-    night_state_directory,
+from a3_research_agent.host.release_packages import (
     prepare_release,
     publish_release,
+    release_directory,
+    verify_release,
 )
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 @pytest.fixture
 def release(tmp_path, monkeypatch):
-    monkeypatch.setattr("a3_research_agent.cli.night_release.native_source", lambda *args: ROOT)
+    monkeypatch.setattr("a3_research_agent.host.release_packages.native_source", lambda *args: ROOT)
     anchor = tmp_path / "project/trajectories/run-original"
     (anchor / ".host").mkdir(parents=True)
     (anchor / ".host/state.json").write_text('{"status":"suspended"}')
@@ -26,10 +26,7 @@ def release(tmp_path, monkeypatch):
 
 def test_release_freezes_current_prompts_and_requires_exact_digest(release):
     anchor, handoff = release
-    assert (
-        night_state_directory(anchor)
-        == anchor.parent.parent / ".runtime/night-window" / anchor.name
-    )
+    assert release_directory(anchor) == anchor.parent.parent / ".runtime/releases" / anchor.name
     from a3_research_agent.host.inputs.versions import InputVersions
 
     versions = InputVersions(ROOT, anchor)
@@ -42,12 +39,12 @@ def test_release_freezes_current_prompts_and_requires_exact_digest(release):
     with pytest.raises(ValueError, match="digest"):
         publish_release(anchor, proposal, "stale")
     publish_release(anchor, proposal, proposal["digest"])
-    directory = night_state_directory(anchor) / "night-releases" / proposal["digest"]
-    NightSchedule.verify(directory, proposal["digest"])
+    directory = release_directory(anchor) / "packages" / proposal["digest"]
+    verify_release(directory, proposal["digest"])
     (directory / "package/checkpoint.json").parent.mkdir(parents=True, exist_ok=True)
     (directory / "package/checkpoint.json").write_text("changed")
     with pytest.raises(ValueError, match="digest"):
-        NightSchedule.verify(directory, proposal["digest"])
+        verify_release(directory, proposal["digest"])
 
 
 def test_published_git_source_excludes_live_checkout_and_unpublished_commits(tmp_path):

@@ -4,7 +4,7 @@
 
 **Architecture:** Keep the single research Agent and server-owned execution queue. Expose common operations as validated tools, deliver the existing skill package through versioned inputs, and use a native-only local runtime and preserve scientific evidence through private offline migration. Scheduling owns resource estimates; research choices remain with the Agent.
 
-**Constraints:** No formal research launch during maintenance. Preserve original trajectories, checkpoints, notes and exports. Public documentation uses generic deployment examples. Every changed current Agent-readable input receives a semantic version increment; historical prompts move unchanged to archive/agent-inputs. Use existing dependencies, package manifests and test infrastructure. Implementation tasks have disjoint file ownership; integration and release follow after all tasks pass review.
+**Constraints:** No formal research launch during maintenance. Preserve original trajectories, checkpoints, notes and exports. Public documentation uses generic deployment examples. Every changed current Agent-readable input receives a semantic version increment; historical prompts move unchanged to legacy_prompt/agent-inputs. Use existing dependencies, package manifests and test infrastructure. Implementation tasks have disjoint file ownership; integration and release follow after all tasks pass review.
 
 ## 1. Skills delivery and discovery
 

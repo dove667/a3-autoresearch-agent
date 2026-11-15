@@ -54,8 +54,7 @@ The Agent authors the plan through `plan(action="show")` and
 the project-root `plan.json`, exposed as `runtime_paths.plan`. New runs, resume
 and maintenance releases read this shared latest plan. At start, revision and stop,
 the runtime preserves an immutable revision/hash snapshot under the trajectory's
-`plan-snapshots/`. A published night release carries the operator-reviewed handoff
-in its input bundle. The Agent updates its route from new evidence while retaining prior
+`plan-snapshots/`. Each night starts a new run and empty model context; shared workspace, plan, memory and skills carry research progress. Same-day interruption recovery remains an explicit option. The Agent updates its route from new evidence while retaining prior
 decisions, job references and results.
 
 The `memory` tool manages active long-term experience in the shared project-level

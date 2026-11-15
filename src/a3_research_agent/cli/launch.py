@@ -3,6 +3,7 @@
 import argparse
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -16,14 +17,21 @@ from a3_research_agent.host.remote_client import remote_call, validate_remote_he
 from a3_research_agent.host.runs.continuation import resolve_harness_start
 from a3_research_agent.host.runs.directories import create_run_directory
 from a3_research_agent.host.runs.state import RunLease
-from a3_research_agent.host.source_snapshots import git
 from a3_research_agent.project import checkout_root, resolve_project_root
+
+
+def reference_commit(source: Path) -> str:
+    return subprocess.check_output(
+        ["git", "-C", str(source), "rev-parse", "HEAD"], text=True
+    ).strip()
 
 
 def launch_main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--night-window", action="store_true", help="Resume only from 21:00 to 09:00 Beijing time"
+        "--night-window",
+        action="store_true",
+        help="Start a fresh run each night from 21:00 to 09:00 Beijing time",
     )
     parser.add_argument(
         "--check", action="store_true", help="Validate deployment without starting an Agent"
@@ -101,18 +109,7 @@ def launch_main() -> None:
     except (ValueError, OSError) as error:
         parser.error(str(error))
     load_dotenv(os.environ.get("A3_RSI_ENV_FILE", root / ".env"), override=True)
-    scheduled_run = os.environ.get("A3_NIGHT_WINDOW_RUN_ID")
     night_child = os.environ.get("A3_NIGHT_WINDOW_CHILD") == "1"
-    if scheduled_run and args.resume_from and not args.check and not args.night_window:
-        from a3_research_agent.cli.night_release import night_state_directory, read_json
-
-        schedule = read_json(
-            night_state_directory(root / "trajectories" / scheduled_run) / "night-schedule.json",
-            {},
-        )
-        protected = {scheduled_run, schedule.get("current")}
-        if args.resume_from.resolve().name in protected and not night_child:
-            parser.error("This run must be resumed with --night-window")
     if night_child:
         from datetime import datetime
 
@@ -121,30 +118,24 @@ def launch_main() -> None:
         if not window_boundary(datetime.now(BEIJING))[0]:
             parser.error("This run can only start from 21:00 to 09:00 Beijing time")
     if args.night_window:
-        if not args.resume_from or args.check:
-            parser.error("--night-window requires an existing --resume-from run")
-        from a3_research_agent.cli.night_release import NightSchedule
-        from a3_research_agent.cli.night_window import run_nightly
-        from a3_research_agent.host.runs.state import RunStateStore
+        if args.resume_from or args.check or not args.harness_commit:
+            parser.error("--night-window requires --harness-commit for a fresh daily run")
+        from a3_research_agent.cli.night_window import FreshNightSchedule, run_nightly
 
-        anchor = args.resume_from.resolve()
         command = [
             sys.executable,
             "-m",
             "a3_research_agent.cli.launch",
             "--project-root",
             str(root),
-            "--resume-from",
-            str(anchor),
+            "--harness-commit",
+            args.harness_commit,
         ]
         if args.feedback_file:
             command.extend(["--feedback-file", str(args.feedback_file.resolve())])
-        schedule = NightSchedule(anchor, command)
-        with RunLease(schedule.directory / "night-launcher"):
-            state = RunStateStore(schedule.current_run())
-            if not state.path.is_file() or state.load().get("status") != "suspended":
-                parser.error("--night-window requires a suspended run")
-            raise SystemExit(run_nightly(command, state, schedule=schedule))
+        schedule = FreshNightSchedule(root, command)
+        with RunLease(root / ".runtime/night-window/launcher"):
+            raise SystemExit(run_nightly(command, None, schedule=schedule))
     required = (
         "MODEL_NAME",
         "A3_PROJECT_ROOT",
@@ -169,14 +160,20 @@ def launch_main() -> None:
                 {
                     "local_execution": "process",
                     "remote_controller": "reachable",
-                    "a3_commit": git(a3, "rev-parse", "HEAD"),
+                    "a3_commit": reference_commit(a3),
                     "remote_response_received": isinstance(remote_ready, dict),
                 }
             )
         )
         return
     run_root = root / "trajectories"
-    run = args.resume_from.resolve() if args.resume_from else create_run_directory(run_root)
+    reserved = os.environ.get("A3_NIGHT_WINDOW_RUN_DIR") if night_child else None
+    if reserved:
+        run = Path(reserved).resolve(strict=True)
+        if run.parent != run_root.resolve() or any(run.iterdir()) or args.resume_from:
+            parser.error("Night launcher requires its reserved empty trajectory directory")
+    else:
+        run = args.resume_from.resolve() if args.resume_from else create_run_directory(run_root)
     with RunLease(root / ".runtime/research-workspace"), RunLease(run):
         launch_run(args, run, a3, start)
 

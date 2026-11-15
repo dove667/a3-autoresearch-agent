@@ -10,7 +10,7 @@
 | `harness_payload.py` | 已审核的 Harness 源码载荷清单 |
 | `token_count.py` | 离线 token 数量估算 |
 
-`host/source_snapshots.py` 准备源码快照，`host/remote_client.py` 负责通过 SSH 调用远程 Controller。
+`host/reference_sources.py` 准备按内容复用的只读参考源码缓存，`host/remote_client.py` 负责通过 SSH 调用远程 Controller。
 
 `harness/history.py` 保存和检索原始执行历史，`harness/long_term_memory.py` 管理主动提炼的长期经验，`harness/operational_state.py` 记录工具交付、读取和作业进度。`harness/context/` 负责工作上下文与完整摘要，`skill_registry.py` 负责可复用方法。
 

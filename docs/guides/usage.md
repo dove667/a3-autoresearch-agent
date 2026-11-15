@@ -29,7 +29,7 @@ bash start-autoresearch.sh --harness-commit <已发布提交SHA>
 
 Host 验证固定提交，将 Harness 缓存在 `.runtime/published-harness/v2/<commit>/`，研究文件使用项目根目录唯一的 `workspace/`，技能使用根 `skills/`，主动经验由 `memory` 工具管理。模型通过具体工具编写研究脚本、提交作业、读取结果与记录经验。研究源码和产物留在该工作区，运行中的 Harness 源码从已发布版本加载。
 
-一次 **run** 保存主身份、轨迹和持续研究状态；同一 run 可以跨多次进程启动和 Harness 维护发布。一次 **job** 是远程采集、训练或评估命令，拥有持久编号和实际执行状态。
+每天启动一个新的 **run**，保存当天的主身份、空对话起点与执行轨迹。所有运行共用 workspace、plan、skills 和 memory，Agent 先读共享计划并核对已有 job。手动恢复可以继续指定 run 的对话和在途调用。一次 **job** 是远程采集、训练或评估命令，拥有持久编号和实际执行状态。
 
 原始 mini-SWE-agent 可独立用于开发：
 
@@ -53,40 +53,27 @@ bash start-autoresearch.sh --resume-from "trajectories/<开始时间>"
 
 ## 在同一工作区更新 Harness
 
-维护修改通过回归与审查后，将源码推送到 `origin/main`。交接文件包含 `## 已核对结论` 与 `## 待办` 两节，附需要继续使用的研究来源与作业引用。发布命令将固定提交、当前输入及交接正文冻结为一个内容摘要：
+维护修改通过回归与审查后，将源码推送到 `origin/main`，下一次启动选择新提交：
 
 ```bash
-uv run python -m a3_research_agent.cli.night_release "trajectories/<开始时间>" \
-  --commit <已发布提交SHA> --handoff <交接.md>
-
-uv run python -m a3_research_agent.cli.night_release "trajectories/<开始时间>" \
-  --commit <已发布提交SHA> --handoff <交接.md> --confirm <发布摘要>
+bash start-autoresearch.sh --harness-commit <新发布提交SHA>
 ```
 
-夜间启动器在下次窗口应用该发布，然后恢复当前 run。也可以在维护窗口离线应用：
-
-```bash
-uv run python -m a3_research_agent.cli.apply_release "trajectories/<开始时间>" \
-  "<冻结发布目录>" --digest <发布摘要>
-```
-
-升级取得原 run 排他锁，归档旧源码指针、配置、输入和 checkpoint 边界，再更新发布版本。主身份、研究目录、对话、记忆、skills、计划和作业状态原地保留。交接正文以独立反馈记录登记，更新的三个 prompt 进入新的 input revision；技能库独立保留版本、哈希和修改历史。模型、数据和评测设置随实验记录保留，便于比较各轮结果。事务中断后使用同一发布摘要继续处理；普通恢复会先检查未完成事务。
-
-发布、输入热加载及人类反馈的完整操作约定见[操作者监督](maintenance.md)。
+新运行从空模型上下文开始，继续使用原 `workspace/`、`plan.json`、`skills/` 和 `memory/`。无需把旧代码、技能和实验材料重新复制进 trajectory。需要接续原对话时，明确指定旧运行使用手动恢复；每日研究默认新建运行。
 
 ## 夜间窗口与防休眠
 
 ```bash
-bash start-autoresearch.sh --night-window --resume-from "trajectories/<开始时间>"
+bash start-autoresearch.sh --night-window --harness-commit <已发布提交SHA>
 ```
 
-窗口为北京时间 21:00 到次日 09:00。到点保存本地恢复状态并结束 Agent，远程 Controller 继续管理已提交作业。下一个窗口按发布记录更新或恢复原研究。`A3_NIGHT_WINDOW_RUN_ID` 可指定对应锚点，要求受管理的 run 通过此入口恢复。
+窗口为北京时间 21:00 到次日 09:00。每个窗口创建独立日期目录和新的模型对话，复用共享工作区、研究计划、技能和长期记忆。到点保存记录并结束 Agent，远程 Controller 继续管理已提交作业；下一窗口的新 Agent 先核对计划与原 job ID。窗口内进程自行退出时，启动器返回退出结果；需要原对话时显式使用 `--resume-from` 手动恢复。更换夜间 Harness 版本时，用新的提交 SHA 重新启动夜间启动器。
 
 macOS 脚本自动使用 `caffeinate -is`，运行期间防止空闲休眠，退出后释放。保持供电、开盖和网络连接。需要关闭终端后继续运行时，可显式后台启动：
 
 ```bash
 mkdir -p runs/night-window
-nohup bash start-autoresearch.sh --night-window --resume-from "trajectories/<开始时间>" \
+nohup bash start-autoresearch.sh --night-window --harness-commit <已发布提交SHA> \
   > runs/night-window/launcher.log 2>&1 &
 ```
 

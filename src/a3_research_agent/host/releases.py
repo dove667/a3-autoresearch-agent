@@ -82,12 +82,12 @@ def apply_release(
     run: Path, directory: Path, digest: str, *, environment: Mapping[str, str] | None = None
 ) -> dict:
     """Upgrade source/config under the run lease, preserving its research identity."""
-    from a3_research_agent.cli.night_release import NightSchedule
+    from a3_research_agent.host.release_packages import verify_release
 
     run, directory = run.resolve(), directory.resolve()
     root = project_for_run(run)
     settings = model_settings(os.environ if environment is None else environment)
-    NightSchedule.verify(directory, digest)
+    verify_release(directory, digest)
     package = json.loads((directory / "package/run.json").read_text())
     commit = package.get("harness_commit")
     if commit is None:

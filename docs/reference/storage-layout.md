@@ -21,7 +21,7 @@
 ├── .runtime/              Host 状态、技能修改历史和源码缓存，Git 忽略
 ├── web-cache/             共享网页缓存，Git 忽略
 ├── reports/               用于展示的网页工程，Git 忽略
-├── archive/               历史提示词原文
+├── legacy_prompt/         停用的历史提示词原文
 ├── tests/                 实现与打包检查
 ├── docs/                  指南、机制与历史设计
 ├── third_party/           固定版本的第三方 submodule
@@ -34,7 +34,7 @@
 
 `harness/` 实现模型决策循环、工具参数校验、研究文件操作、计划、上下文和知识工具。Agent 通过文件工具准备代码，通过远程作业执行研究；工具集不提供本地 Bash 或 Python 命令执行。
 
-`host/launch.py` 装配服务，`host/gateway/` 负责身份、认证、模型和作业转发。`host/sessions/processes.py` 管理本地原生进程，`host/sessions/workspace.py` 提供受限文件访问；`host/runs/` 和 `host/releases.py` 管理恢复与发布事务。`host/source_snapshots.py` 准备只读源码，`host/remote_client.py` 封装 SSH 调用。
+`host/launch.py` 装配服务，`host/gateway/` 负责身份、认证、模型和作业转发。`host/sessions/processes.py` 管理本地原生进程，`host/sessions/workspace.py` 提供受限文件访问；`host/runs/` 和 `host/releases.py` 管理恢复与发布事务。`host/reference_sources.py` 准备共享只读参考源码缓存，`host/remote_client.py` 封装 SSH 调用。
 
 `execution/controller/` 使用标准库管理远程作业；`execution/scheduling/` 负责资源准入，`execution/images/` 保存远程容器构建资源。所有 Python 导入使用 `a3_research_agent.*`。
 
@@ -80,13 +80,15 @@ trajectories/<开始时间>/
 ├── input-revisions/       不可变输入版本
 ├── .host/                 私有控制状态、锁与发布事务
 ├── sessions/              会话登记与共享 workspace 链接
-├── source-code/           历史源码归档（如有）
+├── public/a3              指向共享只读参考源码的链接
+├── retained-files.json    共享研究文件的路径与哈希清单
 ├── startup.json           原始发布输入与启动选择
 ├── model-usage.jsonl      模型原始请求、返回与用量
+├── model-records.tar.gz   历史轮整理后的去重原始记录（如有）
 └── …                      输入事件、可选知识快照与恢复记录
 ```
 
-所有会话、恢复和 Harness 升级共用根目录 `workspace/`。一次只有一个研究进程使用它。普通文件工具在这里自由读写研究材料；输入目录、A3 参考源码和当前 run 的 `conversation/` 只读。根 `skills/` 与 `memory/` 通过专用工具访问。
+每天的新 run 共用根目录 `workspace/`、`plan.json`、`memory/` 和 `skills/`，以空模型上下文读取最新研究进展。一次只有一个研究进程使用它。普通文件工具在这里自由读写研究材料；输入目录、A3 参考源码和当前 run 的 `conversation/` 只读。根 `skills/` 与 `memory/` 通过专用工具访问。
 
 Host 用 `A3_STATE_ROOT` 指定当前 run 的 `conversation/`，并在 `runtime_paths.state` 提供实际路径。`harness/state_paths.py` 统一定位 checkpoint、journal、压缩事务和操作台账；恢复继续读取原状态。`context-history/...`、`.autorun-spill/...` 等逻辑相对来源引用以该路径为基准，原文与内容哈希保持稳定，可通过普通文件工具只读核对。
 
@@ -98,9 +100,9 @@ Host 用 `A3_STATE_ROOT` 指定当前 run 的 `conversation/`，并在 `runtime_
 
 源码放在 `workspace/scripts/<模型或方法>/<可选研究系列>/<用途>/`，例如 `act/p142/training/`、`act/baseline/evaluation/`、`dagger/validation/`。研究系列层按需设置，按 data、training、evaluation、validation 等实际用途分类；参数变化通过配置或命令传入，复用同一入口。
 
-实验配置与产物集中到 `workspace/experiments/<日期-实验名>/`，需要时创建 results、figures、videos、analysis 子目录。配置记录模型与数据版本、超参数、seed、评测条件，结果关联原始 job/export ID、源码路径与哈希。大文件留在执行端，本地保存引用。历史源码快照随对应 trajectory 保存。
+实验配置与产物集中到 `workspace/experiments/<日期-实验名>/`，需要时创建 results、figures、videos、analysis 子目录。配置记录模型与数据版本、超参数、seed、评测条件，结果关联原始 job/export ID、源码路径与哈希。大文件留在执行端，本地保存引用。trajectory 保留模型原始行为、工具调用与返回、输入版本和计划历史；研究脚本继续由 workspace 管理，技能统一由根技能库管理。
 
-retained 知识快照保存 `scripts/` 与 `experiments/` 中的 UTF-8 文本；实验二进制留在共享 workspace，仅在 `retained.json` 中登记路径、SHA256 与大小。迁移到另一项目或执行环境时，通过 exports 交接所需二进制资产。
+retained 记录引用共享 workspace 中的研究文件：`retained-files.json` 保存文本路径与 SHA256，`retained.json` 关联该清单并登记二进制路径、SHA256 与大小。加载时核对实际文件；已改变或缺失的材料需要重新发布保留结果。同一 run 的恢复继续使用当前工作区。迁移到另一项目或执行环境时，通过 exports 交接所需二进制资产。
 
 ## 调试、发布与远程数据
 
@@ -111,12 +113,17 @@ retained 知识快照保存 `scripts/` 与 `experiments/` 中的 UTF-8 文本；
 | `.runtime/skill-revisions/` | 技能修改前的完整包历史 |
 | `.runtime/night-window/` | 夜间调度与发布选择 |
 | `.runtime/published-harness/v2/<commit>/` | 固定 Harness 源码缓存 |
+| `.runtime/reference-sources/<内容摘要>/` | 按实际内容复用的只读 A3 参考源码 |
 | `.runtime/project-job-index.json` | 历史远程作业索引 |
 | `web-cache/` | 可复用的公共网页内容 |
 | `reports/` | 面向展示的网页工程 |
 | `remote-runtime/` | 执行端示例根目录：作业、租约、预算与导出授权 |
 | `models/`、`datasets/`、`model-cache/` | 由执行端配置的权重、数据和缓存 |
 
-维护测试输出集中到 `runs/checks/`，持久工作约定更新本地 `AGENTS.md`。部署参数由 `.env` 配置，见[环境配置](../guides/setup.md)。
+A3 参考源码按实际文件内容生成共享缓存；各次运行的 `public/a3` 只保存链接，缓存不携带 Git 数据库、输出或浏览器临时文件。同一内容只保存一份，源码变化产生独立版本。
+
+历史轮可将模型和工具原文、当时输入及计划记录整理为 `model-records.tar.gz`：清单保留原相对路径与 SHA256，同一内容只保存一份原字节。旧安装代码、仓库和技能副本不再随轨迹保存；整理后的历史包供分析使用，后续研究从新 run 读取共享材料。新运行期间使用直接可读的 `conversation/` 与必要 Host 状态；结束后的历史包按分析价值保留。
+
+`runs/` 的控制台与请求诊断按排错价值保留；`trajectories/` 按原始行为和研究经验的分析价值保留，清理前核对当前恢复及经验来源引用。维护测试输出集中到 `runs/checks/`，持久工作约定更新本地 `AGENTS.md`。部署参数由 `.env` 配置，见[环境配置](../guides/setup.md)。
 
 所有 Controller 共用配置的执行端资源根目录，源码升级继续使用原 GPU 调度锁和作业记录。大文件与只读 exports 留在执行端。原地升级边界保存在 `.host/release-upgrades/`，事件保存在 `.host/release-events.jsonl`。

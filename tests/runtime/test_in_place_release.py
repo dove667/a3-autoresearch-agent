@@ -9,14 +9,13 @@ from pathlib import Path
 
 import pytest
 
-from a3_research_agent.cli.night_release import (
-    NightSchedule,
-    night_state_directory,
-    prepare_release,
-    publish_release,
-)
 from a3_research_agent.host.inputs.versions import InputVersions
 from a3_research_agent.host.published_harness import pin_run, research_workspace, run_commit
+from a3_research_agent.host.release_packages import (
+    prepare_release,
+    publish_release,
+    release_directory,
+)
 from a3_research_agent.host.runs.resume import load_resume_state
 from a3_research_agent.host.runs.state import RunLease, RunStateStore
 
@@ -161,7 +160,7 @@ def published_run(tmp_path, monkeypatch, request):
     handoff.write_text("## 已核对结论\n\n原有结果保留。\n\n## 待办\n\n继续当前研究。\n")
     proposal = prepare_release(root, handoff, commit=commit, run=run)
     publish_release(run, proposal, proposal["digest"])
-    release = night_state_directory(run) / "night-releases" / proposal["digest"]
+    release = release_directory(run) / "packages" / proposal["digest"]
     docker_calls = []
     environment = {"MODEL_NAME": "new/model"}
     return (
@@ -233,22 +232,6 @@ def test_apply_release_preserves_an_empty_initial_checkpoint(published_run):
         if name not in {"checkpoint.json", "pending-calls.json"}
     )
     assert RunStateStore(run).load()["status"] == "suspended"
-
-
-def test_published_night_release_resumes_same_run_instead_of_making_a_fresh_task(
-    published_run, monkeypatch
-):
-    _, run, _workspace, _, commit, proposal, _, protected, env, _ = published_run
-    for name, value in env.items():
-        monkeypatch.setenv(name, value)
-    command = ["python", "-m", "launch", "--resume-from", str(run)]
-    schedule = NightSchedule(run, command)
-    selected, target, extra = schedule.select()
-    assert selected == command and target == run and extra == {}
-    assert schedule.select() == (command, run, {})
-    assert run_commit(run) == commit
-    assert (run / "conversation/checkpoint.json").read_text() == protected["checkpoint.json"]
-    assert json.loads(schedule.state.read_text())["release"] == proposal["digest"]
 
 
 def test_release_refuses_a_live_run_or_unreconciled_checkpoint_before_container_changes(
@@ -591,27 +574,6 @@ def test_plain_resume_rejects_changed_released_inference_settings(published_run,
     assert result["model_settings"] != {key: state[key] for key in result["model_settings"]}
 
 
-def test_night_release_cli_derives_project_from_anchor_when_installed(
-    published_run, tmp_path, monkeypatch, capsys
-):
-    import sys
-
-    from a3_research_agent.cli import night_release
-
-    root, run, _, _, commit, _, _, _, _, _ = published_run
-    handoff = tmp_path / "release-note.md"
-    handoff.write_text("## 已核对结论\n\n维护内容已验证。\n\n## 待办\n\n接续原研究状态。\n")
-    monkeypatch.setattr(
-        night_release, "__file__", "/installed/site-packages/a3_research_agent/cli/night_release.py"
-    )
-    monkeypatch.setattr(
-        sys, "argv", ["night-release", str(run), "--commit", commit, "--handoff", str(handoff)]
-    )
-    night_release.main()
-    assert "Release digest:" in capsys.readouterr().out
-    assert (root / ".runtime/published-harness").is_dir()
-
-
 def test_release_after_trajectory_rename_keeps_workspace_mapping(published_run):
     from a3_research_agent.host.published_harness import MARKER, run_identity
 
@@ -632,7 +594,7 @@ def test_release_after_trajectory_rename_keeps_workspace_mapping(published_run):
     handoff.write_text("## 已核对结论\n\n保留既有研究状态。\n\n## 待办\n\n继续研究。\n")
     proposal = prepare_release(root, handoff, commit=commit, run=relocated)
     publish_release(relocated, proposal, proposal["digest"])
-    directory = night_state_directory(relocated) / "night-releases" / proposal["digest"]
+    directory = release_directory(relocated) / "packages" / proposal["digest"]
     from a3_research_agent.host.releases import apply_release
 
     apply_release(relocated, directory, proposal["digest"], environment={"MODEL_NAME": "new/model"})

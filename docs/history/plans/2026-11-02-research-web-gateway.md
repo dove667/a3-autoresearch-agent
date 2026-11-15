@@ -29,7 +29,7 @@ Version: 0.1.0
 
 使用模拟搜索/HTTP 服务验证请求字段、默认参数、basic 固定选项、结构化结果与安全错误、关闭/未配置状态、共享额度及恢复持久性、并发上限、认证、私有地址与重定向拦截、内容/编码/大小/超时限制及密钥不泄露。回归检查确保已有执行路径与阶段规则不变；本计划不宣称真实网络或实验验收已经通过，不进行真实 Tavily 付费请求。
 
-当时的研究行为见 [第二阶段 Prompt](../../../archive/agent-inputs/shared/protocol.md)。当前工具用法见 [执行约定](../../../prompt/execution.md)，配置见[网页研究](../../guides/setup.md#网页研究)，运行操作见[使用教程](../../guides/usage.md)。代码与配置用于当时经批准的新阶段二 run，不自动应用于既有 run；运行干预按[操作者规则](../../guides/maintenance.md)处理。
+当时的研究行为见 [第二阶段 Prompt](../../../legacy_prompt/agent-inputs/shared/protocol.md)。当前工具用法见 [执行约定](../../../prompt/execution.md)，配置见[网页研究](../../guides/setup.md#网页研究)，运行操作见[使用教程](../../guides/usage.md)。代码与配置用于当时经批准的新阶段二 run，不自动应用于既有 run；运行干预按[操作者规则](../../guides/maintenance.md)处理。
 
 ### 本地验证记录
 

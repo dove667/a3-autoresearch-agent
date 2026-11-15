@@ -27,4 +27,4 @@ Agent 持续研究 Policy、采集、训练与评估，提高 A3 2×5、2×10 �
 
 ## 历史材料 · `history/`
 
-[历史文档](history/README.md)集中保存设计、实施计划和审查记录。旧阶段提示词原文保存在根目录 [archive/](../archive/README.md)。第三方源码归属见 [third_party/README](../third_party/README.md)。
+[历史文档](history/README.md)集中保存设计、实施计划和审查记录。旧阶段提示词原文保存在根目录 [legacy_prompt/](../legacy_prompt/README.md)。第三方源码归属见 [third_party/README](../third_party/README.md)。

@@ -305,14 +305,22 @@ class ProcessRuntime:
                 workspace = Path(workspace).resolve(strict=True)
                 if workspace != expected.resolve(strict=True):
                     raise ValueError("Session requires its current Host-managed research workspace")
-            if not reuse and any(workspace.iterdir()):
-                raise ValueError(
-                    "Existing research workspace must be resumed before starting a process"
-                )
             if not reuse and self.state_root.exists() and any(self.state_root.iterdir()):
                 raise ValueError(
                     "Existing conversation state must be resumed before starting a process"
                 )
+            state_names = {state_paths.CHECKPOINT, state_paths.OUTCOME}
+            state_files = {name: value for name, value in files.items() if name in state_names}
+            research_files = {}
+            for name, content in files.items():
+                if name in state_names:
+                    continue
+                target = workspace_path(workspace, name)
+                if target.exists():
+                    if not target.is_file() or target.read_bytes() != content.encode("utf-8"):
+                        raise ValueError("Seed research file conflicts with the shared workspace")
+                else:
+                    research_files[name] = content
             directory.mkdir(parents=True, exist_ok=reuse)
             if not reuse:
                 link.symlink_to(workspace, target_is_directory=True)
@@ -321,11 +329,6 @@ class ProcessRuntime:
             workspace = workspace.resolve()
             if source.is_relative_to(workspace) or workspace.is_relative_to(source):
                 raise ValueError("Published source must be separate from writable research files")
-            state_names = {state_paths.CHECKPOINT, state_paths.OUTCOME}
-            state_files = {name: value for name, value in files.items() if name in state_names}
-            research_files = {
-                name: value for name, value in files.items() if name not in state_names
-            }
             if reuse and state_files:
                 raise ValueError("Resume must preserve the existing conversation checkpoint")
             self.state_root.mkdir(parents=True, exist_ok=True)

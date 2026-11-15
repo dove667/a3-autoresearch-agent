@@ -522,3 +522,37 @@ def test_interrupted_tool_retains_journal_and_recovery_never_replays(tmp_path, m
     restored = agent.recover_journal(before)
     assert executed == ["submitted"]
     assert json.loads(restored[-1]["output"])["error"] == "outcome_unknown_after_interruption"
+
+
+def test_fresh_daily_run_uses_existing_workspace_and_new_context(tmp_path, monkeypatch):
+    local = runtime(tmp_path, monkeypatch)
+    workspace = tmp_path / "workspace"
+    (workspace / "scripts").mkdir(parents=True)
+    source = workspace / "scripts/train.py"
+    source.write_text("preserved research")
+    local.plan_file.write_text(
+        '{"version":1,"revision":8,"goal":"Continue","reason":"","steps":{}}'
+    )
+    try:
+        launch(local, {"checkpoint.json": "[]", "scripts/train.py": "preserved research"})
+        assert source.read_text() == "preserved research"
+        assert json.loads((local.state_root / "checkpoint.json").read_text()) == []
+        assert json.loads(local.plan_file.read_text())["revision"] == 8
+        assert (
+            next(local.plan_snapshots.glob("*.json")).read_bytes() == local.plan_file.read_bytes()
+        )
+    finally:
+        local.close()
+
+
+def test_fresh_daily_seed_conflict_preserves_workspace_and_empty_state(tmp_path, monkeypatch):
+    local = runtime(tmp_path, monkeypatch)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    original = workspace / "lesson.md"
+    original.write_text("original")
+    with pytest.raises(ValueError, match="conflicts"):
+        local.create("main", COMMAND, {"checkpoint.json": "[]", "lesson.md": "overwrite"}, "token")
+    assert original.read_text() == "original"
+    assert not local.state_root.exists()
+    assert not (local.root / "main").exists()

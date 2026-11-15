@@ -1,4 +1,4 @@
-"""Retained native results freeze selected research knowledge and published code."""
+"""Retained results pin shared research files without copying their contents."""
 
 import json
 
@@ -14,7 +14,7 @@ from a3_research_agent.host.runs.continuation import (
 from a3_research_agent.host.sessions.packages import load_published_manifest
 
 
-def test_published_result_keeps_immutable_notes_and_research_without_old_context(tmp_path):
+def test_published_result_references_shared_notes_and_research_without_old_context(tmp_path):
     run, workspace, _, _, _ = native_run(tmp_path)
     (workspace / "skills/local").mkdir(parents=True)
     (workspace / "skills/local/SKILL.md").write_text("Reusable experiment method")
@@ -27,7 +27,6 @@ def test_published_result_keeps_immutable_notes_and_research_without_old_context
     result = publish_run_result(run, workspace, "main")
     assert result["status"] == "ready" and result["harness_commit"] == COMMIT
     before = (workspace / "experiments/lesson.md").read_text()
-    (workspace / "experiments/lesson.md").write_text("later edit")
     loaded = load_run_result(run)
     assert loaded.command == COMMAND and loaded.source_version == COMMIT
     assert loaded.files["experiments/lesson.md"] == before
@@ -39,14 +38,19 @@ def test_published_result_keeps_immutable_notes_and_research_without_old_context
         not {"research-plan.json", "operational-state.json", "history.jsonl"} & loaded.files.keys()
     )
     assert loaded.previous_run == run
+    assert not (run / "retained-knowledge").exists()
+    assert set(json.loads((run / "retained-files.json").read_text())["files"]) == {
+        "scripts/train.py",
+        "experiments/lesson.md",
+    }
 
 
 def test_modified_knowledge_fails_without_overwriting_its_evidence(tmp_path):
     run, workspace, _, _, _ = native_run(tmp_path)
-    result = publish_run_result(run, workspace, "main")
-    file = run / result["knowledge"]["directory"] / "experiments/lesson.md"
+    publish_run_result(run, workspace, "main")
+    file = workspace / "experiments/lesson.md"
     file.write_text("corrupt")
-    with pytest.raises(ValueError, match="knowledge content changed"):
+    with pytest.raises(ValueError, match="Stale retained research knowledge"):
         load_run_result(run)
     assert file.read_text() == "corrupt"
 
@@ -126,7 +130,7 @@ def test_retention_records_binary_results_in_shared_workspace_without_copying(tm
     assert "experiments/frame.png" not in loaded.files
     assert "experiments/lesson.md" in loaded.files
     assert "scripts/train.py" in loaded.files
-    assert not (run / result["knowledge"]["directory"] / "experiments/frame.png").exists()
+    assert not (run / "retained-knowledge").exists()
     assert binary.read_bytes() == raw
 
 
@@ -136,3 +140,19 @@ def test_binary_script_fails_retention_instead_of_being_silently_excluded(tmp_pa
     with pytest.raises(UnicodeDecodeError):
         publish_run_result(run, workspace, "main")
     assert not (run / "retained.json").exists()
+
+
+def test_missing_shared_research_file_rejects_stale_retained_result(tmp_path):
+    run, workspace, _, _, _ = native_run(tmp_path)
+    publish_run_result(run, workspace, "main")
+    (workspace / "scripts/train.py").unlink()
+    with pytest.raises(ValueError, match="Stale retained research knowledge"):
+        load_run_result(run)
+
+
+def test_modified_reference_manifest_is_rejected(tmp_path):
+    run, workspace, _, _, _ = native_run(tmp_path)
+    publish_run_result(run, workspace, "main")
+    (run / "retained-files.json").write_text('{"version":1,"files":{}}')
+    with pytest.raises(ValueError, match="manifest changed"):
+        load_run_result(run)

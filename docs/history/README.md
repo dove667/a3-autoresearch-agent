@@ -7,4 +7,4 @@
 - [reviews/](reviews/)：历史提示词和阶段输入审查。
 - [上下文 fork 设计](context-fork.md)：早期压缩、预算与恢复方案；当前契约见[上下文与记忆](../reference/context-and-memory.md)。
 
-旧阶段提示词原文保存在 [archive/agent-inputs/](../../archive/README.md)。
+旧阶段提示词原文保存在 [legacy_prompt/agent-inputs/](../../legacy_prompt/README.md)。

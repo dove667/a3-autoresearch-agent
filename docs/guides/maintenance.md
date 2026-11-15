@@ -1,6 +1,6 @@
 # Harness 维护与发布
 
-Version: 0.3.1
+Version: 0.3.2
 
 本文件面向用户、父助手与 Host 操作者，不加入 input manifest。研究目标与行为原则在 SOUL，接口与状态技术事实在 execution；文档职责与装载链见 [Agent 输入管理](../reference/agent-inputs.md)。
 
@@ -8,37 +8,21 @@ Version: 0.3.1
 
 夜间由单个 Agent 自主研究 Policy、采集、训练、评估与分析结果。白天由人类和 Codex 依据原始执行轨迹维护 Harness，包括模型调用、工具、上下文、记忆机制、调度与恢复。Agent 负责报告过程问题及证据，并继续修改研究代码和管理研究知识。
 
-维护者从执行轨迹、Gateway 请求记录、模型用量和 Controller 作业记录定位问题，保留当时输入和版本。先用相同输入复现，再修改、回归并记录版本。保留原 run 的 checkpoint、工作区和在途远程作业；恢复后核对实际加载的版本和首个相关调用。按下文审批流程发布输入或恢复。常规窗口见[夜间运行窗口](#夜间运行窗口)。
+维护者从执行轨迹、Gateway 请求记录、模型用量和 Controller 作业记录定位问题，保留当时输入和版本。先用相同输入复现，再修改、回归并记录版本。每天使用新 run 和空模型上下文，复用共享 workspace、plan、memory 与 skills；核对加载版本和既有作业引用。原始轨迹按分析价值保留，调试文件按排错需要保留。常规窗口见[夜间运行窗口](#夜间运行窗口)。
 
 日间复核从 `trajectories/<开始时间>/conversation/trajectory.jsonl`、模型用量、Host 调试事件和 Controller 作业终态入手。按症状选择可重复的失败序列，用受控状态验证修复，再用正式夜间日志核对真实调用次数、耗时和研究产出。输入 token 与缓存命中分别统计。工具等待产生的 Host 请求属于基础设施流量，模型唤醒次数由 Responses 请求记录核对。
 
-### 原地发布新版 Harness
+### 为下一轮选择新版 Harness
 
-白天完成验证后，选择已推送到 `origin/main` 的完整 Git 提交 SHA。交接 Markdown 只写 `## 已核对结论` 和 `## 待办`，每节至少一项。为结论附实验报告与版本，为待办附原作业 ID、checkpoint 或已经授权的资产引用。
-
-用最初绑定定时启动器的 run 作为锚点。先预览，再用返回的摘要确认发布：
+白天完成修改、回归和审查后，将源码推送到 `origin/main`，选择完整 Git 提交 SHA。下一轮从该版本创建新 run：
 
 ```bash
-uv run python -m a3_research_agent.cli.night_release "trajectories/<开始时间>" \
-  --commit <已发布提交SHA> --handoff <交接.md>
-
-uv run python -m a3_research_agent.cli.night_release "trajectories/<开始时间>" \
-  --commit <已发布提交SHA> --handoff <交接.md> --confirm <发布摘要>
+bash start-autoresearch.sh --harness-commit <已发布提交SHA>
 ```
 
-确认固定启动命令、Git 提交、三个 prompt 和交接正文。21:00 有待发布版本时，定时器在暂停的原 run 上应用发布，再恢复同一主身份和研究工作区。Harness 从固定 Git 提交只读加载；对话、checkpoint、记忆、skills、计划和作业台账继续使用原文件。升级前归档旧源码指针、输入版本和 checkpoint 边界，交接正文通过独立 feedback ID 与 SHA 登记。未发布新版时直接恢复当前 run。
+夜间窗口入口为 `--night-window --harness-commit <已发布提交SHA>`。各晚使用新的身份与对话，共享研究文件、跨运行计划、长期经验和技能；Agent 先读取共享计划、核对作业状态再继续研究。
 
-轨迹、作业归属和产物留在原处，远程在途作业继续执行。Agent 继续使用原身份管理这些作业，在新作业里用只读快照复用历史资产。遇到仍不可读的依赖时，Agent 停止受阻研究线并向操作者报告。若 Mac 重启，用原锚点重新启动定时器；它按锚点选择已发布版本及当前 run。迁移后的发布记录位于 `.runtime/night-window/<锚点run>/`。
-
-也可在维护窗口离线应用已冻结的发布，再按原来的启动命令恢复：
-
-```bash
-uv run python -m a3_research_agent.cli.apply_release "trajectories/<开始时间>" \
-  "<冻结发布目录>" --digest <发布摘要>
-```
-
-原地升级要求 run 已暂停并取得排他锁。普通恢复沿用原模型；明确应用发布时，可采用当前部署配置中的模型与参数，并归档前值。升级事务未完成时，普通恢复会停止并保留现场；用同一发布摘要继续处理。
-
+同一天意外中断且恢复材料完整时，可显式使用 `--resume-from` 接续该 run。维护中的原地升级接口仍可用于这种恢复，要求 run 已暂停并取得排他锁；操作范围和反馈按下文约定处理。
 
 ## 低频弱监督与批准边界
 
@@ -136,13 +120,10 @@ uv run python -m a3_research_agent.cli.reload_feedback "trajectories/<开始时�
 
 ## 夜间运行窗口
 
-暂停过的 run 可用 `bash start-autoresearch.sh --night-window --resume-from trajectories/<开始时间>`
-继续运行。窗口固定为北京时间 21:00（含）到次日 09:00（不含）。到点后启动器向 Host
-发送正常中断信号，保存 checkpoint 并关闭本地 Agent。远端 Controller 继续执行已提交的
-作业。21:00 按发布记录原地升级并恢复当前 run。白天只保留等待窗口的启动器。启动器退出或机器重启后，
-需要重新运行该命令。若固定发布版因耗尽模型请求重试而退出，启动器核对当次的上游失败记录和已保存的
-checkpoint，在窗口内以 30 秒至 5 分钟的退避间隔接续同一 run。其他退出仍保留现场。可在本地 `.env` 设置
-`A3_NIGHT_WINDOW_RUN_ID` 为对应 run 目录名，要求该 run 使用夜间入口恢复。
+使用 `bash start-autoresearch.sh --night-window --harness-commit <已发布提交SHA>`。
+窗口为北京时间 21:00（含）到次日 09:00（不含）。到点正常停止本地 Agent，远端
+Controller 继续管理已提交作业。下一个窗口创建新的 run 和空模型上下文，读取共享研究材料，
+不自动恢复上一晚的对话。启动器退出或机器重启后重新执行该入口。
 
 可在本地 `.env` 设置 `A3_UPSTREAM_RESPONSES_BASE_URL`、
 `A3_UPSTREAM_RESPONSES_MODEL` 和 `A3_UPSTREAM_RESPONSES_API_KEY`，让 Host

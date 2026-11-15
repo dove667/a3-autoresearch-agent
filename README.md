@@ -2,7 +2,7 @@
 
 面向 A3 MuJoCo 机器人 Policy 研究的自主 Agent，持续提高 2×5、2×10 两类任务在全量评测中的入盒准确率与通过率。模型提出假设、编写研究代码、提交采集与训练作业，并根据评估结果继续实验；Harness 提供工具、skills、记忆、上下文压缩与恢复。
 
-常规研究使用已发布的 Harness，通过文件工具准备研究代码，通过远程 Controller 执行仿真、渲染、训练和评估。恢复与维护升级继续使用原研究工作区、对话、技能和长期经验。A3 仿真项目独立维护于 `a3_dual_arm_sim`。
+常规研究使用已发布的 Harness，通过文件工具准备研究代码，通过远程 Controller 执行仿真、渲染、训练和评估。每天创建新的 run 和模型上下文，共用研究工作区、计划、技能和长期经验。A3 仿真项目独立维护于 `a3_dual_arm_sim`。
 
 ## 安装与运行
 
@@ -14,17 +14,13 @@ uv sync --python 3.11
 cp .env.example .env
 ```
 
-按[环境配置](docs/guides/setup.md)填写模型认证、项目路径和远程资源配置。恢复已保存的研究：
-
-```bash
-bash start-autoresearch.sh --resume-from "trajectories/<开始时间>"
-```
-
-首次使用已发布的 Harness 时，指定完整 Git 提交：
+按[环境配置](docs/guides/setup.md)填写模型认证、项目路径和远程资源配置。每天从明确的发布版本开始新一轮研究：
 
 ```bash
 bash start-autoresearch.sh --harness-commit <已发布提交SHA>
 ```
+
+新 run 共用根目录 `workspace/`、`plan.json`、`memory/` 和 `skills/`。
 
 独立开发或体验原始 mini-SWE-agent：
 

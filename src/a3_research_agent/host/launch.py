@@ -28,6 +28,7 @@ from a3_research_agent.host.published_harness import (
     run_commit,
     run_identity,
 )
+from a3_research_agent.host.reference_sources import link_reference_source
 from a3_research_agent.host.remote_client import remote_call, remote_limits, remote_path_hints
 from a3_research_agent.host.runs.continuation import import_retained_exports, publish_run_result
 from a3_research_agent.host.runs.directories import debug_directory, local_storage_bytes
@@ -42,7 +43,6 @@ from a3_research_agent.host.runs.supervisor import RunSupervisor
 from a3_research_agent.host.sessions.isolation import IsolationFixtures
 from a3_research_agent.host.sessions.processes import ProcessRuntime
 from a3_research_agent.host.sessions.workspace import MAX_ACTIVE_SESSIONS, write_durable
-from a3_research_agent.host.source_snapshots import snapshot_checkout
 from a3_research_agent.host.web.gateway import WebConfig, WebGateway
 
 
@@ -118,8 +118,7 @@ def launch_run(args, run: Path, a3: Path, start) -> None:
             port = probe.getsockname()[1]
         inputs.mkdir(parents=True, mode=0o700)
         pin_run(run, commit)
-        public_a3.parent.mkdir()
-        snapshot_checkout(a3, public_a3)
+        link_reference_source(a3, root / ".runtime/reference-sources", public_a3)
     endpoint = f"http://127.0.0.1:{port}"
     input_versions.activate(proposed_inputs, "resume" if resuming else "start")
     task_context = None

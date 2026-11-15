@@ -14,7 +14,7 @@ Host 为每次运行保存三个版本化 prompt 的完整副本、语义版本�
 
 `host/inputs/versions.py` 只加载这三个 prompt。SOUL 正文进入模型请求，另两份说明从 `A3_INPUT_ROOT` 按需读取。`input-manifest.json` 的 `execution_index` 提供执行说明的章节与字符范围。
 
-历史阶段目标、验收和专项指令原文保存在 [archive/agent-inputs/](../../archive/README.md)。具体模型、数据和评测设置随实验保存，完整全量评测用于衡量研究进展。
+历史阶段目标、验收和专项指令原文保存在 [legacy_prompt/agent-inputs/](../../legacy_prompt/README.md)。具体模型、数据和评测设置随实验保存，完整全量评测用于衡量研究进展。
 
 ## 版本与发布记录
 

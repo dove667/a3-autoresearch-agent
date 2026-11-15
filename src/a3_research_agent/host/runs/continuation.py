@@ -3,14 +3,18 @@
 import hashlib
 import json
 import re
-import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from a3_research_agent.execution.exports.readonly import EXPORT_ID
 from a3_research_agent.harness import state_paths
-from a3_research_agent.host.published_harness import COMMAND, conversation_root, run_commit
+from a3_research_agent.host.published_harness import (
+    COMMAND,
+    conversation_root,
+    project_for_run,
+    run_commit,
+)
 from a3_research_agent.host.sessions.packages import load_published_manifest, read_continuation
 from a3_research_agent.host.sessions.workspace import write_durable
 from a3_research_agent.path_safety import workspace_path
@@ -168,33 +172,56 @@ def _read_knowledge(run, reference):
     if (
         not isinstance(digest, str)
         or not re.fullmatch(r"[a-f0-9]{64}", digest)
-        or reference.get("directory") != "retained-knowledge/" + digest
+        or reference.get("manifest") != "retained-files.json"
     ):
         raise ValueError("Invalid retained research knowledge reference")
-    directory = workspace_path(run, reference["directory"])
-    manifest = json.loads(workspace_path(directory, "manifest.json").read_text())
+    manifest = json.loads(workspace_path(run, reference["manifest"]).read_text())
     if (
         not isinstance(manifest, dict)
-        or set(manifest) != {"version", "files"}
+        or set(manifest) != {"version", "files", "workspace_binary_files"}
         or type(manifest.get("version")) is not int
         or manifest["version"] != 1
         or not isinstance(manifest.get("files"), dict)
+        or not isinstance(manifest.get("workspace_binary_files"), list)
         or hashlib.sha256(json.dumps(manifest, sort_keys=True).encode()).hexdigest() != digest
+        or reference.get("workspace_binary_files") != manifest["workspace_binary_files"]
     ):
         raise ValueError("Retained research knowledge manifest changed")
+    workspace = project_for_run(run) / "workspace"
     result = {}
     for name, expected in manifest["files"].items():
         if not _knowledge_name(name):
             raise ValueError("Unexpected file in retained research knowledge")
-        content = workspace_path(directory, name).read_bytes()
-        if hashlib.sha256(content).hexdigest() != expected:
-            raise ValueError("Retained research knowledge content changed")
+        content = _read_retained_file(workspace, name, expected)
         result[name] = content.decode("utf-8")
+    for item in manifest["workspace_binary_files"]:
+        if (
+            not isinstance(item, dict)
+            or set(item) != {"path", "sha256", "bytes", "location"}
+            or item["location"] != "shared_workspace"
+            or not _knowledge_name(item["path"])
+        ):
+            raise ValueError("Invalid retained binary research reference")
+        content = _read_retained_file(workspace, item["path"], item["sha256"])
+        if len(content) != item["bytes"]:
+            raise ValueError("Stale retained research knowledge; republish the current workspace")
     return result
 
 
+def _read_retained_file(workspace, name, expected):
+    try:
+        content = workspace_path(workspace, name).read_bytes()
+    except FileNotFoundError:
+        raise ValueError(
+            "Stale retained research knowledge; republish the current workspace"
+        ) from None
+    if hashlib.sha256(content).hexdigest() != expected:
+        raise ValueError("Stale retained research knowledge; republish the current workspace")
+    return content
+
+
 def _retain_knowledge(run, workspace, names):
-    content, workspace_binaries = {}, []
+    files, workspace_binaries = {}, []
     for name in names:
         if not _knowledge_name(name):
             continue
@@ -217,27 +244,21 @@ def _retain_knowledge(run, workspace, names):
                     }
                 )
                 continue
-        content[name] = raw
+        files[name] = hashlib.sha256(raw).hexdigest()
     manifest = {
         "version": 1,
-        "files": {name: hashlib.sha256(raw).hexdigest() for name, raw in sorted(content.items())},
+        "files": dict(sorted(files.items())),
+        "workspace_binary_files": workspace_binaries,
     }
-    digest = hashlib.sha256(json.dumps(manifest, sort_keys=True).encode()).hexdigest()
-    reference = {"directory": "retained-knowledge/" + digest, "sha256": digest}
-    directory = workspace_path(run, reference["directory"])
-    directory.parent.mkdir(exist_ok=True)
-    if not directory.exists():
-        with tempfile.TemporaryDirectory(dir=directory.parent) as temporary:
-            staging = Path(temporary) / "knowledge"
-            staging.mkdir()
-            for name, raw in content.items():
-                target = workspace_path(staging, name)
-                target.parent.mkdir(parents=True, exist_ok=True)
-                target.write_bytes(raw)
-            write_durable(staging / "manifest.json", json.dumps(manifest, sort_keys=True))
-            staging.rename(directory)
+    raw = json.dumps(manifest, sort_keys=True)
+    reference = {
+        "manifest": "retained-files.json",
+        "sha256": hashlib.sha256(raw.encode()).hexdigest(),
+        "workspace_binary_files": workspace_binaries,
+    }
+    write_durable(run / reference["manifest"], raw)
     _read_knowledge(run, reference)
-    return {**reference, "workspace_binary_files": workspace_binaries}
+    return reference
 
 
 def publish_run_result(
@@ -247,7 +268,7 @@ def publish_run_result(
     *,
     validate_exports: Callable | None = None,
 ) -> dict:
-    """Save the selected published source and immutable research knowledge."""
+    """Record the selected source and hash-pinned references to shared research files."""
     declaration = state_paths.path(state_paths.CONTINUATION, conversation_root(run))
     if declaration.is_file():
         commit = run_commit(run)

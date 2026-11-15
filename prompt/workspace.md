@@ -1,6 +1,6 @@
 # 研究工作区
 
-Version: 0.6.0
+Version: 0.6.1
 
 本地原生进程只提供文件与研究工具，没有本地 bash 或 Python 执行入口。仿真、训练、评估及脚本执行通过远程作业完成。运行状态 `runtime_paths` 给出实际路径：
 
@@ -19,7 +19,7 @@ Version: 0.6.0
 - `scripts/<模型或方法>/<可选研究系列>/<用途>/` 保存源码，例如 `scripts/act/p142/training/`、`scripts/act/baseline/evaluation/`、`scripts/dagger/validation/`。研究系列仅在需要时增加一层；用途按实际内容命名，如 `data`、`training`、`evaluation`、`validation`；相关依赖放在一起，共用脚本复用，参数通过配置或命令传入。
 - `experiments/<日期-实验名>/` 保存该实验的 `config.json`、作业与源码引用、`results/`、`figures/`、`videos/` 和 `analysis/`。配置记录模型版本、数据、超参数、seed 与评测设置；每次独立实验单独建目录。按实际产物创建子目录，源脚本统一留在 `scripts/`。
 
-用 `workspace_files` 将 `scripts/` 中的源码附加到远程作业。需要多个依赖时一并附加；通过 `destination` 明确远程文件位置，并让命令、导入及相对路径与目标位置一致。大文件留在执行端，用 job/export ID 和哈希关联本地实验记录。暂停、恢复和升级 Harness 共用这个工作区；恢复后按计划核对真实作业与产物。
+用 `workspace_files` 将 `scripts/` 中的源码附加到远程作业。需要多个依赖时一并附加；通过 `destination` 明确远程文件位置，并让命令、导入及相对路径与目标位置一致。大文件留在执行端，用 job/export ID 和哈希关联本地实验记录。每天的新 run 共用这个工作区、根计划、记忆和技能，使用新的模型上下文；启动后先读取共享计划，核对既有作业与产物。
 
 项目顶层 `plan.json` 是跨运行共用的研究计划，`runtime_paths.plan` 给出文件路径。Agent 通过 `plan(action="show")` 查看、`plan(action="update", revision=..., ...)` 修改目标、步骤、依赖、进展和作业引用，普通文件工具不直接修改它。新运行、恢复和 Harness 升级都读取这份最新计划；先核对计划中的既有 job，再决定后续操作。Harness 在当前 trajectory 的 `plan-snapshots/` 保存开始、修订和停止时的历史快照。
 

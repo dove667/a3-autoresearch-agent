@@ -1,4 +1,4 @@
-"""Fresh native research shares immutable retained knowledge."""
+"""Fresh native research reads hash-pinned shared research files."""
 
 import json
 
@@ -8,7 +8,7 @@ from a3_research_agent.host.inputs.research_preparation import prepare_research_
 from a3_research_agent.host.runs.continuation import load_run_result, publish_run_result
 
 
-def test_repeated_fresh_research_shares_immutable_source_knowledge(tmp_path):
+def test_repeated_fresh_research_uses_the_same_verified_shared_files(tmp_path):
     run, workspace, _, _, _ = native_run(tmp_path)
     publish_run_result(run, workspace, "main")
     source = load_run_result(run)
@@ -28,7 +28,7 @@ def test_repeated_fresh_research_shares_immutable_source_knowledge(tmp_path):
     assert json.loads(first.files["run-outcome.json"])["status"] == "continue"
 
 
-def test_large_text_snapshot_prepares_and_materializes_without_job_upload_limits(tmp_path):
+def test_large_shared_text_prepares_and_materializes_without_job_upload_limits(tmp_path):
     from a3_research_agent.host.sessions.workspace import write_workspace_files
 
     run, workspace, _, _, _ = native_run(tmp_path)

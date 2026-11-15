@@ -93,3 +93,20 @@ def test_scheduler_does_not_restart_an_exited_host(tmp_path, monkeypatch):
     schedule = SimpleNamespace(select=lambda: (["resume-selected-run"], run, {}))
     assert night_window.run_nightly(["host"], RunStateStore(run), schedule=schedule) == 0
     assert launches == [["resume-selected-run"]]
+
+
+def test_each_night_selects_a_fresh_trajectory_without_old_context(tmp_path):
+    from a3_research_agent.cli.night_window import FreshNightSchedule
+
+    command = ["host", "--harness-commit", "a" * 40]
+    schedule = FreshNightSchedule(tmp_path, command)
+    first_command, first, first_env = schedule.select()
+    (first / "conversation").mkdir()
+    (first / "conversation/checkpoint.json").write_text('[{"role":"user","content":"yesterday"}]')
+    second_command, second, second_env = schedule.select()
+    assert first != second
+    assert first_command == second_command == command
+    assert "--resume-from" not in second_command
+    assert not list(second.iterdir())
+    assert first_env["A3_NIGHT_WINDOW_RUN_DIR"] == str(first)
+    assert second_env["A3_NIGHT_WINDOW_RUN_DIR"] == str(second)

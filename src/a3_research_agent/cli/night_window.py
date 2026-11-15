@@ -7,6 +7,7 @@ import threading
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
+from a3_research_agent.host.runs.directories import create_run_directory
 from a3_research_agent.host.runs.state import RunStateStore
 
 BEIJING = ZoneInfo("Asia/Shanghai")
@@ -21,6 +22,18 @@ def window_boundary(now: datetime) -> tuple[bool, datetime]:
     if now < evening:
         return False, evening
     return True, morning + timedelta(days=1)
+
+
+class FreshNightSchedule:
+    """Reserve a new conversation for each night while sharing research files."""
+
+    def __init__(self, root, command):
+        self.root = root
+        self.command = command
+
+    def select(self):
+        run = create_run_directory(self.root / "trajectories")
+        return self.command.copy(), run, {"A3_NIGHT_WINDOW_RUN_DIR": str(run)}
 
 
 def run_nightly(command: list[str], state: RunStateStore, *, schedule=None) -> int:
