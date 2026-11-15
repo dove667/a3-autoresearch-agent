@@ -165,7 +165,7 @@ def test_control_wait_uses_observed_active_jobs_and_closes_terminal_receipts(mon
         {"job_ids": ["bad"]},
         {"timeout_seconds": True},
         {"timeout_seconds": -1},
-        {"timeout_seconds": 601},
+        {"timeout_seconds": None},
     ],
 )
 def test_bad_job_wait_arguments_return_helpful_errors(arguments):
@@ -197,3 +197,55 @@ def test_idle_service_error_has_a_failure_envelope_without_active_jobs():
 
     result = normalize(waiting.wait_idle(fail, 1))
     assert result["ok"] is False and result["error"] == "wait_observation_failed"
+
+
+def test_default_job_wait_does_not_wake_model_at_ten_minutes():
+    clock, holds = Clock(), []
+    job = "a" * 32
+
+    def request(method, path, body, **options):
+        holds.append(body["seconds"])
+        clock.sleep(body["seconds"])
+        done = clock.now >= 825
+        return {
+            "reason": "terminal" if done else "timeout",
+            "jobs": [{"job_id": job, "status": "completed" if done else "running"}],
+        }
+
+    result = waiting.wait_for_jobs(request, [job], clock=clock.time, sleep=clock.sleep)
+    assert result["reason"] == "state_changed" and clock.now == 825
+    assert len(holds) == 33 and set(holds) == {25}
+
+
+def test_control_job_wait_omits_deadline_and_accepts_explicit_long_timeout(monkeypatch):
+    calls = []
+
+    def observe(request, jobs, **options):
+        calls.append(options["timeout_seconds"])
+        return {"wait_schema": 1, "reason": "timeout"}
+
+    monkeypatch.setattr(waiting, "wait_for_jobs", observe)
+    control_tools.dispatch("job_wait", {"job_ids": ["a" * 32]}, None)
+    control_tools.dispatch("job_wait", {"job_ids": ["a" * 32], "timeout_seconds": 3600}, None)
+    assert calls == [None, 3600]
+
+
+def test_default_long_wait_still_wakes_for_operator_notification():
+    clock = Clock()
+    job = "a" * 32
+
+    def request(method, path, body, **options):
+        clock.sleep(body["seconds"])
+        if clock.now >= 700:
+            return {
+                "reason": "notification",
+                "jobs": [{"job_id": job, "status": "running"}],
+                "signals": {"cursor": "b" * 64, "pending": True},
+            }
+        return {"reason": "timeout", "jobs": [{"job_id": job, "status": "running"}]}
+
+    result = waiting.wait_for_jobs(
+        request, [job], cursor="a" * 64, clock=clock.time, sleep=clock.sleep
+    )
+    assert result["reason"] == "notification" and clock.now == 700
+    assert result["wake_cursor"] == "b" * 64

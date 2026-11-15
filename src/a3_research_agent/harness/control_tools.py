@@ -7,14 +7,14 @@ STRING = {"type": "string"}
 TOOLS = [
     definition(
         "job_wait",
-        "Wait for selected jobs until one finishes/fails/cancels, an operator notification arrives, or timeout_seconds expires. Omit job_ids to use observed active jobs. No active jobs returns immediately; use idle_wait to pause without jobs.",
+        "Wait for selected jobs until one finishes/fails/cancels or an operator/input notification arrives. By default wait without a deadline; set timeout_seconds only for a bounded wait (0 polls once). Omit job_ids to use observed active jobs. No active jobs returns immediately; use idle_wait to pause without jobs.",
         {
             "job_ids": {
                 "type": "array",
                 "maxItems": 64,
                 "items": {"type": "string", "pattern": "^[a-f0-9]{32}$"},
             },
-            "timeout_seconds": {"type": "integer", "minimum": 0, "maximum": 600},
+            "timeout_seconds": {"type": "integer", "minimum": 0},
         },
     ),
     definition(
@@ -60,10 +60,16 @@ def dispatch(name, args, request, *, cursor=None):
             value = text(job, "job_id", 32)
             if len(value) != 32 or any(c not in "0123456789abcdef" for c in value):
                 fail("invalid_job_ids", "Use exact32-character job IDs returned by job tools")
+        timeout = args.get("timeout_seconds")
+        if "timeout_seconds" in args and (type(timeout) is not int or timeout < 0):
+            fail(
+                "invalid_timeout_seconds",
+                "Use a nonnegative integer timeout_seconds, or omit it to wait until an event.",
+            )
         result = waiting.wait_for_jobs(
             request,
             list(dict.fromkeys(ids)),
-            timeout_seconds=integer(args.get("timeout_seconds", 600), "timeout_seconds", 0, 600),
+            timeout_seconds=timeout,
             cursor=cursor,
         )
         operational_state.record_wait(result)

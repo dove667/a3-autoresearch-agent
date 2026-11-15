@@ -55,7 +55,7 @@ GPU 作业先调用 `job_prepare`，同样填写 command、attachments、input_e
 
 ## 等待和检查结果
 
-`job_wait(job_ids=[...],timeout_seconds=600)` 等指定作业终态、操作者通知或总超时；省略 job_ids 时使用当前观察到的活动作业。没有目标会立即返回。`idle_wait(seconds=30)` 只暂停并响应通知，不轮询作业。独立且输入就绪的作业可以先提交，再等待；有依赖时先处理上游结果。
+`job_wait(job_ids=[...])` 默认持续等指定作业终态或通知，内部续接不唤醒模型；需要限时才填写 timeout_seconds，0表示单次观察。省略 job_ids 时使用当前观察到的活动作业。没有目标会立即返回。`idle_wait(seconds=30)` 只暂停并响应通知，不轮询作业。独立且输入就绪的作业可以先提交，再等待；有依赖时先处理上游结果。
 
 `job_status` 读状态和日志尾，`job_list` 分页查找有权访问的历史作业。`job_artifact(job_id,path,area="outputs")` 读持久结果；area="workspace" 读作业源码与工作文件。日志、输入和输出路径以当前作业实际环境为准，使用部署提供的 `A3_OUTPUTS` 等路径，不复制其他后端的绝对路径。
 

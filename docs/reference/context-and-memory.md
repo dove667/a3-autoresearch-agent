@@ -44,9 +44,9 @@ Revisions preserve the previous plan and record reasons for route changes.
 The decision context includes a bounded plan view with ready steps and the last
 observed job status. An active step with a queued or running job can wait. When
 independent work is ready, the next decision frame includes those step IDs.
-`job_wait(job_ids=[...], timeout_seconds=600)` observes selected jobs even when they
+`job_wait(job_ids=[...])` observes selected jobs even when they
 are not yet linked to plan steps. Omit job_ids to use the currently observed active jobs.
-The timeout bounds the whole wait; zero performs one observation. `idle_wait(seconds=30)`
+By default it waits for a terminal result or notification without waking the model periodically. Optional timeout_seconds bounds the whole wait; zero performs one observation. `idle_wait(seconds=30)`
 waits only for operator/input notifications and does not poll jobs. Both modes wake for
 input changes and preserve notification acknowledgement through completed tool results. The Agent verifies the step's criterion before recording evidence
 and marking it done. The plan tracks Agent claims and observed job states.

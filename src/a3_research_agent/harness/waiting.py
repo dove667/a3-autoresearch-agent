@@ -1,4 +1,4 @@
-"""Bounded job-target waits and notification-aware idle waits."""
+"""Event-driven job waits and bounded notification-aware idle pauses."""
 
 import json
 import math
@@ -75,18 +75,20 @@ def wait_for_jobs(
     req,
     jobs,
     *,
-    timeout_seconds=600,
+    timeout_seconds=None,
     cursor=None,
     clock=time.monotonic,
     sleep=time.sleep,
     manifest_path=None,
 ):
-    """Observe only selected jobs until one terminates, inputs change or timeout."""
-    bounded_seconds(timeout_seconds)
+    """Observe selected jobs until an event; a deadline exists only when requested."""
+    if timeout_seconds is not None and (type(timeout_seconds) is not int or timeout_seconds < 0):
+        raise ValueError("Job wait timeout must be a nonnegative integer or omitted")
     if not jobs:
         return {"wait_schema": 1, "reason": "no_jobs", "elapsed_seconds": 0}
     start = clock()
-    deadline, initial_inputs = start + timeout_seconds, input_revision(manifest_path)
+    deadline = math.inf if timeout_seconds is None else start + timeout_seconds
+    initial_inputs = input_revision(manifest_path)
 
     def result(reason, **fields):
         if reason == "observation_error":
@@ -118,7 +120,7 @@ def wait_for_jobs(
             return result("timeout", observed=observed)
         first = False
         batch = jobs[offset : offset + 64]
-        hold = min(25, max(0, math.floor(remaining)))
+        hold = 25 if timeout_seconds is None else min(25, max(0, math.floor(remaining)))
         body = {"job_ids": batch, "seconds": hold}
         if cursor is not None:
             body["cursor"] = cursor

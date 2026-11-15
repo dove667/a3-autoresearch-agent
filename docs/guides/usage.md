@@ -89,7 +89,7 @@ CPU作业使用 `job_submit(command=[...], attachments=[{"path":"scripts/train.p
 收到 prepared_id 和 preflight_job_id 后，调用 `job_wait(job_ids=[preflight_job_id])`；
 检查完成，再用 `job_submit(prepared_id="...")` 提交保存的请求，无需重填参数。
 
-独立且输入就绪的任务可以并行提交。`job_wait` 等待指定作业，默认最多600秒；省略job_ids时
+独立且输入就绪的任务可以并行提交。`job_wait` 默认持续等待指定作业终态或通知，显式填写timeout_seconds才限时；省略job_ids时
 等待程序已观察到的活动作业。`idle_wait(seconds=30)` 只等操作者或输入通知，不轮询作业。
 Controller负责排队、GPU分配与生命周期。提交结果未知时先按编号查询，避免重复启动。
 

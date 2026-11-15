@@ -77,7 +77,8 @@ def test_registered_schemas_are_unique_closed_and_current():
     assert len(tool_catalog.BY_NAME) == len(tool_catalog.TOOLS)
     assert all(tool["parameters"]["additionalProperties"] is False for tool in tool_catalog.TOOLS)
     properties = {tool["name"]: tool["parameters"]["properties"] for tool in tool_catalog.TOOLS}
-    assert properties["job_wait"]["timeout_seconds"]["maximum"] == 600
+    assert properties["job_wait"]["timeout_seconds"]["minimum"] == 0
+    assert "maximum" not in properties["job_wait"]["timeout_seconds"]
     assert properties["idle_wait"]["seconds"]["maximum"] == 600
     assert "goal" not in properties["plan"]
     assert "attachments" in properties["job_submit"]
