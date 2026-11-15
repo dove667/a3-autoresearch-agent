@@ -1,4 +1,4 @@
-"""Serve authenticated research memory and own its local embedding subprocess."""
+"""Serve research memory and skill discovery through one local embedding process."""
 
 import contextlib
 import os
@@ -11,6 +11,7 @@ from pathlib import Path
 import uvicorn
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 
+from a3_research_agent.harness import skill_search
 from a3_research_agent.harness.memory import dispatch, warm_index
 from a3_research_agent.harness.memory.sources import MemorySources
 
@@ -47,7 +48,7 @@ def embedding_command(binary, model, port):
     ]
 
 
-def create_memory_app(project, run_id, token, embedder):
+def create_knowledge_app(project, run_id, token, embedder):
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     sources = MemorySources(project, run_id)
 
@@ -93,21 +94,30 @@ def create_memory_app(project, run_id, token, embedder):
             source_reader=sources,
         )
 
+    @app.post("/skills/search", dependencies=[Depends(authorize)])
+    def skills(arguments: dict):
+        return skill_search.search(
+            arguments,
+            root=project / "skills",
+            history_root=project / ".runtime/skill-revisions",
+            index_root=project / ".runtime/skill-index",
+            embedder=embedder,
+            model_id=MODEL_ID,
+        )
+
     return app
 
 
 def main():
-    project = Path(os.environ["A3_MEMORY_PROJECT"]).resolve()
+    project = Path(os.environ["A3_KNOWLEDGE_PROJECT"]).resolve()
     run_id = os.environ["A3_RUN_ID"]
-    token = os.environ["A3_MEMORY_SERVICE_TOKEN"]
-    port = int(os.environ["A3_MEMORY_SERVICE_PORT"])
-    parent = int(os.environ["A3_MEMORY_PARENT_PID"])
+    token = os.environ["A3_KNOWLEDGE_SERVICE_TOKEN"]
+    port = int(os.environ["A3_KNOWLEDGE_SERVICE_PORT"])
+    parent = int(os.environ["A3_KNOWLEDGE_PARENT_PID"])
     model = verify_model(model_path(project))
-    binary = shutil.which(os.environ.get("A3_MEMORY_LLAMA_SERVER", "llama-server"))
+    binary = shutil.which(os.environ.get("A3_EMBEDDING_SERVER", "llama-server"))
     if binary is None:
-        raise RuntimeError(
-            "Install llama.cpp or configure A3_MEMORY_LLAMA_SERVER for semantic memory"
-        )
+        raise RuntimeError("Install llama.cpp or configure A3_EMBEDDING_SERVER for semantic memory")
     embedding_token = secrets.token_urlsafe(32)
     embedding_port = free_port()
     environment = {**os.environ, "LLAMA_API_KEY": embedding_token}
@@ -129,7 +139,7 @@ def main():
         wait_ready(endpoint, embedding_token, process)
         embedder = LlamaEmbedder(endpoint, embedding_token)
         warm_index(project / "memory", embedder, MODEL_ID)
-        app = create_memory_app(project, run_id, token, embedder)
+        app = create_knowledge_app(project, run_id, token, embedder)
         server = uvicorn.Server(
             uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning", access_log=False)
         )

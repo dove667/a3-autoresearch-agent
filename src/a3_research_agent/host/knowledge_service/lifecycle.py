@@ -1,4 +1,4 @@
-"""Keep the semantic memory worker alive only during one research launch."""
+"""Keep the shared knowledge service alive only during one research launch."""
 
 import os
 import secrets
@@ -47,7 +47,7 @@ def signal_group(identifier, selected_signal):
             raise
 
 
-class MemoryService:
+class KnowledgeService:
     """Own a private service process group and always reclaim it on context exit."""
 
     def __init__(self, project: Path, run: Path, run_id: str):
@@ -63,30 +63,30 @@ class MemoryService:
     @property
     def environment(self):
         return {
-            "A3_MEMORY_SERVICE_URL": self.endpoint,
-            "A3_MEMORY_SERVICE_TOKEN": self.token,
+            "A3_KNOWLEDGE_SERVICE_URL": self.endpoint,
+            "A3_KNOWLEDGE_SERVICE_TOKEN": self.token,
             "A3_RUN_ID": self.run_id,
         }
 
     def __enter__(self):
         verify_model(model_path(self.project))
-        if not shutil.which(os.environ.get("A3_MEMORY_LLAMA_SERVER", "llama-server")):
+        if not shutil.which(os.environ.get("A3_EMBEDDING_SERVER", "llama-server")):
             raise RuntimeError(
-                "Install llama.cpp or configure A3_MEMORY_LLAMA_SERVER for semantic memory"
+                "Install llama.cpp or configure A3_EMBEDDING_SERVER for semantic memory"
             )
-        log_path = debug_directory(self.run) / "memory-service.log"
+        log_path = debug_directory(self.run) / "knowledge-service.log"
         log_path.parent.mkdir(parents=True, exist_ok=True)
         self.log = log_path.open("ab", buffering=0)
         environment = {
             **os.environ,
             **self.environment,
-            "A3_MEMORY_PROJECT": str(self.project),
-            "A3_MEMORY_PARENT_PID": str(os.getpid()),
-            "A3_MEMORY_SERVICE_PORT": str(self.port),
+            "A3_KNOWLEDGE_PROJECT": str(self.project),
+            "A3_KNOWLEDGE_PARENT_PID": str(os.getpid()),
+            "A3_KNOWLEDGE_SERVICE_PORT": str(self.port),
         }
         try:
             self.process = subprocess.Popen(
-                [sys.executable, "-m", "a3_research_agent.host.memory.worker"],
+                [sys.executable, "-m", "a3_research_agent.host.knowledge_service.worker"],
                 env=environment,
                 stdin=subprocess.DEVNULL,
                 stdout=self.log,

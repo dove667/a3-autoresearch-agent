@@ -20,7 +20,7 @@ from a3_research_agent.host.gateway.app import create_app
 from a3_research_agent.host.inputs.feedback import MAX_FEEDBACK_BYTES, HumanFeedback
 from a3_research_agent.host.inputs.research_preparation import input_hashes, prepare_research_start
 from a3_research_agent.host.inputs.versions import InputVersions
-from a3_research_agent.host.memory.lifecycle import MemoryService
+from a3_research_agent.host.knowledge_service.lifecycle import KnowledgeService
 from a3_research_agent.host.models.settings import model_settings, require_release_model
 from a3_research_agent.host.models.upstream import configured_upstream
 from a3_research_agent.host.published_harness import (
@@ -152,8 +152,8 @@ def _launch_run(args, run: Path, a3: Path, start, services) -> None:
             endpoint=endpoint,
             published_source=pinned_source,
         )
-    memory = services.enter_context(MemoryService(root, run, run_id))
-    session_runtime.memory_environment = memory.environment
+    knowledge = services.enter_context(KnowledgeService(root, run, run_id))
+    session_runtime.knowledge_environment = knowledge.environment
     task_instructions = input_versions.model_instructions()[1]
 
     def remote_for_run(operation, payload):

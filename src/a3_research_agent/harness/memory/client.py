@@ -2,37 +2,14 @@
 
 import os
 import time
-from urllib.parse import urlsplit
 
-import httpx
+from a3_research_agent.harness import knowledge_client
 
 _CONTEXT_CACHE = {}
 
 
 def call(arguments):
-    url = os.environ.get("A3_MEMORY_SERVICE_URL", "")
-    token = os.environ.get("A3_MEMORY_SERVICE_TOKEN", "")
-    address = urlsplit(url)
-    if address.scheme != "http" or address.hostname not in {"127.0.0.1", "::1"} or not token:
-        return {
-            "error": "memory_service_unavailable",
-            "hint": "Report missing Host memory service configuration; preserve research progress.",
-        }
-    try:
-        response = httpx.post(
-            url.rstrip("/") + "/memory",
-            json=arguments,
-            headers={"Authorization": "Bearer " + token},
-            timeout=90,
-            trust_env=False,
-        )
-        response.raise_for_status()
-        return response.json()
-    except (httpx.HTTPError, ValueError):
-        return {
-            "error": "memory_service_unavailable",
-            "hint": "Memory service request failed; report the failure and preserve research progress.",
-        }
+    return knowledge_client.call("/memory", arguments)
 
 
 def suggestions(plan):
@@ -46,7 +23,7 @@ def suggestions(plan):
             *[route.get("hypothesis", "") for route in plan.get("routes", {}).values()],
         ]
     )[:1200]
-    key = (os.environ.get("A3_MEMORY_SERVICE_URL"), query, plan.get("revision"))
+    key = (os.environ.get("A3_KNOWLEDGE_SERVICE_URL"), query, plan.get("revision"))
     cached = _CONTEXT_CACHE.get(key)
     if cached and time.monotonic() - cached[0] < 30:
         return cached[1]

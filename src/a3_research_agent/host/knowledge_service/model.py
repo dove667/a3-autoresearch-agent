@@ -21,7 +21,7 @@ MODEL_URL = (
 
 
 def model_path(project):
-    configured = os.environ.get("A3_MEMORY_MODEL")
+    configured = os.environ.get("A3_EMBEDDING_MODEL")
     return (
         Path(configured).expanduser().resolve()
         if configured

@@ -5,9 +5,9 @@ from unittest.mock import Mock
 import pytest
 from fastapi.testclient import TestClient
 
-from a3_research_agent.host.memory import lifecycle, model
-from a3_research_agent.host.memory.embedding import LlamaEmbedder
-from a3_research_agent.host.memory.worker import create_memory_app, embedding_command
+from a3_research_agent.host.knowledge_service import lifecycle, model
+from a3_research_agent.host.knowledge_service.embedding import LlamaEmbedder
+from a3_research_agent.host.knowledge_service.worker import create_knowledge_app, embedding_command
 
 
 def test_model_verification_rejects_partial_and_changed_downloads(tmp_path, monkeypatch):
@@ -22,7 +22,7 @@ def test_model_verification_rejects_partial_and_changed_downloads(tmp_path, monk
 
 
 def test_memory_service_requires_credential_and_keeps_run_scoped_notes(tmp_path):
-    app = create_memory_app(tmp_path, "today", "private-test-token", None)
+    app = create_knowledge_app(tmp_path, "today", "private-test-token", None)
     with TestClient(app) as client:
         assert client.get("/health").status_code == 401
         assert client.post("/memory", json={"action": "list"}).status_code == 401
@@ -59,7 +59,7 @@ def test_readiness_failure_reclaims_worker_group_and_log(tmp_path, monkeypatch):
     monkeypatch.setattr(lifecycle, "group_exists", lambda pid: False)
     killed = []
     monkeypatch.setattr(lifecycle.os, "killpg", lambda pid, sig: killed.append(pid))
-    service = lifecycle.MemoryService(tmp_path, run, "test")
+    service = lifecycle.KnowledgeService(tmp_path, run, "test")
     with pytest.raises(TimeoutError), service:
         pytest.fail("A failed service must never enter the research body")
     assert killed == [1234]
@@ -108,7 +108,7 @@ def test_shutdown_kills_surviving_child_after_worker_exits(tmp_path, monkeypatch
         child_pid = int(ready.read_text())
         run = tmp_path / "trajectories/test"
         run.mkdir(parents=True)
-        service = lifecycle.MemoryService(tmp_path, run, "test")
+        service = lifecycle.KnowledgeService(tmp_path, run, "test")
         service.process = process
         monkeypatch.setattr(lifecycle, "SHUTDOWN_GRACE_SECONDS", 0.2)
         service.close()

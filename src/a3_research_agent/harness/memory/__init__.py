@@ -3,6 +3,8 @@
 import time
 import uuid
 
+from a3_research_agent.harness import semantic_index
+
 from . import retrieval, store
 
 _FIELDS = {"text", "kind", "scope", "refs", "supersedes", "lifetime", "run_ids", "tags"}
@@ -107,7 +109,7 @@ def selected(arguments, entries, run_id):
     if type(include_archived) is not bool:
         raise MemoryError("memory_validation", "include_archived must be boolean")
     kind = text(arguments.get("kind", ""), "kind", 48).casefold()
-    scope = retrieval.normalize(text(arguments.get("scope", ""), "scope", 600))
+    scope = semantic_index.normalize(text(arguments.get("scope", ""), "scope", 600))
     hidden = store.superseded_by(entries, run_id)
     return [
         entry
@@ -115,7 +117,7 @@ def selected(arguments, entries, run_id):
         if (store.applicable(entry, run_id) or include_archived)
         and (include_archived or (entry["status"] == "active" and entry["id"] not in hidden))
         and (not kind or kind == entry["kind"].casefold())
-        and (not scope or scope in retrieval.normalize(entry["scope"]))
+        and (not scope or scope in semantic_index.normalize(entry["scope"]))
     ]
 
 
@@ -177,12 +179,12 @@ def duplicate_candidates(candidate, entries, *, root, run_id, embedder, model_id
     ]
     if embedder is None or not candidates:
         return []
-    cache = retrieval.VectorCache(root, embedder, model_id)
+    cache = semantic_index.VectorCache(root, embedder, model_id)
     vectors = cache.vectors(
         [retrieval.document(candidate), *[retrieval.document(entry) for entry in candidates]]
     )
     matches = [
-        (entry, retrieval.cosine(vectors[0], vector))
+        (entry, semantic_index.cosine(vectors[0], vector))
         for entry, vector in zip(candidates, vectors[1:])
     ]
     return [
@@ -197,7 +199,7 @@ def warm_index(root, embedder, model_id):
         entries = [
             entry for entry in store.current(directory).values() if entry["status"] == "active"
         ]
-        retrieval.VectorCache(directory, embedder, model_id).vectors(
+        semantic_index.VectorCache(directory, embedder, model_id).vectors(
             [retrieval.document(entry) for entry in entries]
         )
         return {"indexed": len(entries), "model": model_id}

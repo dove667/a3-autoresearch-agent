@@ -4,6 +4,7 @@ import os
 import re
 from pathlib import Path
 
+from . import knowledge_client, skill_search
 from . import skill_library as library
 
 ACTIONS = [
@@ -22,7 +23,7 @@ PROPERTIES = {
     "action": {"type": "string", "enum": ACTIONS},
     "id": {"type": "string"},
     "path": {"type": "string"},
-    "query": {"type": "string", "maxLength": 240},
+    "query": {"type": "string", "maxLength": 1200},
     "description": {"type": "string", "maxLength": 512},
     "content": {"type": "string"},
     "old_text": {"type": "string", "minLength": 1},
@@ -41,7 +42,7 @@ TOOLS = [
         "name": "skills",
         "strict": False,
         "description": (
-            "Use the single project skill library: list(query) returns summaries; read(id) reads a "
+            "Use the single project skill library: list(query=natural-language question) uses shared local semantic+keyword search and returns summaries with match reasons; no body or attachment text is delivered; read(id) reads a "
             "matching SKILL.md; list_resources(id) lists attachments; read_resource(id,path) reads "
             "only a needed UTF-8 attachment. Text reads use character offset/limit pages and return "
             "SHA256. save(id,description,content,source,keywords?) creates or updates a skill; updating "
@@ -151,19 +152,38 @@ def replace_text(raw, args):
 
 def dispatch(args, *, root=None, history_root=None):
     try:
+        explicit_root = root is not None
         root, history_root = configured_roots(root, history_root)
         if not isinstance(args, dict) or set(args) - PROPERTIES.keys():
             raise library.SkillError("invalid_arguments")
-        offset, limit = args.get("offset", 0), args.get("limit", 4000)
+        listing = args.get("action") in {"list", "list_resources"}
+        offset, limit = args.get("offset", 0), args.get("limit", 24 if listing else 4000)
         if (
             type(offset) is not int
             or offset < 0
             or type(limit) is not int
-            or not 1 <= limit <= 8000
+            or not 1 <= limit <= (24 if listing else 8000)
         ):
             raise library.SkillError("invalid_page")
         if type(args.get("include_archived", False)) is not bool:
             raise library.SkillError("invalid_archived_selection")
+        query = args.get("query", "")
+        if not isinstance(query, str) or len(query) > 1200:
+            raise library.SkillError("invalid_query")
+        if args.get("action") == "list" and query.strip():
+            request = {
+                key: args[key]
+                for key in ("query", "offset", "limit", "include_archived")
+                if key in args
+            }
+            if explicit_root:
+                return skill_search.search(
+                    request,
+                    root=root,
+                    history_root=history_root,
+                    index_root=history_root.parent / "skill-index",
+                )
+            return knowledge_client.call_skill_search(request)
         with library.locked_library(root, history_root):
             return operate(root, history_root, args, offset, limit)
     except library.SkillError as error:
@@ -179,7 +199,7 @@ def operate(root, history_root, args, offset, limit):
     action = args.get("action")
     if action == "list":
         query = args.get("query", "")
-        if not isinstance(query, str) or len(query) > 240:
+        if not isinstance(query, str) or len(query) > 1200:
             raise library.SkillError("invalid_query")
         terms = set(re.findall(r"\w+", query.casefold()))
         matches = []
@@ -196,10 +216,10 @@ def operate(root, history_root, args, offset, limit):
         return {
             "skills": [
                 {**summary(e), "description": e["description"][:256]}
-                for _, e in matches[offset : offset + 24]
+                for _, e in matches[offset : offset + limit]
             ],
             "total": len(matches),
-            "next_offset": offset + 24 if offset + 24 < len(matches) else None,
+            "next_offset": offset + limit if offset + limit < len(matches) else None,
         }
     skill_id = library.identifier(args.get("id"))
     entry = library.read_catalog(root, skill_id)
@@ -236,9 +256,9 @@ def operate(root, history_root, args, offset, limit):
         ]
         return {
             **summary(entry),
-            "resources": resources[offset : offset + 24],
+            "resources": resources[offset : offset + limit],
             "total": len(resources),
-            "next_offset": offset + 24 if offset + 24 < len(resources) else None,
+            "next_offset": offset + limit if offset + limit < len(resources) else None,
         }
     if action in {"read_resource", "write_resource", "delete_resource", "edit_resource"}:
         relative = args.get("path")
