@@ -73,6 +73,8 @@ def view(plan=None, *, jobs=None, compact=False):
             status: sum(step["status"] == status for step in steps.values()) for status in STATUSES
         },
     }
+    if not compact:
+        result["reviews"] = plan.get("reviews", [])
     if compact:
         ordered = ready + [
             key for key, step in steps.items() if key not in ready and step["status"] == "active"

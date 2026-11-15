@@ -68,6 +68,7 @@ def test_results_require_explicit_review_and_paused_routes_stop_dispatch():
     )
     assert result["ready"] == [] and result["review_due"] == []
     assert plan.load()["reviews"][0]["observed_jobs"] == {job: "completed"}
+    assert plan.dispatch({"action": "show"})["reviews"][0]["conclusion"] == "No gain"
 
 
 def test_route_changes_need_reason_and_cannot_break_step_links(monkeypatch, tmp_path):
