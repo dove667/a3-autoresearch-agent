@@ -13,13 +13,12 @@ KINDS = frozenset(
         "model_context",
         "research_web",
         "remote_job",
-        "candidate",
-        "candidate_version",
+        "session",
         "comparison",
         "isolation_fixture",
     }
 )
-ROLES = frozenset({"main", "worker", "candidate", "summary"})
+ROLES = frozenset({"main", "worker", "summary"})
 OBSERVATIONS = frozenset(
     {
         "read_calls",
@@ -33,7 +32,7 @@ OBSERVATIONS = frozenset(
 )
 MAX_EVENTS = 256
 MAX_RECENT_EVENTS = 32
-CONTROL_ROUTES = frozenset({"/sessions/self", "/evolution"})
+CONTROL_ROUTES = frozenset({"/sessions/self"})
 
 
 def bounded_number(value, maximum=1_000_000_000):

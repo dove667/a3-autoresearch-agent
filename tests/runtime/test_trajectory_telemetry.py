@@ -104,30 +104,17 @@ def test_local_observations_strict_bounded_self_only_and_persistent(tmp_path):
     assert resumed.get("/telemetry", headers=HEADERS).json()["local_observations"] == OBSERVATIONS
 
 
-def test_descendant_scope_excludes_siblings_and_ancestors(tmp_path):
-    store = RunStateStore(tmp_path)
-    client = client_for(tmp_path, state_store=store)
-    client.app.state.save_checkpoint()
-    gateway = store.load()["gateway"]
-    gateway["sessions"].update({"child-token": "child", "grand-token": "grand"})
-    gateway["scope_parents"].update({"child": "main", "grand": "child"})
-    client = client_for(tmp_path, state_store=store, restored_state=gateway)
-    for token in ("token-a", "token-b", "child-token", "grand-token"):
+def test_run_scope_includes_registered_owners_while_self_is_scoped(tmp_path):
+    client = client_for(tmp_path)
+    for token in ("token-a", "token-b"):
         client.post(
             "/telemetry/observations",
             headers={"Authorization": "Bearer " + token},
             json=OBSERVATIONS,
         )
-    assert (
-        client.get("/telemetry?scope=descendants", headers=HEADERS).json()["observation_owners"]
-        == 3
-    )
-    assert (
-        client.get(
-            "/telemetry?scope=descendants", headers={"Authorization": "Bearer child-token"}
-        ).json()["observation_owners"]
-        == 2
-    )
+    assert client.get("/telemetry", headers=HEADERS).json()["observation_owners"] == 1
+    assert client.get("/telemetry?scope=run", headers=HEADERS).json()["observation_owners"] == 2
+    assert client.get("/telemetry?scope=descendants", headers=HEADERS).status_code == 422
 
 
 def test_event_and_owner_bounds_and_unknown_usage_values():

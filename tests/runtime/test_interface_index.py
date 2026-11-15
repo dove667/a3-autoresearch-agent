@@ -1,39 +1,35 @@
-"""References remain complete; the index only selects the needed character pages."""
+"""Reference indexes select exact character ranges without injecting the full text."""
 
 import hashlib
+import json
+from pathlib import Path
 
-from test_input_versions import INPUT_SOURCES, sources
+from task_input_support import deployment_source, task_inputs
 
-from a3_research_agent.host.inputs.versions import InputVersions
+from a3_research_agent.host.inputs.versions import InputVersions, execution_index
+
+ROOT = Path(__file__).resolve().parents[2]
 
 
-def test_execution_sections_match_raw_character_offsets_without_injection(tmp_path):
-    root = sources(tmp_path)
+def test_execution_sections_preserve_original_bytes_and_character_offsets(tmp_path):
+    root = deployment_source(tmp_path / "source")
     text = "Version: 9.0.0\r\n前言🌍\r\n## Alpha\r\n参数α\r\n### nested\r\nbody\r\n## Beta\r\nend"
-    (root / INPUT_SOURCES["execution.md"]).write_bytes(text.encode())
-    versions = InputVersions(root, tmp_path / "run")
-    manifest = versions.activate(versions.prepare(), "start")
+    (root / "agent-inputs/shared/execution.md").write_bytes(text.encode())
+    inputs = InputVersions(root, tmp_path / "run", custom_dir=task_inputs(tmp_path / "task"))
+    manifest = inputs.activate(inputs.prepare(), "start")
     index = manifest["execution_index"]
     assert index["unit"] == "characters"
     assert index["sha256"] == hashlib.sha256(text.encode()).hexdigest()
-    assert (tmp_path / "run/inputs/execution.md").read_bytes() == text.encode()
-    assert [x["title"] for x in index["sections"]] == ["Alpha", "Beta"]
+    assert (inputs.run / "inputs/execution.md").read_bytes() == text.encode()
+    assert [section["title"] for section in index["sections"]] == ["Alpha", "Beta"]
     for section in index["sections"]:
         assert text[section["offset"] : section["end"]].startswith("## " + section["title"])
-    _, prompt = versions.model_instructions()
-    assert "参数α" not in prompt
-    assert "execution_index" in prompt
-    assert "无需" in prompt
-    for name in ["SOUL.md", "goal.md", "acceptance.md", "phase-instructions.md"]:
-        assert versions.contents[name] in prompt
+    prompt = inputs.model_instructions()[1]
+    assert "参数α" not in prompt and "execution_index" in prompt
 
 
-def test_custom_many_long_headings_produce_bounded_index_not_lost_source():
-    import json
-
-    from a3_research_agent.host.inputs.versions import execution_index
-
-    text = "".join("## " + ("长" * 400) + str(i) + "\nbody\n" for i in range(400))
+def test_many_long_headings_have_bounded_index_and_lossless_source_identity():
+    text = "".join("## " + "长" * 400 + str(index) + "\nbody\n" for index in range(400))
     index = execution_index(text)
     assert index["truncated"] is True
     assert len(json.dumps(index, ensure_ascii=False).encode()) <= 8000
@@ -41,17 +37,12 @@ def test_custom_many_long_headings_produce_bounded_index_not_lost_source():
     assert index["sha256"] == hashlib.sha256(text.encode()).hexdigest()
 
 
-def test_real_phase_two_core_is_unchanged_and_execution_stays_reference_only(tmp_path):
-    from pathlib import Path
-
-    root = Path(__file__).resolve().parents[2]
-    versions = InputVersions(root, tmp_path / "run", phase="phase-two")
-    versions.activate(versions.prepare(), "start")
-    _, prompt = versions.model_instructions()
-    for name in ["SOUL.md", "goal.md", "acceptance.md", "protocol.md"]:
-        assert versions.contents[name] in prompt
-    assert versions.contents["execution.md"] not in prompt
+def test_real_runtime_reference_is_mounted_without_repeating_its_body(tmp_path):
+    inputs = InputVersions(ROOT, tmp_path / "run", custom_dir=task_inputs(tmp_path / "task"))
+    inputs.activate(inputs.prepare(), "start")
+    prompt = inputs.model_instructions()[1]
+    assert inputs.contents["execution.md"] not in prompt
     assert (
-        versions.manifest["execution_index"]["sha256"]
-        == versions.manifest["files"]["execution.md"]["sha256"]
+        inputs.manifest["execution_index"]["sha256"]
+        == inputs.manifest["files"]["execution.md"]["sha256"]
     )

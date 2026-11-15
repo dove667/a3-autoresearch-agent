@@ -225,34 +225,32 @@ def test_revoke_and_delete_refuse_live_consumers(tmp_path, monkeypatch):
 
 
 def test_retained_declaration_carries_only_validated_export_references(tmp_path):
+    from native_run_support import native_run
+
     from a3_research_agent.host.runs.continuation import (
         load_run_result,
         prepare_fresh_task,
         publish_run_result,
     )
-    from a3_research_agent.host.sessions.versions import CandidateVersions
 
-    workspace = tmp_path / "workspace"
-    workspace.mkdir()
-    (workspace / "agent.py").write_text("pass")
-    (workspace / "checkpoint.json").write_text("[]")
+    run, workspace, _, _, _ = native_run(tmp_path)
+    from a3_research_agent.host.published_harness import COMMAND
+
     identifier = "export-" + "a" * 32
     (workspace / "continuation.json").write_text(
         json.dumps(
             {
-                "command": ["python", "agent.py", "--resume"],
-                "files": ["agent.py", "checkpoint.json"],
+                "version": 1,
+                "command": COMMAND,
+                "files": ["checkpoint.json"],
                 "remote_exports": [identifier],
             }
         )
     )
-    versions = CandidateVersions(tmp_path / "versions")
     calls = []
-    publish_run_result(
-        tmp_path, workspace, versions, "main", None, validate_exports=lambda ids: calls.append(ids)
-    )
+    publish_run_result(run, workspace, "main", validate_exports=lambda ids: calls.append(ids))
     assert calls == [[identifier]]
-    start = load_run_result(tmp_path)
+    start = load_run_result(run)
     assert start.remote_exports == [identifier]
     assert start.source_owner == "main"
     fresh, _ = prepare_fresh_task(start, "new task")
@@ -284,7 +282,15 @@ def test_new_run_imports_explicit_retained_exports_and_rolls_back_partial_failur
             )
         return exports.revoke(request["experiment_id"], request["export_id"], request["recipient"])
 
-    start = HarnessStart(["true"], {}, source_owner="old-main", remote_exports=[identifier])
+    from a3_research_agent.host.published_harness import COMMAND
+
+    start = HarnessStart(
+        COMMAND,
+        {"checkpoint.json": "[]"},
+        source_owner="old-main",
+        remote_exports=[identifier],
+        harness_commit="a" * 40,
+    )
     assert import_retained_exports(start, "new-run", remote) == [identifier]
     assert (
         exports.data_path("new-run", identifier).joinpath("model.bin").read_bytes()
@@ -309,7 +315,15 @@ def test_many_retained_assets_use_bounded_checks_before_any_grant():
         calls.append((operation, request))
         return {"status": "ready"}
 
-    start = HarnessStart(["true"], {}, source_owner="old-main", remote_exports=identifiers)
+    from a3_research_agent.host.published_harness import COMMAND
+
+    start = HarnessStart(
+        COMMAND,
+        {"checkpoint.json": "[]"},
+        source_owner="old-main",
+        remote_exports=identifiers,
+        harness_commit="a" * 40,
+    )
     assert import_retained_exports(start, "new-main", remote) == identifiers
     assert [
         len(payload["export_ids"]) for operation, payload in calls if operation == "exports-check"

@@ -13,7 +13,6 @@ from a3_research_agent.host.models.settings import (
     validate_model_request_options,
     validate_role_models,
 )
-from a3_research_agent.host.runs.evolution import EvolutionState
 from a3_research_agent.host.runs.state import RunStateStore
 from a3_research_agent.host.telemetry.diagnostics import GatewayDiagnostics
 from a3_research_agent.host.telemetry.trajectory import TrajectoryTelemetry
@@ -42,13 +41,11 @@ class Gateway(
         forward_model: Callable,
         remote_call: Callable,
         usage_log: Path,
-        sandbox=None,
+        session_runtime=None,
         fixtures=None,
-        versions=None,
         initial_inputs: Path | None = None,
         main_owner: str | None = None,
-        start_main_session: bool = False,
-        phase_instructions: str = "",
+        task_instructions: str = "",
         state_store: RunStateStore | None = None,
         restored_state: dict | None = None,
         input_versions: InputVersions | None = None,
@@ -66,13 +63,11 @@ class Gateway(
         self.forward_model = forward_model
         self.remote_call = remote_call
         self.usage_log = usage_log
-        self.sandbox = sandbox
+        self.session_runtime = session_runtime
         self.fixtures = fixtures
-        self.versions = versions
         self.initial_inputs = initial_inputs
         self.main_owner = main_owner
-        self.start_main_session = start_main_session
-        self.phase_instructions = phase_instructions
+        self.task_instructions = task_instructions
         self.state_store = state_store
         self.restored_state = restored_state
         self.input_versions = input_versions
@@ -103,8 +98,7 @@ class Gateway(
         self.diagnostics.attach(self.app)
         self.log_lock = threading.Lock()
         self.session_lock = threading.RLock()
-        self.children: dict[str, dict] = {}
-        self.scope_parents: dict[str, str] = {}
+        self.session_records: dict[str, dict] = {}
         self.jobs: dict[str, set[str]] = {}
         self.job_evaluations = {}
         self.evaluation_workers = ThreadPoolExecutor(max_workers=2)
@@ -114,33 +108,23 @@ class Gateway(
         self.project_scope_runs, self.project_job_scopes = project_job_index(project_history_run)
         self.root_owners = set(self.sessions.values())
         self.app.state.closing = False
-        self.evolution = (
-            EvolutionState(self.usage_log.with_name("evolution.json"), self.main_owner)
-            if self.main_owner
-            else None
-        )
         if self.restored_state is not None:
             self.sessions.clear()
             self.sessions.update(self.restored_state["sessions"])
             self.root_owners = set(self.restored_state["root_owners"])
-            self.children.update(self.restored_state["children"])
-            runtime_records = getattr(self.sandbox, "records", {})
-            for session_id, record in self.children.items():
+            self.session_records.update(self.restored_state["session_records"])
+            runtime_records = getattr(self.session_runtime, "records", {})
+            for session_id, record in self.session_records.items():
                 if record.get("self_stopped") or runtime_records.get(session_id, {}).get(
                     "self_stopped"
                 ):
                     record["self_stopped"] = True
                     self.sessions.pop(record["token"], None)
-            self.scope_parents.update(self.restored_state["scope_parents"])
             self.job_evaluations.update(self.restored_state.get("job_evaluations", {}))
             self.jobs.update(
                 {key: set(value) for key, value in self.restored_state["jobs"].items()}
             )
-            if self.evolution and self.restored_state.get("evolution"):
-                saved = self.restored_state["evolution"]
-                self.evolution.main_owner = saved["main_owner"]
-                self.evolution.trials = saved["trials"]
-                self.evolution.transitions = saved["transitions"]
+            self.main_owner = self.restored_state["main_owner"]
             if self.fixtures is not None:
                 self.fixtures.records = self.restored_state.get("fixtures", {})
             for actor, values in self.restored_state.get("telemetry_observations", {}).items():
@@ -165,15 +149,7 @@ class Gateway(
         self.app.add_api_route("/web/status", self.web_status, methods=["GET"])
         self.app.add_api_route("/web/search", self.web_search, methods=["POST"])
         self.app.add_api_route("/web/fetch", self.web_fetch, methods=["POST"])
-        self.app.add_api_route("/sessions", self.create_session, methods=["POST"])
-        self.app.add_api_route("/evolution", self.inspect_evolution, methods=["GET"])
-        self.app.add_api_route("/evolution/trials", self.start_trial, methods=["POST"])
-        self.app.add_api_route(
-            "/evolution/trials/{session_id}/decision", self.decide_trial, methods=["POST"]
-        )
         self.app.add_api_route("/sessions", self.list_sessions, methods=["GET"])
-        self.app.add_api_route("/versions", self.save_version, methods=["POST"])
-        self.app.add_api_route("/versions", self.list_versions, methods=["GET"])
         self.app.add_api_route("/checks/comparison", self.comparison, methods=["POST"])
         self.app.add_api_route("/sessions/self", self.self_status, methods=["GET"])
         self.app.add_api_route("/sessions/self/stop", self.stop_self, methods=["POST"])
@@ -181,9 +157,6 @@ class Gateway(
         self.app.add_api_route("/sessions/{session_id}", self.cancel_session, methods=["DELETE"])
         self.app.add_api_route(
             "/sessions/{session_id}/artifacts", self.session_artifact, methods=["GET"]
-        )
-        self.app.add_api_route(
-            "/sessions/{session_id}/versions", self.descendant_versions, methods=["GET"]
         )
         self.app.add_api_route("/fixtures/isolation", self.create_fixture, methods=["POST"])
         self.app.add_api_route(
@@ -234,13 +207,11 @@ def create_app(
     forward_model: Callable,
     remote_call: Callable,
     usage_log: Path,
-    sandbox=None,
+    session_runtime=None,
     fixtures=None,
-    versions=None,
     initial_inputs: Path | None = None,
     main_owner: str | None = None,
-    start_main_session: bool = False,
-    phase_instructions: str = "",
+    task_instructions: str = "",
     state_store: RunStateStore | None = None,
     restored_state: dict | None = None,
     input_versions: InputVersions | None = None,
@@ -259,13 +230,11 @@ def create_app(
         forward_model=forward_model,
         remote_call=remote_call,
         usage_log=usage_log,
-        sandbox=sandbox,
+        session_runtime=session_runtime,
         fixtures=fixtures,
-        versions=versions,
         initial_inputs=initial_inputs,
         main_owner=main_owner,
-        start_main_session=start_main_session,
-        phase_instructions=phase_instructions,
+        task_instructions=task_instructions,
         state_store=state_store,
         restored_state=restored_state,
         input_versions=input_versions,
@@ -278,42 +247,3 @@ def create_app(
         context_budget=context_budget,
         project_history_run=project_history_run,
     ).app
-
-
-# Preserve public request types from the original Gateway module.
-from .schemas import (
-    ComparisonRequest,
-    ExportGrantRequest,
-    ExportRequest,
-    FeedbackPreviewRequest,
-    FeedbackUpdateRequest,
-    InputUpdateRequest,
-    JobRequest,
-    SessionRequest,
-    SessionStopRequest,
-    SummaryRequest,
-    TrialDecision,
-    TrialRequest,
-    VersionRequest,
-    WorkspaceFileReference,
-)
-
-__all__ = [
-    "ComparisonRequest",
-    "ExportGrantRequest",
-    "ExportRequest",
-    "FeedbackPreviewRequest",
-    "FeedbackUpdateRequest",
-    "Gateway",
-    "InputUpdateRequest",
-    "JobRequest",
-    "ObservationRequest",
-    "SessionRequest",
-    "SessionStopRequest",
-    "SummaryRequest",
-    "TrialDecision",
-    "TrialRequest",
-    "VersionRequest",
-    "WorkspaceFileReference",
-    "create_app",
-]

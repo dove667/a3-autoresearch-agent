@@ -1,4 +1,5 @@
 import base64
+import hashlib
 import json
 
 from a3_research_agent.harness import agent
@@ -13,13 +14,22 @@ def call(**arguments):
 
 def test_gpu_admission_uses_same_source_and_assets_and_requires_real_report(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
+    decoder = tmp_path / "research/decoder.py"
+    decoder.parent.mkdir()
+    decoder.write_text("def load(): return 1\n")
     job = {
         "gpu": True,
         "gpu_memory_mb": 6000,
         "command": ["python", "train.py", "--resume", "checkpoint.pt"],
         "files": {"train.py": "import decoder"},
-        "workspace_files": [{"path": "decoder.py", "sha256": "c" * 64}],
-        "input_exports": ["export-pinned"],
+        "workspace_files": [
+            {
+                "path": "research/decoder.py",
+                "destination": "decoder.py",
+                "sha256": hashlib.sha256(decoder.read_bytes()).hexdigest(),
+            }
+        ],
+        "input_exports": ["export-" + "c" * 32],
     }
     calls = []
     status = {"job_id": JOB_ID, "status": "completed", "exit_code": 0}

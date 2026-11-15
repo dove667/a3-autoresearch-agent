@@ -38,6 +38,15 @@ def pin_run(run: Path, commit: str) -> None:
     write_atomic(workspace_path(run, MARKER), json.dumps({"commit": commit}).encode())
 
 
+def replace_run_pin(run: Path, previous: str, commit: str) -> None:
+    """Advance a published pin only through the offline release transaction."""
+    if run_commit(run) != previous:
+        raise ValueError("Published Harness pin changed during release")
+    if not re.fullmatch(r"[a-f0-9]{40}", commit):
+        raise ValueError("Invalid published Harness release commit")
+    write_atomic(workspace_path(run, MARKER), json.dumps({"commit": commit}).encode())
+
+
 def research_workspace(run: Path, session: str) -> Path:
     if not re.fullmatch(r"[a-zA-Z0-9_-]{1,100}", session):
         raise ValueError("Invalid research workspace identity")
@@ -48,6 +57,15 @@ def pinned_resume(workspace: Path) -> tuple[list[str], dict[str, str]]:
     return COMMAND.copy(), {
         "checkpoint.json": workspace_path(workspace, "checkpoint.json").read_text()
     }
+
+
+def native_source(root: Path, commit: str) -> Path:
+    """Require the published path contract before any native run is created."""
+    from a3_research_agent.host.sessions.processes import ProcessRuntime
+
+    source = published_source(root, commit)
+    ProcessRuntime.require_native_source(source)
+    return source
 
 
 def published_source(root: Path, commit: str) -> Path:

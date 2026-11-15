@@ -2,7 +2,6 @@
 
 import pytest
 from fastapi.testclient import TestClient
-from host_fixtures import host_create_session
 
 from a3_research_agent.harness.context import compaction
 from a3_research_agent.harness.context import manager as cm
@@ -147,13 +146,7 @@ def test_env_template_publishes_binary_aligned_context_budget():
     assert budget["target_tokens"] == 32 * 1024
 
 
-def test_worker_receives_its_own_smaller_admission_window(tmp_path):
-    class Backend:
-        def create(self, owner, command, files, token):
-            self.token = token
-            return {"session_id": owner, "status": "created"}
-
-    backend = Backend()
+def test_other_identity_receives_its_own_smaller_admission_window(tmp_path):
     budget = settings(
         A3_WORKER_CONTEXT_TOKENS="300000",
         A3_CONTEXT_TRIGGER_TOKENS="200000",
@@ -162,22 +155,23 @@ def test_worker_receives_its_own_smaller_admission_window(tmp_path):
     client = TestClient(
         create_app(
             model_name="fake",
-            sessions={"token": "main"},
+            sessions={"token": "observer"},
             main_owner="main",
-            sandbox=backend,
             remote_call=lambda *a: pytest.fail("remote called"),
             forward_model=lambda **kw: pytest.fail("model called"),
             usage_log=tmp_path / "usage.jsonl",
             context_budget=budget,
+            restored_state={
+                "sessions": {"token": "observer"},
+                "root_owners": [],
+                "session_records": {},
+                "scope_parents": {},
+                "jobs": {},
+                "main_owner": "main",
+            },
         )
     )
-    result = host_create_session(
-        client,
-        headers={"Authorization": "Bearer token"},
-        json={"command": ["true"], "files": {"entry.py": "pass"}},
-    )
-    assert result.status_code == 200
-    result = client.get("/context/config", headers={"Authorization": "Bearer " + backend.token})
+    result = client.get("/context/config", headers={"Authorization": "Bearer token"})
     assert result.status_code == 200
     assert result.json()["decision_input_tokens"] == 261808
     assert result.json()["trigger_tokens"] == 200000

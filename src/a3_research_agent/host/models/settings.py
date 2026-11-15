@@ -1,7 +1,10 @@
 """Optional operator-owned inference settings, shared by every model request."""
 
+import hashlib
 from collections.abc import Mapping
 from copy import deepcopy
+
+from .context import read_context_budget
 
 
 def validate_model_request_options(options: dict | None) -> dict:
@@ -71,3 +74,40 @@ def read_role_models(environment: Mapping[str, str]) -> dict:
                 options["reasoning"] = {"effort": effort}
             routes[role] = {"model_name": name, "request_options": options}
     return validate_role_models(routes)
+
+
+def upstream_identity(environment: Mapping[str, str]) -> dict:
+    endpoint = environment.get("A3_UPSTREAM_RESPONSES_BASE_URL", "").rstrip("/")
+    model = environment.get("A3_UPSTREAM_RESPONSES_MODEL", "") if endpoint else None
+    if endpoint and not model:
+        raise ValueError("The configured Responses upstream requires its model identifier")
+    return {
+        "upstream_model": model,
+        "upstream_endpoint_sha256": hashlib.sha256(endpoint.encode()).hexdigest()
+        if endpoint
+        else None,
+    }
+
+
+def model_settings(environment: Mapping[str, str]) -> dict:
+    for name in ("MODEL_NAME",):
+        if not isinstance(environment.get(name), str) or not environment[name].strip():
+            raise ValueError(f"Release requires the deployment setting {name}")
+    return {
+        "model": environment["MODEL_NAME"],
+        "model_request_options": read_model_request_options(environment),
+        "model_roles": read_role_models(environment),
+        "context_budget": read_context_budget(environment),
+        **upstream_identity(environment),
+    }
+
+
+def require_release_model(state: dict, environment: Mapping[str, str]) -> None:
+    """Keep every released inference setting fixed until an offline apply-release."""
+    proposed = model_settings(environment)
+    recorded = {name: state[name] for name in proposed if name in state}
+    if recorded != proposed:
+        raise ValueError(
+            "Resume requires released model settings, including the released upstream model; "
+            "use offline apply-release to change them"
+        )

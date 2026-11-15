@@ -2,14 +2,15 @@
 
 import base64
 import json
-import re
 import time
 import uuid
 from collections import defaultdict
 from pathlib import PurePosixPath
 from typing import Annotated, Literal
 
-from fastapi import Header, HTTPException
+from fastapi import Header, HTTPException, Query
+
+from a3_research_agent.execution.controller.files import MAX_FILE_BYTES
 
 from .evaluation import EvaluationComparison, evaluation_diagnostics
 from .job_observation import TERMINAL_STATES, compact_status
@@ -23,19 +24,16 @@ from .schemas import (
 
 class JobRoutes:
     def research_scopes(self, actor):
-        """Only the adopted main inherits the recorded, retained predecessor line."""
-        scopes = [actor]
-        if self.evolution and actor == self.evolution.main_owner:
-            for transition in reversed(self.evolution.transitions):
-                if transition["to"] == scopes[-1] and transition["from"] not in scopes:
-                    scopes.append(transition["from"])
-        return scopes
+        """Mutations retain the submitting session identity."""
+        return [actor]
 
     def research_read_scopes(self, actor):
         with self.session_lock:
             scopes = self.research_scopes(actor)
-            if actor in self.root_owners or actor in self.children:
-                scopes.extend(sorted((self.root_owners | self.children.keys()) - set(scopes)))
+            if actor in self.root_owners or actor in self.session_records:
+                scopes.extend(
+                    sorted((self.root_owners | self.session_records.keys()) - set(scopes))
+                )
             return scopes
 
     def project_read_scopes(self, actor):
@@ -53,22 +51,7 @@ class JobRoutes:
             if not shared_read or not self.project_scope_runs:
                 return actor
             scope = self.project_job_scopes.get(job_id)
-        if scope:
-            return scope
-        if not re.fullmatch(r"[a-f0-9]{32}", job_id):
-            return actor
-        # Some old Host checkpoints missed jobs accepted by the Controller.
-        for scope in self.project_scope_runs:
-            try:
-                self.remote("jobs-status", {"experiment_id": scope, "job_ids": [job_id]})
-            except HTTPException as error:
-                if error.status_code != 403:
-                    raise
-                continue
-            with self.session_lock:
-                self.project_job_scopes[job_id] = scope
-            return scope
-        return actor
+        return scope or actor
 
     def accessible_export(self, actor, export_id):
         """Prepare read-only mounts from research identities in this project."""
@@ -106,27 +89,18 @@ class JobRoutes:
         with self.session_lock:
             self.accepting_resources()
             experiment = self.owner(authorization)
-            if self.evolution:
-                if experiment == self.evolution.main_owner and self.evolution.pending():
-                    raise HTTPException(
-                        409, "Predecessor waits for the single successor trial before new research"
-                    )
-                retired = any(item["from"] == experiment for item in self.evolution.transitions)
-                if retired:
-                    raise HTTPException(403, "Retired main cannot submit new research")
             request = body.model_dump(exclude_none=True, exclude={"workspace_files", "evaluation"})
             if body.retry_on_gpu_contention:
                 request.pop("retry_on_gpu_contention")
             source_files = []
             if body.workspace_files:
                 self.own_session(authorization)
-                if self.sandbox is None:
-                    raise HTTPException(503, "Candidate execution is not configured")
+                if self.session_runtime is None:
+                    raise HTTPException(503, "Native research execution is not configured")
                 attached, source_files = self.deployment_call(
-                    self.sandbox.read_workspace_files,
+                    self.session_runtime.read_workspace_files,
                     experiment,
                     [x.model_dump() for x in body.workspace_files],
-                    True,
                 )
                 files = dict(body.files)
                 for reference, receipt in zip(body.workspace_files, source_files, strict=True):
@@ -273,18 +247,11 @@ class JobRoutes:
         return self.remote("export-manifest", {"experiment_id": scope, "export_id": export_id})
 
     def require_export_recipient(self, actor, session_id):
-        if self.evolution is None:
-            raise HTTPException(403, "Only the current main Agent can share exports")
-        # A trial can return its bounded validation assets to the predecessor.
-        if (
-            self.evolution.trials.get(actor, {}).get("status") == "testing"
-            and session_id == self.evolution.main_owner
-        ):
-            return
-        self.deployment_call(self.evolution.require_main, actor)
-        record = self.children.get(session_id)
-        if not record or record["parent"] != actor or record["closed"]:
-            raise HTTPException(403, "Export recipient must be the active linear successor")
+        if actor != self.main_owner:
+            raise HTTPException(403, "Only the main session can share exports")
+        record = self.session_records.get(session_id)
+        if not record or record["closed"]:
+            raise HTTPException(403, "Export recipient must be an active session in this run")
 
     def grant_export(
         self,
@@ -307,9 +274,6 @@ class JobRoutes:
     ):
         with self.session_lock:
             actor = self.owner(authorization)
-            if self.evolution is None:
-                raise HTTPException(403, "Only the current main Agent revokes worker access")
-            self.deployment_call(self.evolution.require_main, actor)
             self.require_export_recipient(actor, session_id)
             _, record = self.accessible_export(actor, export_id)
             if record.get("owner") in self.project_scope_runs:
@@ -521,8 +485,17 @@ class JobRoutes:
         path: str,
         authorization: Annotated[str | None, Header()] = None,
         area: Literal["workspace", "outputs"] = "workspace",
+        offset: Annotated[str | None, Query(pattern=r"^[0-9]{1,20}$")] = None,
+        limit: Annotated[str | None, Query(pattern=r"^[0-9]{1,4}$")] = None,
+        max_bytes: Annotated[str | None, Query(pattern=r"^[0-9]{1,20}$")] = None,
     ):
         actor = self.owner(authorization)
+        if (offset is None) != (limit is None):
+            raise HTTPException(422, "Artifact paging requires both offset and limit")
+        if limit is not None and not 1 <= int(limit) <= 8000:
+            raise HTTPException(422, "Artifact page limit must be in 1..8000 characters")
+        if max_bytes is not None and not 1 <= int(max_bytes) <= MAX_FILE_BYTES:
+            raise HTTPException(422, "Artifact byte ceiling must narrow the configured limit")
         payload = {
             "experiment_id": self.job_owner(actor, job_id, shared_read=True),
             "job_id": job_id,
@@ -530,12 +503,20 @@ class JobRoutes:
         }
         if area != "workspace":
             payload["area"] = area
+        if offset is not None:
+            payload.update(offset=int(offset), limit=int(limit))
+        if max_bytes is not None:
+            payload["max_bytes"] = int(max_bytes)
         try:
             result = self.remote("artifact", payload)
             if area == "outputs" and result.get("area") != "outputs":
                 raise HTTPException(
                     502,
                     "Controller did not confirm outputs area; verify matching deployment versions",
+                )
+            if offset is not None and result.get("encoding") not in {"utf-8", "binary"}:
+                raise HTTPException(
+                    502, "Controller does not support artifact pages; update its deployment"
                 )
             return result
         except HTTPException as error:
@@ -545,7 +526,7 @@ class JobRoutes:
                     {
                         "code": "artifact_not_found",
                         "area": area,
-                        "hint": "Not found in the selected area. workspace is this job's /workspace; outputs is this owner's shared /outputs within the recorded run. Use a relative path and select area explicitly. No fallback or cross-owner access occurs; a missing file is not a reason to rerun the job.",
+                        "hint": "Not found in the selected area. workspace is this job's input and source directory; outputs is this owner's shared result directory within the recorded run. Use a relative path and select area explicitly. No fallback or cross-owner access occurs; a missing file is not a reason to rerun the job.",
                     },
                 ) from None
             raise

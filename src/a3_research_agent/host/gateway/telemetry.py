@@ -14,14 +14,14 @@ class TelemetryRoutes:
     def read_telemetry(
         self,
         authorization: Annotated[str | None, Header()] = None,
-        scope: Literal["self", "descendants", "run"] = "self",
+        scope: Literal["self", "run"] = "self",
     ):
         with self.session_lock:
             actor = self.owner(authorization)
             allowed = (
                 set(self.research_read_scopes(actor)).__contains__
                 if scope == "run"
-                else self.telemetry_scope(actor, scope == "descendants")
+                else lambda owner: owner == actor
             )
             return self.telemetry.snapshot(allowed)
 
@@ -42,7 +42,7 @@ class TelemetryRoutes:
         # wait for a model. Updates racing this read remain visible next poll.
         with self.session_lock:
             actor = self.owner(authorization)
-            current_main = self.evolution.main_owner if self.evolution else self.main_owner
+            current_main = self.main_owner
         with self.input_versions.lock if self.input_versions else nullcontext():
             manifest = dict(self.input_versions.manifest) if self.input_versions else {}
         with self.human_feedback.lock if self.human_feedback else nullcontext():

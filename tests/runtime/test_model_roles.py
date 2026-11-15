@@ -6,7 +6,7 @@ from a3_research_agent.host.gateway.app import create_app
 from a3_research_agent.host.inputs.feedback import HumanFeedback
 
 
-def test_narrow_summary_does_not_repeat_phase_or_full_feedback(tmp_path):
+def test_narrow_summary_does_not_repeat_task_or_full_feedback(tmp_path):
     calls = []
     feedback = HumanFeedback(tmp_path)
     feedback.register_content(b"operator-specific-source-note", "main")
@@ -15,7 +15,7 @@ def test_narrow_summary_does_not_repeat_phase_or_full_feedback(tmp_path):
             model_name="configured/main",
             sessions={"token": "main"},
             main_owner="main",
-            phase_instructions="LONG-PHASE-INSTRUCTIONS",
+            task_instructions="LONG-TASK-INSTRUCTIONS",
             human_feedback=feedback,
             usage_log=tmp_path / "usage.jsonl",
             forward_model=lambda **kw: calls.append(kw) or {"status": "completed", "output": []},
@@ -31,7 +31,7 @@ def test_narrow_summary_does_not_repeat_phase_or_full_feedback(tmp_path):
         },
     )
     assert response.status_code == 200
-    assert "LONG-PHASE-INSTRUCTIONS" not in json.dumps(calls)
+    assert "LONG-TASK-INSTRUCTIONS" not in json.dumps(calls)
     assert "operator-specific-source-note" not in json.dumps(calls)
     assert "tools" not in calls[0]
     assert response.json()["a3_summary"]["feedback_refs"][0]["feedback_id"] == "feedback-0001"
@@ -84,25 +84,21 @@ def test_client_cannot_expand_summary_scope(tmp_path):
     assert calls == []
 
 
-def test_host_roles_keep_main_and_behavioral_trial_on_primary(tmp_path):
+def test_host_routes_registered_main_and_auxiliary_identity(tmp_path):
     calls = []
     app = create_app(
         model_name="fixed/main",
-        sessions={"m": "main", "w": "worker", "t": "trial"},
+        sessions={"m": "main", "w": "worker"},
         main_owner="main",
         usage_log=tmp_path / "usage.jsonl",
         remote_call=lambda *args: {},
         restored_state={
-            "sessions": {"m": "main", "w": "worker", "t": "trial"},
+            "sessions": {"m": "main", "w": "worker"},
             "root_owners": ["main"],
-            "children": {},
+            "session_records": {},
             "scope_parents": {},
             "jobs": {},
-            "evolution": {
-                "main_owner": "main",
-                "trials": {"trial": {"status": "testing"}},
-                "transitions": [],
-            },
+            "main_owner": "main",
         },
         forward_model=lambda **kw: calls.append(kw) or {"output": []},
         role_models={
@@ -116,9 +112,8 @@ def test_host_roles_keep_main_and_behavioral_trial_on_primary(tmp_path):
             },
         },
     )
-    # The trial classification comes from restored Host evolution metadata.
     client = TestClient(app)
-    for token in ["m", "w", "t"]:
+    for token in ["m", "w"]:
         assert (
             client.post(
                 "/v1/responses",
@@ -127,51 +122,10 @@ def test_host_roles_keep_main_and_behavioral_trial_on_primary(tmp_path):
             ).status_code
             == 200
         )
-    assert [x["model"] for x in calls] == ["fixed/main", "fixed/helper", "fixed/main"]
+    assert [x["model"] for x in calls] == ["fixed/main", "fixed/helper"]
     assert calls[1]["reasoning"] == {"effort": "medium"}
     logs = [json.loads(x) for x in (tmp_path / "usage.jsonl").read_text().splitlines()]
-    assert [x["model_role"] for x in logs] == ["main", "worker", "candidate"]
-
-
-def test_linear_trial_uses_primary_and_full_phase(tmp_path):
-    calls = []
-    restored = {
-        "sessions": {"m": "main", "v": "validator"},
-        "root_owners": ["main"],
-        "children": {
-            "validator": {
-                "owner": "validator",
-                "parent": "main",
-                "token": "v",
-                "closed": False,
-                "purpose": "successor",
-            }
-        },
-        "scope_parents": {"validator": "main"},
-        "jobs": {},
-        "evolution": {
-            "main_owner": "main",
-            "trials": {"validator": {"status": "testing"}},
-            "transitions": [],
-        },
-    }
-    client = TestClient(
-        create_app(
-            model_name="fixed/main",
-            sessions={},
-            main_owner="main",
-            restored_state=restored,
-            phase_instructions="authoritative phase contract",
-            usage_log=tmp_path / "usage.jsonl",
-            remote_call=lambda *args: {},
-            forward_model=lambda **kw: calls.append(kw) or {"output": []},
-            role_models={"worker": {"model_name": "fixed/helper", "request_options": {}}},
-        )
-    )
-    result = client.post("/v1/responses", headers={"Authorization": "Bearer v"}, json={"input": []})
-    assert result.status_code == 200
-    assert calls[0]["model"] == "fixed/main"
-    assert "authoritative phase contract" in calls[0]["instructions"]
+    assert [x["model_role"] for x in logs] == ["main", "worker"]
 
 
 def test_null_instructions_are_normalized_before_provider_and_audit(tmp_path):
@@ -208,7 +162,7 @@ def test_summary_uses_fixed_instructions_and_rejects_old_retry_fields(tmp_path):
             model_name="fixed/main",
             sessions={"token": "main"},
             main_owner="main",
-            phase_instructions="PRIVATE-PHASE-BODY",
+            task_instructions="PRIVATE-TASK-BODY",
             usage_log=tmp_path / "usage.jsonl",
             remote_call=lambda *args: {},
             forward_model=lambda **kw: calls.append(kw) or {"status": "completed", "output": []},
@@ -226,8 +180,8 @@ def test_summary_uses_fixed_instructions_and_rejects_old_retry_fields(tmp_path):
     )
     assert response.status_code == 200
     assert calls[0]["model"] == "fixed/summary"
-    assert "6000" in calls[0]["instructions"]
-    assert "PRIVATE-PHASE-BODY" not in str(calls)
+    assert calls[0]["max_output_tokens"] == 32000
+    assert "PRIVATE-TASK-BODY" not in str(calls)
     for obsolete in ({"compact_retry": True}, {"previous": ""}, {"fragment": "data"}):
         response = client.post(
             "/v1/summary",

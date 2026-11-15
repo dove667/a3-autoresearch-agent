@@ -7,11 +7,8 @@ import re
 from pathlib import Path
 
 from a3_research_agent.host.inputs.feedback import HumanFeedback
-from a3_research_agent.host.inputs.versions import input_sources, write_atomic
-from a3_research_agent.host.published_harness import COMMAND, published_source
-from a3_research_agent.host.runs.directories import create_run_directory
-from a3_research_agent.host.runs.state import RunStateStore
-from a3_research_agent.host.sessions.packages import load_harness_package
+from a3_research_agent.host.inputs.versions import InputVersions, write_atomic
+from a3_research_agent.host.published_harness import COMMAND, native_source, project_for_run
 from a3_research_agent.workspace.paths import workspace_path
 
 
@@ -20,32 +17,25 @@ def encoded(data):
 
 
 def prepare_release(
-    root: Path, package: Path | None, handoff: Path, *, commit: str | None = None
+    root: Path,
+    handoff: Path,
+    *,
+    commit: str,
+    run: Path,
 ) -> dict:
-    """Materialize the exact Python source and reviewed research note for approval."""
-    if commit is not None:
-        published_source(root, commit)
-        command, files = COMMAND, {}
-    else:
-        command, files = load_harness_package(package)
-        if not files or any(Path(name).suffix != ".py" for name in files):
-            raise ValueError("Release manifests may contain only Python source")
-        for name, source in files.items():
-            if Path(name).as_posix() != name or any(
-                part.startswith(".") for part in Path(name).parts
-            ):
-                raise ValueError(f"Invalid release source path: {name}")
-            compile(source, name, "exec")
+    """Freeze a published source pin, current task inputs, and reviewed release note."""
+    native_source(root, commit)
     note = HumanFeedback.validate_content(handoff.read_bytes())
     if not re.fullmatch(r"\s*## 已核对结论\n\s*\S[\s\S]*?\n## 待办\n\s*\S[\s\S]*", note):
         raise ValueError("Handoff must contain nonempty 已核对结论 and 待办 sections")
-    manifest = {"command": command, "files": sorted([*files, "checkpoint.json"])}
-    if commit is not None:
-        manifest["harness_commit"] = commit
-    package_files = {**files, "checkpoint.json": "[]", "run.json": encoded(manifest).decode()}
-    inputs = {
-        name: (root / source).read_text() for name, source in input_sources("phase-two").items()
+    manifest = {
+        "version": 1,
+        "command": COMMAND.copy(),
+        "files": ["checkpoint.json"],
+        "harness_commit": commit,
     }
+    package_files = {"checkpoint.json": "[]", "run.json": encoded(manifest).decode()}
+    inputs = InputVersions(root, run).prepare_shared_update()["contents"]
     inputs["initial-feedback.md"] = (
         "# 夜间研究交接\n\nVersion: 0.1.0\n\n"
         "以下是经操作者核对的研究状态。工具、接口和权限以当前部署为准。\n\n" + note
@@ -55,12 +45,8 @@ def prepare_release(
 
 
 def night_state_directory(anchor: Path) -> Path:
-    """Keep migrated scheduler state independent of the anchor's old workspace."""
-    if anchor.parent.name == "rsi" and anchor.parent.parent.name == "artifacts":
-        shared = workspace_path(anchor.parent.parent, f"night-window/{anchor.name}")
-        if shared.is_dir():
-            return shared
-    return anchor / ".host"
+    """Keep scheduler state separate from the persistent research workspace."""
+    return anchor.parent.parent / "night-window" / anchor.name
 
 
 def publish_release(anchor: Path, proposal: dict, confirm: str) -> None:
@@ -69,6 +55,8 @@ def publish_release(anchor: Path, proposal: dict, confirm: str) -> None:
     state = night_state_directory(anchor)
     directory = state / "night-releases" / confirm
     contents = {name: proposal[name] for name in ("package", "inputs")}
+    if hashlib.sha256(encoded(contents)).hexdigest() != confirm:
+        raise ValueError("Release contents changed after preview")
     for kind, files in contents.items():
         for name, text in files.items():
             write_atomic(directory / kind / name, text.encode())
@@ -94,7 +82,7 @@ def read_json(path: Path, default: dict) -> dict:
 
 
 class NightSchedule:
-    """Pin a new run before launching so a restart cannot fork the release twice."""
+    """Resume published releases in the same research workspace."""
 
     def __init__(self, anchor: Path, resume_command: list[str]):
         self.anchor = anchor
@@ -107,31 +95,11 @@ class NightSchedule:
         state = read_json(self.state, {"current": self.anchor.name})
         return workspace_path(self.anchor.parent, state["current"])
 
-    def record_started_release(self, run: Path) -> None:
-        state = read_json(self.state, {})
-        if state.get("target") == run.name:
-            write_atomic(
-                self.state, encoded({"current": run.name, "release": state["target_release"]})
-            )
-
     def select(self) -> tuple[list[str], Path, dict[str, str]]:
         state = read_json(self.state, {"current": self.anchor.name})
         current = workspace_path(self.anchor.parent, state["current"])
-        target_name = state.get("target")
-        if target_name:
-            target = workspace_path(self.anchor.parent, target_name)
-            if (target / "startup.json").is_file():
-                if RunStateStore(target).load().get("status") != "suspended":
-                    raise RuntimeError(f"Released run requires recovery: {target}")
-                state = {"current": target.name, "release": state["target_release"]}
-                self.record_started_release(target)
-                current = target
-                target_name = None
-            elif not target.is_dir() or any(target.iterdir()):
-                raise RuntimeError(f"Interrupted release requires inspection: {target}")
-
         release = read_json(self.directory / "night-release.json", {}).get("digest")
-        if not target_name and (not release or release == state.get("release")):
+        if not release or release == state.get("release"):
             command = (
                 self.command[: self.resume_index + 2]
                 if state.get("release")
@@ -140,25 +108,19 @@ class NightSchedule:
             command[self.resume_index + 1] = str(current)
             return command, current, {}
 
-        digest = state["target_release"] if target_name else release
+        digest = release
         directory = self.directory / "night-releases" / digest
         self.verify(directory, digest)
-        if not target_name:
-            if RunStateStore(current).load().get("status") != "suspended":
-                raise RuntimeError(f"Pause the current run before starting the release: {current}")
-            target = create_run_directory(self.anchor.parent)
-            state.update(target=target.name, target_release=digest)
-            write_atomic(self.state, encoded(state))
-        command = [
-            *self.command[: self.resume_index],
-            "--phase",
-            "phase-two",
-            "--run-harness",
-            str(directory / "package"),
-            "--agent-inputs-dir",
-            str(directory / "inputs"),
-        ]
-        return command, target, {"A3_NIGHT_WINDOW_TARGET": str(target)}
+        package = json.loads((directory / "package/run.json").read_text())
+        if not package.get("harness_commit"):
+            raise ValueError("Release requires a published Harness commit")
+        from a3_research_agent.host.releases import apply_release
+
+        apply_release(current, directory, digest)
+        write_atomic(self.state, encoded({"current": current.name, "release": digest}))
+        command = self.command[: self.resume_index + 2]
+        command[self.resume_index + 1] = str(current)
+        return command, current, {}
 
     @staticmethod
     def verify(directory: Path, digest: str) -> None:
@@ -172,6 +134,11 @@ class NightSchedule:
         if hashlib.sha256(encoded(contents)).hexdigest() != digest:
             raise ValueError("Published release content no longer matches its digest")
         for kind, entries in contents.items():
+            if any(
+                hashlib.sha256(text.encode()).hexdigest() != manifest[kind][name]
+                for name, text in entries.items()
+            ):
+                raise ValueError("Published release file differs from its manifest hash")
             files = {
                 p.relative_to(directory / kind).as_posix()
                 for p in (directory / kind).rglob("*")
@@ -188,21 +155,31 @@ def main() -> None:
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("anchor", type=Path)
-    source = parser.add_mutually_exclusive_group(required=True)
-    source.add_argument("--package", type=Path)
-    source.add_argument("--commit")
+    parser.add_argument("--commit", required=True)
     parser.add_argument("--handoff", type=Path, required=True)
     parser.add_argument("--confirm")
     args = parser.parse_args()
-    root = Path(__file__).resolve().parents[3]
     anchor = args.anchor.resolve()
+    try:
+        root = project_for_run(anchor)
+    except ValueError as error:
+        parser.error(str(error))
     if anchor.parent != root / "artifacts/rsi" or not (
         (anchor / "startup.json").is_file()
         or (night_state_directory(anchor) / "night-schedule.json").is_file()
     ):
         parser.error("Select an existing night-window anchor under artifacts/rsi")
     try:
-        proposal = prepare_release(root, args.package, args.handoff, commit=args.commit)
+        state = read_json(
+            night_state_directory(anchor) / "night-schedule.json", {"current": anchor.name}
+        )
+        current = workspace_path(anchor.parent, state["current"])
+        proposal = prepare_release(
+            root,
+            args.handoff,
+            commit=args.commit,
+            run=current,
+        )
     except (OSError, ValueError, SyntaxError) as error:
         parser.error(str(error))
     print("Command:", json.loads(proposal["package"]["run.json"])["command"])

@@ -1,7 +1,6 @@
 import json
 
 from a3_research_agent.harness import agent
-from a3_research_agent.host.runs.continuation import HarnessStart, prepare_fresh_task
 
 
 def call(name, **arguments):
@@ -28,7 +27,6 @@ def test_plan_tracks_dependencies_evidence_and_job_results(tmp_path, monkeypatch
         ],
     )
     assert result["revision"] == 1 and result["ready"] == ["pilot", "audit"]
-    assert call("wait", seconds=60)["ready"] == ["pilot", "audit"]
     assert (
         call("plan", action="update", revision=1, steps=[{"id": "pilot", "status": "done"}])[
             "error"
@@ -77,33 +75,12 @@ def test_plan_tracks_dependencies_evidence_and_job_results(tmp_path, monkeypatch
         ],
     )
     assert result["ready"] == ["collect", "audit"]
-    assert agent.operational_message()["content"].find("1000 unique eligible") >= 0
+    for variable in ("A3_WORKSPACE", "A3_INPUT_ROOT", "A3_REFERENCE_ROOT"):
+        monkeypatch.setenv(variable, str(tmp_path))
+    view = json.loads(agent.operational_message()["content"])
+    assert view["runtime_paths"]["inputs"] == str(tmp_path)
+    assert "1000 unique eligible" in json.dumps(view)
     assert list((tmp_path / "context-history").glob("plan-revision-*"))
-
-
-def test_fresh_task_archives_old_plan_and_resume_retains_it(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
-    call(
-        "plan",
-        action="update",
-        revision=0,
-        goal="old research",
-        steps=[
-            {"id": "old", "task": "old pending", "criterion": "old evidence"},
-        ],
-    )
-    source = HarnessStart(
-        ["python", "agent.py"],
-        {
-            "checkpoint.json": "[]",
-            "research-plan.json": (tmp_path / "research-plan.json").read_text(),
-        },
-    )
-    fresh, metadata = prepare_fresh_task(source, "new task")
-    assert call("plan", action="show")["goal"] == "old research"
-    assert "research-plan.json" not in fresh.files
-    archive = metadata["operational_task_archives"]["research-plan.json"]
-    assert fresh.files[archive] == source.files["research-plan.json"]
 
 
 def test_memory_search_preserves_sources_and_superseded_notes(tmp_path, monkeypatch):

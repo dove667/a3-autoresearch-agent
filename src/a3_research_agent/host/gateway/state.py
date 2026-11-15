@@ -9,12 +9,12 @@ from contextlib import asynccontextmanager, nullcontext
 
 from fastapi import HTTPException
 
-from a3_research_agent.host.sessions.containers import (
+from a3_research_agent.host.sessions.workspace import (
     DEFAULT_ARTIFACT_PAGE_BYTES,
-    MAX_ACTIVE_CANDIDATES,
+    MAX_ACTIVE_SESSIONS,
     MAX_ARTIFACT_BYTES,
     ArtifactTooLargeError,
-    CandidateCapacityError,
+    SessionCapacityError,
 )
 from a3_research_agent.host.telemetry.diagnostics import CURRENT_REQUEST
 
@@ -28,16 +28,16 @@ class GatewayState:
         def reap_workers():
             while not stopped.wait(2):
                 try:
-                    self.sandbox.reap_exited()
-                except Exception as error:  # noqa: BLE001 — retry after Host storage/daemon failures
+                    self.session_runtime.reap_exited()
+                except Exception as error:  # noqa: BLE001 — retry after Host storage failures
                     logging.getLogger(__name__).error(
-                        "Worker container cleanup will retry (%s)", type(error).__name__
+                        "Research process cleanup will retry (%s)", type(error).__name__
                     )
 
         reaper = None
-        if self.sandbox is not None and hasattr(self.sandbox, "reap_exited"):
+        if self.session_runtime is not None and hasattr(self.session_runtime, "reap_exited"):
             reaper = threading.Thread(
-                target=reap_workers, name="worker-container-reaper", daemon=True
+                target=reap_workers, name="research-process-reaper", daemon=True
             )
             reaper.start()
         budget_monitor = None
@@ -76,54 +76,29 @@ class GatewayState:
                         "telemetry_observations": dict(self.telemetry.observations),
                         "sessions": dict(self.sessions),
                         "root_owners": sorted(self.root_owners),
-                        "children": self.children,
-                        "scope_parents": self.scope_parents,
+                        "session_records": self.session_records,
                         "jobs": {key: sorted(value) for key, value in self.jobs.items()},
                         "job_evaluations": self.job_evaluations,
-                        "evolution": self.evolution.snapshot() if self.evolution else None,
+                        "main_owner": self.main_owner,
                         "fixtures": self.fixtures.records if self.fixtures is not None else {},
                     }
                 )
 
     def result_location(self):
         with self.session_lock:
-            actor = self.evolution.main_owner if self.evolution else self.main_owner
-            record = self.children.get(actor, {})
-            return actor, record.get("version_id")
+            return self.main_owner
 
     def session_event(self, event, session_id):
-        record = self.children[session_id]
+        record = self.session_records[session_id]
         entry = {
             "event": event,
             "session_id": session_id,
             "parent": record["parent"],
             "time": time.time(),
-            "version_id": record.get("version_id"),
         }
-        if record.get("assembly") is not None:
-            entry["assembly"] = record["assembly"]
         with self.log_lock, self.usage_log.with_name("session-events.jsonl").open("a") as stream:
             stream.write(json.dumps(entry) + "\n")
         self.save_checkpoint()
-
-    def descendants(self, session_id):
-        by_parent: dict[str, list[str]] = {}
-        for candidate, record in self.children.items():
-            by_parent.setdefault(record["parent"], []).append(candidate)
-        branch, pending = [], [session_id]
-        while pending:
-            candidate = pending.pop()
-            branch.append(candidate)
-            pending.extend(by_parent.get(self.children[candidate]["owner"], []))
-        return branch
-
-    def manages(self, experiment, record):
-        ancestor = record["parent"]
-        while ancestor:
-            if ancestor == experiment:
-                return True
-            ancestor = self.scope_parents.get(ancestor)
-        return False
 
     def accepting_resources(self):
         if self.app.state.closing:
@@ -148,34 +123,31 @@ class GatewayState:
                 errors.append("remote job " + job_id)
         return errors
 
-    def close_child(self, session_id):
+    def close_session(self, session_id):
         with self.session_lock:
-            errors = []
-            for candidate in reversed(self.descendants(session_id)):
-                record = self.children[candidate]
-                if record["closed"]:
-                    continue
-                self.sessions.pop(record["token"], None)
-                candidate_errors = self.close_owner_resources(record["owner"])
-                try:
-                    self.sandbox.cancel(record["owner"], candidate)
-                except Exception:  # noqa: BLE001 — retain ancestor management for retry
-                    candidate_errors.append("candidate " + candidate)
-                if not candidate_errors:
-                    record["closed"] = True
-                    self.session_event("closed", candidate)
-                errors.extend(candidate_errors)
+            record = self.session_records[session_id]
+            if record["closed"]:
+                return {"session_id": session_id, "status": "closed"}
+            self.sessions.pop(record["token"], None)
+            errors = self.close_owner_resources(record["owner"])
+            try:
+                self.session_runtime.cancel(record["owner"], session_id)
+            except Exception:  # noqa: BLE001 — retain failed cleanup for an explicit retry
+                errors.append("research process " + session_id)
             if errors:
+                self.save_checkpoint()
                 raise RuntimeError("Cleanup pending: " + ", ".join(errors))
+            record["closed"] = True
+            self.session_event("closed", session_id)
             return {"session_id": session_id, "status": "closed"}
 
     def close_resources(self):
         self.begin_shutdown()
         errors = []
         with self.session_lock:
-            for session_id in list(self.children):
+            for session_id in list(self.session_records):
                 try:
-                    self.close_child(session_id)
+                    self.close_session(session_id)
                 except RuntimeError:
                     errors.append(session_id)
             for experiment in self.root_owners:
@@ -194,25 +166,9 @@ class GatewayState:
                 return experiment
         raise HTTPException(401, "Invalid experiment token")
 
-    def telemetry_scope(self, actor, descendants=False):
-        def allowed(candidate):
-            if candidate == actor:
-                return True
-            if not descendants:
-                return False
-            seen = set()
-            while candidate in self.scope_parents and candidate not in seen:
-                seen.add(candidate)
-                candidate = self.scope_parents[candidate]
-                if candidate == actor:
-                    return True
-            return False
-
-        return allowed
-
-    def deployment_call(self, operation, *args):
+    def deployment_call(self, operation, *args, **kwargs):
         try:
-            return operation(*args)
+            return operation(*args, **kwargs)
         except PermissionError:
             raise HTTPException(403, "Resource is not accessible") from None
         except ArtifactTooLargeError as error:
@@ -227,39 +183,39 @@ class GatewayState:
             ) from None
         except ValueError:
             raise HTTPException(422, "Invalid workspace file or input size") from None
-        except CandidateCapacityError as error:
-            self.diagnostics.error("candidate_capacity", error)
+        except SessionCapacityError as error:
+            self.diagnostics.error("session_capacity", error)
             raise HTTPException(
                 409,
                 {
-                    "reason": "candidate_capacity",
-                    "max_active": MAX_ACTIVE_CANDIDATES,
+                    "reason": "session_capacity",
+                    "max_active": MAX_ACTIVE_SESSIONS,
                     "retry_after_seconds": 2,
                 },
             ) from None
-        except Exception as error:  # noqa: BLE001 — do not expose Docker or transport details
+        except Exception as error:  # noqa: BLE001 — do not expose process or transport details
             self.diagnostics.error("deployment", error)
             raise HTTPException(
                 409, "Deployment operation failed; check available resources"
             ) from None
 
-    def child(self, authorization, session_id):
-        record = self.children.get(session_id)
-        if record is None or not self.manages(self.owner(authorization), record):
-            raise HTTPException(403, "Candidate session is not accessible")
+    def managed_session(self, authorization, session_id):
+        record = self.session_records.get(session_id)
+        if record is None or self.owner(authorization) not in self.root_owners:
+            raise HTTPException(403, "Research session is not accessible")
         return record
 
     def own_session(self, authorization):
         experiment = self.owner(authorization)
-        record = self.children.get(experiment)
+        record = self.session_records.get(experiment)
         if record is None or record["owner"] != experiment:
-            raise HTTPException(403, "This identity has no candidate session")
+            raise HTTPException(403, "This identity has no research session")
         return record
 
     def readable_session(self, authorization, session_id):
         """Allow registered identities to read this run's research workspaces."""
         self.owner(authorization)
-        record = self.children.get(session_id)
+        record = self.session_records.get(session_id)
         if record is None:
             raise HTTPException(403, "Session is not registered in this run")
         return record

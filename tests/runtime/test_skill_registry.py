@@ -91,6 +91,29 @@ def test_unindexed_markdown_is_visible_for_registration(tmp_path):
     assert result["unindexed"] == ["skills/local/SKILL.md"]
 
 
+def test_multi_keyword_discovery_ranks_relevance_without_requiring_an_exact_phrase(tmp_path):
+    call(
+        tmp_path,
+        "save",
+        id="generic-training",
+        description="Model training",
+        content="x",
+        source="test",
+    )
+    call(
+        tmp_path,
+        "save",
+        id="act-data",
+        description="ACT training and data quality",
+        keywords=["DAgger", "evaluation"],
+        content="x",
+        source="test",
+    )
+    result = call(tmp_path, "list", query="ACT TRAINING DAgger audit")
+    assert [entry["id"] for entry in result["skills"]] == ["act-data", "generic-training"]
+    assert call(tmp_path, "list", query="astronomy telescope")["skills"] == []
+
+
 def test_concurrent_updates_keep_one_winner(tmp_path):
     from concurrent.futures import ThreadPoolExecutor
 

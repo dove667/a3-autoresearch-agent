@@ -5,6 +5,7 @@ import json
 import pathlib
 import re
 
+from a3_research_agent.harness import paths
 from a3_research_agent.harness.context import manager as context_manager
 
 
@@ -19,13 +20,13 @@ def relative_path(name):
     return path.as_posix()
 
 
-def install_input_skills(input_root=pathlib.Path("/run/input")):
+def install_input_skills(input_root=None):
     """Materialize selected deployed references, without injecting their whole text.
 
     The frozen manifest, not arbitrary catalog paths, defines eligible source bytes.
     Existing version directories remain immutable; publish the index only last.
     """
-    input_root = pathlib.Path(input_root)
+    input_root = pathlib.Path(input_root) if input_root is not None else paths.input_root()
     manifest_path = input_root / "input-manifest.json"
     if not manifest_path.is_file():
         return

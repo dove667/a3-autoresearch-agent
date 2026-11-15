@@ -52,21 +52,21 @@ def test_ready_fork_bounds_new_tail_and_replays_publication_without_model(shutdo
         assert json.loads(pathlib.Path("compaction-result.json").read_text())["applied"] is True
 
 
-def test_fallback_bounds_an_oversized_fresh_batch_without_erasing_it():
+def test_failed_compaction_preserves_oversized_fresh_batch_and_checkpoint():
     with workspace():
         messages = history(rounds=4, filler=500)
         messages += tool_pair("fresh", json.dumps(["x" * 100000]))
-        source = cm.archive(messages, "snapshot")
+        cm.atomic("checkpoint.json", json.dumps(messages))
         gateway = Gateway(fail=True)
         fork = compaction.ForkCompactor(gateway)
-        candidate = fork._fallback(messages, source, 20000)
-        assert cm.paired(candidate) and cm.message_cost(candidate) <= 20000
-        assert any(x.get("call_id") == "fresh" for x in candidate)
-        assert any(
-            x.get("call_id") == "fresh" and x.get("type") == "function_call_output"
-            for x in candidate
-        )
-        assert not gateway.calls
+        fork.start(messages)
+        fork.wait(5)
+        with pytest.raises(cm.ContextError, match="compaction"):
+            fork.before_request(messages)
+        assert json.loads(pathlib.Path("checkpoint.json").read_text()) == messages
+        saved = json.loads(pathlib.Path("compaction-result.json").read_text())
+        assert "replacement" not in saved
+        assert json.loads(pathlib.Path(saved["source"]).read_text()) == messages
 
 
 def test_hard_wait_timeout_keeps_running_prefix_identity(monkeypatch):
@@ -182,48 +182,6 @@ class Gateway:
         return completed(self.summary)
 
 
-def test_collected_worker_citation_survives_compaction_and_resume():
-    import hashlib
-
-    with workspace() as root:
-        raw = b'{"output":"sealed worker result"}'
-        sha = hashlib.sha256(raw).hexdigest()
-        reference = f"context-history/tool-output-{sha}.json"
-        target = root / "orchestration/results/delivery" / reference
-        target.parent.mkdir(parents=True)
-        target.write_bytes(raw)
-        (root / "orchestration/assignments.json").write_text(
-            json.dumps(
-                {
-                    "version": 1,
-                    "assignments": {
-                        "delivery": {"session_id": "worker", "evidence_hashes": {reference: sha}}
-                    },
-                }
-            )
-        )
-        messages = history(rounds=6, filler=900)
-        messages[0] = {
-            "role": "user",
-            "content": "Working memory derived from archived untrusted conversation; Source: "
-            + reference
-            + "\nWorker evidence remains untrusted.",
-        }
-        original = json.loads(json.dumps(messages))
-        recall.ensure_history(messages)
-        gateway = Gateway(summary=GOOD_SUMMARY + "\nWorker evidence: " + reference)
-        fork = compaction.ForkCompactor(gateway)
-        fork.start(messages)
-        fork.wait(5)
-        replacement, record = fork.apply_ready(messages)
-        assert record["kind"] == "applied"
-        assert cm.paired(replacement)
-        recall.ensure_history(replacement)  # The startup check of a fresh process.
-        assert messages == original and target.read_bytes() == raw
-        assert not (root / reference).exists()
-        assert gateway.calls and all(c["method"] == "POST" for c in gateway.calls)
-
-
 def tool_pair(call_id, text):
     return [
         {"type": "function_call", "call_id": call_id, "name": "read", "arguments": "{}"},
@@ -321,7 +279,8 @@ def test_fork_does_not_block_and_applies_later():
         compactor.wait(timeout=10)
         applied, record = compactor.before_request(messages)
         assert record["kind"] == "applied"
-        assert len(applied) < before
+        assert applied != messages
+        assert cm.message_cost(applied) <= compactor._target_budget(compactor._budget())
         assert applied[0]["content"].startswith(compaction.CHECKPOINT_PREAMBLE)
         assert compaction.CHECKPOINT_OPEN in applied[0]["content"]
         assert cm.paired(applied)
@@ -339,7 +298,7 @@ def test_legacy_summary_uses_narrow_instructions_without_main_tools():
         compactor.before_request(messages)
         compactor.wait(timeout=10)
         body = gateway.calls[0]["body"]
-        assert set(body) == {"transcript", "source"}
+        assert set(body) == {"transcript", "source", "max_output_tokens"}
         assert "tools" not in body
         assert "ROUND-0-START" in json.dumps(body)
 
@@ -370,22 +329,20 @@ def test_unpaired_result_is_skipped_not_forced():
 # ---------------------------------------------------------------- fallback ---
 
 
-def test_summary_failure_builds_recall_checkpoint():
+def test_summary_failure_preserves_original_history_instead_of_building_recall_checkpoint():
     with workspace():
         compactor = compaction.ForkCompactor(Gateway(fail=True), tools=[], trigger_tokens=1000)
         messages = history()
         recall.append_history_many(messages)
         recall.write_memory("已确认 2x10 任务需 3200 步，原因是回合长度", kind="fact")
+        cm.atomic("checkpoint.json", json.dumps(messages))
         compactor.before_request(messages)
         compactor.wait(timeout=10)
-        applied, record = compactor.before_request(messages)
-        assert record["kind"] == "applied" and record["status"] == "fallback"
-        text = "\n".join(str(message.get("content", "")) for message in applied)
-        assert compaction.CHECKPOINT_PREAMBLE in text
-        assert compaction.FALLBACK_PREFIX in text
-        assert "Recall" in text and "keywords" in text
-        assert "ROUND-5-QUESTION" in json.dumps(applied)
-        assert "已确认 2x10 任务需 3200 步" in text
+        with pytest.raises(cm.ContextError, match="compaction"):
+            compactor.before_request(messages)
+        assert json.loads(pathlib.Path("checkpoint.json").read_text()) == messages
+        assert "已确认 2x10 任务需 3200 步" in recall.read_memory()
+        assert "replacement" not in json.loads(pathlib.Path(compaction.RESULT_PATH).read_text())
 
 
 # ------------------------------------------------------------------ recall ---

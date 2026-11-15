@@ -1,9 +1,11 @@
-"""Wait for owned jobs, linear trial state and operator notifications."""
+"""Wait for owned jobs and operator notifications."""
 
 import json
 import pathlib
 import re
 import time
+
+from a3_research_agent.harness import paths as runtime_paths
 
 TERMINAL_STATES = frozenset({"completed", "failed", "cancelled"})
 
@@ -124,13 +126,18 @@ def wait_for_change(
     *,
     clock=time.monotonic,
     sleep=time.sleep,
-    manifest_path=pathlib.Path("/run/input/input-manifest.json"),
+    manifest_path=None,
     signals=None,
     cursor=None,
 ):
     """Wait without a model round trip; observations never acknowledge Host events."""
     if type(seconds) is not int or not 0 <= seconds <= 600:
         raise ValueError("Wait seconds must be an integer in 0..600")
+    manifest_path = (
+        pathlib.Path(manifest_path)
+        if manifest_path is not None
+        else runtime_paths.input_root() / "input-manifest.json"
+    )
     start = clock()
     deadline = start + seconds
     current_cursor = cursor

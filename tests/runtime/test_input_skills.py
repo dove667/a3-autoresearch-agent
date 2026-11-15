@@ -44,7 +44,8 @@ def test_installed_reference_is_readable_idempotent_and_preserves_agent_revision
             }
         )
     )
-    input_skills.install_input_skills(inputs)
+    monkeypatch.setenv("A3_INPUT_ROOT", str(inputs))
+    input_skills.install_input_skills()
     first = (tmp_path / "skills/index.json").read_bytes()
     input_skills.install_input_skills(inputs)
     assert (tmp_path / "skills/index.json").read_bytes() == first

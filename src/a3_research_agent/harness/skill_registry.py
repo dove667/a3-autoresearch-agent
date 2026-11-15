@@ -152,14 +152,19 @@ def operate(root, args):
             query = args.get("query", "")
             if not isinstance(query, str):
                 raise SkillError("invalid_query")
-            query = query.casefold().strip()
-            matches = [
-                e
-                for e in entries
-                if (args.get("include_archived") or e.get("status") != "archived")
-                and query
-                in " ".join([e["id"], e.get("description", ""), *e.get("keywords", [])]).casefold()
-            ]
+            terms = set(re.findall(r"\w+", query.casefold()))
+            matches = []
+            for entry in entries:
+                if not args.get("include_archived") and entry.get("status") == "archived":
+                    continue
+                searchable = " ".join(
+                    [entry["id"], entry.get("description", ""), *entry.get("keywords", [])]
+                ).casefold()
+                score = sum(term in searchable for term in terms)
+                if not terms or score:
+                    matches.append((score, entry))
+            matches.sort(key=lambda item: item[0], reverse=True)
+            matches = [entry for _, entry in matches]
             indexed = {e.get("local_source") for e in entries}
             unindexed = []
             for count, path in enumerate((root / "skills").rglob("SKILL.md")):

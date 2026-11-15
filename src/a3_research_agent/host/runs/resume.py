@@ -1,109 +1,65 @@
-"""Validate in-place recovery and import Host metadata from pre-checkpoint runs."""
+"""Resume the current published native run from its explicit Host checkpoint."""
 
 import hashlib
 import json
 import os
+import re
 import secrets
-import socket
 import time
 from copy import deepcopy
 from pathlib import Path
 
-from a3_research_agent.host.published_harness import pinned_resume, run_commit
+from a3_research_agent.host.published_harness import COMMAND, run_commit
 from a3_research_agent.host.runs.state import RunStateStore
-from a3_research_agent.host.sessions.containers import workspace_path
+from a3_research_agent.host.sessions.workspace import (
+    exit_archived,
+    require_native_record,
+    session_workspace,
+    write_durable,
+)
+from a3_research_agent.workspace.paths import workspace_path
 
 
-def original_model(run: Path) -> str:
-    seen = set()
-    while run not in seen:
-        seen.add(run)
-        startup = json.loads((run / "startup.json").read_text())
-        if startup.get("model"):
-            return startup["model"]
-        parent = startup.get("parent_run")
-        if not parent:
-            break
-        run = workspace_path(run.parent, parent)
-    raise ValueError("Cannot verify the original model for this checkpoint")
-
-
-def load_resume_state(
-    run: Path, store: RunStateStore, model: str, model_class: str | None = None
-) -> dict:
-    if store.path.is_file():
-        state = store.load()
-        if state["run_id"] != run.name or state["model"] != model:
-            raise ValueError("Resume must retain the original run and model")
-        if model_class is not None and state.get("model_class") != model_class:
-            raise ValueError("Resume requires the original model adapter")
-        if state.get("status") == "completed":
-            raise ValueError("This run has ended; select its retained Harness for a new run")
-        return state
-    if original_model(run) != model:
-        raise ValueError("Resume requires the original model")
-    startup = json.loads((run / "startup.json").read_text())
-    if startup.get("run_id") != run.name:
-        raise ValueError("Resume requires the original run directory name")
-    evolution_file = run / "evolution.json"
-    evolution = (
-        json.loads(evolution_file.read_text())
-        if evolution_file.exists()
-        else {
-            "main_owner": startup.get("session_id", run.name),
-            "trials": {},
-            "transitions": [],
-        }
-    )
-    children, parents, sessions = {}, {}, {secrets.token_urlsafe(32): run.name}
-    events = run / "session-events.jsonl"
-    for line in events.read_text().splitlines() if events.exists() else []:
-        event = json.loads(line)
-        if event["event"] != "created":
-            continue
-        session = event["session_id"]
-        path = workspace_path(run, f"candidates/{session}/session.json")
-        record = json.loads(path.read_text())
-        if not record["closed"]:
-            raise ValueError("Stop the old Host before importing its session metadata")
-        if record["owner"] != session or event["parent"] not in {run.name, *children}:
-            raise ValueError("Invalid saved Host session relationship")
-        token = secrets.token_urlsafe(32)
-        closed = record["closed"] and session != evolution["main_owner"]
-        children[session] = {
-            "parent": event["parent"],
-            "owner": session,
-            "token": token,
-            "closed": closed,
-            "version_id": record.get("version_id"),
-        }
-        parents[session] = event["parent"]
-        if not closed:
-            sessions[token] = session
-    if evolution["main_owner"] != run.name and evolution["main_owner"] not in children:
-        raise ValueError("Current main identity is missing from Host metadata")
-    state = {
-        "run_id": run.name,
-        "model": model,
-        "model_class": model_class,
-        "status": "suspended",
-        "endpoint": json.loads((run / "inputs/deployment.json").read_text())["gateway"],
-        "gateway": {
-            "sessions": sessions,
-            "root_owners": [run.name],
-            "children": children,
-            "scope_parents": parents,
-            "jobs": {},
-            "evolution": evolution,
-            "fixtures": {},
-        },
-        "imported_host_metadata": True,
-    }
-    # Old authentication material was not persisted. Rotate tokens while preserving scopes.
-    with socket.socket() as probe:
-        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        probe.bind(("127.0.0.1", int(state["endpoint"].rsplit(":", 1)[1])))
-    store.save(state)
+def load_resume_state(run: Path, store: RunStateStore, model: str) -> dict:
+    if not store.path.is_file():
+        raise ValueError("Native resume requires the saved Host checkpoint")
+    state = store.load()
+    if (
+        not isinstance(state, dict)
+        or type(state.get("version")) is not int
+        or state["version"] != 1
+        or state.get("backend") != "process"
+    ):
+        raise ValueError("Unsupported native Host checkpoint schema")
+    if state.get("run_id") != run.name or state.get("model") != model:
+        raise ValueError("Resume must retain the saved run and model")
+    if state.get("status") == "completed":
+        raise ValueError("This run has ended; select its retained Harness for a new run")
+    commit = run_commit(run)
+    if commit is None or state.get("harness_commit") != commit:
+        raise ValueError("Host checkpoint must match the current published Harness pin")
+    startup = json.loads(workspace_path(run, "startup.json").read_text())
+    source = startup.get("harness_commit") if isinstance(startup, dict) else None
+    if (
+        not isinstance(startup, dict)
+        or startup.get("run_id") != run.name
+        or not isinstance(source, str)
+        or not re.fullmatch(r"[a-f0-9]{40}", source)
+    ):
+        raise ValueError("Invalid original native startup provenance")
+    gateway = state.get("gateway", {})
+    actor = gateway.get("main_owner") if isinstance(gateway, dict) else None
+    if (
+        not isinstance(actor, str)
+        or not isinstance(gateway.get("session_records"), dict)
+        or actor not in gateway["session_records"]
+    ):
+        raise ValueError("Current research identity is missing from the Host checkpoint")
+    record = json.loads(workspace_path(run, f"sessions/{actor}/session.json").read_text())
+    require_native_record(record)
+    if record.get("owner") != actor or record.get("session_id") != actor:
+        raise ValueError("Native checkpoint session identity does not match its owner")
+    session_workspace(run / "sessions", actor)
     return state
 
 
@@ -112,32 +68,27 @@ def preflight_blocked_resume(
 ) -> dict | None:
     """Read-only eligibility check for an explicit CLI resume, never supervisor retry."""
     from a3_research_agent.host.runs.supervisor import evaluate_outcome
-    from a3_research_agent.host.sessions.containers import candidate_workspace
-    from a3_research_agent.host.sessions.packages import load_harness_package
 
     journal = run / ".host/blocked-resume"
     for path in journal.glob("*/attempt.json"):
         if json.loads(path.read_text()).get("status") != "complete":
             raise ValueError(
-                f"Blocked resume pending at {path.parent}; inspect the container and archived "
+                f"Blocked resume pending at {path.parent}; inspect the process and archived "
                 "state before recovery; automatic retry is disabled"
             )
     gateway = state["gateway"]
-    actor = gateway["evolution"]["main_owner"]
-    child = gateway["children"].get(actor)
-    path = workspace_path(run, f"candidates/{actor}/session.json")
+    actor = gateway["main_owner"]
+    child = gateway["session_records"].get(actor)
+    path = workspace_path(run, f"sessions/{actor}/session.json")
     if child is None or not path.is_file():
         return None
     record_text = path.read_text()
     record = json.loads(record_text)
+    require_native_record(record)
     if not (
         child.get("self_stopped") or record.get("self_stop_requested") or record.get("self_stopped")
     ):
         return None
-    evolution = json.loads(workspace_path(run, "evolution.json").read_text())
-    if evolution.get("main_owner") != actor:
-        raise ValueError("Saved main identity disagrees with the evolution history")
-    terminal = record.get("terminal_state", {})
     if (
         state.get("status") not in {"suspended", "stopped"}
         or child.get("closed") is not False
@@ -147,12 +98,11 @@ def preflight_blocked_resume(
         or child.get("owner") != actor
         or record.get("self_stop_requested") is not True
         or record.get("self_stopped") is not True
-        or record.get("container_removed") is not True
-        or terminal.get("Status") not in {"exited", "dead"}
-        or any(terminal.get(key) is not False for key in ("Running", "Paused", "Restarting"))
+        or record.get("launch_pending") is not False
+        or not exit_archived(record)
     ):
         raise ValueError("Blocked resume requires the confirmed stopped, nonclosed current main")
-    workspace = candidate_workspace(run / "candidates", actor)
+    workspace = session_workspace(run / "sessions", actor)
     outcome = evaluate_outcome(workspace, ())
     supervision = json.loads(workspace_path(run, "supervision.json").read_text())
     host_outcome = json.loads(workspace_path(run, "outcome.json").read_text())
@@ -167,21 +117,10 @@ def preflight_blocked_resume(
         if prior_attempt != child.get("restart_attempt"):
             raise ValueError("Workspace terminal does not match the Host restart attempt")
     commit = run_commit(run)
-    if commit:
-        command, files = pinned_resume(workspace)
-    else:
-        command, files = load_harness_package(workspace, "resume.json")
-        if (
-            len(command) != 3
-            or command[0] not in {"python", "python3"}
-            or command[2] != "--resume"
-            or command[1] not in files
-            or not command[1].endswith(".py")
-            or "checkpoint.json" not in files
-        ):
-            raise ValueError("Blocked resume requires an explicit Python checkpoint resume command")
-    checkpoint = json.loads(files["checkpoint.json"])
-    messages = checkpoint.get("messages") if isinstance(checkpoint, dict) else checkpoint
+    if commit is None or state.get("harness_commit") != commit or record.get("command") != COMMAND:
+        raise ValueError("Blocked resume requires the fixed current published Harness")
+    checkpoint_text = workspace_path(workspace, "checkpoint.json").read_text()
+    messages = json.loads(checkpoint_text)
     if (
         not isinstance(messages, list)
         or not messages
@@ -195,7 +134,7 @@ def preflight_blocked_resume(
         "outcome.json": workspace_path(run, "outcome.json").read_text(),
         "supervision.json": workspace_path(run, "supervision.json").read_text(),
     }
-    console = workspace_path(run, f"candidates/{actor}/console.log")
+    console = workspace_path(run, f"sessions/{actor}/console.log")
     if console.is_file():
         snapshots["console.log"] = console.read_text()
     return {
@@ -205,16 +144,9 @@ def preflight_blocked_resume(
         "workspace": workspace,
         "record_text": record_text,
         "snapshots": snapshots,
-        "resume_sha256": hashlib.sha256(
-            commit.encode() if commit else workspace_path(workspace, "resume.json").read_bytes()
-        ).hexdigest(),
-        "source_sha256": {
-            name: hashlib.sha256(text.encode()).hexdigest() for name, text in files.items()
-        },
-        "command": command,
-        "checkpoint_sha256": hashlib.sha256(
-            workspace_path(workspace, "checkpoint.json").read_bytes()
-        ).hexdigest(),
+        "harness_commit": commit,
+        "command": COMMAND.copy(),
+        "checkpoint_sha256": hashlib.sha256(checkpoint_text.encode()).hexdigest(),
     }
 
 
@@ -284,14 +216,12 @@ def _feedback_retry(run, workspace, actor, feedback, host_outcome, supervision):
 
 
 def _validate_blocked_checkpoint(messages: list[dict]) -> None:
-    from a3_research_agent.host.runs.context import require_tool_results
+    from a3_research_agent.host.runs.checkpoints import require_tool_results
 
     require_tool_results(messages)
     calls, results = set(), set()
     for message in messages:
-        items = message.get("output")
-        items = items if isinstance(items, list) else [message]
-        for item in items:
+        for item in [message]:
             if not isinstance(item, dict):
                 continue
             kind = item.get("type")
@@ -318,10 +248,8 @@ def begin_blocked_resume(
     """Durably journal the authorization before changing current terminal state.
 
     The caller holds RunLease. A pending journal intentionally fences off all later
-    CLI attempts: a crash can occur after Docker starts but before its receipt saves.
+    CLI attempts: a crash can occur after a process starts but before its receipt saves.
     """
-    from a3_research_agent.host.sessions.containers import CandidateRuntime
-
     # Recheck before credential issuance, including checkpoint/outcome changes since preflight.
     current = preflight_blocked_resume(run, state, feedback=plan.get("feedback"))
     if current != plan:
@@ -337,7 +265,7 @@ def begin_blocked_resume(
         raise ValueError("Resume notification must be registered through HumanFeedback first")
     attempt = run / ".host/blocked-resume" / str(time.time_ns())
     attempt.mkdir(parents=True)
-    write = CandidateRuntime.write_durable
+    write = write_durable
     metadata = {
         "status": "pending",
         "event": "explicit_blocked_resume",
@@ -347,8 +275,7 @@ def begin_blocked_resume(
         "feedback": feedback_registration,
         "prior_attempt": plan.get("prior_attempt"),
         "checkpoint_sha256": plan["checkpoint_sha256"],
-        "resume_sha256": plan["resume_sha256"],
-        "source_sha256": plan["source_sha256"],
+        "harness_commit": plan["harness_commit"],
         "command": plan["command"],
         "previous_sha256": {
             name: hashlib.sha256(text.encode()).hexdigest()
@@ -359,7 +286,10 @@ def begin_blocked_resume(
     write(attempt / "attempt.json", json.dumps(metadata, indent=2))
     for name, text in plan["snapshots"].items():
         write(attempt / name, text)
-    write(attempt / "gateway-child.json", json.dumps(state["gateway"]["children"][actor], indent=2))
+    write(
+        attempt / "gateway-child.json",
+        json.dumps(state["gateway"]["session_records"][actor], indent=2),
+    )
     with (run / "session-events.jsonl").open("a") as stream:
         stream.write(
             json.dumps({**metadata, "attempt": str(attempt.relative_to(run)), "time": time.time()})
@@ -385,7 +315,7 @@ def begin_blocked_resume(
     runtime.save_record(restarted)
     runtime.records[actor] = restarted
     gateway = state["gateway"]
-    child = gateway["children"][actor]
+    child = gateway["session_records"][actor]
     # Revoke every stale credential for only this identity, retaining all other scopes.
     gateway["sessions"] = {
         token: owner for token, owner in gateway["sessions"].items() if owner != actor
@@ -401,9 +331,7 @@ def begin_blocked_resume(
 
 
 def finish_blocked_resume(attempt: Path) -> None:
-    from a3_research_agent.host.sessions.containers import CandidateRuntime
-
     path = attempt / "attempt.json"
     metadata = json.loads(path.read_text())
     metadata["status"] = "complete"
-    CandidateRuntime.write_durable(path, json.dumps(metadata, indent=2))
+    write_durable(path, json.dumps(metadata, indent=2))

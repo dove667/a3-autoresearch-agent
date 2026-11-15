@@ -1,1 +1,0 @@
-"""Bootstrap container build resources."""

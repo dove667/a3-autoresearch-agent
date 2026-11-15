@@ -31,20 +31,16 @@ def test_agent_import_does_not_read_credentials_or_start_loop(tmp_path):
 def test_exported_sources_can_reproduce_payload_without_checkout(tmp_path):
     from a3_research_agent.packaging.harness_payload import build_harness_payload
 
-    files = build_harness_payload(
-        {"web_tools.py": "TOOLS = []\nROUTES = {}\n", "skill_tools.py": "TOOLS = []\nROUTES = {}\n"}
-    )
+    files = build_harness_payload()
     for name, content in files.items():
         target = tmp_path / name
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content)
     script = """
 import json
-from pathlib import Path
 from a3_research_agent.harness.agent import tools
 from a3_research_agent.packaging.harness_payload import build_harness_payload
-extensions = {name: Path(name).read_text() for name in ("web_tools.py", "skill_tools.py")}
-print(json.dumps({"files": build_harness_payload(extensions), "tools": [x["name"] for x in tools]}))
+print(json.dumps({"files": build_harness_payload(), "tools": [x["name"] for x in tools]}))
 """
     result = subprocess.run(
         [sys.executable, "-c", script],
@@ -58,4 +54,19 @@ print(json.dumps({"files": build_harness_payload(extensions), "tools": [x["name"
     assert result.returncode == 0, result.stderr
     exported = json.loads(result.stdout)
     assert exported["files"] == files
-    assert {"gateway", "read", "wait", "skills", "plan", "memory", "preflight"} <= set(exported["tools"])
+    assert {
+        "gateway",
+        "read",
+        "wait",
+        "skills",
+        "plan",
+        "memory",
+        "preflight",
+        "job_submit",
+        "job_artifact",
+        "search_files",
+        "edit",
+        "web_search",
+        "web_fetch",
+        "web_status",
+    } <= set(exported["tools"])

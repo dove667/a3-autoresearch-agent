@@ -1,18 +1,22 @@
-"""Export the complete trusted overlay without executing candidate source code."""
+"""Export the complete maintained Harness source package."""
 
-from collections.abc import Mapping
 from pathlib import Path
 
 # A reviewed source manifest, not a recursive copy of an experiment workspace.
 HARNESS_MODULES = (
     "__init__.py",
     "agent.py",
+    "paths.py",
     "skill_registry.py",
     "input_skills.py",
     "lifecycle.py",
     "waiting.py",
     "planning.py",
     "job_preflight.py",
+    "job_tools.py",
+    "workspace_tools.py",
+    "research_web.py",
+    "tool_contracts.py",
     "context/__init__.py",
     "context/compaction.py",
     "context/manager.py",
@@ -21,16 +25,10 @@ HARNESS_MODULES = (
     "memory/recall.py",
     "memory/state.py",
 )
-EXTENSION_NAMES = frozenset({"skill_tools.py", "web_tools.py"})
 
 
-def build_harness_payload(extension_sources: Mapping[str, str] | None = None) -> dict[str, str]:
-    """Return source bytes as UTF-8 text; extensions are explicit caller-selected bytes.
-
-    This exports the installed/source overlay, never a candidate workspace or its
-    credentials. Applying it to a retained Harness creates a new derived version;
-    callers keep its compatible extensions and evidence separately selected.
-    """
+def build_harness_payload() -> dict[str, str]:
+    """Return the fixed package sources as UTF-8 text."""
     package = Path(__file__).resolve().parents[1]
     sources = {
         "__init__.py": package / "__init__.py",
@@ -44,8 +42,4 @@ def build_harness_payload(extension_sources: Mapping[str, str] | None = None) ->
         if path.is_symlink() or not path.is_file():
             raise ValueError("Missing regular Harness source: " + name)
         files["a3_research_agent/" + name] = path.read_bytes().decode("utf-8")
-    for name, content in (extension_sources or {}).items():
-        if name not in EXTENSION_NAMES or not isinstance(content, str):
-            raise ValueError("Only explicitly selected text Harness extensions may be attached")
-        files[name] = content
     return files

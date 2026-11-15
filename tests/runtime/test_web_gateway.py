@@ -577,28 +577,21 @@ def test_no_cumulative_run_cap(tmp_path, operation, count):
     assert state["budget"][operation] == {"limit": None, "used": count}
 
 
-def test_legacy_limits_migrate_without_resetting_usage_or_history(tmp_path):
+def test_unsupported_accounting_schema_is_not_migrated(tmp_path):
     svc = service(tmp_path)
     svc.root.mkdir(parents=True, exist_ok=True)
-    old = {"search": {"limit": 100, "used": 100}, "fetch": {"limit": 200, "used": 200}}
-    (svc.root / "budget.json").write_text(json.dumps(old))
-    history = '{"historical": "unchanged"}\n'
-    (svc.root / "events.jsonl").write_text(history)
-    assert svc.budget()["search"] == {"limit": None, "used": 100}
-    assert json.loads((svc.root / "budget.json").read_text())["fetch"] == {
-        "limit": None,
-        "used": 200,
-    }
-    assert service(tmp_path).budget("search")["search"]["used"] == 101
-    assert service(tmp_path).budget("fetch")["fetch"]["used"] == 201
-    assert (svc.root / "events.jsonl").read_text() == history
+    raw = json.dumps({"search": {"limit": 100, "used": 100}, "fetch": {"limit": 200, "used": 200}})
+    (svc.root / "budget.json").write_text(raw)
+    with pytest.raises(web.WebError, match="budget_unavailable"):
+        svc.budget()
+    assert (svc.root / "budget.json").read_text() == raw
 
 
 @pytest.mark.parametrize("used", [-1, True, "100", None])
 def test_invalid_accounting_fails_closed_without_overwrite(tmp_path, used):
     svc = service(tmp_path)
     svc.root.mkdir(parents=True, exist_ok=True)
-    raw = json.dumps({"search": {"limit": 100, "used": used}, "fetch": {"limit": 200, "used": 0}})
+    raw = json.dumps({"search": {"limit": None, "used": used}, "fetch": {"limit": None, "used": 0}})
     (svc.root / "budget.json").write_text(raw)
     with pytest.raises(web.WebError, match="budget_unavailable"):
         svc.budget("search")

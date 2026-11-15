@@ -129,7 +129,7 @@ def test_malformed_provider_response_does_not_repeat_after_restart(tmp_path, mon
     with pytest.raises(context.ContextError):
         context.prepare(messages(), [], lambda *a: [])
     restarted = load_context()
-    with pytest.raises(restarted.ContextError, match="failed or uncertain"):
+    with pytest.raises(restarted.ContextError, match="bounded attempts"):
         restarted.prepare(messages(), [], lambda *a: pytest.fail("duplicate dispatch"))
 
 
@@ -269,7 +269,7 @@ def test_oversized_summary_is_diagnosed_and_restart_is_bounded(tmp_path, monkeyp
     assert len(calls) <= 8
     failure_records = list((tmp_path / "context-history").glob("summary-failure-*.json"))
     assert any(
-        json.loads(p.read_text())["reason"] == "summary_text_exceeds_memory_budget"
+        json.loads(p.read_text())["reason"] == "summary_text_exceeds_token_budget"
         for p in failure_records
     )
 
@@ -352,7 +352,9 @@ def test_token_compaction_uses_summary_operation_and_preserves_pairing(tmp_path,
     result, record = context.prepare(messages(80000), [], provider)
     assert context.paired(result)
     assert all(path == "/v1/summary" for _, path, _ in requests)
-    assert all(set(body) == {"transcript", "source"} for _, _, body in requests)
+    assert all(
+        set(body) == {"transcript", "source", "max_output_tokens"} for _, _, body in requests
+    )
     assert record["budget_unit"] == "estimated_tokens" and record["after_estimated_tokens"] < 6000
     assert record["after_estimated_tokens"] < record["before_estimated_tokens"]
 
@@ -450,7 +452,7 @@ def test_escaping_heavy_summary_is_sized_like_host_envelope(tmp_path, monkeypatc
     assert record["after_estimated_tokens"] < record["before_estimated_tokens"]
 
 
-def test_overlong_summary_keeps_source_without_corrective_retry(tmp_path, monkeypatch):
+def test_complete_utf8_summary_can_exceed_old_byte_limit(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     context = load_context()
     calls = []
@@ -461,8 +463,8 @@ def test_overlong_summary_keeps_source_without_corrective_retry(tmp_path, monkey
         result["output"][0]["content"][0]["text"] = "汉" * 2100
         return result
 
-    with pytest.raises(context.ContextError, match="memory_budget"):
-        context.prepare(messages(), [], provider)
+    result, _ = context.prepare(messages(), [], provider)
+    assert "汉" * 2100 in result[0]["content"]
     assert len(calls) == 1
     assert json.loads(pathlib.Path(calls[0]["source"]).read_text()) == messages()
 
@@ -473,7 +475,7 @@ def test_failed_summary_remains_failed_after_restart(tmp_path, monkeypatch):
     with pytest.raises(context.ContextError):
         context.prepare(messages(), [], lambda *a: {"http_error": 502})
     restarted = load_context()
-    with pytest.raises(restarted.ContextError, match="failed or uncertain"):
+    with pytest.raises(restarted.ContextError, match="bounded attempts"):
         restarted.prepare(messages(), [], lambda *a: pytest.fail("unexpected retry"))
 
 
@@ -485,7 +487,7 @@ def test_persistently_overlong_summary_still_blocks_with_original_evidence(tmp_p
     def invalid(method, path, body):
         calls.append(body)
         result = completed()
-        result["output"][0]["content"][0]["text"] = "汉" * 2100
+        result["output"][0]["content"][0]["text"] = "汉" * 20000
         return result
 
     for _ in range(5):

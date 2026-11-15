@@ -2,7 +2,7 @@
 name: a3-mujoco-autoresearch
 description: Develop and improve learned policies for the A3 dual-arm MuJoCo cookie-packing project. Use for method selection, ACT/Diffusion/Flow/VLA/world-model experiments, data and training diagnostics, paired closed-loop evaluation, and reusable research experience. Applies to research planning or authorized execution, not permission to start training or change the benchmark.
 metadata:
-  version: 0.1.14
+  version: 0.1.15
 ---
 
 # A3 MuJoCo autoresearch
@@ -34,7 +34,7 @@ Fix ordinary script and adapter failures within the current task and verify the 
 ## Schedule independent episodes
 
 Submit independent ready remote jobs in parallel within the existing resource limits, then collect their results. Respect data dependencies. For collection and evaluation, submit an episode manifest to the deployment's unified executor:
-`python /run/a3/episode_executor.py --manifest research/episodes.json --output /outputs/<batch>`.
+use the `A3_EPISODE_EXECUTOR` and `A3_OUTPUTS` paths supplied to a process job; Docker uses `/run/a3/episode_executor.py` and `/outputs`. Build argument arrays from the actual job environment inside the entry script rather than copying paths from a previous backend.
 Read the current execution reference's episode-executor section for the manifest and recovery contract.
 Keep task parameters, seeds, policy weights and output paths explicit. Let the executor adjust concurrency
 inside the job's existing CPU, memory and GPU reservation; avoid replacing it with a fixed two-process loop.

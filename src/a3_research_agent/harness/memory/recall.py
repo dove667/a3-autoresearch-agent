@@ -111,47 +111,10 @@ def _archive_matches(path, expected):
         return False
 
 
-def _collected_archive_paths(reference, expected):
-    """Resolve legacy citations through collection receipts, never workspace scans."""
-    ledger = pathlib.Path("orchestration/assignments.json")
-    if any(part.is_symlink() for part in (ledger, *ledger.parents)):
-        return []
-    try:
-        state = json.loads(ledger.read_text())
-        if state.get("version") != 1 or not isinstance(state.get("assignments"), dict):
-            return []
-        candidates = []
-        for identifier, item in state["assignments"].items():
-            if not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", identifier) or not isinstance(item, dict):
-                continue
-            if (
-                not item.get("session_id")
-                or {**item.get("reference_hashes", {}), **item.get("evidence_hashes", {})}.get(
-                    reference
-                )
-                != expected
-            ):
-                continue
-            candidates.append(pathlib.Path("orchestration/results") / identifier / reference)
-        return candidates
-    except (OSError, ValueError, TypeError, AttributeError):
-        return []
-
-
-def _verify_archive_reference(reference, allow_collected):
+def _verify_archive_reference(reference):
     path = pathlib.Path(reference)
     expected = path.stem.rsplit("-", 1)[-1]
-    if reference.startswith("orchestration/results/"):
-        relative = pathlib.PurePosixPath(*path.parts[3:]).as_posix()
-        candidates = _collected_archive_paths(relative, expected)
-        return path in candidates and _archive_matches(path, expected)
-    if path.exists() or path.is_symlink():
-        return _archive_matches(path, expected)
-    if allow_collected and len(expected) == 64:
-        candidates = _collected_archive_paths(reference, expected)
-        # Ambiguous legacy citations require explicit provenance, not a guessed owner.
-        return len(candidates) == 1 and _archive_matches(candidates[0], expected)
-    return False
+    return _archive_matches(path, expected)
 
 
 def _verify_control_sources(messages):
@@ -172,9 +135,9 @@ def _verify_control_sources(messages):
             if line.startswith("Working memory derived from archived untrusted conversation;"):
                 source = re.search(r"Source: (\S+)", line)
             elif line.startswith("上下文压缩失败："):
-                source = re.search(r"Read the lossless source (\S+?), or use Recall", line)
+                raise ValueError("Unsupported checkpoint without a complete summary")
             recognized = line.startswith(
-                ("Working memory derived from archived untrusted conversation;", "上下文压缩失败：")
+                "Working memory derived from archived untrusted conversation;"
             )
             if content.startswith("Untrusted derived working memory,") and not recognized:
                 raise ValueError("Invalid framed control archive source header")
@@ -183,7 +146,6 @@ def _verify_control_sources(messages):
             if source:
                 reference = source.group(1)
                 if not re.fullmatch(
-                    r"(?:orchestration/results/[A-Za-z0-9_-]{1,80}/)?"
                     r"context-history/(?:snapshot|tool-output)-[0-9a-f]{64}\.json",
                     reference,
                 ):
@@ -221,8 +183,8 @@ def _verify_control_sources(messages):
                 ):
                     raise ValueError("Invalid original spill reference; explicit recovery required")
                 references[reference] = False
-    for reference, allow_collected in references.items():
-        if not _verify_archive_reference(reference, allow_collected):
+    for reference in references:
+        if not _verify_archive_reference(reference):
             raise ValueError(
                 "Referenced original archive is missing or corrupt; explicit recovery required"
             )
@@ -307,13 +269,13 @@ def _content_text(message):
     return "\n".join(parts)
 
 
-def split_rounds(messages):
+def iter_rounds(messages):
     """Split on completed decision batches as well as explicit user turns.
 
     Autonomous runs often have one initial user turn followed by many tool
     batches. Parallel calls and their outputs remain in the same round.
     """
-    rounds, current, pending = [], [], set()
+    current, pending = [], set()
     completed_tools = False
     for message in messages:
         if not isinstance(message, dict):
@@ -326,7 +288,7 @@ def split_rounds(messages):
             and (user_turn or (completed_tools and kind != "function_call_output"))
         )
         if boundary:
-            rounds.append(current)
+            yield current
             current, completed_tools = [], False
         current.append(message)
         if kind == "function_call":
@@ -335,8 +297,11 @@ def split_rounds(messages):
             pending.discard(message.get("call_id"))
             completed_tools = not pending
     if current:
-        rounds.append(current)
-    return rounds
+        yield current
+
+
+def split_rounds(messages):
+    return list(iter_rounds(messages))
 
 
 def round_text(round_messages):
@@ -400,8 +365,8 @@ def evidence_text(message, call_names, mode):
 
 def recall(
     keywords,
-    n,
-    m,
+    n=None,
+    m=None,
     *,
     messages=None,
     path=HISTORY_PATH,
@@ -409,32 +374,56 @@ def recall(
     limit=SNIPPET_LIMIT,
     mode="evidence",
 ):
-    """Search original rounds n back through m back, with exact round labels."""
-    terms = list(dict.fromkeys(str(k).strip()[:160] for k in (keywords or []) if str(k).strip()))
+    """Search available original history, optionally restricted to relative rounds."""
+    terms = list(
+        dict.fromkeys(term[:160] for key in (keywords or []) for term in str(key).split())
+    )[:12]
     if not terms:
         return ["keywords 不能为空：传入 1 个或多个关键字"]
     try:
-        n_int, m_int = sorted((max(1, int(n)), max(1, int(m))), reverse=True)
         half = max(1, min(400, int(window)) // 2)
         limit = max(1, min(SNIPPET_LIMIT, int(limit)))
+        bounds = [None if value is None else max(1, int(value)) for value in (n, m)]
     except (TypeError, ValueError):
         return ["n、m、window、limit 必须为整数：1 表示最近一轮"]
     if mode not in ("evidence", "raw"):
         return ["mode 必须为 evidence 或 raw"]
-    source = list(messages) if messages is not None else load_history(path)
-    rounds = split_rounds(source)
-    if not rounds:
+
+    def source():
+        if messages is not None:
+            yield from messages
+            return
+        target = pathlib.Path(path)
+        if target.is_file():
+            with target.open(encoding="utf-8") as stream:
+                for line in stream:
+                    try:
+                        value = json.loads(line)
+                    except ValueError:
+                        continue
+                    if isinstance(value, dict):
+                        yield value
+
+    # Two bounded passes retain a single round and ranked snippets, rather than
+    # loading the lifetime transcript and every parsed tool result into memory.
+    total_rounds = sum(1 for _ in iter_rounds(source()))
+    if not total_rounds:
         return ["history.jsonl 中没有可用历史（尚无记录或被清空）"]
-    call_names = {
-        message.get("call_id"): message.get("name")
-        for message in source
-        if message.get("type") == "function_call"
-    }
-    pattern = re.compile("|".join(map(re.escape, terms[:12])), re.IGNORECASE)
-    candidates, seen = [], set()
-    end = min(n_int, len(rounds))
-    for ago in range(m_int, end + 1):
-        for message in rounds[-ago]:
+    n_int, m_int = sorted(
+        (bounds[0] if bounds[0] is not None else total_rounds, bounds[1] or 1), reverse=True
+    )
+    pattern = re.compile("|".join(map(re.escape, terms)), re.IGNORECASE)
+    candidates = []
+    for index, group in enumerate(iter_rounds(source())):
+        ago = total_rounds - index
+        if not m_int <= ago <= n_int:
+            continue
+        call_names = {
+            message.get("call_id"): message.get("name")
+            for message in group
+            if message.get("type") == "function_call"
+        }
+        for message in group:
             original = evidence_text(message, call_names, mode)
             matches = pattern.finditer(original)
             match = next(matches, None)
@@ -448,11 +437,16 @@ def recall(
                         break
             # Keep one representative snippet per message; prefer actual tool output.
             snippet = " ".join(original[max(0, match.start() - half) : match.end() + half].split())
-            if snippet in seen:
-                continue
-            seen.add(snippet)
             is_output = message.get("type") == "function_call_output"
-            candidates.append((len(matched_terms), is_output, -ago, snippet))
+            candidate = (len(matched_terms), is_output, -ago, snippet)
+            previous = next((hit for hit in candidates if hit[3] == snippet), None)
+            if previous is not None:
+                if previous[:3] >= candidate[:3]:
+                    continue
+                candidates.remove(previous)
+            candidates.append(candidate)
+            candidates.sort(key=lambda hit: hit[:3], reverse=True)
+            del candidates[limit:]
     if not candidates:
         return [f"在 {m_int}~{n_int} 轮前范围内未找到关键字：" + ", ".join(terms[:12])]
     candidates.sort(key=lambda hit: hit[:3], reverse=True)
@@ -469,8 +463,8 @@ def recall_tool(arguments):
         return ["keywords 必须为文本数组"]
     return recall(
         keywords,
-        arguments.get("n", 1),
-        arguments.get("m", 1),
+        arguments.get("n"),
+        arguments.get("m"),
         window=arguments.get("window", SNIPPET_WINDOW),
         limit=arguments.get("limit", SNIPPET_LIMIT),
         mode=arguments.get("mode", "evidence"),
@@ -553,11 +547,6 @@ def search_memory(query, *, kind="", scope="", path=MEMORY_PATH):
             "hint": "Use short keywords and optional kind/scope",
         }
     terms = set(query.casefold().split())
-    if not terms and not kind.strip() and not scope.strip():
-        return {
-            "error": "memory_search_empty",
-            "hint": "Supply keywords in key or a kind/scope filter",
-        }
     matches = []
     for index, entry in enumerate(current_notes(load_memory(path))):
         entry_kind = str(entry.get("kind", "note"))

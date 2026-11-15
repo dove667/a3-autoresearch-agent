@@ -64,9 +64,9 @@ class ControlRoutes:
 
     def prepare_feedback(self, text):
         self.accepting_resources()
-        if self.human_feedback is None or self.evolution is None:
+        if self.human_feedback is None or self.main_owner is None:
             raise HTTPException(503, "Human feedback and a main session must be configured")
-        actor = self.evolution.main_owner
+        actor = self.main_owner
         if actor not in self.sessions.values():
             raise HTTPException(409, "The main session is no longer accepting model requests")
         try:
@@ -88,7 +88,7 @@ class ControlRoutes:
         self, body: FeedbackUpdateRequest, authorization: Annotated[str | None, Header()] = None
     ):
         self.require_operator(authorization)
-        # Serialize confirmation with promotion so feedback cannot silently change recipients.
+        # Serialize confirmation with session updates so feedback cannot silently change recipients.
         with self.session_lock:
             proposal = self.prepare_feedback(body.text)
             if not secrets.compare_digest(body.confirm, proposal["digest"]):

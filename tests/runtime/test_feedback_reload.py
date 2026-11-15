@@ -96,20 +96,14 @@ def test_invalid_feedback_has_no_side_effects(tmp_path, text):
 
 
 def test_main_change_invalidates_feedback_confirmation(tmp_path, monkeypatch):
-    from a3_research_agent.host.gateway import app as host_gateway
-
-    captured = []
-    original = host_gateway.EvolutionState
-
-    def track_evolution(*args):
-        instance = original(*args)
-        captured.append(instance)
-        return instance
-
-    monkeypatch.setattr(host_gateway, "EvolutionState", track_evolution)
     api, feedback, _ = setup(tmp_path)
     proposal = preview(api)
-    captured[0].main_owner = "worker"
+    gateway = next(
+        route.endpoint.__self__
+        for route in api.app.routes
+        if getattr(route, "path", None) == "/health"
+    )
+    gateway.main_owner = "worker"
     response = api.post(
         "/control/feedback",
         headers=OPERATOR,
@@ -202,7 +196,7 @@ def test_cli_preview_and_explicit_confirmation(tmp_path, monkeypatch, capsys):
     api, feedback, _ = setup(tmp_path)
     run = tmp_path / "run"
     RunStateStore(run).save(
-        {"endpoint": "http://host.docker.internal:1234", "operator_token": "operator-secret"}
+        {"endpoint": "http://127.0.0.1:1234", "operator_token": "operator-secret"}
     )
     source = tmp_path / "human-feedback.md"
     source.write_text("Expert advice")

@@ -16,7 +16,7 @@ def test_context_configuration_counts_injected_input_without_model_call(tmp_path
             model_name="fixed/main",
             sessions={"token": "main"},
             main_owner="main",
-            phase_instructions="host phase rules " * 6000,
+            task_instructions="host phase rules " * 6000,
             human_feedback=feedback,
             usage_log=tmp_path / "usage.jsonl",
             remote_call=lambda *args: {},
@@ -36,7 +36,11 @@ def test_context_configuration_counts_injected_input_without_model_call(tmp_path
     assert config["unit"] == "estimated_tokens" and config["tokenizer"] == "o200k_base"
     assert config["injected_reserve_tokens"] > 32000
     assert config["trigger_tokens"] == 200000
-    assert config["target_tokens"] - config["injected_reserve_tokens"] == 32000
+    assert config["target_tokens"] == 32000
+    from a3_research_agent.harness.context import manager as context
+
+    with pytest.raises(context.ContextError, match="budget"):
+        context.configure(lambda *args: config)
     assert calls == []
     assert client.get("/context/config").status_code == 401
 

@@ -22,6 +22,7 @@ class SummaryRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     transcript: str = Field(min_length=1)
     source: str = Field(pattern="^context-history/snapshot-[0-9a-f]{64}\\.json$")
+    max_output_tokens: int | None = Field(default=None, ge=1, strict=True)
 
 
 class WorkspaceFileReference(BaseModel):
@@ -53,17 +54,6 @@ class JobWaitRequest(BaseModel):
     cursor: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
 
 
-class SessionRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    command: list[str] = Field(min_length=1, max_length=256)
-    files: dict[str, str] = Field(default_factory=dict)
-    version_id: str | None = None
-    parent_version: str | None = None
-    read_only_exports: list[str] = Field(default_factory=list, max_length=64)
-    purpose: Literal["successor"] = "successor"
-    workspace_files: list[WorkspaceFileReference] = Field(default_factory=list, max_length=16)
-
-
 class ExportRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     path: str = Field(min_length=1, max_length=4096)
@@ -73,18 +63,6 @@ class ExportRequest(BaseModel):
 class ExportGrantRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     session_id: str = Field(min_length=1, max_length=64)
-
-
-class TrialRequest(SessionRequest):
-    baseline_version: str
-    checklist: str = Field(min_length=1, max_length=32000)
-
-
-class TrialDecision(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    retain: StrictBool
-    reason: str = Field(min_length=1, max_length=16000)
-    evidence: list[str] = Field(default_factory=list, max_length=128)
 
 
 class SessionStopRequest(BaseModel):
@@ -105,12 +83,6 @@ class FeedbackPreviewRequest(BaseModel):
 
 class FeedbackUpdateRequest(FeedbackPreviewRequest):
     confirm: str = Field(pattern="^[0-9a-f]{64}$")
-
-
-class VersionRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    files: dict[str, str]
-    parent_version: str | None = None
 
 
 class ComparisonRequest(BaseModel):

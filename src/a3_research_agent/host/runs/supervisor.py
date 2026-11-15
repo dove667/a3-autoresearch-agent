@@ -1,13 +1,12 @@
-"""Keep a Host run alive across builder submissions and descendant sessions."""
+"""Observe research sessions and archive their result after execution stops."""
 
 import json
 import time
 from collections.abc import Callable
 from pathlib import Path
 
-from a3_research_agent.host.sessions.containers import workspace_path
-from a3_research_agent.host.sessions.packages import load_harness_package
-from a3_research_agent.host.sessions.versions import CandidateVersions
+from a3_research_agent.host.sessions.packages import read_continuation
+from a3_research_agent.workspace.paths import workspace_path
 
 ACTIVE_STATES = {"running", "created", "restarting", "paused"}
 EXTERNAL_BLOCKERS = {"authentication", "permission", "unavailable_service", "missing_resource"}
@@ -43,8 +42,7 @@ def evaluate_outcome(workspace: Path, required_checks: tuple[str, ...]) -> dict:
                     raise ValueError(f"Acceptance {key} has not passed")
                 if not evidence_exists(workspace, check.get("evidence")):
                     raise ValueError(f"Acceptance {key} needs reachable, nonempty evidence files")
-            _, files = load_harness_package(workspace, "continuation.json")
-            CandidateVersions.validate_files(files)
+            read_continuation(workspace)
             return outcome
         if outcome.get("status") == "blocked":
             blocker = outcome.get("external_blocker", {})
@@ -73,7 +71,6 @@ class RunSupervisor:
         workspace: Path,
         required_checks: tuple[str, ...] | Callable[[], tuple[str, ...]],
         sessions: Callable[[], list[dict]],
-        execute_builder: Callable[[str, Path], None],
         finalize: Callable[[], None] | None = None,
         wait: Callable[[float], None] = time.sleep,
         result_workspace: Callable[[], Path] | None = None,
@@ -84,19 +81,16 @@ class RunSupervisor:
         self.workspace = workspace
         self.required_checks = required_checks
         self.sessions = sessions
-        self.execute_builder = execute_builder
         self.finalize = finalize
         self.wait = wait
         self.result_workspace = result_workspace
         self.input_manifest = input_manifest
         self.on_finishing = on_finishing
-        self.turn = 0
         self.last_event = None
 
     def record(self, phase: str, outcome: dict, sessions: list[dict]) -> None:
         state = {
             "phase": phase,
-            "builder_turn": self.turn,
             "outcome": outcome,
             "sessions": sessions,
             "updated_at": time.time(),
@@ -123,17 +117,8 @@ class RunSupervisor:
             if not record.get("closed") and record.get("status") in ACTIVE_STATES
         )
 
-    def run(self, *, initial_builder: bool = True) -> dict:
-        """Start once, preserve workers, and record the result after all workers stop."""
-        builder_error = None
-        if initial_builder:
-            self.turn = 1
-            self.record("starting", {}, self.sessions())
-            try:
-                self.execute_builder("", self.run_directory / "trajectory.json")
-            except Exception as error:  # noqa: BLE001 — keep existing workers alive
-                builder_error = type(error).__name__
-                self.record("builder_error", {"error_type": builder_error}, self.sessions())
+    def run(self) -> dict:
+        """Wait for research processes to stop, then check and preserve their result."""
 
         sessions = self.sessions()
         while self.active(sessions):
@@ -160,8 +145,6 @@ class RunSupervisor:
             outcome["input_manifest"] = manifest
         if outcome["status"] == "continue":
             outcome = {**outcome, "status": "incomplete"}
-        if builder_error:
-            outcome["builder_error"] = builder_error
         if outcome["status"] == "complete" and self.finalize is not None:
             try:
                 self.finalize()

@@ -136,32 +136,6 @@ def test_changed_evidence_is_flagged_without_automatic_reopening(tmp_path, monke
     assert item["status"] == "closed"
 
 
-def test_new_task_archives_operational_state_but_keeps_source_immutable(tmp_path):
-    from a3_research_agent.host.runs.continuation import HarnessStart, prepare_fresh_task
-
-    source = HarnessStart(
-        ["python", "agent.py", "--resume"],
-        {
-            "checkpoint.json": "[]",
-            "memory.jsonl": "retained lessons",
-            "operational-state.json": json.dumps(
-                {"version": 1, "items": {"old": {"status": "closed"}}}
-            ),
-        },
-        source_version="version-old",
-    )
-    before = dict(source.files)
-    fresh, context = prepare_fresh_task(source, "new task")
-    assert source.files == before and fresh.files["memory.jsonl"] == "retained lessons"
-    assert (
-        context["source_checkpoint_sha256"]
-        == __import__("hashlib").sha256(before["checkpoint.json"].encode()).hexdigest()
-    )
-    assert json.loads(fresh.files["operational-state.json"])["items"] == {}
-    for name, archive in context["operational_task_archives"].items():
-        assert fresh.files[archive] == before[name]
-
-
 def test_sparse_coverage_is_bounded_and_never_fills_gaps(tmp_path, monkeypatch):
     m = load(tmp_path, monkeypatch)
     p = tmp_path / "sparse"
@@ -194,7 +168,7 @@ def test_receipt_failure_cannot_hide_successful_job_result(tmp_path, monkeypatch
     def fail(*args):
         raise OSError("receipt failed")
 
-    from a3_research_agent.harness import lifecycle
+    from a3_research_agent.harness import job_tools, lifecycle, research_web, workspace_tools
 
     def request(method, path, data=None):
         if path == "/sessions/self":
@@ -204,6 +178,9 @@ def test_receipt_failure_cannot_hide_successful_job_result(tmp_path, monkeypatch
         return result
 
     namespace = {
+        "job_tools": job_tools,
+        "workspace_tools": workspace_tools,
+        "research_web": research_web,
         "lifecycle": lifecycle,
         "web_tools": SimpleNamespace(ROUTES={}),
         "skill_tools": SimpleNamespace(ROUTES={}),
@@ -241,42 +218,6 @@ def test_large_json_selection_returns_explicit_bounded_not_delivered(tmp_path, m
     result = ns["select_json_fields"](raw, ["rows"], "/workspace/report.json")
     assert result["error"] == "field_selection_exceeds_page_budget" and "fields" not in result
     assert result["sha256"] == hashlib.sha256(raw).hexdigest() and len(json.dumps(result)) < 1000
-
-
-def test_fresh_task_archives_fork_sidecars_and_old_history_without_loading_them(tmp_path):
-    from a3_research_agent.host.runs.continuation import HarnessStart, prepare_fresh_task
-
-    old = {
-        "checkpoint.json": '[{"role":"user","content":"old goal"}]',
-        "pending-calls.json": '{"base_hash":"old","output":[{"type":"function_call"}]}',
-        "compaction-result.json": '{"checkpoint":[{"role":"user","content":"old summary"}]}',
-        "compaction-epoch.json": '{"version":1,"id":"old-task"}',
-        "history.jsonl": '{"role":"user","content":"old raw goal"}\n',
-        "context-history/compaction-progress.json": '{"old":"spent-call-journal"}',
-        "context-history/summary-request-" + "a" * 64 + ".json": '{"status":"dispatched"}',
-        "context-failure.json": '{"error":"old failure"}',
-        "memory.jsonl": '{"lesson":"retain long-term experience"}\n',
-    }
-    names = list(old) + ["resume.json", "continuation.json"]
-    for name in ["resume.json", "continuation.json"]:
-        old[name] = json.dumps({"command": ["python", "agent.py", "--resume"], "files": names})
-    start = HarnessStart(["python", "agent.py", "--resume"], dict(old), source_version="prior")
-    fresh, context = prepare_fresh_task(start, "new goal")
-    assert start.files == old
-    assert json.loads(fresh.files["checkpoint.json"])[0]["content"] == "new goal"
-    assert json.loads(fresh.files["pending-calls.json"]) is None
-    assert json.loads(fresh.files["compaction-result.json"]) is None
-    assert json.loads(fresh.files["compaction-epoch.json"])["id"] is None
-    assert fresh.files["history.jsonl"] == ""
-    assert "context-history/compaction-progress.json" not in fresh.files
-    assert "context-history/summary-request-" + "a" * 64 + ".json" not in fresh.files
-    assert "context-failure.json" not in fresh.files
-    assert fresh.files["memory.jsonl"] == old["memory.jsonl"]
-    for name in ["resume.json", "continuation.json"]:
-        declared = json.loads(fresh.files[name])["files"]
-        assert all(path in fresh.files for path in declared)
-    for name, archive in context["operational_task_archives"].items():
-        assert fresh.files[archive] == old[name]
 
 
 def test_identical_page_reference_requires_visible_content(tmp_path, monkeypatch):

@@ -49,7 +49,7 @@ def test_400k_transcript_is_sent_whole_once_and_replayed_without_provider(tmp_pa
 
     def provider(method, path, body):
         assert path == "/v1/summary"
-        assert set(body) == {"transcript", "source"}
+        assert set(body) == {"transcript", "source", "max_output_tokens"}
         assert json.loads(body["transcript"]) == original
         assert 400000 < cm.request_cost(body) < 491808
         requests.append(body)
@@ -112,7 +112,9 @@ def test_removed_summary_input_setting_is_rejected():
         read_context_budget({"A3_SUMMARY_INPUT_TOKENS": "48000"})
 
 
-def test_uncertain_dispatch_is_not_automatically_replayed(tmp_path, monkeypatch):
+def test_uncertain_pure_summary_has_bounded_retries_without_touching_original(
+    tmp_path, monkeypatch
+):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
         cm,
@@ -120,6 +122,7 @@ def test_uncertain_dispatch_is_not_automatically_replayed(tmp_path, monkeypatch)
         {
             "summary_input_tokens": 491808,
             "summary_reserve_tokens": 5000,
+            "target_tokens": 32000,
         },
     )
     original = [{"role": "user", "content": "current task and original evidence"}]
@@ -130,9 +133,10 @@ def test_uncertain_dispatch_is_not_automatically_replayed(tmp_path, monkeypatch)
         calls.append(args)
         raise TimeoutError("response unknown")
 
-    with pytest.raises(cm.ContextError, match="failed"):
+    monkeypatch.setattr(cm.time, "sleep", lambda seconds: None)
+    with pytest.raises(cm.ContextError, match="original snapshot retained"):
         cm.full_summary(original, source, timeout)
-    with pytest.raises(cm.ContextError, match="uncertain"):
+    with pytest.raises(cm.ContextError, match="bounded attempts"):
         cm.full_summary(original, source, timeout)
-    assert len(calls) == 1
+    assert len(calls) == 3
     assert json.loads((tmp_path / source).read_text()) == original

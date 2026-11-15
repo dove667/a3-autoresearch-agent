@@ -235,7 +235,7 @@ def test_reencoding_strips_metadata_and_appended_bytes():
 
 
 def test_permission_and_symlink_rejection_remain_reader_owned(tmp_path):
-    from a3_research_agent.host.sessions.containers import workspace_path
+    from a3_research_agent.workspace.paths import workspace_path
 
     outside = tmp_path / "outside.png"
     outside.write_bytes(picture())

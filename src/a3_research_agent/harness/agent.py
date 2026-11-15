@@ -10,23 +10,25 @@ import urllib.request
 
 os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
 
-from a3_research_agent.harness import job_preflight, planning, skill_registry
+from a3_research_agent.harness import (
+    input_skills,
+    job_preflight,
+    job_tools,
+    lifecycle,
+    planning,
+    research_web,
+    skill_registry,
+    tool_contracts,
+    waiting,
+    workspace_tools,
+)
+from a3_research_agent.harness import (
+    paths as runtime_paths,
+)
 from a3_research_agent.harness.context import compaction
 from a3_research_agent.harness.context import manager as context_manager
 from a3_research_agent.harness.memory import recall as recall_tools
 from a3_research_agent.harness.memory import state as memory_state
-
-# The derived harness ships without the generated extension modules. Their
-# absence must not stop the loop: lookups below tolerate empty ROUTES/TOOLS.
-try:
-    import skill_tools
-except ImportError:
-    skill_tools = None
-try:
-    import web_tools
-except ImportError:
-    web_tools = None
-from a3_research_agent.harness import input_skills, lifecycle, waiting
 
 BASE = None
 TOKEN = None
@@ -88,10 +90,24 @@ def select_json_fields(raw, fields, path):
         or not 1 <= len(fields) <= 32
         or any(not isinstance(k, str) or len(k) > 200 for k in fields)
     ):
-        raise ValueError("fields must contain 1..32 bounded JSON object keys")
-    value = json.loads(raw)
+        return {
+            "error": "invalid_fields",
+            "hint": "Use fields with 1..32 top-level JSON object keys, at most 200 characters each.",
+        }
+    try:
+        value = json.loads(raw)
+    except (ValueError, UnicodeError):
+        return {
+            "error": "source_not_json",
+            "path": path,
+            "hint": "Use read without fields for a bounded text page; the source is not valid JSON.",
+        }
     if not isinstance(value, dict):
-        raise ValueError("field selection requires a JSON object")  # noqa: TRY004 - preserve tool contract
+        return {
+            "error": "json_root_not_object",
+            "path": path,
+            "hint": "Use read without fields for a bounded page; fields selects top-level object keys.",
+        }
     result = {
         "path": path,
         "sha256": hashlib.sha256(raw).hexdigest(),
@@ -109,19 +125,38 @@ def select_json_fields(raw, fields, path):
 
 
 def tool(name, a):
+    if name in job_tools.NAMES:
+        return job_tools.dispatch(
+            name,
+            a,
+            lambda method, path, body=None: tool(
+                "gateway", {"method": method, "path": path, "body": body}
+            ),
+        )
+    if name in workspace_tools.NAMES:
+        return workspace_tools.dispatch(name, a, protected=(planning.PATH, job_preflight.RECEIPTS))
+    if name in research_web.NAMES:
+        return research_web.dispatch(
+            name,
+            a,
+            lambda method, path, body=None: tool(
+                "gateway", {"method": method, "path": path, "body": body}
+            ),
+        )
     if name == "skills":
         return skill_registry.dispatch(a)
     if name == "recall":
         return recall_tools.recall_tool(a)
     if name == "memory":
         return recall_tools.memory_tool(a)
-    if name in getattr(web_tools, "ROUTES", {}):
-        return web_tools.dispatch(name, a)
-    if name in getattr(skill_tools, "ROUTES", {}):
-        return skill_tools.dispatch(name, a)
     if name == "preflight":
         return job_preflight.dispatch(
-            a,
+            {
+                **a,
+                "job": job_tools.submit_request(
+                    a.get("job"), pathlib.Path.cwd(), allow_pinned_sources=True
+                ),
+            },
             lambda method, path, body=None: tool(
                 "gateway", {"method": method, "path": path, "body": body}
             ),
@@ -138,16 +173,14 @@ def tool(name, a):
                 "/jobs",
                 "/resources/gpus",
                 "/sessions",
-                "/versions",
                 "/checks/comparison",
                 "/fixtures/isolation",
-                "/evolution",
                 "/telemetry",
                 "/vision",
+                "/web",
             ]
         ):
             return "path not allowed"
-        lifecycle.guard_gateway(req, a["method"], path, a.get("body"))
         result = req(a["method"], path, a.get("body"))
         try:
             memory_state.record_gateway(a["method"], path, result)
@@ -158,11 +191,12 @@ def tool(name, a):
                 pass  # Optional diagnostics cannot hide an executed operation.
         return result
     if name in ("read", "write", "list"):
+        tool_contracts.text(a.get("path"), "path")
         p = pathlib.Path(a["path"]).resolve()
         roots = [
-            pathlib.Path("/workspace"),
-            pathlib.Path("/opt/a3"),
-            pathlib.Path("/run/input"),
+            runtime_paths.workspace_root(),
+            runtime_paths.reference_root(),
+            runtime_paths.input_root(),
         ]
         if not any(p == r or r in p.parents for r in roots):
             return "denied"
@@ -177,7 +211,17 @@ def tool(name, a):
             p.write_text(a["content"])
             return "written"
         if name == "list":
+            if not p.is_dir():
+                return {
+                    "error": "path_is_file",
+                    "hint": "Use read for a file; list requires a directory.",
+                }
             return [str(x) for x in p.iterdir()][:300]
+        if p.is_dir():
+            return {
+                "error": "path_is_directory",
+                "hint": "Use list for a directory, then read a selected file.",
+            }
         if a.get("fields") is not None:
             if p.stat().st_size > 1024 * 1024:
                 return {
@@ -186,15 +230,13 @@ def tool(name, a):
                     "notice": "Use bounded offset/limit text pages; no JSON fields were read.",
                 }
             return select_json_fields(p.read_bytes(), a["fields"], str(p))
-        return memory_state.read_page(p, a.get("offset", 0), a.get("limit", 4000))
+        offset = tool_contracts.integer(a.get("offset", 0), "offset", 0, 2**63 - 1)
+        limit = tool_contracts.integer(a.get("limit", 4000), "limit", 1, 8000)
+        return memory_state.read_page(p, offset, limit)
     if name == "wait":
         seconds = a.get("seconds", 5)
         if type(seconds) is not int or not 0 <= seconds <= 600:
             raise ValueError("Wait seconds must be an integer in 0..600")
-        if seconds:
-            ready = planning.view(compact=True)["ready"]
-            if ready:
-                return {"error": "plan_work_ready", "ready": ready}
         jobs = waiting.active_jobs()
         if jobs and seconds:
             return waiting.wait_for_jobs(req, jobs, cursor=WAIT_CURSOR)
@@ -240,8 +282,18 @@ SAFE_VALIDATION_ERRORS = {
 def dispatch_tool_call(call):
     arguments = {}
     try:
-        arguments = json.loads(call["arguments"])
+        try:
+            arguments = json.loads(call["arguments"])
+        except json.JSONDecodeError:
+            return {
+                "error": "invalid_tool_json",
+                "hint": "Send one valid JSON object as the tool arguments.",
+            }
+        if not isinstance(arguments, dict):
+            return {"error": "invalid_arguments", "hint": "Tool arguments must be a JSON object."}
         return tool(call["name"], arguments)
+    except tool_contracts.ToolInputError as error:
+        return {"error": error.code, "hint": error.hint}
     except FileNotFoundError:
         return {"error": "file_not_found", "path": arguments.get("path")}
     except PermissionError:
@@ -300,11 +352,12 @@ def spec(name, props, required):
         "name": name,
         "description": {
             "gateway": (
-                "Call Host APIs. For remote job creation POST /jobs body "
+                "Advanced Host API access; prefer job_submit/job_status/job_artifact for common work. "
+                "For remote job creation POST /jobs body "
                 '{command:["python","-m","module","--help"],gpu:false,files:{}}; command MUST '
                 "be an array. GET /jobs/{id} reads an accessible job's status and log tail. "
                 "GET /resources/gpus reads aggregate GPU memory and utilization on demand. "
-                "Research workspaces, versions and artifacts are shared for reading. Attach "
+                "The current research workspace and artifacts are available for reading. Attach "
                 "local scripts with workspace_files and existing datasets or model assets "
                 "with input_exports. Use wait after independent submissions. Jobs execute "
                 "isolated code, not local host commands."
@@ -313,18 +366,21 @@ def spec(name, props, required):
             "write": "Write text in workspace.",
             "list": "List accessible directory.",
             "preflight": (
-                "Check a GPU job on CPU using the same command, source and inputs with "
+                "Check a GPU job on CPU using the same command, source and inputs; workspace_files "
+                "needs only path and optional destination, with source hashes computed locally. "
+                "The check uses "
                 "A3_RESEARCH_PREFLIGHT=1. Implement this mode in the entry to load the real "
                 "assets, import dependencies, exercise a minimal forward or data read, write "
                 "a3-preflight.json in the job workspace, and exit before production. After "
                 "completion use action=submit with the same job and preflight_id."
             ),
-            "plan": "Show or update the persistent research plan. Update with the current revision and patch steps by stable ID. Each new step needs task and criterion. Use depends_on for real prerequisites, jobs for submitted Controller IDs, progress for counts or blockers, and evidence when done. Give reason for route changes or archiving done/skipped steps. Show can select a single ID. Update before wait, which returns ready work instead of sleeping.",
+            "plan": "Show or update the persistent research plan. Update with the current revision and patch steps by stable ID. Each new step needs task and criterion. Use depends_on for real prerequisites, jobs for submitted Controller IDs, progress for counts or blockers, and evidence when done. Give reason for route changes or archiving done/skipped steps. Show can select a single ID. Ready steps are included in the decision context; use wait when submitted work must finish.",
             "progress": "List or explicitly update bounded operational items with evidence references. These are your claims, not validated scientific acceptance; closed items remain recorded across summaries.",
             "wait": "Wait until an owned job finishes, fails or is cancelled, or an operator notification arrives. Queued and running jobs stay in program-level wait. With no jobs, seconds is a finite 0..600 delay.",
             "recall": (
-                "Search original history by keyword over an n..m round window "
-                "(n=1 is the most recent round). Use after compaction or whenever "
+                "Search original history by keyword; by default search all available history. "
+                "Optionally restrict to an n..m round window (n=1 is the most recent round). "
+                "Use after compaction or whenever "
                 "earlier evidence is missing. Returns labelled snippets from the "
                 "original messages. Default evidence mode skips tool arguments and retrieval echoes; "
                 "use mode=raw for exact historical tool traffic."
@@ -364,8 +420,8 @@ tools = (
             "read",
             {
                 "path": S,
-                "offset": {"type": "integer"},
-                "limit": {"type": "integer"},
+                "offset": {"type": "integer", "minimum": 0},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 8000},
                 "fields": {
                     "type": "array",
                     "items": {"type": "string"},
@@ -379,7 +435,7 @@ tools = (
             "preflight",
             {
                 "action": {"type": "string", "enum": ["check", "submit"]},
-                "job": {"type": "object"},
+                "job": job_tools.PREFLIGHT_JOB,
                 "preflight_id": S,
             },
             ["action", "job"],
@@ -443,7 +499,7 @@ tools = (
                 "window": {"type": "integer"},
                 "limit": {"type": "integer"},
             },
-            ["keywords", "n", "m"],
+            ["keywords"],
         ),
         spec(
             "memory",
@@ -459,8 +515,9 @@ tools = (
             ["action"],
         ),
     ]
-    + list(getattr(web_tools, "TOOLS", []))
-    + list(getattr(skill_tools, "TOOLS", []))
+    + job_tools.TOOLS
+    + workspace_tools.TOOLS
+    + research_web.TOOLS
     + skill_registry.TOOLS
 )
 
@@ -472,8 +529,6 @@ WAIT_CURSOR = None
 
 def save_manifest():
     files = {
-        "web_tools.py",
-        "skill_tools.py",
         "task.txt",
         "checkpoint.json",
         "memory.jsonl",
@@ -502,10 +557,13 @@ def save_manifest():
         p for p in files if pathlib.Path(p).is_file() or p in ("resume.json", "continuation.json")
     )
     for filename, command in [
-        ("resume.json", ["python", "-m", "a3_research_agent.harness.agent", "--resume"]),
-        ("continuation.json", ["python", "-m", "a3_research_agent.harness.agent", "--resume"]),
+        ("resume.json", ["python", "-P", "-m", "a3_research_agent.harness.agent", "--resume"]),
+        (
+            "continuation.json",
+            ["python", "-P", "-m", "a3_research_agent.harness.agent", "--resume"],
+        ),
     ]:
-        data = {**manifests[filename], "command": command, "files": files}
+        data = {**manifests[filename], "version": 1, "command": command, "files": files}
         context_manager.atomic(filename, json.dumps(data))
 
 
@@ -513,6 +571,11 @@ def operational_message():
     state = memory_state.load()
     value = memory_state.view(state)
     value["research_plan"] = planning.view(jobs=state.get("jobs", {}), compact=True)
+    value["runtime_paths"] = {
+        "workspace": str(runtime_paths.workspace_root()),
+        "inputs": str(runtime_paths.input_root()),
+        "reference": str(runtime_paths.reference_root()),
+    }
     return {"role": "user", "content": json.dumps(value, ensure_ascii=False)}
 
 
@@ -601,10 +664,7 @@ def main() -> None:
     while True:
         try:
             loop_phase = "decision_prepare"
-            if lifecycle.should_retire(req):
-                checkpoint(messages)
-                log({"role_transition": "former_main_saved_and_exiting"})
-                break
+            lifecycle.self_status(req)
             try:
                 context_manager.configure(req)
             except Exception as e:  # noqa: BLE001 - preserve the checkpoint when Host budgets are unknown
@@ -694,6 +754,15 @@ def main() -> None:
                     }
                 )
                 checkpoint(messages)
+        except KeyboardInterrupt:
+            log(
+                {
+                    "interrupted": True,
+                    "phase": loop_phase,
+                    "state": "last paired checkpoint and pending-call journal retained",
+                }
+            )
+            break
         except Exception as e:  # noqa: BLE001 - preserve recoverable state on unexpected failures
             failure = {
                 "loop_error": type(e).__name__,

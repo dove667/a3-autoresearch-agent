@@ -1,20 +1,47 @@
 # Host提供的执行与验收入口
 
-Version: 0.18.7
+Version: 0.22.0
 
-部署方运行 gateway、容器引擎、模型认证与远程资源调度。候选 Harness 在独立容器内运行，
-通过 HTTP 请求这些固定能力。工具名称、研究逻辑、反思方法和版本选择由 Agent 设计。
+部署方运行 Host Gateway、模型认证与远程资源调度。已发布的 Harness 在本地原生进程运行，
+通过固定工具访问研究工作区、只读输入与远程作业。研究逻辑、反思方法和实验选择由 Agent 执行。
 目标和验收以本次只读的 `goal.md`、`acceptance.md` 为准。
+
+## 常用研究工具
+
+日常操作优先使用以下工具；`gateway` 保留完整 HTTP 接口供高级操作。
+
+| 操作 | 工具与参数 |
+| --- | --- |
+| 提交远程命令 | `job_submit(command=["python", "research/train.py"], gpu=true, workspace_files=[{"path":"research/train.py"}])`；`command` 是参数数组，源码附件只填路径与可选 `destination`，工具自动计算 SHA256 |
+| 查询与等待 | `job_status(job_id=...)`、`job_list(...)`；独立作业提交完毕后用 `wait`，资源排队由程序处理 |
+| 读取结果 | `job_artifact(job_id=..., area="outputs", path="experiment/report.json")`；返回字符分页、完整文件 SHA256 和来源，源码用 `area="workspace"` |
+| 取消与封存 | `job_cancel(job_id=...)` 取消自有作业；`job_export(job_id=..., area="outputs", path="experiment")` 异步创建只读快照，后续通过返回的 export ID 查询状态 |
+| 查找源码 | `search_files(path="research", query="PolicyAdapter")` 返回匹配路径、行号和片段；结果截断时缩小路径或查询 |
+| 局部修改 | `edit(path=..., old_text=..., new_text=...)` 只替换唯一精确匹配；多处替换需显式 `replace_all=true`，可用 `expected_sha256` 防止过期修改 |
+| 联网研究 | `web_search(query=...)`、`web_fetch(url=...)`、`web_status()` 通过 Host 配置的服务搜索和读取公共来源 |
+
+`job_submit` 可通过 `input_exports` 复用数据与权重。需要固定科研比较时，`evaluation` 接受
+`baseline_job_id`、`baseline_manifest` 和 `candidate_manifest`，字段语义见后文的评估诊断接口。
+`preflight` 的 `job` 使用相同的具体作业字段，源码附件同样自动计算哈希；已有显式源码哈希
+会与当前文件核对。生产提交继续绑定已通过的相同请求，重复读取提交回执不会重新启动作业。
+托管 GPU 作业使用每作业显存预算；默认预算由部署者配置，可用 `gpu_memory_mb` 提供已知峰值，
+无需计算服务器剩余显存。资源暂时不足时保留同一 job ID 排队；超出单卡容量的请求明确拒绝。
+
+提交返回 `submission_unknown` 时，记录返回的 `job_id`，先用 `job_status` 或 `job_list` 核对。
+读取结果失败或等待中的资源压力均无需再次提交。`read` 的 `offset/limit` 按字符计量，
+`limit` 范围为 1–8000；目录用 `list`。工具返回的参数错误说明可直接用于修正下一次调用。
+`job_artifact` 将分页参数传到 Controller，返回所需文本页及完整文件摘要，避免每页下载完整文件。
+未带分页参数的 artifact HTTP 接口返回 Base64 内容，供视觉和评估调用使用。
 
 `deployment.json.remote_limits.managed_jobs=true` 表示服务器托管执行：Agent 只提交命令、输入、科研参数和是否需要 GPU，Controller 持久保存队列、选择设备、分配显存预算、等待资源及管理安全重试。普通返回不包含服务器 CPU、内存或显卡分配明细。有具体需要时可按需查询只读显卡快照。Controller 的诊断、修复与运维由人类操作者负责；基础设施问题不转成 Agent 的研究任务。
 
-摘要返回超过硬字节上限时，客户端可在同一原文分段的有界重试中发送 `compact_retry: true`；Host 仅选择固定的更紧凑提示，不接受自定义指令或模型。纠正状态与累计调用数持久保存，不截断原文、不放宽 6000 UTF-8 字节限制；当前 run 的冻结输入不因部署修复而自动更新。
+上下文压缩必须生成完整摘要。压缩目标覆盖整份下一轮输入，摘要额度由剩余 token 空间计算；暂时错误按持久记录有限重试，失败时保留原 checkpoint。摘要接口与具体预算见文末。
 
 ## 执行主体与证据归属
 
 研究 Agent 负责 Policy、数据采集、训练、评估、研究脚本和结果判断。Harness 的模型调用、工具注册、上下文、记忆机制、调度与恢复由人类和 Codex 在运行暂停期间维护。遇到这类问题时保留轨迹位置、实际影响和复现条件，交给维护者。夜间只使用部署方提供的 Harness，不修改运行框架、启动 Harness 候选或切换主身份。
 
-冷启动的初始 mini 只负责引导首个研究进程。研究证据以当前研究进程的真实调用、结果与版本为准。
+Host 从操作者选择的发布版本启动一个研究进程。研究证据关联实际调用、结果与发布版本。
 
 ## 启动与恢复状态
 
@@ -22,19 +49,21 @@ Version: 0.18.7
 
 具体 run 的来源、任务切换、人工恢复或修复及旧终态说明由本轮 human feedback 提供，不在全局输入中预设。处理反馈遵循 SOUL 与当前验收/协议；输入一致性、反馈投递与恢复 API 见下文。
 
+每轮运行状态 `runtime_paths` 给出真实 `workspace`、`inputs` 与 `reference` 目录。工作区内使用相对路径，读取输入或 A3 参考源码时使用对应实际路径。
+
 ## 请求与权限
 
 gateway 地址和本身份的令牌由 `A3_GATEWAY_URL`、`A3_GATEWAY_TOKEN` 环境变量提供。
 请求携带 `Authorization: Bearer <本身份令牌>`，不要把令牌打印到轨迹或存入报告。
-模型使用 Responses 接口 `/v1/responses`，别名 `openai/sandbox-model`，适配器 `litellm_response`。
+模型使用 Responses 接口 `/v1/responses`，别名 `openai/sandbox-model`。
 `OPENAI_API_BASE` 与 `OPENAI_API_KEY` 已配置为本轮转发入口；实际模型固定在Host。
 调用费用未知时保持未知，token 用量从响应读取。
 
 ## 本轮研究数据共享
 
-同一 run 内已登记的研究身份可共享源码、记忆、可见轨迹和研究产物。第二阶段的作业接口按项目共享：已登记的研究身份可以读取本项目历史作业的状态、日志及产物，并把历史数据或权重封存成只读快照供新作业使用。Host 按已登记的作业归属核验，封存保留来源与哈希，新作业使用自己的令牌和输出目录。工作区写入、作业取消和历史快照删除仍分别检查归属。Host 凭据、私有控制状态及其他项目的数据保持隔离。
+同一 run 内已登记的研究身份可共享源码、记忆、可见轨迹和研究产物。作业接口按项目共享：已登记的研究身份可以读取本项目历史作业的状态、日志及产物，并把历史数据或权重封存成只读快照供新作业使用。Host 按已登记的作业归属核验，封存保留来源与哈希，新作业使用自己的令牌和输出目录。工作区写入、作业取消和历史快照删除仍分别检查归属。Host 凭据、私有控制状态及其他项目的数据保持隔离。
 
-`GET /sessions` 与会话状态／产物接口用于本轮研究读取；已知 job 可直接按 ID 读取。第二阶段的 `GET /jobs` 返回 `historical_scopes` 时，用 `GET /jobs?scope=<owner>` 分页查对应历史作业。读取共享内容仍使用自己的令牌，不获取或复用其他身份认证。研究内容共享不改变身份和管理权限。
+`GET /sessions` 与会话状态／产物接口用于本轮研究读取；已知 job 可直接按 ID 读取。`GET /jobs` 返回 `historical_scopes` 时，用 `GET /jobs?scope=<owner>` 分页查对应历史作业。读取共享内容仍使用自己的令牌，不获取或复用其他身份认证。研究内容共享不改变身份和管理权限。
 
 ## 研究网页网关
 
@@ -119,7 +148,7 @@ Host 验证并去除图像 metadata 后，向配置的视觉辅助模型发送�
 
 研究 Agent 负责 Policy、数据采集、训练、评估、研究脚本和结果判断。Harness 的模型调用、工具注册、上下文、记忆机制、调度与恢复由人类和 Codex 在运行暂停期间维护。遇到这类问题时保留轨迹位置、实际影响和复现条件，交给维护者。夜间只使用部署方提供的 Harness，不修改运行框架、启动 Harness 候选或切换主身份。
 
-互相独立且输入已就绪的远程作业，先在权限与资源额度内并行提交，再统一查询与收集结果；有数据依赖的作业按依赖推进。采集和评估中的独立 episode 统一使用 `/run/a3/episode_executor.py`，由 Agent 固定科学参数、seed、协议与输出；不另写固定两个并发的循环，不重复已完成的科学 episode 测吞吐。
+互相独立且输入已就绪的远程作业，先在权限与资源额度内并行提交，再统一查询与收集结果；有数据依赖的作业按依赖推进。采集和评估中的独立 episode 统一使用作业环境提供的 `A3_EPISODE_EXECUTOR`（远程 Docker 为 `/run/a3/episode_executor.py`），由 Agent 固定科学参数、seed、协议与输出；不另写固定两个并发的循环，不重复已完成的科学 episode 测吞吐。
 
 普通脚本、参数、依赖适配和结果解析问题由当前 Agent 在当前任务中定位、修复并验证到底，保留失败与修复证据；需要 Host 凭据、权限、服务或资源配置变更时，保存具体错误、所缺条件和所需操作，暂停受阻研究线并明确报告操作者，保留该线进度，避免重跑已有采集、训练或评估来绕过权限问题。正常作业等待按状态继续推进。
 
@@ -139,61 +168,29 @@ Host 验证并去除图像 metadata 后，向配置的视觉辅助模型发送�
 
 ## 独立候选执行
 
-Agent 令牌不能通过 `POST /sessions` 创建普通 worker；请求被拒绝。Host 启动器可建立初始主会话；冷启动的初始 mini 可引导一次首个研究进程。容器使用独立身份与 `/workspace`，只读输入位于 `/run/input`，公共 A3 位于 `/opt/a3`；不挂载 Host 凭据、Docker socket 或其他身份工作区。候选固定使用 2 CPU、2 GiB 内存、256 个进程、512 MiB 临时目录。模型客户端位于本地镜像，A3 依赖位于远程作业镜像。
+常规研究由同一个主 Agent 在原生进程执行。主身份、工作区和临时 Gateway 令牌由 Host 登记。
+文件工具将 `/workspace`、`/run/input`、`/opt/a3` 分别映射到实际研究目录、只读输入和公共 A3 参考目录；相对路径从研究工作区解析。
+模型调用、文件工具和远程提交使用已发布的固定入口。训练、仿真及研究脚本通过远程 job 执行。
 
-`GET /sessions/{session_id}` 返回状态、退出码和近期输出，Docker 完成状态为 `exited`。
-`GET /sessions/{session_id}/artifacts?path=relative_path` 返回最多 32 MiB 文件的 Base64 内容。
-大轨迹使用同一接口的 `offset` 和 `limit` 按字节分段读取，例如
-`?path=trajectory.jsonl&offset=0&limit=1048576`。返回 `data`、`offset`、`next_offset`、
-`size_bytes` 与 `eof`；按 `next_offset` 继续读取，先拼接解码后的字节，再解析 UTF-8 或 JSONL。
-每段最多 32 MiB；只给非零 `offset` 时默认读取 1 MiB。未分段请求超大文件会返回
-HTTP 422、`reason: artifact_too_large` 和可重试的 `retry_query`，不改变身份和路径授权。
-`size_bytes` 与 `eof` 反映本次读取时观察到的文件末尾；运行中的轨迹可继续追加，之后可从已保存偏移量继续查询。
-`GET /sessions` 列出同一 run 的登记研究会话及关系；本轮身份可查询会话状态、取回研究产物。生命周期管理仍使用原权限。
-`GET /sessions?include_status=true` 在同一会话锁下取得列表、状态与退出码，Host 使用此快照判断活动后继，避免并发创建后继时漏记。
-同 run 内候选与前任可以互相读取研究会话；写入、停止和删除等管理权限独立检查，读取权限不授予管理权限。其他 run 和外部身份不能读取。
-进程正常退出会保留后继候选的执行与身份，结束的进程不再占活动容器名额。
+`GET /sessions/self` 返回当前 session 的状态与 `is_main`、`has_been_main`。
+`GET /sessions/{session_id}` 返回有权读取会话的状态、退出码与近期输出。
+`GET /sessions` 列出本 run 登记的研究身份；历史关系仍用于来源追溯。
+Agent 令牌不创建普通 `/sessions` worker；当前主 Agent 自行完成研究任务。
 
-Host 每两秒检查本轮已登记的研究进程；状态查询也会尝试回收已退出的 Docker。
-确认 Docker 已退出后，先将控制台保存为 `candidates/<session_id>/console.log`，
-将退出码、结束状态和保存时间原子落盘到 `session.json`，再删除该 container。
-工作区直接保存在 Host 挂载目录，源码、checkpoint、记忆和产物继续保留；
-Harness 须在退出前完成自己的写入。Host 不生成缺失的 checkpoint，也不替 Agent 判断验收。
-删除后仍能通过原 session ID 查询退出码、近期输出及工作区产物。
+历史会话文件使用 `GET /sessions/{session_id}/artifacts?path=relative_path`。
+该接口无分页参数时返回 Base64；大轨迹可用 `offset` 和 `limit` 按**字节**读取，
+返回 `offset`、`next_offset`、`size_bytes` 和 `eof`。每段最多 32 MiB，先拼接解码后的字节再解析 UTF-8 或 JSONL。
+远程 `job_artifact` 的分页单位是**字符**，按各工具返回的单位与游标续读。
 
-container 回收不关闭会话管理关系，不撤销普通退出身份，不取消远程作业、fixture 或后继。
-运行和暂停中的 Docker 保留。日志或退出记录保存失败时不删除 container；
-清理错误记录在 `session.json` 的 `cleanup_error`，单会话状态查询也返回该字段。
-Host 存活期间自动重试，恢复同一 run 后继续处理遗留清理；删除成功后清除此错误。
-container 回收不删除镜像、构建缓存、运行目录或历史证据；这些内容仍需单独管理空间。
+Host 保存原生进程控制台、退出状态和时间，研究源码、checkpoint、记忆、skills 与结果留在原工作区。
+暂停后恢复同一身份与目录；远程作业继续按原编号管理。
+`POST /sessions/self/stop {"reason":"状态已保存"}` 主动结束自身进程并撤销其令牌，保留研究文件。
+调用前保存证据、记忆、checkpoint、`run-outcome.json` 和 `continuation.json`，再单独调用。
+该进程可能在收到响应之前退出，Host 分别记录停止请求与确认结果。
+明确 self-stop 的会话按恢复协议处理；需要人工解除的有效外部阻塞保留原因与证据。
 
-`GET /sessions/self` 返回调用身份自己的 session 状态及 `is_main`、`has_been_main` 两个角色标记，不返回其他身份。当前 Harness 据此在交权后保存并退出旧主进程；可用自己的实际 session ID 查询普通状态。
-初始 mini 使用提交标记退出；没有候选 Docker 的构建者身份不能调用自身 session 接口。
-
-`POST /sessions/self/stop {"reason":"状态已保存"}` 是候选进程的主动结束入口。
-Host 仅停止调用者自身的 Docker，确认退出并保存控制台后自动删除 container，
-保留工作区，不级联终止后继，不取消远程作业。
-这些作业继续受原资源分配和超时约束，并在整轮清理时回收。成功停止后撤销当前会话令牌，
-祖先仍可查询该 session 和后继，后继使用自己的身份继续执行。通过此接口主动结束的 session 不自动重启；唯一恢复例外是操作者明确 `--resume-from`，且当前主身份因有效外部 blocked 停止（见下文）。
-停止失败时返回可重试错误，身份保持可用。请求不能指定其他身份、挂载或级联操作。
-Host 先记录停止意图，再停止进程；若中断留下未确认的停止请求，恢复会明确报错，需先核查实际状态。
-日志归档错误记录在 session.json 的 cleanup_error，保留 container 等待重试；
-已确认的停止不会因日志错误而变成可恢复进程。
-
-这是终结操作：先保存证据、记忆、checkpoint、run-outcome.json 和 continuation.json，
-再单独调用，不与其他写入并行。Docker 先收到正常终止信号，五秒内未退出则强制终止；
-调用进程可能在收到 HTTP 响应或保存该工具结果之前结束。Host 的 session-events.jsonl
-记录 self_stop_requested 和成功时的 self_stopped；两者分别表示请求与实际停止。
-优先使用部署的正常退出路径保存最后一次工具结果。
-
-`DELETE /sessions/{session_id}` 关闭当前候选；若还有未回收后代，返回 HTTP 409 和后代标识，保持分支不变。
-明确放弃整条分支时，使用 `DELETE /sessions/{session_id}?cascade=true`。
-分支取消回收该候选及后继候选、相关远程作业和隔离 fixture，保存控制台输出、移除容器并撤销身份，工作区保留。
-如果部分资源暂时无法回收，返回错误；父调用方仍可用原 session ID 重试清理。
-运行Host始终保留后代管理关系，父进程退出后后代仍可由上级身份管理。
-`session-events.jsonl` 保存创建与关闭关系，不保存令牌。
-研究 Agent 可以使用自己的固定权限工具和候选代码；工具后端仍经这些部署边界执行。
-研究轨迹及实验结果由 Agent 保存。
+写入、取消和生命周期管理仍按原身份与已采用 lineage 检查。
+对旧身份的读取权限保留来源追溯，管理操作由 Host 按实际授权执行。
 
 ## 远程 A3 作业
 
@@ -214,8 +211,7 @@ Host 在发送请求前保存任务编号。提交遇到传输失败时，502 �
 合并后最多128文件／20 MiB，重复目标和文件／目录冲突直接拒绝。响应 `source_files`
 与 Host 的 `job-inputs.jsonl` 记录实际来源、目标、哈希和字节数。
 `input_exports` 继续使用提交者已有的授权，无需新建子进程或继续转授权。
-`version_id` 不属于作业接口；固定版本通过 `/versions` 保存后由正式 trial 使用。详见
-[文件传递](../../docs/workspace-snapshot-assembly.md#send-selected-workspace-files-to-a-remote-job)。
+提交回执记录实际源码哈希；研究报告按回执关联作业版本。
 
 
 ### 受信任的进程后端与真实路径
@@ -292,15 +288,13 @@ Harness 在程序内部续接 timeout，不为正常运行、排队或等待超�
 每个身份同时最多一个 fixture，可清理后重新创建。启动器退出时也会清理本轮 fixture。
 接口成功或Host预检通过不能代替研究 Agent 自己执行 A、B、C 的验收证据。
 
-初始 SWE 只启动一次。它退出后，Host 保持已经启动的后继、Gateway 和资源服务可用，等待全部研究进程停止。Host 不定时重建 Agent，不因未完成或错误重新派发任务，不自动生成审查意见；显式反馈的投递机制见下文。后续进程与交接由 SWE 自己安排。
-
-整轮正常完成后 Host 清理资源；启动器中断会暂停候选并保留资源以便恢复。清理失败保存 `cleanup-errors.json` 供复核。Host 在全部研究进程停止后读取终态清单并进行结构检查；该检查不替代实际验收证据。
+Host 启动一个研究进程并监督其生命周期。正常结束时清理本轮资源；操作者中断时保存暂停状态，保留研究文件与在途作业。清理失败保存 `cleanup-errors.json`。Host 在研究进程停止后检查终态清单。
 
 ### 整轮结束与未完成交接
 
-第二阶段是否收尾先以本轮 goal.md 的持续研究与停止条件为准；A–D 阶段性通过不单独触发 complete，其他阶段仍按各自目标正常完成退出。
+是否收尾按当前任务 goal.md 的研究与停止条件执行。
 
-生成后的主 Agent 在自己的工作区根目录使用 `/workspace/run-outcome.json` 声明状态和终态；只有初始构建者使用 `/workspace/run/run-outcome.json`。Host 按当前主身份的实际工作区读取清单，不会合并两个路径的内容。Agent 应在任务或作业状态变化后更新自己的状态引用，保留已有决定与未完成项；保存 checkpoint 不会替 Agent 自动更新科研决定。验收细节与证据格式仍由 Agent 组织；这份清单在全部研究进程停止后用于记录结果：
+主 Agent 在自己的工作区根目录使用 `run-outcome.json` 声明状态和终态。Host 按当前主身份的实际工作区读取清单。Agent 应在任务或作业状态变化后更新自己的状态引用，保留已有决定与未完成项；保存 checkpoint 不会替 Agent 自动更新科研决定。验收细节与证据格式仍由 Agent 组织；这份清单在全部研究进程停止后用于记录结果：
 
 ```json
 {
@@ -314,11 +308,9 @@ Harness 在程序内部续接 timeout，不为正常运行、排队或等待超�
 }
 ```
 
-验收项取自版本化 `acceptance.md` 的字母标题，所有必需项均为 `passed`、引用文件在本工作区实际存在且非空，并有有效 `continuation.json`，才能声明完成。路径相对 `/workspace/run/`。先将选择的后继证据与入口按授权交接到该目录；Host 不替 Agent 选择候选。Host 检查协议和文件可达性，实际能力仍按版本化标准复核。
+验收项取自版本化 `acceptance.md` 的字母标题，所有必需项均为 `passed`、引用文件在本工作区实际存在且非空，并有有效 `continuation.json`，才能声明完成。证据路径相对当前研究工作区。Host 检查协议和文件可达性，实际能力仍按版本化标准复核。
 
-上例是普通第一阶段，不是所有 profile 的固定清单。web-extension 的 acceptance 只有 E，终态示例为 `{"status":"complete","acceptance":{"E":{"status":"passed","evidence":["evidence/web-report.json"]}}}`，仍须真实证据、有效 continuation 与实际退出。历史 A–D 来源摘要单独保存，不能复制成新 pass；E 完成不认证前轮整轮历史。配置／认证／额度／网络阻断时使用下述 blocked 协议，保存未验证链路与恢复入口，有限排查后退出，不无限等待或用离线 fixture 替代真实成功。
-
-未完成时可写 `{"status":"continue","reason":"尚未完成的能力与已有进展"}`，或仅保存进展后提交本回合。提交前须自行安排后继；Host 只等待现有后继，不开启新回合。全部研究进程已停止但未完成时，记录 incomplete。
+未完成时可写 `{"status":"continue","reason":"尚未完成的能力与已有进展"}`，或仅保存进展后提交本回合。保存已有研究进度后退出；Host 记录 incomplete，等待操作者恢复。
 
 确需人工处理的外部阻塞使用 `status: blocked` 与 `external_blocker`，字段为 `kind`、`requires_human: true`、`reason`、`required_action`、`evidence`。允许的类别是 `authentication`、`permission`、`unavailable_service` 和 `missing_resource`；同样需要可达证据。候选名额、作业等待、无收益候选和待完成验收都应继续处理。
 
@@ -326,7 +318,7 @@ run-outcome.json 声明结果，Host 等待进程实际停止后再读取它。�
 
 ## 研究源码版本
 
-用实际作业源码、摘要和快照标识关联 Policy 实验。已登记版本可通过 `GET /versions` 核对。版本装配与远程作业源码传递见 `docs/workspace-snapshot-assembly.md`。
+用作业提交回执中的源码哈希、输入快照和发布 commit 关联 Policy 实验。附件通过 `workspace_files` 从当前 `research/` 目录传递。
 
 ## 比较条件检查
 
@@ -359,59 +351,37 @@ run-outcome.json 声明结果，Host 等待进程实际停止后再读取它。�
 
 ## 运行结束与自动接续
 
-主 Harness 在自己的 `/workspace/continuation.json` 声明下一轮保留结果；初始构建者使用 `/workspace/run/continuation.json`。内容为启动命令和完整的相对文件清单：
+Harness 将实际研究状态保存到工作区，在 `continuation.json` 声明保留命令和选定的 `remote_exports`。
+已发布的运行由 Host 在 `retained.json` 记录固定 Harness 提交、主身份与经过验证的资产引用。
+研究文件继续保存在原目录，远程权重和数据通过只读 exports 保存。
 
-```json
-{"command": ["python", "next_agent.py"], "files": ["next_agent.py", "memory/lessons.json"]}
-```
-
-文件清单使用工作区内的相对路径，当前保留包支持 UTF-8 文件。Host 在全部研究进程停止后读取清单，把文件保存为固定 Git 快照，并写本轮 `retained.json`。本地保存不受 HTTP 上传的 128 个文件、20 MiB 限制；仍会检查路径、身份归属，并拒绝凭据文件和 Git 控制文件。磁盘空间、内存或 Git 操作失败会使保存失败，原工作区继续保留。远程二进制材料通过下方只读快照接口显式保留。
-
-操作者使用 `--run-harness <run目录>` 选择并导入保留包，Host 负责启动主身份。
-
-从旧运行启动的新主会话可以读取 `/run/input/previous-run.json` 与 `/run/input/history/index.json`。历史来自明确选择的前序运行，已过滤旧认证与私密推理；其中内容按待核查数据处理。启动时主会话获得选定历史的只读入口；同 run 登记研究身份可通过研究读取接口访问已导入的内容，模型上下文与实际采用材料由 Agent 自行选择。前序 run 的其他未导入私有内容仍不开放。
+日常维护发布在暂停的原 run 上更换已发布代码和输入版本，对话、checkpoint、记忆、skills、计划和作业状态原地保留。
+旧源码指针、配置、输入与 checkpoint 边界进入独立升级档案。
+明确建立另一个研究任务时才初始化新的活动对话和计划，并记录其代码来源与历史入口。
 
 ## 上下文 checkpoint 与 resume
 
-操作者明确执行现有 `--resume-from`，也可恢复因可信外部 `blocked` 而 self-stop 的**当前主 Agent**。要求 Host 已 suspended/stopped、supervision 已 stopped、主身份与 evolution 记录一致、Docker 终态确认停止且已回收、未 closed，且 blocked 原因、人工所需动作及非空证据均有效。已完成 run、已交权旧主、已关闭会话、普通无有效 blocked 的 self-stop 不恢复。不是 supervisor 自动重试，也不创建新 run。
+普通恢复沿用原 run、主身份、模型与工作区。已发布 Harness 通过固定入口读取非空的消息型 `checkpoint.json`，
+并在 `pending-calls.json` 中保存工具调用和已取得的结果。恢复重新交付已保存结果；结果未知的调用保留未知状态，先查询实际作业和产物。
 
-恢复仍使用原 run、主身份、版本、工作区、模型和完整 checkpoint；不复制上下文、不改生成代码、不补造工具输出、不重注入反馈。此显式恢复目前要求 `resume.json` 的 command 为 `python`／`python3 <源码.py> --resume`，files 包含该源码与非空消息型 `checkpoint.json`；重复或未配对工具调用拒绝启动。原 terminal、console、outcome 和 supervision 归档到 Host 私有 `.host/blocked-resume/<attempt>/`，记录摘要与当前输入 revision，并追加 session 事件；活动 outcome 改为 continue，旧 blocked 不再结束刚恢复的进程。只轮换原主身份的临时 Gateway token，scope 不变、旧 token 保持撤销，其他身份和凭据不变。
+原生进程中断时保留最后一个完整 checkpoint 与工具 journal，远程作业继续执行。
+Host 的 `.host/state.json` 保存身份、会话、作业与当前主身份；该私有目录不在 Agent 文件工具的读取范围。
+run 排他锁和 Gateway 端口检查阻止重复启动，原轨迹继续追加，`startup.json` 保持原样。
 
-人工恢复自停 run 时，应通过现有 `--feedback-file <UTF-8通知文件>` 说明已修复的问题、仍需重验的验收和下一步范围，不能仅恢复进程而让 Agent 猜测。若上一次已完成的 blocked 恢复留下活动 `continue`、Host `incomplete / Explicit operator resume`，主进程又 self-stop，只有本次明确反馈、同一 Host restart attempt 关联及原 blocked 归档摘要均核验通过时才允许继续；普通 incomplete 不适用。原有效 blocked 的兼容入口不变。
-
-反馈沿用 HumanFeedback 现有协议：以独立 `user` 消息进入首次恢复的完整模型请求，不改生成代码、checkpoint 或 system 指令。attempt 关联 feedback_id／SHA；`registered` 只是排队，不代表模型已收到，模型转发成功后才有 `forwarded` 及用量记录 human_feedback_ids。同一文件按已有规则幂等登记；同一反馈在完整历史中仅出现一次，但后续模型请求仍携带该历史，不是每次都追加新的人工消息。基础设施 smoke 证据与 Agent 的任务验收须在通知中明确区分。
-
-先完成只读校验，再写 pending 恢复日志，最后才调整状态、发放凭据和启动。若进程崩溃／启动失败留下 pending，后续 CLI 明确拒绝自动重试，须核查 Docker 实际状态和该目录归档后人工协调恢复；不要直接删 pending、改标志或重放工具。RunLease 和固定 container 名防止并发／重复启动。本机制提供失败封闭的进程崩溃审计，不承诺断电级跨文件事务。
-
-初始 mini 的 trajectory 原子写入。恢复保留用户/模型对话与工具结果，部署方 system Prompt 按当前 bootstrap 和所选阶段协议刷新。目标、验收和执行说明采用启动时当前版本；显式登记的反馈独立投递，不改写原历史。主动提交的会话不恢复；未保存结果的工具调用拒绝自动重放。
-
-生成的 Harness 用 `resume.json` 声明包含 checkpoint 的源码清单及恢复命令。Host 不把 continuation 入口当作 resume；缺失 checkpoint 入口时拒绝启动。`--resume-from` 在原 run 目录、时间戳、主身份、工作区和版本库恢复。Host 私有 `.host/state.json` 保存本轮身份令牌、会话与作业注册表、主身份和 trial；Agent Docker 不挂载此目录。恢复沿用原 Gateway 端口与 scope。暂停中的 Docker 直接接回；主进程已退出时，以同一身份在原工作区执行恢复命令，不复制成新的候选。自动回收的主 container 按相同规则重新创建，先前控制台另存为 `console-resume-*.log`；已完成的其他研究身份 不重新执行，通过自身停止接口结束的会话也不自动重启；明确恢复外部 blocked 当前主身份的例外见下文。
-
-中断时暂停本轮候选 Docker、保存 Host 状态并保留远程作业；整轮正常结束仍回收资源。原任务轨迹继续追加，`startup.json` 保持原样，`resume-events.jsonl` 记录每次恢复。run 排他锁拒绝重复启动，端口不可用时明确失败。旧 Host 无私有快照时，仅从已停止运行的 Host 元数据导入原 scope 并轮换本轮令牌；不修改生成代码或模型上下文。已取消的远程 job 不自动重跑。
-
-## 主身份与引导交接
-
-`GET /evolution` 可核对当前主身份和历史试运行。冷启动的初始 mini 使用既有引导接口建立首个研究会话；该引导只执行一次。历史身份与恢复信息继续可读。日常研究由部署方启动或恢复的主 Agent 执行。
+因有效外部 blocked 而 self-stop 的当前主 Agent，可由操作者显式恢复。
+Host 核对阻塞原因、证据、停止状态和主身份，归档旧终态后继续同一身份；已完成或已交权身份保持历史状态。
+人工修复说明通过独立反馈记录投递，带 feedback ID、SHA 和实际转发事件。
+未完成的恢复或发布事务会阻止普通启动，按对应事务记录核查后继续。
 
 ## 固定核心提示词
 
-`agent-inputs/shared/bootstrap.yaml` 仅维护初始 mini 的参数、Bash/提交约定与启动路径。第一阶段的专门任务协议维护在 `agent-inputs/phase-one/instructions.md`；第二阶段没有额外 instructions 文件，由 SOUL、goal、acceptance 与 protocol 组成主 Agent 核心输入。目标和验收来自对应的 `agent-inputs/<phase>/`；第二阶段另从 `agent-inputs/shared/protocol.md` 加载 protocol.md；共享存放不意味着第一阶段加载。
+当前任务的 `goal.md`、`acceptance.md` 与 `protocol.md` 由操作者明确提供。Host 将完整正文与共享 `SOUL.md` 加入当前主 Agent 的模型 instructions，保留 Agent 专属 instructions、消息和工具定义。`execution.md` 与工作区指引按需读取。
 
-第一阶段显式 task_profile=web-extension 时改选 `agent-inputs/phase-one-web/instructions.md` 与 `agent-inputs/phase-one-web/{goal,acceptance}.md`，仍映射到相同 `/run/input` 名称；三者正文注入主身份／接任候选，execution 保持可读，不叠加普通 A–D Prompt 或第二阶段 protocol。startup 与 input manifest 保存 task_profile，缺省 standard；同 run 恢复和输入更新保持原 profile，冲突选择拒绝。
+主身份来自 Host 记录。本地只运行一个研究 Agent，工具不提供 worker 创建或主身份交接。
 
-第一阶段显式 task_profile=skills-extension 时改选 `agent-inputs/phase-one-skills/{instructions,goal,acceptance}.md`，只验收 F；不叠加 A–E 或第二阶段任务。新来源须是 Host 记录 E 完成且 retained ready 的 web-extension run，来源记录不是 Host 独立重验能力的证明。新任务沿用代码与持久记忆、使用 F 目标新上下文；A–E 只保留带来源的历史结论。旧任务和初始反馈归档到新副本的 `inherited-task-state/skills-extension/`，原归档不覆盖；旧反馈不作为本轮新指令。显式提供本轮初始反馈时才加入新上下文。该初始化不实现技能工具，不重写源 retained，也不改变同 run resume 的完整历史语义。
+普通恢复从本轮已保存的 input revision 装载输入。维护者通过显式原地发布更新通用输入与 Harness，保留研究目标和协议。仅编辑源文件不会改变运行中的输入。每个部署输入都有 Version，manifest记录 revision、generation、源路径、版本与SHA256。
 
-本 profile 成功顶层为 `status=complete`，`acceptance.F.status=passed` 并附实际证据与有效 continuation；不得在顶层写 passed 或复制 A–E 成功项。失败、未完成、外部阻塞沿用上述固定结果协议。F 完成后保存并退出，不自动开始第二阶段。
-
-共享 `agent-inputs/SOUL.md` 版本化为 `/run/input/SOUL.md`，其长期行为原则与所选阶段协议一起提供给当前主 Agent 与接任候选；SOUL 不改变本轮目标、验收或权限。
-
-Host 只加载所选阶段的输入，不叠加 common 或另一阶段 Prompt。第一阶段的任务协议版本化为 `inputs/phase-instructions.md`；新第二阶段不创建该文件或空壳。主 Agent 与接任候选遵循同一套版本化输入，摘要进入 `startup.json`。初始 mini 的 system 直接加载这套内容；Gateway 在转发当前主身份、待接任候选的每次模型请求时，以同一版本化内容作为 instructions 前缀，保留其专属 instructions、消息和工具定义。主身份来自 Host 记录，候选来自 `/evolution/trials`，不依据模型在提示词里自称的角色。
-
-不创建普通 `/sessions` worker 或局部测试 Agent。主身份交接后，接任候选继续得到核心协议，旧主身份不再获得新的附加层。部署准备检查不使用这份完整 auto research 协议。
-
-内置 preset 的启动和 resume 读取仓库当前文件；显式自定义输入按已记录快照冻结恢复，不回退到仓库模板。仅编辑源文件不会更新运行中的输入，运行中更换版本由 Host 独立发布。每个直接发布的 Agent 输入都有 Version，清单见 `/run/input/input-manifest.json`。其中 revision 是整套输入的快照编号，generation 是发布尝试序号，失败回滚也会递增；由 Host 自动维护。Gateway 用量记录 input_revision、各文件版本与摘要；历史内容保存在 run 的 input-revisions。主 Agent 与接任候选会获得 SOUL、当前阶段的目标和验收，第一阶段另含任务 instructions，第二阶段另含 protocol.md，旧对话作为历史保留。当前 Agent 自行执行局部任务。
-
-输入发布入口不接受 Agent 令牌。已发出的模型请求不变，后续请求采用新版本；Agent 连续读取多个输入文件时，前后必须都是 manifest.status=active，且 revision 和 generation 都相同。updating 时等待，标识变化后重新读取。热加载不重建现有 Python 对象、不切换模型或 Docker 镜像；bootstrap 运行参数及固定基础设施代码变化须经 Host 重启/恢复才应用。
+输入发布入口不接受 Agent 令牌。已发出的请求保留原版本，后续请求使用新版本。连续读取多个输入文件时，前后 manifest.status 必须为 active，revision 与 generation 相同；updating 时等待，标识变化后重新读取。工具实现、模型与启动配置通过暂停期间的原地发布应用。
 
 人类反馈使用独立的 Host 控制入口，Agent 令牌不能调用。登记绑定正文与接收主身份，Gateway 接收文本而不是读取 Host 文件路径；正文或接收身份变化会使原确认失效。这些控制入口不是 Agent 可调用工具。
 
@@ -419,25 +389,19 @@ Host 只加载所选阶段的输入，不叠加 common 或另一阶段 Prompt。
 
 ## 远程资产、输出与额度
 
-部署方可配置只读 `/models`、`/datasets`；Agent 根据目录中的实际文件选择模型和数据。远程作业自己的 `/workspace` 与同一研究身份持久可写的 `/outputs` 保存在服务器项目的数据目录中。其他身份的可写输出不直接挂载；第二阶段通过作业产物接口读取项目历史产物，已封存的项目快照可供后续 run 复用。需要在新作业内使用大文件时，仍通过 input_exports 只读挂载。写入和作业管理沿本身份或已采用 lineage 权限执行。
+部署方可配置只读 `/models`、`/datasets`；Agent 根据目录中的实际文件选择模型和数据。远程作业自己的 `/workspace` 与同一研究身份持久可写的 `/outputs` 保存在服务器项目的数据目录中。其他身份的可写输出不直接挂载；通过作业产物接口读取项目历史产物，已封存的项目快照可供后续 run 复用。需要在新作业内使用大文件时，仍通过 input_exports 只读挂载。写入和作业管理按本身份权限执行。
 
 部署信息 remote_limits 保存实际并发、单作业超时和本地 run 文件与新增远程数据的合计额度。timeout_seconds 为 0 表示不限时，run_storage_bytes 为 0 表示不启用这项额度；只读公共模型与数据不计入新增额度。本轮各代身份的新增远程数据合并计入同一 run；Host 每五秒报告本地 run 文件占用，远程 watcher 使用最近报告与远程占用之和。
 
 额度检查在提交前执行，运行中的 watcher 每秒扫描，达到额度后停止自己的作业，保留文件和失败原因。并行写入及正常停止有延迟，可能短暂超过阈值；这是监测式额度，不是文件系统硬配额。收到 storage_limit 或 run storage limit reached 后保存状态并结束预算内任务，不以重复提交绕过额度。
 
-远程 **job** 的 `completed/failed/cancelled` 记录提交且容器确已退出后，Host 先把当前 Docker 保留日志、准确容器状态和作业来源归档到执行端 job 元数据目录，再自动删除该 job 容器；不删除工作区、outputs、导出快照或镜像。显式取消尚未启动的 created job 也先归档再非强制删除，不会为清理启动任务。查询仍返回退出码和最近最多 65536 字符输出，新增 `cleanup.status` 说明 removed、retained 或 missing_unarchived；retained 附原因。归档保存当前可读取的全部日志，不包含 Docker 已轮转丢弃的历史；超过 8 MiB、归档失败、额度不足、归属不明或状态变化时保留容器。归档字节计入 run 新增远程占用。失败清理会在后续该 job 状态查询/取消时重试；没有定时全局清理或 TTL 保证。该机制不适用于 Agent 会话容器，不改变会话 resume/交接。
+远程 **job** 的 `completed/failed/cancelled` 记录提交且容器确已退出后，Host 先把当前 Docker 保留日志、准确容器状态和作业来源归档到执行端 job 元数据目录，再自动删除该 job 容器；不删除工作区、outputs、导出快照或镜像。显式取消尚未启动的 created job 也先归档再非强制删除，不会为清理启动任务。查询仍返回退出码和最近最多 65536 字符输出，新增 `cleanup.status` 说明 removed、retained 或 missing_unarchived；retained 附原因。归档保存当前可读取的全部日志，不包含 Docker 已轮转丢弃的历史；超过 8 MiB、归档失败、额度不足、归属不明或状态变化时保留容器。归档字节计入 run 新增远程占用。失败清理会在后续该 job 状态查询/取消时重试；没有定时全局清理或 TTL 保证。本地研究进程的退出归档由 Host 单独处理。
 
 ## 新任务与 checkpoint 复用
 
-阶段二或第一阶段 web-extension 从保留结果启动新任务时，Host 从所选保留 commit 复制代码、文件和持久记忆，在新副本中将 checkpoint.json 的消息列表初始化为当前目标。原 checkpoint、轨迹及原保留 commit 不改；历史文件按授权放在只读 history 中，按需检索。启动记录 task_context 保存源 checkpoint 摘要、旧消息数与新会话消息数。
-
-web-extension 仅接受第一阶段明确 retained 来源；task_context.inherited_acceptance 记录 checks=[A,B,C,D]、status=historical-not-recertified、source_run 与 source_version，仅表示历史来源，不生成新验收证据。新副本若携带旧 run-outcome.json，将活动值初始化为 continue，并在 task_context.retired_terminal 记录原摘要与来源，避免旧 complete／blocked 结束新 E 任务；原保留结果不改，普通同 run resume 不做此新任务初始化；显式 blocked 恢复仅按上述协议归档并解除旧 terminal 声明。
-
-此 profile 还将已存在的 `task.txt`、`trajectory.jsonl`、`progress.md`、`run-outcome.json` 原文归档到新副本的 `inherited-task-state/`：活动 task.txt 写当前 E 目标，trajectory.jsonl 清空，progress.md 写 E pending／历史 A–D 未重新认证，run-outcome.json 写 continue；不存在的文件不凭空创建。`task_context.initialized_task_files` 按文件名记录 source_sha256、archive_path、source_run、source_version；归档路径或其祖先／后代冲突时拒绝启动，不覆盖已有材料。checkpoint 另按上述新消息规则初始化。源保留快照、只读历史和长期记忆不改。Harness 负责新增模块／记忆的 resume 与 continuation 清单及其持久写入逻辑；Host 的任务状态初始化不替代工具实现或清单完整性验证。
-
-当前新任务入口支持 checkpoint.json 为 JSON 消息列表的 Harness，并继续使用其原启动命令。未知格式会拒绝启动，须由 Harness 提供适配入口；Host 不猜测私有状态格式或代写记忆整理。普通 --resume-from 仍保留原会话、原身份和完整上下文。
-
-web-extension 新任务可携带部署方显式提供的已批准初始反馈：非空 UTF-8，最多 64 KiB。此时 checkpoint 为目标与初始反馈两个 user messages，新副本保存 `initial-feedback.md`，task_context 记录摘要、字节数及来源；省略时只有目标消息。它不属于动态 Host feedback 队列，不伪造 forwarded 事件，不改变同 run resume 或运行中反馈协议；profile 本身不内置私人反馈。
+日常 Harness 维护使用原地发布，保留当前 checkpoint、长期记忆、skills、研究计划和作业状态。
+操作者明确创建独立任务时，通过已发布提交或保留来源建立新的 run，初始化当前目标对应的对话与计划，保存来源关联。
+原研究材料继续通过授权历史和项目作业接口检索，原始输入、轨迹和报告保持原条件。
 
 ## 同卡多作业与显存预留
 
@@ -451,7 +415,7 @@ Controller 继续遵守整机资源、数据盘余量、存储额度和外部作
 
 托管作业重新准入暂时没有资源时，由 Controller 内部等待；重试耗尽才以真实终态返回。模型自身显存不足、训练中前向／反向 OOM、其他代码错误、取消、超时以及日志未安全归档时不自动重放。Controller 会重跑符合安全加载条件的原命令；包含既有训练／评估成果后再次加载模型、或其他不可重复副作用的复合作业，应设置 `retry_on_gpu_contention: false`。此字段为严格布尔值，默认 true。训练中断接续和跳过已完成 episode 由研究脚本保存的 checkpoint 和 ledger 实现。
 
-`POST /jobs` 的 gpu_memory_mb 在托管部署中可以省略，Controller 自动分配可用容量；既有客户端的估计仅作启动需求提示。非托管 Docker／process 部署保留旧的即时准入接口；其 resource_busy 由部署者按部署方案处理。不要在科研循环内诊断或优化 Controller。
+`POST /jobs` 的 gpu_memory_mb 在托管部署中可以省略，使用部署方配置的每作业默认预算；显式峰值预算保持原值，多个小作业可共享同卡。非托管 Docker／process 部署保留旧的即时准入接口；其 resource_busy 由部署者按部署方案处理。不要在科研循环内诊断或优化 Controller。
 
 任务完成或中途停止时，分析研究代码、训练曲线、视频和结果；基础设施停止保留 job ID 并等待操作者处理，不自行修改服务或重提状态不明的实验。
 
@@ -469,8 +433,8 @@ backbone、tokenizer 及相关预训练资源由人类提前准备、校验后�
 1. 先让写入选定文件的作业完成或停止写入，再 `POST /jobs/{job_id}/exports`，例如 `{"location":"outputs","path":"checkpoints/best"}`。location 可用 outputs 或 workspace，path 是本身份作业内的相对路径。只接受普通文件和目录，拒绝符号链接与特殊文件。
 2. 返回 export_id 和 preparing。用 `GET /jobs/exports/{export_id}` 等待 ready；失败返回 failed 与 error。封存使用独立进程，不占 GPU。每个文件复制并计算 SHA256，源文件在封存期间改变则失败；ready 后源文件再改变不影响快照。`GET /jobs/exports/{export_id}/manifest` 返回相对路径、字节数与逐文件 SHA256。`GET /jobs/exports` 列出本轮研究身份已获授权的只读快照。
 3. 本轮已登记研究身份按授权使用只读快照；缺少挂载授权时记录快照标识和所需范围，由操作者处理。
-4. 本轮可读该快照的 Agent 提交 `/jobs` 时加入 `"input_exports":["export-..."]`。Docker 执行端把每份快照挂载为只读 `/inputs/<export_id>/`；process 通过 `A3_INPUT_EXPORTS_JSON` 提供封存目录，按只读约定使用；两者均保留选定目录的相对结构；选单个文件时路径为 `/inputs/<export_id>/<文件名>`。本地 Agent Docker 不挂载这些执行端二进制文件，需要通过远程作业使用。本轮不可读或未 ready 的引用拒绝提交，不分配作业资源。每个请求最多 64 个引用。
-5. 同 run 恢复保留已授权快照。第二阶段项目内跨 run 复用时，在提交作业的 `input_exports` 中引用已有快照，Host 自动核验并授予只读访问。保留版本也可在 continuation.json 的 `remote_exports` 中声明选定 ID。
+4. 本轮可读该快照的 Agent 提交 `/jobs` 时加入 `"input_exports":["export-..."]`。Docker 执行端把每份快照挂载为只读 `/inputs/<export_id>/`；process 通过 `A3_INPUT_EXPORTS_JSON` 提供封存目录，按只读约定使用；两者均保留选定目录的相对结构；选单个文件时路径为 `/inputs/<export_id>/<文件名>`。本地 Agent 通过远程作业使用这些执行端二进制文件。本轮不可读或未 ready 的引用拒绝提交，不分配作业资源。每个请求最多 64 个引用。
+5. 同 run 恢复保留已授权快照。项目内跨 run 复用时，在提交作业的 `input_exports` 中引用已有快照，Host 自动核验并授予只读访问。保留版本也可在 continuation.json 的 `remote_exports` 中声明选定 ID。
 
 例如保留声明：
 
@@ -485,27 +449,28 @@ backbone、tokenizer 及相关预训练资源由人类提前准备、校验后�
 
 ## 人类反馈与源码版本
 
-部署方可在恢复时或运行期间显式登记人类反馈。Host 把它作为独立 user message 加入登记时主身份的下一次完整历史模型请求，原历史与 checkpoint 不改写。后续请求保持同一反馈位置，输入历史压缩或重建时重新定位并留下事件；具体文本、摘要和反馈 ID 在 Host 私有目录保存。反馈以独立输入投递，具体解释遵循 SOUL，实验安排及证据按当前阶段 acceptance 与 protocol（如有）处理；普通文件和工具输出不因此变为反馈入口。该入口不自动广播给其他会话或后继身份。
+部署方可在恢复时或运行期间显式登记人类反馈。Host 把它作为独立 user message 加入登记时主身份的下一次完整历史模型请求，原历史与 checkpoint 不改写。后续请求保持同一反馈位置，输入历史压缩或重建时重新定位并留下事件；具体文本、摘要和反馈 ID 在 Host 私有目录保存。反馈以独立输入投递，具体解释遵循 SOUL，实验安排及证据按当前任务 acceptance 与 protocol处理；普通文件和工具输出不因此变为反馈入口。该入口不自动广播给其他会话或后继身份。
 
 远程镜像提供 git 与只读 /opt/a3/.git，git -C /opt/a3 rev-parse HEAD 返回实际 A3 源码提交。/opt/a3/source-revision.json 保存镜像准备时的文件摘要及源工作区 dirty 标记，未提交改动需结合摘要和 git diff 核对；源码版本不代表训练权重版本。导出的浅仓库不复制 Host 的 remote、认证配置或 hooks。运行镜像中的文件可能是完整源码仓库的部署子集，git diff 应按实际路径解读；不要修改只读基线。
 
 
 ## 上下文摘要与模型角色
 
-`GET /context/config` 返回当前身份的非秘密预算、tokenizer、注入开销预留和摘要入口；不调用模型。
-启用时单位为 `estimated_tokens`，与 UTF-8 文件/请求字节数分开记录。估算使用离线 o200k 编码，
-加入 Host 提示词、完整人工反馈、provider framing 和输出余量；它不是服务端精确计费或模型窗口探测。
-未配置已核实窗口时会明确标记旧字节兼容模式。
+`GET /context/config` 返回当前身份的估算 token 预算、离线 tokenizer、注入开销预留和摘要入口。
+压缩目标包含整个下一轮输入：固定指令、工具定义、操作视图、摘要及保留的近期完整结果。
+例如总目标为 32k 时，扣除这些必要开销后的剩余 token 空间用于生成摘要。
 
-`POST /v1/summary` 只接受 `previous`（不超过6000 UTF-8字节）、`fragment` 和
-`source`（`context-history/snapshot-<SHA256>.json`）三个字段。不接受模型、上游地址、密钥、
-自定义 instructions 或 tools。它只转换有来源的历史数据，不执行工具、不授予权限、不替代正常决策。
-Host使用精简摘要指令，附人工反馈ID/哈希引用；完整反馈仍由Host保存并原样送到正常决策，
-摘要引用不算完整通知已送达。来源和未知/纠正/未完成事项必须保留，不能伪造通过。
+`POST /v1/summary` 接受完整 `transcript`、`source`（`context-history/snapshot-<SHA256>.json`）和可选的 `max_output_tokens`。
+Host 将实际输入与该次输出预算一起计入摘要模型窗口，按可用空间归一化。
+摘要没有另设固定的 1000／4096 token 输出限制或 6000 字节上限。
+完整原文单次送入摘要模型，成功且完整的摘要才可替换工作上下文。
+暂时传输错误或不完整响应按持久记录有限重试；最终失败保留原 checkpoint 并阻止需要压缩的下一次决策。
+运行时不生成无摘要的档案降级状态。
 
-模型按 Host 配置与已登记身份选择：当前主身份与正式 trial 候选使用主模型，摘要使用独立摘要模型。客户端不能用 model 字段自行选择上游；普通 `/sessions` 的 worker 或 candidate_validation 均不向 Agent 开放。
-工具输出先归档并重新判定是否还需摘要；已经低于预算则保存可回查引用，避免不必要模型调用。
-
+摘要只转换有来源的历史数据，保留目标、纠正、结果、未知事项、来源与下一步。
+原始消息、工具结果和完整人类反馈继续保留，研究状态由当前 Agent 根据实际证据推进。
+模型路由由 Host 配置决定：主决策使用主模型，摘要使用配置的摘要路由。
+固定源码和模型配置由操作者发布，Agent 不切换上游地址、认证或模型身份。
 
 ### 安全运行视图
 

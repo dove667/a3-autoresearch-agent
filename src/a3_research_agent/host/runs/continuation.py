@@ -2,14 +2,17 @@
 
 import hashlib
 import json
+import re
+import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
-from a3_research_agent.host.published_harness import COMMAND, pinned_resume, run_commit
-from a3_research_agent.host.sessions.containers import candidate_workspace
-from a3_research_agent.host.sessions.packages import load_harness_package
-from a3_research_agent.host.sessions.versions import CandidateVersions
+from a3_research_agent.execution.exports.readonly import EXPORT_ID
+from a3_research_agent.host.published_harness import COMMAND, run_commit
+from a3_research_agent.host.sessions.packages import load_published_manifest, read_continuation
+from a3_research_agent.host.sessions.workspace import write_durable
+from a3_research_agent.workspace.paths import workspace_path
 
 
 @dataclass
@@ -17,96 +20,47 @@ class HarnessStart:
     command: list[str]
     files: dict[str, str]
     previous_run: Path | None = None
-    source_version: str | None = None
     remote_exports: list[str] = field(default_factory=list)
     source_owner: str | None = None
     harness_commit: str | None = None
 
+    def __post_init__(self):
+        if (
+            self.command != COMMAND
+            or not isinstance(self.harness_commit, str)
+            or not re.fullmatch(r"[a-f0-9]{40}", self.harness_commit)
+        ):
+            raise ValueError(
+                "A native research start requires the fixed published Harness command and commit"
+            )
+
+    @property
+    def source_version(self):
+        return self.harness_commit
+
 
 def prepare_fresh_task(start: HarnessStart, task: str) -> tuple[HarnessStart, dict]:
-    """Initialize a copied message checkpoint; preserve the retained code and memory."""
-    content = start.files.get("checkpoint.json")
-    if content is None:
-        raise ValueError("Fresh tasks require a supported checkpoint.json message list")
-    messages = json.loads(content)
-    if not isinstance(messages, list) or not all(isinstance(item, dict) for item in messages):
-        raise ValueError("Unsupported checkpoint format; Harness needs an explicit new-task entry")
-    files = dict(start.files)
-    files["checkpoint.json"] = json.dumps([{"role": "user", "content": task}], ensure_ascii=False)
-    # Operational progress belongs to this task, not to the
-    # inherited research capabilities. Preserve them as history in the new copy.
-    reset = {
-        "pending-calls.json": None,
-        "compaction-result.json": None,
-        "compaction-epoch.json": {"version": 1, "id": None},
-        "operational-state.json": {
-            "version": 1,
-            "revision": 0,
-            "reads": {},
-            "items": {},
-            "counters": {},
-        },
-        "operational-state.json.previous": {
-            "version": 1,
-            "revision": 0,
-            "reads": {},
-            "items": {},
-            "counters": {},
-        },
-    }
-    replacements = {name: json.dumps(value) for name, value in reset.items()}
-    replacements["history.jsonl"] = ""
-    removed = {
-        "context-history/compaction-progress.json",
-        "context-failure.json",
-        "research-plan.json",
-    }
-    removed.update(
-        name
-        for name in start.files
-        if (name.startswith("context-history/summary-request-") and name.endswith(".json"))
-        or name.startswith(".research-preflight/")
-    )
-    present = {
-        name: start.files[name] for name in set(replacements) | removed if name in start.files
-    }
-    identity = json.dumps([start.source_version, task, present], sort_keys=True)
-    prefix = (
-        "inherited-task-state/operational/" + hashlib.sha256(identity.encode()).hexdigest() + "/"
-    )
-    operational_archives = {}
-    for name, inherited_content in present.items():
-        target = prefix + name
-        if target in files and files[target] != inherited_content:
-            raise ValueError("Operational task archive collision")
-        files[target] = inherited_content
-        if name in removed:
-            files.pop(name, None)
-        else:
-            files[name] = replacements[name]
-        operational_archives[name] = target
-    if operational_archives:
-        for name in ("resume.json", "continuation.json"):
-            if name not in files:
-                continue
-            declaration = json.loads(files[name])
-            if not isinstance(declaration, dict) or not isinstance(declaration.get("files"), list):
-                raise TypeError("Invalid inherited operational file declaration")
-            declaration["files"] = sorted(
-                (set(declaration["files"]) - removed) | set(operational_archives.values())
-            )
-            files[name] = json.dumps(declaration)
+    """Seed an explicit new task from retained research knowledge and published code."""
+    from a3_research_agent.host.runs.checkpoints import require_tool_results
 
-    return (
-        replace(start, command=start.command.copy(), files=files),
-        {
-            "mode": "fresh",
-            "previous_message_count": len(messages),
-            "source_checkpoint_sha256": hashlib.sha256(content.encode()).hexdigest(),
-            "initial_message_count": 1,
-            "operational_task_archives": operational_archives,
-        },
-    )
+    content = start.files.get("checkpoint.json")
+    messages = json.loads(content) if isinstance(content, str) else None
+    if not isinstance(messages, list) or not all(isinstance(item, dict) for item in messages):
+        raise ValueError("Published Harness needs a message-list checkpoint")
+    require_tool_results(messages)
+    if any(name != "checkpoint.json" and not _knowledge_name(name) for name in start.files):
+        raise ValueError("Fresh tasks accept only retained research knowledge and an empty seed")
+    files = {
+        **start.files,
+        "checkpoint.json": json.dumps([{"role": "user", "content": task}], ensure_ascii=False),
+    }
+    return replace(start, files=files), {
+        "mode": "fresh",
+        "previous_message_count": len(messages),
+        "source_checkpoint_sha256": hashlib.sha256(content.encode()).hexdigest(),
+        "initial_message_count": 1,
+        "source_commit": start.harness_commit,
+    }
 
 
 def import_retained_exports(start: HarnessStart | None, recipient: str, remote_call) -> list[str]:
@@ -153,123 +107,154 @@ def import_retained_exports(start: HarnessStart | None, recipient: str, remote_c
 
 def load_run_result(run: Path) -> HarnessStart:
     retained = run / "retained.json"
-    if retained.is_file():
-        record = json.loads(retained.read_text())
-        if record.get("status") != "ready":
-            raise ValueError(
-                "Previous run has no retained result; Agent must save continuation.json"
-            )
-        commit = run_commit(run)
-        if commit:
-            if record.get("harness_commit") != commit:
-                raise ValueError("Retained result disagrees with the pinned Harness")
-            return HarnessStart(
-                COMMAND.copy(),
-                {"checkpoint.json": "[]"},
-                run,
-                record.get("version_id"),
-                record.get("remote_exports", []),
-                record.get("selected_by"),
-                commit,
-            )
-        files = CandidateVersions.read_snapshot(run / "versions", record["version_id"])
-        command = record["command"]
-        if (
-            not isinstance(command, list)
-            or not command
-            or not all(isinstance(x, str) for x in command)
-        ):
-            raise ValueError("Invalid retained command")
-        return HarnessStart(
-            command,
-            files,
-            run,
-            record["version_id"],
-            record.get("remote_exports", []),
-            record.get("selected_by"),
-        )
-
-    raise ValueError("Previous run has no retained result; refusing to guess or rebuild")
+    if not retained.is_file():
+        raise ValueError("Previous run has no retained result")
+    record = json.loads(retained.read_text())
+    commit = run_commit(run)
+    if (
+        not isinstance(record, dict)
+        or type(record.get("version")) is not int
+        or record["version"] != 1
+        or record.get("status") != "ready"
+        or not commit
+        or record.get("harness_commit") != commit
+        or record.get("command") != COMMAND
+    ):
+        raise ValueError("Expected a ready retained result for the current published Harness")
+    exports = _remote_exports(record.get("remote_exports"))
+    files = {"checkpoint.json": "[]", **_read_knowledge(run, record["knowledge"])}
+    return HarnessStart(
+        COMMAND.copy(),
+        files,
+        previous_run=run,
+        remote_exports=exports,
+        source_owner=record["selected_by"],
+        harness_commit=commit,
+    )
 
 
 def resolve_harness_start(target: str | Path) -> HarnessStart:
     source = Path(target).resolve()
     if (source / "startup.json").is_file() or (source / "retained.json").is_file():
         return load_run_result(source)
-    command, files = load_harness_package(source)
-    commit = json.loads((source / "run.json").read_text()).get("harness_commit")
-    if commit is not None and (
-        set(files) != {"checkpoint.json"} or files["checkpoint.json"] != "[]"
-    ):
-        raise ValueError("Published Harness packages can only seed an empty checkpoint")
+    commit, command, files = load_published_manifest(source)
     return HarnessStart(command, files, harness_commit=commit)
 
 
-def resolve_resume_start(run: Path) -> HarnessStart | None:
-    startup = json.loads((run / "startup.json").read_text())
-    main_file = run / "evolution.json"
-    main_owner = (
-        json.loads(main_file.read_text()).get("main_owner") if main_file.is_file() else None
-    )
-    if main_owner and main_owner != startup.get("run_id"):
-        session_id = main_owner
-    elif startup.get("mode") == "retained-harness":
-        session_id = startup["session_id"]
-    else:
-        return None
-    workspace = candidate_workspace(run / "candidates", session_id)
-    commit = run_commit(run)
-    if commit:
-        command, files = pinned_resume(workspace)
-        return HarnessStart(command, files, run, startup.get("version_id"), harness_commit=commit)
-    if not (workspace / "resume.json").is_file():
-        raise ValueError(
-            "Harness has no resume.json checkpoint entry; refusing a fresh-context restart"
+def _remote_exports(identifiers):
+    if (
+        not isinstance(identifiers, list)
+        or any(
+            not isinstance(value, str) or not EXPORT_ID.fullmatch(value) for value in identifiers
         )
-    command, files = load_harness_package(workspace, "resume.json")
-    return HarnessStart(command, files, run, startup.get("version_id"))
+        or len(set(identifiers)) != len(identifiers)
+    ):
+        raise ValueError("Remote exports need a unique explicit export ID list")
+    return identifiers.copy()
+
+
+def _knowledge_name(name):
+    parts = Path(name).parts
+    return name == "memory.jsonl" or bool(
+        parts
+        and parts[0] in {"skills", "research"}
+        and not any(part.startswith(".") for part in parts)
+    )
+
+
+def _read_knowledge(run, reference):
+    digest = reference.get("sha256") if isinstance(reference, dict) else None
+    if (
+        not isinstance(digest, str)
+        or not re.fullmatch(r"[a-f0-9]{64}", digest)
+        or reference.get("directory") != "retained-knowledge/" + digest
+    ):
+        raise ValueError("Invalid retained research knowledge reference")
+    directory = workspace_path(run, reference["directory"])
+    manifest = json.loads(workspace_path(directory, "manifest.json").read_text())
+    if (
+        not isinstance(manifest, dict)
+        or set(manifest) != {"version", "files"}
+        or type(manifest.get("version")) is not int
+        or manifest["version"] != 1
+        or not isinstance(manifest.get("files"), dict)
+        or hashlib.sha256(json.dumps(manifest, sort_keys=True).encode()).hexdigest() != digest
+    ):
+        raise ValueError("Retained research knowledge manifest changed")
+    result = {}
+    for name, expected in manifest["files"].items():
+        if not _knowledge_name(name):
+            raise ValueError("Unexpected file in retained research knowledge")
+        content = workspace_path(directory, name).read_bytes()
+        if hashlib.sha256(content).hexdigest() != expected:
+            raise ValueError("Retained research knowledge content changed")
+        result[name] = content.decode("utf-8")
+    return result
+
+
+def _retain_knowledge(run, workspace, names):
+    content = {
+        name: workspace_path(workspace, name).read_bytes()
+        for name in names
+        if _knowledge_name(name)
+    }
+    for raw in content.values():
+        raw.decode("utf-8")
+    manifest = {
+        "version": 1,
+        "files": {name: hashlib.sha256(raw).hexdigest() for name, raw in sorted(content.items())},
+    }
+    digest = hashlib.sha256(json.dumps(manifest, sort_keys=True).encode()).hexdigest()
+    reference = {"directory": "retained-knowledge/" + digest, "sha256": digest}
+    directory = workspace_path(run, reference["directory"])
+    directory.parent.mkdir(exist_ok=True)
+    if not directory.exists():
+        with tempfile.TemporaryDirectory(dir=directory.parent) as temporary:
+            staging = Path(temporary) / "knowledge"
+            staging.mkdir()
+            for name, raw in content.items():
+                target = workspace_path(staging, name)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(raw)
+            write_durable(staging / "manifest.json", json.dumps(manifest, sort_keys=True))
+            staging.rename(directory)
+    _read_knowledge(run, reference)
+    return reference
 
 
 def publish_run_result(
     run: Path,
     workspace: Path,
-    versions: CandidateVersions,
     owner: str,
-    parent_version: str | None,
     *,
     validate_exports: Callable | None = None,
 ) -> dict:
-    """Persist the Agent's explicit selection; never rank candidate versions here."""
+    """Save the selected published source and immutable research knowledge."""
     declaration = workspace / "continuation.json"
     if declaration.is_file():
         commit = run_commit(run)
-        if commit:
-            command = COMMAND.copy()
-        else:
-            command, files = load_harness_package(workspace, "continuation.json")
-        remote_exports = json.loads(declaration.read_text()).get("remote_exports", [])
-        if not isinstance(remote_exports, list) or any(
-            not isinstance(x, str) for x in remote_exports
-        ):
-            raise ValueError("remote_exports must be an explicit export ID list")
+        if commit is None:
+            raise ValueError("Result retention requires a published Harness pin")
+        manifest = read_continuation(workspace)
+        remote_exports = _remote_exports(manifest.get("remote_exports", []))
         if remote_exports:
             if validate_exports is None:
                 raise ValueError("Remote exports require Host access validation")
             validate_exports(remote_exports)
         result = {
             "status": "ready",
-            "command": command,
+            "version": 1,
+            "command": COMMAND.copy(),
+            "harness_commit": commit,
             "selected_by": owner,
             "remote_exports": remote_exports,
+            "knowledge": _retain_knowledge(run, workspace, manifest["files"]),
         }
-        if commit:
-            result.update(harness_commit=commit, version_id=parent_version)
-        else:
-            version = versions.create_local(owner, files, parent_version)
-            result.update(version_id=version["version_id"], commit=version["commit"])
     else:
-        result = {"status": "missing", "reason": "Agent did not save continuation.json"}
-    temporary = run / "retained.tmp"
-    temporary.write_text(json.dumps(result, indent=2))
-    temporary.replace(run / "retained.json")
+        result = {
+            "version": 1,
+            "status": "missing",
+            "reason": "Agent did not save continuation.json",
+        }
+    write_durable(run / "retained.json", json.dumps(result, indent=2))
     return result

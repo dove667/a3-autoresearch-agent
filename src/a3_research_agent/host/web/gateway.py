@@ -110,7 +110,6 @@ class WebConfig:
         enabled = os.environ.get("A3_WEB_ENABLED", "0")
         if enabled not in ("0", "1"):
             raise ValueError("A3_WEB_ENABLED must be 0 or 1")
-        # Removed legacy A3_WEB_SEARCH_LIMIT / A3_WEB_FETCH_LIMIT are ignored.
         return cls(
             enabled == "1",
             os.environ.get("TAVILY_API_KEY", "").strip(),
@@ -465,7 +464,7 @@ class WebGateway:
         self.fetcher = self.extract
 
     def budget(self, reserve=None, *, provider=None):
-        """Persistent attempt accounting; legacy name/file retained for compatibility."""
+        """Persist cumulative request and provider-attempt counts."""
         try:
             return self._account_usage(reserve, provider=provider)
         except OSError:
@@ -483,7 +482,7 @@ class WebGateway:
                         used, limit = state[kind]["used"], state[kind]["limit"]
                         if type(used) is not int or used < 0:
                             raise ValueError
-                        if limit is not None and (type(limit) is not int or limit < 0):
+                        if limit is not None:
                             raise ValueError
                 except (ValueError, KeyError, TypeError, AssertionError):
                     raise WebError("budget_unavailable", 503) from None
@@ -497,14 +496,9 @@ class WebGateway:
                 raise WebError("budget_unavailable", 503)
             if provider:
                 provider_counts[provider] += 1
-            # Migrate finite legacy limits under the same cross-process lock, never
-            # reset used counts or touch historical audit events.
-            migrated = any(state[kind]["limit"] is not None for kind in ("search", "fetch"))
-            for kind in ("search", "fetch"):
-                state[kind]["limit"] = None
             if reserve:
                 state[reserve]["used"] += 1
-            if reserve or provider or migrated or not path.exists():
+            if reserve or provider or not path.exists():
                 temporary = path.with_suffix(".tmp")
                 with temporary.open("w") as stream:
                     json.dump(state, stream)

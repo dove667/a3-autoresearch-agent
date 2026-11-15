@@ -1,21 +1,15 @@
 # Context recovery and model roles
 
-The optional overlay is maintained in `src/a3_research_agent/harness/`, with
-context, research planning and memory components.
+The Harness in `src/a3_research_agent/harness/` supplies context management,
+research planning, durable memory and built-in tools. The Host runs a fixed
+published Git commit in a native process, separate from the writable research
+workspace. Maintenance releases preserve the run's checkpoint and research files.
 
-Build a new explicitly derived package using
-`a3_research_agent.packaging.harness_payload.build_harness_payload(extension_sources)`.
-The optional mapping accepts only explicitly selected UTF-8 `skill_tools.py` and
-`web_tools.py` source. Copy **every** returned path/content pair into the package,
-preserve its compatible memory and evidence, and record source/version hashes and
-the intervention. The output includes package modules and the token estimator. Start it with
-`python -m a3_research_agent.harness.agent --resume` to run the single research Agent.
-
-Export never executes candidate code or selects a live workspace. It does not create
-a retained manifest or authorize dispatch: callers must explicitly include the returned
-files in their existing package/continuation contract. Historical ready packages and
-checkpoints are never automatically upgraded. An old acceptance record does not certify
-new code.
+`a3_research_agent.packaging.harness_payload.build_harness_payload()` exports the
+complete declared Python payload, including its token estimator, for packaging
+and validation. Tool implementations belong in that declared source tree. The
+fixed runtime command is `python -P -m a3_research_agent.harness.agent --resume`.
+Publication and in-place updates follow the [operator workflow](operator-supervision.md).
 
 ## Research plans and durable notes
 
@@ -49,8 +43,9 @@ Revisions preserve the previous plan and record reasons for route changes.
 
 The decision context includes a bounded plan view with ready steps and the last
 observed job status. An active step with a queued or running job can wait. When
-independent work is ready, a positive-duration `wait` returns those step IDs.
-The normal program-level wait still handles queueing and running jobs without
+independent work is ready, the next decision frame includes those step IDs.
+`wait` observes submitted jobs even when the Agent has not yet linked them to a
+plan step. Program-level waiting handles queueing and running jobs without
 model polling. The Agent verifies the step's criterion before recording evidence
 and marking it done. The plan tracks Agent claims and observed job states.
 
@@ -64,11 +59,14 @@ Use `memory(action="search", key=...)` to look up prior conclusions, failures
 and verified entry points. Add `kind` or `scope` when a narrower search is needed,
 then read the selected note by ID. Notes can carry applicability in `scope`,
 source IDs or paths in `refs`, and an old note ID in `supersedes`. Search excludes
-superseded notes, which remain readable by ID. Existing free-text notes stay
+superseded notes, which remain readable by ID. An empty search returns recent
+current notes with their source references. Existing free-text notes stay
 readable and searchable. The Agent chooses which findings to record and checks
 their applicability before reuse.
 
-Use Recall for original observations. Its default evidence mode ranks matching
+Use Recall for original observations. Without `n`/`m`, it searches the available
+original history; an explicit round window retains its existing meaning. Search
+streams rounds and keeps bounded ranked snippets. Its default evidence mode ranks matching
 snippets and excludes tool arguments and prior retrieval responses. Use
 `mode="raw"` for historical tool traffic. Both modes point to the original round,
 and the complete source history remains on disk.
@@ -96,67 +94,39 @@ the registered job ID or check the job list before another attempt.
 
 ## Token budgets and full-transcript summaries
 
-The overlay asks authenticated `GET /context/config` for current nonsecret reserves
-before a normal decision. With verified model windows configured, it uses the
-already bundled offline `o200k_base` codec, not UTF-8 bytes divided by a constant.
-Counts of serialized inputs, tool schemas and message framing are **estimates**;
-they are not provider-exact billing or proof that a model uses that exact codec.
-The Host also reserves provider framing and output space, and enforces input
-headroom against the declared model window. Verify the declarations against the
-actual model catalog and compare estimates with real returned usage.
+Before each decision, the Harness reads authenticated `GET /context/config` and
+estimates the entire request with the bundled offline `o200k_base` tokenizer.
+The count includes messages, tool definitions, operational state, injected inputs,
+feedback and provider framing. Deployers configure the actual model windows and
+compare estimates with returned usage.
 
-The default soft trigger is 400,000 estimated input tokens and the post-compaction
-soft target is 32,000. Both include injected reserves; tools and the operational
-frame also count toward triggering. A 500,000 configured window retains 10%
-headroom and 8,192 output tokens, so separate hard admission is 441,808 tokens.
-The Host publishes `decision_input_tokens` for the calling role. The client deducts
-the same injected/tool/operational costs from each threshold; it does not start at
-85% of 400,000. Hard admission always wins over repeat-trigger hysteresis.
+`A3_CONTEXT_TARGET_TOKENS` is the target for the complete post-compaction decision
+input. For a 32k target, the Harness deducts fixed instructions, tools, the current
+operational frame, the summary wrapper and the newest complete tool batch. The
+remaining tokens fund the summary. Its output allocation follows this remaining
+budget and the summary model's actual window; there is no separate fixed 1000- or
+4096-token cap, byte ceiling or fixed short-summary length.
 
-Summary uses the full configured model window in one request, reserving output
-space: a 500,000 window admits 491,808 estimated input tokens, including instructions
-and provider framing. There is no independent 48k input policy. The configured
-post-compaction soft target is 32,000, preserving the small working state needed
-for the next decision while the full original history remains retrievable. Token
-mode keeps the longest paired tail that fits the target; the newest complete tool
-batch stays protected even if it makes the soft target infeasible. Hard admission
-still applies. File and memory byte limits are separate from tokenizer estimates.
+The summary request contains the complete readable source transcript in one pass.
+The Host checks its input and requested output together against the configured
+summary window. A complete successful response is required before compacted state
+is published. Temporary failures and incomplete responses use the bounded summary
+retry protocol, preserving the source snapshot and each attempt. Exhausted failures
+keep the checkpoint recoverable and block the decision that requires compaction.
+The runtime does not generate a no-summary archive fallback.
 
-The root `.env.example` supplies explicit 500k/400k/32k settings; copy the
-required values into the Host’s `.env` or selected `A3_RSI_ENV_FILE`.
-Existing explicit 64k/32k environment values are honored, so changing defaults
-alone does not migrate a deployment. The Host reads budgets at startup; Agent
-input hot reload does not replace them. A matching derived Harness reads the
-current `/context/config` before decisions. Historical Harness packages and active
-processes are not rewritten by a local code or profile change.
+Original messages and tool results remain in `history.jsonl` and verified source
+snapshots. Large tool results are separately stored losslessly with bounded previews;
+remote text artifacts use character pages with source hashes. This result transport
+keeps the request bounded while preserving access to the actual observations.
+The newest complete tool batch stays paired and visible; its size can make the soft
+target infeasible, in which case the hard model-window admission still applies.
 
-Large tool outputs are content-addressed and replaced by retrievable references.
-The ingress bound covers all JSON result types and measures the complete serialized
-call-output envelope, including JSON escaping and receipt metadata. The default
-per-result bound is 12,000 UTF-8 bytes; the whole request must still satisfy its
-token budget. Fresh results remain verbatim when they fit. Oversized results retain
-their call ID, a verified original envelope and an explicitly partial observation.
-Parallel batches are fitted as a whole, including their minimal reference metadata.
-An irreducible batch fails explicitly without dropping calls or increasing limits.
-
-Explicit Base64 artifact envelopes also produce a verified content-addressed local
-file. UTF-8 content can be read using character pages; binary content returns type,
-byte length and hash metadata rather than a generic text-decoding error. Untrusted
-upstream filenames never select the local destination. Invalid Base64 is reported,
-not interpreted. Original encoded envelopes remain available. Missing derived files
-can be rebuilt from verified original bytes on recovery; corruption is retained and
-reported instead of silently overwritten.
-
-At compaction, the overlay sends the entire readable transcript in one summary
-request, including recent messages retained in the result. It does not replace old
-tool results with archive previews before summarizing. All originals remain in the
-snapshot. Working memory targets 2,400 UTF-8 bytes with a validated 6,000-byte ceiling.
-An oversized or failed response is recorded without automatic retries or truncation.
-The normal hard decision gate may still archive oversized tool outputs to keep a
-request within its model window; that is separate from summary segmentation.
-
-The current Host token-budget endpoint is required. Missing or older configurations
-are rejected; there is no byte-budget mode or ordinary-model summary fallback.
+The template currently provides explicit model windows, a trigger and a 32k target.
+Set them in the Host's `.env` or `A3_RSI_ENV_FILE` for the selected model. The Host
+loads budgets at startup, and the Harness reads the active contract before decisions.
+Published code is changed through the stopped-run release procedure; existing
+historical source and checkpoints retain their original versions.
 
 ## Deliver observations before compacting them
 
@@ -184,8 +154,7 @@ resetting their state. These measures do not automatically close experiments or
 make keep/reject decisions: the Agent must still record those decisions from the
 actual evidence. Stale research files and a semantic-summary error remain separate
 possible causes; the transport fix does not certify autonomous long-run convergence.
-The generated main publishes `run-outcome.json` at its workspace root; only the
-initial builder uses the `run/` subdirectory. Saving a checkpoint does not update
+The main publishes `run-outcome.json` at its research workspace root. Saving a checkpoint does not update
 Agent-authored experiment decisions or stale job ledgers.
 
 ## Fixed roles and narrow summary operation
@@ -193,26 +162,26 @@ Agent-authored experiment decisions or stale job ledgers.
 `MODEL_NAME`, `MODEL_CLASS` and `A3_MODEL_REASONING_EFFORT` remain the primary model
 configuration. Optional `A3_WORKER_MODEL_NAME` and `A3_SUMMARY_MODEL_NAME`, with their
 respective `A3_WORKER_REASONING_EFFORT` and `A3_SUMMARY_REASONING_EFFORT`, configure
-fixed helper and summary routes. Absent overrides, behavior remains compatible.
-All these settings are Host-owned; containers cannot supply upstream URLs, keys or
+fixed helper and summary routes. Absent overrides, these routes use the primary model.
+All these settings are Host-owned; research processes cannot supply upstream URLs, keys or
 arbitrary role-model mappings. The supported service-tier override remains
 `A3_MODEL_SERVICE_TIER=default` (Standard).
 
 | Session or operation | Route and authoritative contract |
 | --- | --- |
-| Current main, root builder | Primary model |
-| Formal candidate-main trial | Primary model and current phase contract |
+| Current main | Primary model |
 | `POST /v1/summary` | Summary override, otherwise primary; data transformation only |
 
 A test assistant and a model under test are different roles. Testing a future main's
 behavior with a helper model would not establish behavior of the deployed main.
 Maintainers validate changes to the main Harness during a maintenance window. Ordinary `/sessions` creation and `candidate_validation` helpers are denied to Agent tokens. Role and requested/actual model options are audited.
 
-`POST /v1/summary` accepts the full `transcript` and a relative
-`context-history/snapshot-<SHA256>.json` source reference. It cannot receive client
+`POST /v1/summary` accepts the full `transcript`, a relative
+`context-history/snapshot-<SHA256>.json` source reference and the requested output
+allocation in `max_output_tokens`. It cannot receive client
 instructions, tools, model selection or credentials. The Host supplies concise
-source/uncertainty/correction instructions rather than repeating the whole phase
-contract. The output grants no authority and never executes tools. The full phase
+source/uncertainty/correction instructions rather than repeating the whole task
+contract. The output grants no authority and never executes tools. The full task
 contract continues to govern normal main and candidate decisions.
 
 Summary metadata binds operator-feedback IDs and hashes. It does not copy every
@@ -221,24 +190,21 @@ Full notices remain durably stored on the Host and are still delivered unchanged
 to that owner's normal decisions, including after compression and resume. They
 are per-run records; a new task needs its own approved initial intervention notice.
 
-Token control defaults to a 500k deployment cap. Set `A3_MODEL_CONTEXT_TOKENS` and, for alternate
-models, `A3_WORKER_CONTEXT_TOKENS` / `A3_SUMMARY_CONTEXT_TOKENS`. Optional
-`A3_CONTEXT_TRIGGER_TOKENS` and `A3_CONTEXT_TARGET_TOKENS` tune the working policy.
-The configured target budgets compacted working context, including tools.
-Host instructions and operator feedback use a separate reserve. The context
-endpoint adds that reserve to the target it sends to the Harness and caps the
-combined target below the trigger. The complete decision request still has to
-fit the model input budget.
-`A3_SUMMARY_INPUT_TOKENS` was removed and is rejected if present; remove it before
-starting an updated Host. Model identifiers and windows are
-deployment choices; no particular provider, account or model is a public default.
+Set `A3_MODEL_CONTEXT_TOKENS` and, for alternate models,
+`A3_WORKER_CONTEXT_TOKENS` / `A3_SUMMARY_CONTEXT_TOKENS` to their supported windows.
+`A3_CONTEXT_TRIGGER_TOKENS` selects when to start compression;
+`A3_CONTEXT_TARGET_TOKENS` budgets the complete compacted decision input, including
+Host instructions, operator feedback and tools. The context endpoint reports this
+same total target without adding another reserve to it.
+`A3_SUMMARY_INPUT_TOKENS` was removed and is rejected if present.
 
 ## Durable failure behavior and deployment
 
 Each complete-transcript request is recorded **before** dispatch. A restart reuses
-a checksummed completed summary; failed or uncertain requests are not automatically
-replayed. There are no fragments, corrective-summary retries, or cumulative 8/16-call
-budgets. Corrupt request records fail explicitly and original snapshots remain intact.
+a checksummed completed summary. Retriable summary attempts remain source-bound and
+are recorded separately; this operation only transforms supplied text. Tool side
+effects retain their separate no-replay journal. Corrupt request records fail
+explicitly and original snapshots remain intact.
 The new `transcript`/`source` protocol rejects old fields and requires a matching
 Host and Harness update. Local source changes do not update live processes.
 

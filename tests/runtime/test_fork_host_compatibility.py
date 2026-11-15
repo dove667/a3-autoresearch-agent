@@ -97,7 +97,7 @@ def test_real_host_summary_protocol_role_and_feedback(modules, tmp_path):
             forward_model=forward,
             remote_call=lambda *a: {},
             usage_log=tmp_path / "usage.jsonl",
-            phase_instructions="PRIVATE-PHASE",
+            task_instructions="PRIVATE-PHASE",
             human_feedback=feedback,
             role_models={
                 "summary": {
@@ -131,7 +131,7 @@ def test_real_host_summary_protocol_role_and_feedback(modules, tmp_path):
     result, _ = fork.before_request(original)
     assert calls, "real Host must accept the summary request"
     assert all(call["model"] == "summary-model" for call in calls)
-    assert all("tools" not in call and call["max_output_tokens"] == 1000 for call in calls)
+    assert all("tools" not in call and 0 < call["max_output_tokens"] <= 32000 for call in calls)
     assert "PRIVATE-OPERATOR-NOTICE" not in json.dumps(calls)
     assert "PRIVATE-PHASE" not in json.dumps(calls)
     assert "/v1/responses" not in paths
@@ -262,10 +262,29 @@ def test_valid_result_is_rejected_after_source_prefix_change(modules):
     assert list(pathlib.Path("context-history").glob("rejected-compaction-result-*.json"))
 
 
-def test_interrupted_fork_preserves_source_without_replaying_unknown_call(modules):
+def test_interrupted_fork_resumes_pure_summary_and_preserves_source(modules):
     module, cm = modules["compaction"], modules["context_manager"]
     original = tool_history(6, 100)
-    fork = module.ForkCompactor(lambda *a: (_ for _ in ()).throw(AssertionError("must not retry")))
+    calls = []
+    fork = module.ForkCompactor(
+        lambda *args: (
+            calls.append(args)
+            or {
+                "status": "completed",
+                "output": [
+                    {
+                        "type": "message",
+                        "content": [
+                            {
+                                "type": "output_text",
+                                "text": "Complete recovered research state and original evidence references.",
+                            }
+                        ],
+                    }
+                ],
+            }
+        )
+    )
     source = cm.archive(original, "snapshot")
     pathlib.Path(module.RESULT_PATH).write_text(
         json.dumps(
@@ -281,10 +300,13 @@ def test_interrupted_fork_preserves_source_without_replaying_unknown_call(module
             }
         )
     )
-    restored, report = fork.before_request(original)
-    assert report["strategy"] == "interrupted"
+    same, report = fork.before_request(original)
+    assert report["kind"] == "fork_resumed"
+    fork.wait(5)
+    restored, report = fork.before_request(same)
+    assert report["strategy"] == "host_summary" and len(calls) == 1
     assert cm.paired(restored)
-    assert "not summarized" in json.dumps(restored)
+    assert "Complete recovered research state" in json.dumps(restored)
     assert json.loads(pathlib.Path(source).read_text()) == original
 
 

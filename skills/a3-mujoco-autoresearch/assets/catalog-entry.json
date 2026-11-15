@@ -1,6 +1,6 @@
 {
   "id": "a3-mujoco-autoresearch",
-  "version": "0.1.14",
+  "version": "0.1.15",
   "status": "reference",
   "comparison_status": "compare-not-proven",
   "description": "A3 MuJoCo autoresearch and model training: ACT, Diffusion/Flow, VLA, world models, diagnostics and paired evaluation.",
@@ -35,6 +35,10 @@
   ],
   "evidence_status": "literature-and-source-inspected; offline-helper-tests; no-local-policy-comparison",
   "version_history": [
+    {
+      "version": "0.1.15",
+      "change": "Resolve episode executor and output paths from the actual job backend and environment."
+    },
     {
       "version": "0.1.0",
       "change": "Initial externally authored research reference and offline paired-evaluation helper."

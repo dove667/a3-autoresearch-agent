@@ -152,7 +152,7 @@ def test_failed_provider_response_does_not_mark_feedback_forwarded(tmp_path):
 def test_feedback_cli_rejects_fresh_start_before_deployment_calls(tmp_path, monkeypatch):
     import sys
 
-    from a3_research_agent.host import bootstrap as launch
+    from a3_research_agent.cli import launch
 
     monkeypatch.setattr(sys, "argv", ["launch", "--feedback-file", str(tmp_path / "feedback.md")])
     monkeypatch.setattr(launch, "load_dotenv", lambda *args, **kwargs: pytest.fail("No deployment"))

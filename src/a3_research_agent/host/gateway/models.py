@@ -49,44 +49,38 @@ class ModelRoutes:
             arguments.pop("instructions", None)
         elif not isinstance(arguments["instructions"], str):
             raise HTTPException(422, "Instructions must be text or null")
-        with self.session_lock:
-            trial = self.evolution.trials.get(experiment, {}) if self.evolution else {}
-            receives_phase = bool(
-                purpose == "decision"
-                and (self.phase_instructions or self.input_versions)
-                and self.evolution
-                and (experiment == self.evolution.main_owner or trial.get("status") == "testing")
-            )
+        inject_task = bool(
+            purpose == "decision"
+            and (self.task_instructions or self.input_versions)
+            and experiment == self.main_owner
+        )
         role = (
             "summary"
             if purpose == "summary"
             else "worker"
             if purpose == "vision"
-            else "candidate"
-            if trial.get("status") == "testing"
+            or (
+                self.main_owner is not None
+                and experiment != self.main_owner
+                and experiment not in self.root_owners
+            )
             else "main"
-            if self.evolution is None
-            or experiment == self.evolution.main_owner
-            or experiment in self.root_owners
-            else "worker"
         )
         route = self.fixed_roles.get(
             role, {"model_name": self.model_name, "request_options": self.fixed_model_options}
         )
         options = route["request_options"]
         arguments.update(validate_model_request_options(options))
-        input_manifest, active_phase = (
+        input_manifest, active_task = (
             self.input_versions.model_instructions()
             if self.input_versions is not None
-            else ({}, self.phase_instructions)
+            else ({}, self.task_instructions)
         )
-        if receives_phase:
+        if inject_task:
             specific = arguments.get("instructions")
             if specific is not None and not isinstance(specific, str):
                 raise HTTPException(422, "Instructions must be text")
-            arguments["instructions"] = (
-                active_phase + "\n\n" + specific if specific else active_phase
-            )
+            arguments["instructions"] = active_task + "\n\n" + specific if specific else active_task
         if isinstance(arguments.get("input"), str):
             arguments["input"] = [{"role": "user", "content": arguments["input"]}]
         feedback_ids = []
@@ -95,6 +89,14 @@ class ModelRoutes:
                 arguments, feedback_ids = self.human_feedback.apply(experiment, arguments)
             except ValueError as error:
                 raise HTTPException(422, str(error)) from None
+        if self.token_budget is None:
+            raise HTTPException(503, "Model token budget is unavailable")
+        output_tokens = arguments.get("max_output_tokens")
+        if output_tokens is None:
+            output_tokens = self.token_budget.output_reserve_tokens
+        if type(output_tokens) is not int or output_tokens <= 0:
+            raise HTTPException(422, "Output allowance must be a positive integer")
+        arguments["max_output_tokens"] = output_tokens
         estimated_tokens = None
         if self.token_budget:
             estimate_arguments = arguments
@@ -120,11 +122,30 @@ class ModelRoutes:
                 if role == "worker"
                 else self.token_budget.main_context_tokens
             )
-            limit = (
-                self.token_budget.summary_input_tokens
-                if role == "summary"
-                else window * 9 // 10 - self.token_budget.output_reserve_tokens
-            )
+            if role == "summary":
+                output_limit = min(arguments["max_output_tokens"], self.token_budget.target_tokens)
+                summary_instructions = arguments.get("instructions", "")
+                while True:
+                    arguments["max_output_tokens"] = output_limit
+                    arguments["instructions"] = (
+                        summary_instructions
+                        + f" Working-memory output budget: {output_limit} tokens. "
+                        "Return a complete summary within this budget."
+                    )
+                    estimated_tokens = estimate_request_tokens(
+                        arguments, self.token_budget.provider_reserve_tokens
+                    )
+                    available = window - estimated_tokens
+                    if available <= 0:
+                        raise HTTPException(422, "Summary input leaves no output space")
+                    if output_limit <= available:
+                        break
+                    output_limit = available
+                limit = window - max(self.token_budget.output_reserve_tokens, output_limit)
+            else:
+                limit = window * 9 // 10 - max(
+                    self.token_budget.output_reserve_tokens, output_tokens
+                )
             if estimated_tokens > limit:
                 raise HTTPException(422, "Estimated model input exceeds configured token headroom")
         started = time.monotonic()
@@ -188,8 +209,8 @@ class ModelRoutes:
             )
         if feedback_ids:
             entry["human_feedback_ids"] = feedback_ids
-        if receives_phase:
-            entry["phase_instructions_sha256"] = hashlib.sha256(active_phase.encode()).hexdigest()
+        if inject_task:
+            entry["task_instructions_sha256"] = hashlib.sha256(active_task.encode()).hexdigest()
         if input_manifest:
             entry["input_revision"] = input_manifest["revision"]
             entry["input_versions"] = input_manifest["files"]
@@ -206,16 +227,11 @@ class ModelRoutes:
     def context_configuration(self, authorization: Annotated[str | None, Header()] = None):
         self.accepting_resources()
         experiment = self.owner(authorization)
-        with self.session_lock:
-            trial = self.evolution.trials.get(experiment, {}) if self.evolution else {}
-            receives_phase = bool(
-                self.evolution
-                and (experiment == self.evolution.main_owner or trial.get("status") == "testing")
-            )
-        phase = (
+        inject_task = experiment == self.main_owner
+        instructions = (
             self.input_versions.model_instructions()[1]
             if self.input_versions is not None
-            else self.phase_instructions
+            else self.task_instructions
         )
         records = [
             record
@@ -226,12 +242,11 @@ class ModelRoutes:
         refs = [
             {"feedback_id": record["feedback_id"], "sha256": record["sha256"]} for record in records
         ]
-        injected = {"instructions": phase if receives_phase else "", "feedback": notes}
+        injected = {"instructions": instructions if inject_task else "", "feedback": notes}
         main_route = (
-            self.evolution is None
-            or experiment == self.evolution.main_owner
+            self.main_owner is None
+            or experiment == self.main_owner
             or experiment in self.root_owners
-            or trial.get("status") == "testing"
         )
         window = (
             self.token_budget.main_context_tokens
@@ -244,11 +259,6 @@ class ModelRoutes:
             + 512
             + 16 * len(notes)
         )
-        # The Harness subtracts this reserve from the target on the wire.
-        request_target = min(
-            self.token_budget.target_tokens + injected_reserve,
-            self.token_budget.trigger_tokens - 1,
-        )
         return {
             "enabled": True,
             "summary_operation": "/v1/summary",
@@ -256,7 +266,7 @@ class ModelRoutes:
             "tokenizer": "o200k_base",
             "trigger_tokens": self.token_budget.trigger_tokens,
             "decision_input_tokens": window * 9 // 10 - self.token_budget.output_reserve_tokens,
-            "target_tokens": request_target,
+            "target_tokens": self.token_budget.target_tokens,
             "summary_input_tokens": self.token_budget.summary_input_tokens,
             "injected_reserve_tokens": injected_reserve,
             "summary_reserve_tokens": count_tokens(SUMMARY_INSTRUCTIONS)
@@ -296,11 +306,13 @@ class ModelRoutes:
             "transcript": body.transcript,
             "operator_feedback_refs": references,
         }
+        if self.token_budget is None:
+            raise HTTPException(503, "Summary token budget is unavailable")
         result = self.forward_response(
             {
                 "instructions": SUMMARY_INSTRUCTIONS,
                 "input": [{"role": "user", "content": json.dumps(payload, ensure_ascii=False)}],
-                "max_output_tokens": 1000,
+                "max_output_tokens": body.max_output_tokens or self.token_budget.target_tokens,
             },
             authorization,
             purpose="summary",

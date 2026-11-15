@@ -9,41 +9,67 @@ from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
 
-import yaml
-from jinja2 import Environment, TemplateError
-
 SHARED_INPUT_SOURCES = {
     "SOUL.md": "agent-inputs/SOUL.md",
-    "bootstrap.yaml": "agent-inputs/shared/bootstrap.yaml",
     "execution.md": "agent-inputs/shared/execution.md",
-    "readiness-task.md": "agent-inputs/shared/readiness-task.md",
     "workspace-instructions.md": "agent-inputs/shared/workspace.md",
 }
-PHASES = ("phase-one", "phase-two")
-TASK_PROFILES = ("standard", "web-extension", "skills-extension")
-EXTENSION_PROFILES = ("web-extension", "skills-extension")
+TASK_INPUTS = {"goal.md", "acceptance.md", "protocol.md"}
+DEPLOYED_SKILLS = ("a3-mujoco-autoresearch",)
 
 
-def input_sources(phase: str, task_profile: str = "standard") -> dict[str, str]:
-    if phase not in PHASES:
-        raise ValueError(f"Unknown phase: {phase}")
-    if task_profile not in TASK_PROFILES:
-        raise ValueError(f"Unknown task profile: {task_profile}")
-    if task_profile in EXTENSION_PROFILES and phase != "phase-one":
-        raise ValueError(f"{task_profile} requires phase-one")
-    bundle = {"web-extension": "phase-one-web", "skills-extension": "phase-one-skills"}.get(
-        task_profile, phase
-    )
-    sources = {
-        **SHARED_INPUT_SOURCES,
-        "goal.md": f"agent-inputs/{bundle}/goal.md",
-        "acceptance.md": f"agent-inputs/{bundle}/acceptance.md",
-    }
-    if phase == "phase-one":
-        sources["phase-instructions.md"] = f"agent-inputs/{bundle}/instructions.md"
-    if phase == "phase-two":
-        sources["protocol.md"] = "agent-inputs/shared/protocol.md"
+def deployment_input_sources(source_root: Path) -> dict[str, str]:
+    """Add declared reference packages without changing the required task contract."""
+    sources = dict(SHARED_INPUT_SOURCES)
+    for identifier in DEPLOYED_SKILLS:
+        directory = source_root / "skills" / identifier
+        if not directory.exists():
+            raise ValueError(f"Missing deployed skill reference: {identifier}")
+        if directory.is_symlink() or (source_root / "skills").is_symlink():
+            raise ValueError("Deployed skill references cannot be symlinks")
+        selected = []
+        for path in sorted(directory.rglob("*")):
+            relative = path.relative_to(source_root)
+            if any(part.startswith(".") or part == "__pycache__" for part in relative.parts):
+                continue
+            if path.is_symlink():
+                raise ValueError("Deployed skill references cannot be symlinks")
+            if path.is_file() and path.suffix in {".md", ".json", ".py"}:
+                if path.stat().st_size > 1024 * 1024:
+                    raise ValueError("Deployed skill reference exceeds file size bound")
+                selected.append(relative.as_posix())
+        required = {
+            f"skills/{identifier}/SKILL.md",
+            f"skills/{identifier}/assets/catalog-entry.json",
+        }
+        if not required <= set(selected) or len(selected) > 128:
+            raise ValueError("Deployed skill reference tree is incomplete or oversized")
+        sources.update({name: name for name in selected})
     return sources
+
+
+def skill_input_versions(contents: dict[str, str]) -> dict[str, str]:
+    """Version a complete skill tree by its catalog, with separate per-file hashes."""
+    versions = {}
+    for name, text in contents.items():
+        if not name.startswith("skills/") or not name.endswith("/assets/catalog-entry.json"):
+            continue
+        catalog = json.loads(text)
+        if not isinstance(catalog, dict):
+            raise TypeError("Skill reference catalog must be an object")
+        prefix = name.removesuffix("assets/catalog-entry.json")
+        identifier = prefix.split("/")[1]
+        version = catalog.get("version")
+        if (
+            catalog.get("id") != identifier
+            or catalog.get("local_source") != prefix + "SKILL.md"
+            or not isinstance(version, str)
+            or not re.fullmatch(r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)", version)
+            or prefix + "SKILL.md" not in contents
+        ):
+            raise ValueError("Invalid versioned skill reference catalog")
+        versions.update({path: version for path in contents if path.startswith(prefix)})
+    return versions
 
 
 def execution_index(text: str) -> dict:
@@ -63,7 +89,7 @@ def execution_index(text: str) -> dict:
             break
         sections.append(section)
     return {
-        "path": "/run/input/execution.md",
+        "path": "execution.md",
         "unit": "characters",
         "sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
         "total": len(text),
@@ -74,44 +100,6 @@ def execution_index(text: str) -> dict:
         if len(sections) < len(headings)
         else len(text),
     }
-
-
-def resolve_phase(run: Path | None, requested: str | None = None) -> str:
-    """Keep a run in its recorded stage; older runs belong to phase one."""
-    recorded = []
-    paths = (run / "startup.json", run / "inputs/input-manifest.json") if run else ()
-    for path in paths:
-        if path.is_file():
-            saved = json.loads(path.read_text())
-            phase = saved.get("phase") or saved.get("input_manifest", {}).get("phase")
-            recorded.append(phase or "phase-one")
-    phase = requested or (recorded[0] if recorded else "phase-one")
-    if phase not in PHASES:
-        raise ValueError(f"Unknown phase: {phase}")
-    if any(previous != phase for previous in recorded):
-        raise ValueError("Cannot change phase within a run; start a new run with --run-harness")
-    return phase
-
-
-def resolve_task_profile(run: Path | None, requested: str | None = None) -> str:
-    """A profile is immutable within a run; pre-profile runs are standard."""
-    recorded = []
-    paths = (run / "startup.json", run / "inputs/input-manifest.json") if run else ()
-    for path in paths:
-        if path.is_file():
-            saved = json.loads(path.read_text())
-            profile = saved.get("task_profile") or saved.get("input_manifest", {}).get(
-                "task_profile"
-            )
-            recorded.append(profile or "standard")
-    profile = requested or (recorded[0] if recorded else "standard")
-    if profile not in TASK_PROFILES:
-        raise ValueError(f"Unknown task profile: {profile}")
-    if any(previous != profile for previous in recorded):
-        raise ValueError(
-            "Cannot change task profile within a run; start a new run with --run-harness"
-        )
-    return profile
 
 
 VERSION = re.compile(
@@ -131,165 +119,121 @@ def write_atomic(path: Path, content: bytes) -> None:
             temporary.unlink(missing_ok=True)
 
 
-def validate_bootstrap(text: str) -> None:
-    try:
-        config = yaml.safe_load(text)
-        if not isinstance(config, dict):
-            raise TypeError("Expected a mapping")
-        agent, run = config.get("agent"), config.get("run")
-        if not isinstance(agent, dict) or not isinstance(run, dict):
-            raise TypeError("Missing agent or run configuration")
-        for name in ("system_template", "instance_template"):
-            if not isinstance(agent.get(name), str):
-                raise TypeError(f"Missing text template: {name}")
-            Environment().parse(agent[name])
-        if not isinstance(run.get("task"), str):
-            raise TypeError("Missing text task")
-    except (yaml.YAMLError, TemplateError, TypeError) as error:
-        raise ValueError(f"Invalid bootstrap.yaml: {error}") from None
-
-
 class InputVersions:
-    def __init__(
-        self,
-        source_root: Path,
-        run: Path | None,
-        phase: str | None = None,
-        task_profile: str | None = None,
-        custom_dir: Path | None = None,
-    ):
-        self.source_root = source_root
-        self.run = run
-        self.phase = resolve_phase(run, phase)
-        self.task_profile = resolve_task_profile(run, task_profile)
-        self.sources = input_sources(self.phase, self.task_profile)
-        self.input_mode = "custom" if custom_dir else "preset"
+    def __init__(self, source_root: Path, run: Path | None, *, custom_dir: Path | None = None):
+        self.source_root, self.run = source_root, run
         self.custom_dir = custom_dir
         self.frozen_manifest = None
-        saved_path = run / "inputs/input-manifest.json" if run else None
-        if saved_path and saved_path.is_file():
-            saved = json.loads(saved_path.read_text())
-            if saved.get("input_mode") == "custom":
-                if custom_dir is not None:
-                    raise ValueError("Cannot replace custom inputs on resume; start a new run")
-                revision = saved.get("revision", "")
-                if not re.fullmatch(r"revision-\d{4,}", revision):
-                    raise ValueError("Invalid recorded custom input revision")
-                self.input_mode = "custom"
-                self.custom_dir = run / "input-revisions" / revision
-                self.frozen_manifest = saved
-        if self.input_mode == "custom":
-            if self.task_profile != "standard":
-                raise ValueError("Custom inputs cannot be combined with a preset task profile")
-            self.sources = self._custom_sources()
+        self.provided = None
         self.lock = threading.RLock()
-        self.manifest: dict = {}
-        self.contents: dict[str, str] = {}
-
-    @classmethod
-    def from_proposal(cls, source_root: Path, run: Path, proposal: dict):
-        """Use the already validated bytes, not a second read of mutable source files."""
-        instance = cls(source_root, run, proposal["phase"], proposal["task_profile"])
-        instance.input_mode = proposal.get("input_mode", "preset")
-        instance.sources = {name: item["source"] for name, item in proposal["files"].items()}
-        return instance
-
-    def _custom_sources(self) -> dict[str, str]:
-        directory = self.custom_dir
-        if not directory or not directory.is_dir() or directory.is_symlink():
-            raise ValueError("Agent input directory must be a real directory")
-        if self.frozen_manifest:
-            names = list(self.frozen_manifest["files"])
+        self.manifest, self.contents = {}, {}
+        saved = run / "inputs/input-manifest.json" if run else None
+        if saved and saved.is_file():
+            if custom_dir is not None:
+                raise ValueError("Cannot replace task inputs on resume; preview an explicit update")
+            self.frozen_manifest = json.loads(saved.read_text())
+            revision = self.frozen_manifest.get("revision", "")
+            if not re.fullmatch(r"revision-\d{4,}", revision):
+                raise ValueError("Invalid recorded input revision")
+            self.custom_dir = run / "input-revisions" / revision
+            self.sources = {name: name for name in self.frozen_manifest["files"]}
         else:
-            names = []
-            for path in sorted(directory.rglob("*")):
-                if path.is_symlink():
-                    raise ValueError(f"Agent inputs cannot contain symlinks: {path.name}")
-                if path.is_file():
-                    names.append(path.relative_to(directory).as_posix())
-                elif not path.is_dir():
-                    raise ValueError(f"Unsupported Agent input: {path.name}")
-        required = set(input_sources(self.phase))
-        missing = required - set(names)
-        if missing:
+            if run and (run / "startup.json").is_file():
+                raise ValueError("Recorded runs require their current input manifest")
+            if custom_dir is None:
+                raise ValueError("New research tasks require an explicit Agent input directory")
+            self.sources = self._task_sources(custom_dir)
+
+    def _task_sources(self, directory: Path) -> dict[str, str]:
+        if not directory.is_dir() or directory.is_symlink():
+            raise ValueError("Agent input directory must be a real directory")
+        names = []
+        reserved = {"input-manifest.json", "manifest.json", "deployment.json", "history"}
+        shared = deployment_input_sources(self.source_root)
+        for path in sorted(directory.rglob("*")):
+            name = path.relative_to(directory).as_posix()
+            if path.is_symlink():
+                raise ValueError(f"Agent inputs cannot contain symlinks: {name}")
+            if path.is_file():
+                if (
+                    path.relative_to(directory).parts[0] in reserved
+                    or name in shared
+                    or name.startswith("skills/")
+                ):
+                    raise ValueError(f"Reserved Agent input path: {name}")
+                names.append(name)
+        if missing := TASK_INPUTS - set(names):
             raise ValueError(
                 f"Incomplete Agent input directory; missing: {', '.join(sorted(missing))}"
             )
-        reserved = {
-            "input-manifest.json",
-            "manifest.json",
-            "deployment.json",
-            "previous-run.json",
-            "history",
-            "common-instructions.md",
-        }
-        for name in names:
-            path = Path(name)
-            if (
-                path.is_absolute()
-                or ".." in path.parts
-                or not path.parts
-                or path.parts[0] in reserved
-            ):
-                raise ValueError(f"Reserved or unsafe Agent input path: {name}")
-        return {name: name for name in names}
+        return {name: str(directory.resolve() / name) for name in names}
+
+    @classmethod
+    def from_proposal(cls, source_root: Path, run: Path, proposal: dict):
+        instance = cls.__new__(cls)
+        instance.source_root, instance.run = source_root, run
+        instance.custom_dir, instance.frozen_manifest = None, None
+        instance.sources = {name: record["source"] for name, record in proposal["files"].items()}
+        instance.provided = deepcopy(proposal)
+        instance.lock = threading.RLock()
+        instance.manifest, instance.contents = {}, {}
+        return instance
 
     def prepare_directory(self, directory: Path) -> dict:
-        """Operator-selected replacement; keep the custom contract and historical snapshots."""
-        with self.lock:
-            if self.input_mode != "custom" or self.run is None:
-                raise ValueError("Directory selection requires an existing custom-input run")
-            candidate = InputVersions(
-                self.source_root,
-                None,
-                phase=self.phase,
-                task_profile=self.task_profile,
-                custom_dir=directory,
-            )
-            if set(candidate.sources) != set(self.sources):
-                raise ValueError("Replacement must retain exactly the current custom file names")
-            # Reuse version-history validation without treating this new source as
-            # a mutable replacement of an already frozen revision.
-            candidate.run = self.run
-            return candidate.prepare()
+        candidate = InputVersions(self.source_root, None, custom_dir=directory)
+        candidate.run = self.run
+        return candidate.prepare()
+
+    def prepare_shared_update(self) -> dict:
+        proposal = self.prepare()
+        sources = deployment_input_sources(self.source_root)
+        for name in list(proposal["contents"]):
+            if name in SHARED_INPUT_SOURCES or name.startswith("skills/"):
+                proposal["contents"].pop(name)
+                proposal["files"].pop(name)
+        for name, source in sources.items():
+            proposal["contents"][name] = (self.source_root / source).read_bytes().decode("utf-8")
+            proposal["files"][name] = {"source": source}
+        candidate = InputVersions.from_proposal(self.source_root, self.run, proposal)
+        return candidate.prepare()
 
     def prepare(self) -> dict:
         """Read a proposed update without changing the active run."""
         with self.lock:
+            if self.provided is not None:
+                selected = self.provided["contents"]
+            elif self.frozen_manifest:
+                selected = {}
+                for name in self.sources:
+                    path = self.custom_dir / name
+                    if path.is_symlink() or any(
+                        parent.is_symlink()
+                        for parent in path.parents
+                        if parent != self.custom_dir.parent
+                    ):
+                        raise ValueError(f"Unsafe recorded input: {name}")
+                    selected[name] = path.read_bytes().decode("utf-8")
+            else:
+                self.sources = {
+                    **self._task_sources(self.custom_dir),
+                    **deployment_input_sources(self.source_root),
+                }
+                selected = {}
+                for name, source in self.sources.items():
+                    path = Path(source) if Path(source).is_absolute() else self.source_root / source
+                    if path.is_symlink() or not path.is_file():
+                        raise ValueError(f"Missing or unsafe input: {name}")
+                    selected[name] = path.read_bytes().decode("utf-8")
             contents, files = {}, {}
             for name, relative in self.sources.items():
-                path = (
-                    (self.custom_dir / name)
-                    if self.input_mode == "custom"
-                    else (self.source_root / relative)
-                )
-                if (
-                    path.is_symlink()
-                    or not path.is_file()
-                    or (
-                        self.input_mode == "custom"
-                        and any(
-                            (self.custom_dir / parent).is_symlink()
-                            for parent in path.relative_to(self.custom_dir).parents
-                            if parent != Path(".")
-                        )
-                    )
-                ):
-                    raise ValueError(f"Missing or unsafe input: {name}")
-                data = path.read_bytes()
-                text = data.decode("utf-8")
+                text = selected[name]
+                data = text.encode("utf-8")
                 match = VERSION.search(text)
-                if not match and (
-                    self.input_mode != "custom"
-                    or name in input_sources(self.phase)
-                    or name == "phase-instructions.md"
-                ):
+                if not match and name in TASK_INPUTS | SHARED_INPUT_SOURCES.keys():
                     raise ValueError(f"Missing semantic version in {relative}")
                 contents[name] = text
                 files[name] = {
-                    "source": str(self.custom_dir.resolve() / name)
-                    if self.input_mode == "custom"
-                    else relative,
+                    "source": relative,
                     "version": ".".join(match.groups()) if match else None,
                     "sha256": hashlib.sha256(data).hexdigest(),
                 }
@@ -298,6 +242,9 @@ class InputVersions:
                     if old["sha256"] != files[name]["sha256"]:
                         raise ValueError(f"Recorded custom input snapshot changed: {name}")
                     files[name] = dict(old)
+            for name, version in skill_input_versions(contents).items():
+                if not self.frozen_manifest:
+                    files[name]["version"] = version
             previous_manifests = (
                 (self.run / "input-revisions").glob("*/manifest.json") if self.run else ()
             )
@@ -306,6 +253,26 @@ class InputVersions:
                 if saved.get("status") != "active":
                     continue
                 for name, item in files.items():
+                    if not name.startswith("skills/") or not name.endswith(
+                        "/assets/catalog-entry.json"
+                    ):
+                        continue
+                    if saved["files"].get(name, {}).get("version") != item["version"]:
+                        continue
+                    prefix = name.removesuffix("assets/catalog-entry.json")
+                    old_tree = {
+                        path: record["sha256"]
+                        for path, record in saved["files"].items()
+                        if path.startswith(prefix)
+                    }
+                    new_tree = {
+                        path: record["sha256"]
+                        for path, record in files.items()
+                        if path.startswith(prefix)
+                    }
+                    if old_tree != new_tree:
+                        raise ValueError(f"{prefix} changed without a version increment")
+                for name, item in files.items():
                     old = saved["files"].get(name, {})
                     if (
                         item["version"] is not None
@@ -313,20 +280,13 @@ class InputVersions:
                         and old.get("sha256") != item["sha256"]
                     ):
                         raise ValueError(f"{name} changed without a version increment")
-            validate_bootstrap(contents["bootstrap.yaml"])
-            if self.input_mode == "custom":
-                checks = re.findall(
-                    r"^## ([A-Za-z][A-Za-z0-9_-]*)\.(?:\s|$)",
-                    contents["acceptance.md"],
-                    re.MULTILINE,
-                )
-                if not checks or len(checks) != len(set(checks)):
-                    raise ValueError("Custom acceptance needs unique ## check_id. headings")
+            checks = re.findall(
+                r"^## ([A-Za-z][A-Za-z0-9_-]*)\.(?:\s|$)", contents["acceptance.md"], re.MULTILINE
+            )
+            if not checks or len(checks) != len(set(checks)):
+                raise ValueError("Task acceptance needs unique ## check_id. headings")
             digest = hashlib.sha256(json.dumps(files, sort_keys=True).encode()).hexdigest()
             return {
-                "phase": self.phase,
-                "input_mode": self.input_mode,
-                "task_profile": self.task_profile,
                 "digest": digest,
                 "files": files,
                 "contents": contents,
@@ -337,28 +297,8 @@ class InputVersions:
         with self.lock:
             if self.run is None:
                 raise ValueError("Input preview has no run directory to activate")
-            if proposal.get("input_mode", "preset") != self.input_mode:
-                raise ValueError("Cannot change input mode within a run")
-            if proposal["phase"] != self.phase:
-                raise ValueError("Cannot activate another phase within a run")
-            if proposal.get("task_profile", "standard") != self.task_profile:
-                raise ValueError("Cannot activate another task profile within a run")
             revisions = self.run / "input-revisions"
             revisions.mkdir(parents=True, exist_ok=True)
-            legacy = revisions / "legacy"
-            if not legacy.exists() and (self.run / "inputs").exists():
-                legacy.mkdir()
-                for name in dict.fromkeys(
-                    (
-                        *self.sources,
-                        "phase-instructions.md",
-                        "common-instructions.md",
-                        "input-manifest.json",
-                    )
-                ):
-                    original = self.run / "inputs" / name
-                    if original.is_file():
-                        write_atomic(legacy / name, original.read_bytes())
             index = 1
             while True:
                 directory = revisions / f"revision-{index:04d}"
@@ -368,9 +308,6 @@ class InputVersions:
                 except FileExistsError:
                     index += 1
             manifest = {
-                "phase": self.phase,
-                "input_mode": self.input_mode,
-                "task_profile": self.task_profile,
                 "revision": directory.name,
                 "digest": proposal["digest"],
                 "files": proposal["files"],
@@ -387,29 +324,23 @@ class InputVersions:
             }
             manifest_bytes = (json.dumps(manifest, ensure_ascii=False, indent=2) + "\n").encode()
             targets = [self.run / "inputs"]
-            if (self.run / "private-inputs").is_dir():
-                targets.append(self.run / "private-inputs")
             replacements = {}
             for name, text in proposal["contents"].items():
                 data = text.encode()
                 write_atomic(directory / name, data)
                 replacements.update({target / name: data for target in targets})
-            # Retire the old mounted prompt after archiving it; new requests use one stage prompt.
-            for target in targets:
-                old_prompt = target / "common-instructions.md"
-                if old_prompt.exists():
-                    replacements[old_prompt] = None
-                retired_stage = target / "phase-instructions.md"
-                if "phase-instructions.md" not in proposal["contents"] and retired_stage.exists():
-                    replacements[retired_stage] = None
-            workspace_guide = self.run / "workspace/harness/AGENTS.md"
-            if workspace_guide.parent.exists():
-                replacements[workspace_guide] = proposal["contents"][
-                    "workspace-instructions.md"
-                ].encode()
             replacements.update(
                 {target / "input-manifest.json": manifest_bytes for target in targets}
             )
+            current_manifest = self.run / "inputs/input-manifest.json"
+            if current_manifest.is_file():
+                old_names = json.loads(current_manifest.read_text())["files"]
+                replacements.update(
+                    {
+                        self.run / "inputs" / name: None
+                        for name in old_names.keys() - proposal["contents"].keys()
+                    }
+                )
             backups = {path: path.read_bytes() if path.exists() else None for path in replacements}
             event_log = self.run / "input-events.jsonl"
             old_events = event_log.read_bytes() if event_log.exists() else b""
@@ -456,9 +387,10 @@ class InputVersions:
                 raise
             self.manifest = manifest
             self.contents = dict(proposal["contents"])
-            if self.input_mode == "custom":
-                self.custom_dir = directory
-                self.frozen_manifest = deepcopy(manifest)
+            self.custom_dir = directory
+            self.frozen_manifest = deepcopy(manifest)
+            self.provided = None
+            self.sources = {name: name for name in manifest["files"]}
             return deepcopy(manifest)
 
     def model_instructions(self) -> tuple[dict, str]:
@@ -466,20 +398,15 @@ class InputVersions:
             manifest = deepcopy(self.manifest)
             instructions = (
                 f"当前 Agent 输入：{manifest['revision']}，generation={manifest['generation']}，status={manifest['status']}，内容标识 {manifest['digest']}。\n"
-                f"当前阶段：{self.phase}；任务配置：{self.task_profile}。目标、验收和阶段协议以以下当前版本为准；"
+                "当前研究目标、验收和协议以以下版本化任务输入为准；"
                 "历史上下文中的旧版内容保留供追溯。\n"
-                "详细接口按需读取：/run/input/input-manifest.json 的 execution_index 给出 execution.md 章节字符 offset/end 和完整 SHA256，配合 read 的 fields 及分页；不要通读全部接口作为每轮前置步骤。"
+                "详细接口按需读取：A3_INPUT_ROOT 下 input-manifest.json 的 execution_index 给出 execution.md 章节字符 offset/end 和完整 SHA256，配合 read 的 fields 及分页；不要通读全部接口作为每轮前置步骤。"
                 "本请求已给出当前输入标识；同一已验证 revision 的已读内容无需重复读取或每轮再查 manifest。"
                 "连续读取多个输入文件时，前后必须都是status=active且revision与generation相同；"
                 "status=updating时等待，标识变化后重新读取。\n\n"
-                + "SOUL 是跨阶段长期角色原则；SOUL 不得覆盖当前阶段的 goal、acceptance、protocol 或权限边界。\n"
+                + "SOUL 提供长期角色原则；goal、acceptance、protocol 定义当前研究任务。\n"
                 + self.contents["SOUL.md"]
                 + "\n\n"
-                + (
-                    self.contents["phase-instructions.md"] + "\n\n"
-                    if "phase-instructions.md" in self.contents
-                    else ""
-                )
                 + self.contents["goal.md"]
                 + "\n\n"
                 + self.contents["acceptance.md"]

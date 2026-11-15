@@ -3,21 +3,30 @@
 import argparse
 import json
 import os
-import subprocess
 import sys
 from pathlib import Path
 
+from dotenv import load_dotenv
 
-def launch_main(runtime) -> None:
+from a3_research_agent.host.inputs.task_preparation import prepare_custom_task
+from a3_research_agent.host.inputs.versions import InputVersions
+from a3_research_agent.host.launch import launch_run
+from a3_research_agent.host.models.settings import model_settings
+from a3_research_agent.host.runs.continuation import resolve_harness_start
+from a3_research_agent.host.runs.directories import create_run_directory
+from a3_research_agent.host.runs.state import RunLease
+from a3_research_agent.host.transport import remote_call, validate_remote_health
+from a3_research_agent.host.workspaces import git
+from a3_research_agent.project import checkout_root, resolve_project_root
+
+
+def launch_main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--night-window", action="store_true", help="Resume only from 21:00 to 09:00 Beijing time"
     )
     parser.add_argument(
         "--check", action="store_true", help="Validate deployment without starting an Agent"
-    )
-    parser.add_argument(
-        "--verify-deployment", action="store_true", help="Run a bounded agent readiness check"
     )
     parser.add_argument(
         "--resume-from",
@@ -27,17 +36,11 @@ def launch_main(runtime) -> None:
     parser.add_argument(
         "--run-harness",
         type=Path,
-        help="Start from the retained result of an explicitly selected run/package directory",
+        help="Start a new task from an explicitly selected published run/package directory",
     )
     parser.add_argument(
-        "--phase",
-        choices=runtime.PHASES,
-        help="Select stage inputs; new runs default to phase-one, resumes keep their stage",
-    )
-    parser.add_argument(
-        "--task-profile",
-        choices=runtime.TASK_PROFILES,
-        help="New tasks default to standard; resumes keep their recorded profile",
+        "--harness-commit",
+        help="Start fresh from a full published origin/main Harness commit",
     )
     parser.add_argument(
         "--feedback-file",
@@ -45,14 +48,9 @@ def launch_main(runtime) -> None:
         help="On resume, explicitly add a human feedback file before the next main model call",
     )
     parser.add_argument(
-        "--initial-feedback-file",
-        type=Path,
-        help="Approved initial user input for a new retained phase-one extension task",
-    )
-    parser.add_argument(
         "--agent-inputs-dir",
         type=Path,
-        help="Complete custom Agent input directory for a new --run-harness task",
+        help="Complete custom Agent input directory for a new published task",
     )
     parser.add_argument(
         "--project-root",
@@ -61,102 +59,74 @@ def launch_main(runtime) -> None:
     )
     args = parser.parse_args()
     try:
-        runtime.ROOT = runtime.resolve_project_root(args.project_root or runtime.ROOT)
+        root = resolve_project_root(args.project_root or checkout_root())
     except ValueError as error:
         parser.error(str(error))
-    if args.agent_inputs_dir and (
-        not args.run_harness
-        or args.resume_from
-        or args.check
-        or args.verify_deployment
-        or args.task_profile not in (None, "standard")
-        or args.initial_feedback_file
-    ):
-        parser.error(
-            "--agent-inputs-dir requires a new --run-harness with no preset profile; put initial-feedback.md in the directory"
-        )
-    args.custom_input_proposal = None
+    if sum(bool(value) for value in (args.resume_from, args.run_harness, args.harness_commit)) > 1:
+        parser.error("Select only one of --harness-commit, --resume-from or --run-harness")
+    if not (args.resume_from or args.run_harness or args.harness_commit or args.check):
+        parser.error("Select --harness-commit <published SHA> or --resume-from <published run>")
     if args.feedback_file and not args.resume_from:
         parser.error("--feedback-file requires --resume-from")
-    if args.run_harness and (args.resume_from or args.verify_deployment):
-        parser.error("--run-harness cannot be combined with --resume-from or --verify-deployment")
-    try:
-        args.phase = runtime.resolve_phase(args.resume_from, args.phase)
-        args.task_profile = runtime.resolve_task_profile(args.resume_from, args.task_profile)
-    except ValueError as error:
-        parser.error(str(error))
-    if args.initial_feedback_file and (
-        not args.run_harness
-        or args.resume_from
-        or args.check
-        or args.verify_deployment
-        or args.phase != "phase-one"
-        or args.task_profile not in runtime.EXTENSION_PROFILES
-    ):
-        parser.error("--initial-feedback-file requires a new phase-one extension --run-harness")
-    if args.phase == "phase-two" and not (args.run_harness or args.resume_from):
-        parser.error("phase-two requires --run-harness or a phase-two --resume-from")
-    if args.phase == "phase-two" and args.verify_deployment:
-        parser.error("--verify-deployment is a phase-one readiness check")
-    if args.task_profile in runtime.EXTENSION_PROFILES:
-        if args.phase != "phase-one" or args.verify_deployment:
-            parser.error(
-                f"{args.task_profile} requires phase-one and is not a deployment readiness check"
-            )
-        if not (args.run_harness or args.resume_from):
-            parser.error(f"{args.task_profile} requires --run-harness or a matching --resume-from")
-        if args.resume_from and not (args.resume_from / "startup.json").is_file():
-            parser.error(f"{args.task_profile} resume requires an existing recorded run")
-        if args.run_harness and not (args.run_harness / "retained.json").is_file():
-            parser.error(f"{args.task_profile} requires an existing retained run source")
+    if args.agent_inputs_dir and (args.resume_from or args.check):
+        parser.error("--agent-inputs-dir selects a new research task")
+    if not args.resume_from and not args.check and not args.agent_inputs_dir:
+        parser.error(
+            "New research tasks require --agent-inputs-dir with goal.md, acceptance.md and protocol.md"
+        )
+    args.custom_input_proposal = None
     args.initial_feedback = None
     try:
-        if args.initial_feedback_file:
-            with args.initial_feedback_file.open("rb") as stream:
-                args.initial_feedback = runtime.HumanFeedback.validate_content(
-                    stream.read(runtime.MAX_FEEDBACK_BYTES + 1)
-                )
         if args.agent_inputs_dir:
-            # Pure validation/snapshot before environment, Docker, SSH or run creation.
-            args.custom_input_proposal = runtime.InputVersions(
-                runtime.ROOT,
+            # Pure validation/snapshot before environment, SSH or run creation.
+            args.custom_input_proposal = InputVersions(
+                root,
                 None,
-                phase=args.phase,
                 custom_dir=args.agent_inputs_dir,
             ).prepare()
             args.initial_feedback = args.custom_input_proposal["contents"].get(
                 "initial-feedback.md"
             )
-        start = runtime.resolve_harness_start(args.run_harness) if args.run_harness else None
-        if args.custom_input_proposal:
-            runtime.prepare_custom_task(
-                start, args.custom_input_proposal["contents"]["goal.md"], args.initial_feedback
+        from a3_research_agent.host.published_harness import COMMAND, native_source, run_commit
+        from a3_research_agent.host.runs.continuation import HarnessStart
+
+        start = resolve_harness_start(args.run_harness) if args.run_harness else None
+        if args.harness_commit:
+            start = HarnessStart(
+                COMMAND.copy(), {"checkpoint.json": "[]"}, harness_commit=args.harness_commit
             )
-        if args.task_profile in runtime.EXTENSION_PROFILES and start:
-            # Validate source and checkpoint before deployment or resource access.
-            runtime.prepare_task_start(
-                start,
-                args.phase,
-                args.task_profile,
-                "",
-                initial_feedback=args.initial_feedback,
-                initial_feedback_source=args.initial_feedback_file,
+        if (start and not start.harness_commit) or (
+            args.resume_from and not run_commit(args.resume_from.resolve())
+        ):
+            raise ValueError(
+                "Generated/cold-start execution is retired; publish reviewed Harness source and select --harness-commit"
+            )
+        selected = (
+            run_commit(args.resume_from.resolve())
+            if args.resume_from
+            else start.harness_commit
+            if start
+            else None
+        )
+        if selected:
+            native_source(root, selected)
+        if args.custom_input_proposal:
+            prepare_custom_task(
+                start, args.custom_input_proposal["contents"]["goal.md"], args.initial_feedback
             )
     except (ValueError, OSError) as error:
         parser.error(str(error))
-    runtime.load_dotenv(os.environ.get("A3_RSI_ENV_FILE", runtime.ROOT / ".env"), override=True)
+    load_dotenv(os.environ.get("A3_RSI_ENV_FILE", root / ".env"), override=True)
     scheduled_run = os.environ.get("A3_NIGHT_WINDOW_RUN_ID")
     night_child = os.environ.get("A3_NIGHT_WINDOW_CHILD") == "1"
-    reserved_target = os.environ.get("A3_NIGHT_WINDOW_TARGET")
     if scheduled_run and args.resume_from and not args.check and not args.night_window:
         from a3_research_agent.cli.night_release import night_state_directory, read_json
 
         schedule = read_json(
-            night_state_directory(runtime.ROOT / "artifacts/rsi" / scheduled_run)
-            / "night-schedule.json",
+            night_state_directory(root / "artifacts/rsi" / scheduled_run) / "night-schedule.json",
             {},
         )
-        protected = {scheduled_run, schedule.get("current"), schedule.get("target")}
+        protected = {scheduled_run, schedule.get("current")}
         if args.resume_from.resolve().name in protected and not night_child:
             parser.error("This run must be resumed with --night-window")
     if night_child:
@@ -166,10 +136,8 @@ def launch_main(runtime) -> None:
 
         if not window_boundary(datetime.now(BEIJING))[0]:
             parser.error("This run can only start from 21:00 to 09:00 Beijing time")
-    if reserved_target and not (night_child and args.run_harness and args.custom_input_proposal):
-        parser.error("A reserved night target requires a scheduled Harness release")
     if args.night_window:
-        if not args.resume_from or args.check or args.verify_deployment:
+        if not args.resume_from or args.check:
             parser.error("--night-window requires an existing --resume-from run")
         from a3_research_agent.cli.night_release import NightSchedule
         from a3_research_agent.cli.night_window import run_nightly
@@ -181,21 +149,20 @@ def launch_main(runtime) -> None:
             "-m",
             "a3_research_agent.cli.launch",
             "--project-root",
-            str(runtime.ROOT),
+            str(root),
             "--resume-from",
             str(anchor),
         ]
         if args.feedback_file:
             command.extend(["--feedback-file", str(args.feedback_file.resolve())])
         schedule = NightSchedule(anchor, command)
-        with runtime.RunLease(schedule.directory / "night-launcher"):
+        with RunLease(schedule.directory / "night-launcher"):
             state = RunStateStore(schedule.current_run())
             if not state.path.is_file() or state.load().get("status") != "suspended":
                 parser.error("--night-window requires a suspended run")
             raise SystemExit(run_nightly(command, state, schedule=schedule))
     required = (
         "MODEL_NAME",
-        "MODEL_CLASS",
         "A3_PROJECT_ROOT",
         "A3_REMOTE_HOST",
         "A3_REMOTE_CONTROLLER",
@@ -209,43 +176,30 @@ def launch_main(runtime) -> None:
         if not os.environ.get(key):
             raise SystemExit(f"Missing deployment setting: {key}")
     a3 = Path(os.environ["A3_PROJECT_ROOT"]).resolve()
-    runtime.get_model_class(os.environ["MODEL_NAME"], os.environ["MODEL_CLASS"])
-    image = os.environ.get("A3_LOCAL_IMAGE", "a3-agent-bootstrap:local")
-    subprocess.run(["docker", "image", "inspect", image], stdout=subprocess.DEVNULL, check=True)
-    remote_ready = runtime.remote_call("health", {})
-    runtime.validate_remote_health(remote_ready)
+    model_settings(os.environ)
+    remote_ready = remote_call("health", {})
+    validate_remote_health(remote_ready)
     if args.check:
         print(
             json.dumps(
                 {
-                    "local_image": "available",
+                    "local_execution": "process",
                     "remote_controller": "reachable",
-                    "a3_commit": runtime.git(a3, "rev-parse", "HEAD"),
+                    "a3_commit": git(a3, "rev-parse", "HEAD"),
                     "remote_response_received": isinstance(remote_ready, dict),
                 }
             )
         )
         return
-    run_root = runtime.ROOT / "artifacts"
-    run_root /= "validation/deployment" if args.verify_deployment else "rsi"
-    if reserved_target:
-        run = Path(reserved_target).resolve()
-        if run.parent != run_root.resolve() or not run.is_dir() or any(run.iterdir()):
-            parser.error("Reserved night target must be an empty run directory")
-    else:
-        run = (
-            args.resume_from.resolve()
-            if args.resume_from
-            else runtime.create_run_directory(run_root)
-        )
-    with runtime.RunLease(run):
-        runtime.launch_run(args, run, a3, image, start)
+    run_root = root / "artifacts"
+    run_root /= "rsi"
+    run = args.resume_from.resolve() if args.resume_from else create_run_directory(run_root)
+    with RunLease(run):
+        launch_run(args, run, a3, start)
 
 
 def main() -> None:
-    from a3_research_agent.host import bootstrap
-
-    launch_main(bootstrap)
+    launch_main()
 
 
 if __name__ == "__main__":

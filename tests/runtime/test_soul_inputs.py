@@ -1,51 +1,28 @@
-"""SOUL is a versioned main-role input, not a replacement for stage authority."""
+"""SOUL and explicit task contracts are versioned, frozen and forwarded once."""
 
 import hashlib
 import json
 
 import pytest
 from fastapi.testclient import TestClient
+from task_input_support import deployment_source, task_inputs
 
 from a3_research_agent.host.gateway.app import create_app
-from a3_research_agent.host.inputs.versions import InputVersions, input_sources
-
-PROFILES = [
-    ("phase-one", "standard"),
-    ("phase-one", "web-extension"),
-    ("phase-one", "skills-extension"),
-    ("phase-two", "standard"),
-]
+from a3_research_agent.host.inputs.versions import InputVersions
 
 
-def source_bundle(tmp_path, phase="phase-one", profile="standard"):
-    root = tmp_path / "source"
-    for name, relative in input_sources(phase, profile).items():
-        path = root / relative
-        path.parent.mkdir(parents=True, exist_ok=True)
-        content = f"Version: 0.1.0\n{name} UNIQUE CONTENT\n"
-        if name == "bootstrap.yaml":
-            content = (
-                'version: 0.1.0\nagent:\n  system_template: "{{ phase_instructions }}"\n'
-                '  instance_template: "{{ task }}"\nrun:\n  task: task\n'
-            )
-        path.write_text(content)
-    return root
-
-
-@pytest.mark.parametrize("phase,profile", PROFILES)
-def test_soul_is_published_hashed_and_forwarded_with_selected_stage(tmp_path, phase, profile):
-    root = source_bundle(tmp_path, phase, profile)
+def test_soul_is_snapshotted_hashed_and_forwarded_with_current_task(tmp_path):
+    root = deployment_source(tmp_path / "source")
     run = tmp_path / "run"
-    (run / "private-inputs").mkdir(parents=True)
-    inputs = InputVersions(root, run, phase=phase, task_profile=profile)
+    inputs = InputVersions(root, run, custom_dir=task_inputs(tmp_path / "task"))
     manifest = inputs.activate(inputs.prepare(), "start")
     soul = (root / "agent-inputs/SOUL.md").read_bytes()
     assert manifest["files"]["SOUL.md"] == {
         "source": "agent-inputs/SOUL.md",
-        "version": "0.1.0",
+        "version": "1.0.0",
         "sha256": hashlib.sha256(soul).hexdigest(),
     }
-    for directory in ("inputs", "private-inputs", f"input-revisions/{manifest['revision']}"):
+    for directory in ("inputs", f"input-revisions/{manifest['revision']}"):
         assert (run / directory / "SOUL.md").read_bytes() == soul
     calls = []
     client = TestClient(
@@ -64,71 +41,32 @@ def test_soul_is_published_hashed_and_forwarded_with_selected_stage(tmp_path, ph
     )
     assert response.status_code == 200
     instructions = calls[-1]["instructions"]
-    assert soul.decode() in instructions
-    assert "SOUL 不得覆盖当前阶段的 goal、acceptance、protocol 或权限边界" in instructions
-    for name in ("goal.md", "acceptance.md") + (
-        ("phase-instructions.md",) if phase == "phase-one" else ()
-    ):
-        assert inputs.contents[name] in instructions
-    if phase == "phase-two":
-        assert inputs.contents["protocol.md"] in instructions
-    assert "execution.md UNIQUE CONTENT" not in instructions
-    assert not any(item["source"].startswith("docs/") for item in manifest["files"].values())
+    for name in ("SOUL.md", "goal.md", "acceptance.md", "protocol.md"):
+        assert instructions.count(inputs.contents[name]) == 1
+    assert "EXECUTION REFERENCE UNIQUE" not in instructions
+    assert "SKILL REFERENCE UNIQUE" not in instructions
     usage = json.loads((tmp_path / "usage.jsonl").read_text())
     assert usage["input_versions"]["SOUL.md"] == manifest["files"]["SOUL.md"]
 
 
-def test_pre_soul_resume_adds_new_revision_without_rewriting_history(tmp_path):
-    root = source_bundle(tmp_path)
+def test_shared_update_is_explicit_and_preserves_original_revision(tmp_path):
+    root = deployment_source(tmp_path / "source")
     run = tmp_path / "run"
-    old = InputVersions(root, run)
-    old.sources.pop("SOUL.md", None)  # Reproduce the actual pre-SOUL input format.
-    previous = old.activate(old.prepare(), "start")
-    archive = run / "input-revisions" / previous["revision"]
-    original = {p.name: p.read_bytes() for p in archive.iterdir()}
-    checkpoint = run / "trajectory.json"
-    checkpoint.write_text('{"history": "original context"}')
-    resumed = InputVersions(root, run)
-    current = resumed.activate(resumed.prepare(), "resume")
-    assert "SOUL.md" in current["files"]
-    assert "SOUL.md" not in previous["files"]
-    assert {p.name: p.read_bytes() for p in archive.iterdir()} == original
-    legacy = run / "input-revisions/legacy"
-    assert json.loads((legacy / "input-manifest.json").read_text()) == previous
-    assert not (legacy / "SOUL.md").exists()
-    assert checkpoint.read_text() == '{"history": "original context"}'
-    (root / "agent-inputs/SOUL.md").write_text("Version: 0.1.1\nupdated soul\n")
-    updated = resumed.activate(resumed.prepare(), "hot_reload")
-    assert updated["files"]["SOUL.md"]["version"] == "0.1.1"
-    assert "updated soul" in resumed.model_instructions()[1]
-    assert (
-        run / "input-revisions" / current["revision"] / "SOUL.md"
-    ).read_text() != "Version: 0.1.1\nupdated soul\n"
-    assert {p.name: p.read_bytes() for p in archive.iterdir()} == original
-    (root / "agent-inputs/SOUL.md").write_text("Version: 0.1.1\nchanged without bump\n")
-    with pytest.raises(ValueError, match="SOUL.md changed without a version increment"):
-        resumed.prepare()
-
-
-def test_repository_phase_two_layers_remain_selected_and_versioned(tmp_path):
-    """Exercise real input files, not synthetic layer placeholders."""
-    from pathlib import Path
-
-    root = Path(__file__).resolve().parents[2]
-    inputs = InputVersions(root, tmp_path / "run", phase="phase-two")
-    manifest = inputs.activate(inputs.prepare(), "start")
-    _, instructions = inputs.model_instructions()
-    assert manifest["files"]["SOUL.md"]["version"] == "0.2.24"
-    assert "phase-instructions.md" not in manifest["files"]
-    for name in ("SOUL.md", "goal.md", "acceptance.md", "protocol.md"):
-        assert inputs.contents[name] in instructions
-    assert inputs.contents["execution.md"] not in instructions
-    assert "研究 Agent 负责 Policy、数据采集、训练、评估、研究脚本和结果判断" in instructions
-    assert "调度与恢复由人类和 Codex 在运行暂停期间维护" in instructions
-    assert "启动 Harness 候选或切换主身份" in instructions
-    assert "按本轮职责处理" in instructions
-    assert not (root / "agent-inputs/phase-two/instructions.md").exists()
-    # Optional method references and maintainer review notes are not injected inputs.
-    assert not any(
-        item["source"].startswith(("skills/", "docs/")) for item in manifest["files"].values()
-    )
+    inputs = InputVersions(root, run, custom_dir=task_inputs(tmp_path / "task"))
+    original = inputs.activate(inputs.prepare(), "start")
+    archived = run / "input-revisions" / original["revision"] / "SOUL.md"
+    before = archived.read_bytes()
+    source = root / "agent-inputs/SOUL.md"
+    source.write_text("Version: 1.0.1\nUpdated SOUL principles\n")
+    restored = InputVersions(root, run)
+    assert restored.prepare()["digest"] == original["digest"]
+    proposal = restored.prepare_shared_update()
+    assert proposal["digest"] != original["digest"]
+    current = restored.activate(proposal, "hot_reload")
+    assert current["files"]["SOUL.md"]["version"] == "1.0.1"
+    assert "Updated SOUL principles" in restored.model_instructions()[1]
+    assert archived.read_bytes() == before
+    source.write_text("Version: 1.0.1\nChanged without version increment\n")
+    with pytest.raises(ValueError, match="version increment"):
+        restored.prepare_shared_update()
+    assert archived.read_bytes() == before

@@ -1,137 +1,84 @@
 # 目录职责与产物管理
 
-项目将固定基础设施、原始运行档案与展示报告分别维护。先看项目能力与启动方式可读根目录 README；SWE Agent 生成的代码与运行证据共同保存在对应 run 中。
+固定实现进入 Git；研究工作区、运行证据、部署配置和报告留在本地。
 
 ```text
 .
-├── src/a3_research_agent/  可安装的固定实现与显式派生 Harness overlay
-│   ├── host/              Gateway、会话、run、输入、模型、网络与轨迹
-│   ├── execution/         Controller、调度、导出与镜像准备
-│   ├── harness/           上下文、记忆、分析与运行控制
-│   ├── packaging/         完整 Harness 源码载荷导出
-│   ├── workspace/         工作区路径校验
-│   └── cli/               启动及操作者命令
-├── agent-inputs/           部署方提供给 Agent 的全部版本化输入
-│   ├── SOUL.md             跨阶段长期角色原则
-│   ├── shared/             bootstrap、execution、workspace、readiness-task
-│   ├── phase-one/          冷启动 goal、acceptance、instructions
-│   ├── phase-one-web/      E-only goal、acceptance、instructions
-│   ├── phase-one-skills/   F-only skills 工具输入
-│   ├── phase-one-context/  G-only 上下文管理输入
-│   └── phase-two/          联合优化 goal、acceptance；protocol 位于 shared/
-├── tests/runtime/          本地和远程基础设施的回归测试
-├── scripts/                薄启动入口
-├── skills/                 Agent 按需读取的研究与线性演化方法包
-├── .env.example            统一部署配置模板
-├── .env                    本机部署配置，不纳入 Git
-├── third_party/            固定版本的 mini-SWE-agent submodule
-├── reports/                可选的本地报告工程，不纳入 Git
-├── docs/                   环境指南、架构、路线与历史设计
-└── artifacts/              本地运行档案、验证记录和部署材料
+├── src/a3_research_agent/
+│   ├── harness/           模型循环、工具、上下文、记忆与 skills
+│   ├── host/              发布、Gateway、进程、输入与运行记录
+│   ├── execution/         Controller、作业、GPU 调度和远程镜像
+│   ├── packaging/         发布源码载荷清单
+│   ├── workspace/         路径校验
+│   └── cli/               启动和操作者命令
+├── agent-inputs/          当前通用角色、接口与工作区指引
+├── archive/               历史阶段提示词
+├── skills/                项目研究方法包
+├── tests/                 固定实现的回归与打包检查
+├── scripts/               薄命令入口
+├── docs/                  安装、使用、架构与接口说明
+├── third_party/           固定版本的第三方 submodule
+├── workspace/             研究代码、上下文与知识，Git 忽略
+├── artifacts/             运行、验证和部署记录，Git 忽略
+├── reports/               可选本地报告，Git 忽略
+├── .env.example           公共部署模板
+└── .env                   本机配置，Git 忽略
 ```
 
-## 源码与职责
+## 源码边界
 
-| 目录 | 负责什么 | Git 管理 |
-| --- | --- | --- |
-| `src/a3_research_agent/host/` | 固定 Host 服务；Gateway 各领域共享同一状态实例与锁 | 是 |
-| `src/a3_research_agent/execution/` | 标准库 Controller、作业与 GPU 调度、只读导出、镜像准备 | 是 |
-| `src/a3_research_agent/harness/` | 显式派生包使用的 overlay；不自动替换历史生成代码 | 是 |
-| `src/a3_research_agent/packaging/` | 按显式清单交付完整包源码 | 是 |
-| `agent-inputs/` | 全部部署方 Agent 输入（README 仅作维护者导航）；每次运行另存版本化副本 | 是 |
-| `skills/` | 供 Agent 发现与按需读取的研究方法和版本交接参考 | 是 |
-| `.env.example`、`.env` | 部署参数的公共模板与本机实际值 | 仅模板 |
-| `tests/runtime/` | 验证固定部署逻辑，不承担 A3 自身的开发测试 | 是 |
-| `reports/` | 可选的本地报告工程，保存展示用正文、数据与图像 | 否 |
-| `third_party/` | 第三方原始源码与独立 Git 历史 | submodule |
+`host/launch.py` 装配并启动服务，`host/gateway/` 按模型、作业、会话、网络与操作者控制分组，所有路由共用同一身份注册表、锁和 checkpoint。
 
-人类和 Codex 维护 Harness 与基础设施。Policy、研究脚本、知识与实验结果保存在对应运行中。
+`host/sessions/processes.py` 只处理本地原生进程生命周期；`host/sessions/workspace.py` 提供当前工作区和受限文件操作。`host/runs/` 管理运行状态、checkpoint 配对、恢复与保留结果；`host/releases.py` 处理暂停期间的原地发布事务。
 
-部署参数统一由根 `.env.example` 提供模板，Host 加载项目根 `.env`，或通过 `A3_RSI_ENV_FILE` 指定另一份完整配置；加载规则见[环境配置](setup.md#本地配置与运行产物)。
+`execution/controller/` 使用标准库实现作业入口，`execution/scheduling/` 负责资源准入，`execution/images/` 保存远程容器构建资源。远程 Controller 从 `src/a3_research_agent/execution/controller/__main__.py` 或安装后的命令运行。所有 Python 导入使用 `a3_research_agent.*`。
 
-所有 Python 导入使用 `a3_research_agent.*`。Controller 只依赖标准库，通过
-`src/a3_research_agent/execution/controller/__main__.py` 支持系统 Python 的直接执行；
-Harness 使用 `python -m a3_research_agent.harness.agent --resume`。远程镜像和 bootstrap
-镜像资源分别位于包内 `execution/images/Dockerfile` 与 `host/images/Dockerfile`。
-远程部署配置须将 `A3_REMOTE_CONTROLLER` 指向上述包内入口，安装包和测试不提供旧路径适配器。
+Harness 通过 Gateway 请求模型、计算和外部网络。工具参数校验、文件预处理和结果展示归属 `harness/`；身份、认证和转发归属 Host；计算资源与作业状态归属 Controller。
 
-## 本地生成内容
-
-| 路径 | 内容与生命周期 |
-| --- | --- |
-| `artifacts/rsi/run-*/` | 正式冷启动原始档案：版本化输入、独立工作区、候选、轨迹、实验报告与会话事件 |
-| `artifacts/rsi/latest-run.txt` | 最近正式运行的路径，供轨迹浏览与恢复入口读取 |
-| `artifacts/rsi/launch-logs/` | 后台启动时保存的终端日志；正式轨迹与验收证据仍归属各 run |
-| `artifacts/validation/` | 部署、恢复、隔离、预检、安装和报告复核记录；不作为正式验收的替代 |
-| `artifacts/deployment/` | 镜像构建材料、迁移清单、部署修复与目录迁移记录 |
-| `artifacts/model-cache/` | 人类准备的项目专属 HF/Torch 离线缓存，仅引用批准模型和 tokenizer |
-| `artifacts/models/`、`artifacts/datasets/` | 可选的只读公共权重与数据目录，也可配置到其他项目数据目录 |
-| `artifacts/remote-runtime/` | 执行端的作业、共享调度锁、显存预留与只读快照授权；所有 Controller 必须使用同一配置根目录 |
-| `reports/<name>/dist/` | 报告构建结果，由 Data 插件生成 |
-| `reports/<name>/output/` | 报告截图与视觉检查输出 |
-| `.env`、`.venv/` | 本机部署配置和依赖环境 |
-
-run 目录按 Host 本地时间命名，如 `run-20261031-110415-123456`；末段为微秒，发生重名时追加递增序号。正式运行与部署检查使用相同的命名规则。
-
-`artifacts/` 中仅目录说明进入 Git。其余原始日志、工作区副本和部署配置留在本地。不要整体取消忽略；需要分享候选时，从明确选定的 run 与版本导出获授权的材料，需要展示的已审阅数据移交到 `reports/`。
-
-## 正式运行内部结构
+## 研究与运行目录
 
 ```text
-artifacts/rsi/run-*/
-├── inputs/                 当前生效的目标、验收、Prompt 与版本清单
-├── input-revisions/        每次启动和输入切换时的完整历史副本
-├── input-events.jsonl      版本切换记录
-├── workspace/
-│   ├── a3/                 初始构建 Agent 使用的 A3 副本
-│   ├── harness/            独立项目 Git 工作区
-│   └── run/                Agent 写入的实验记录与最终材料
-├── public/a3/              后继候选可读的 A3 基线
-├── candidates/             各后继的源码、轨迹和实验产物
-├── versions/               Host Git 对象、候选元数据与独立 worktree
-├── fixtures/               受控隔离检查记录
-├── recovery/               mini 恢复时供构建者读取的历史
-├── private-inputs/         主 Harness 独享的只读输入与跨轮历史
-├── retained.json           Host 保存的明确保留结果及版本标识
-├── trajectory.json         初始 mini 轨迹
-├── supervision.json        Host 当前监督阶段与后继状态
-├── supervisor-events.jsonl Host 监督与交接事件
-├── outcome.json            Host 接受的整轮完成或外部阻塞声明
-├── model-usage.jsonl        Gateway 模型调用记录
-├── evolution.json          当前主身份、改动验收清单和保留/拒绝决定
-├── session-events.jsonl     Host 记录的后继关系与生命周期
-└── gateway-events.jsonl     请求开始、结束、错误类别与耗时
+workspace/<run-id>/<session-id>/
+├── research/              Agent 编写的研究脚本与分析
+├── skills/                工作区 skills
+├── memory.jsonl           长期经验及来源
+├── checkpoint.json        模型上下文与恢复状态
+└── …                      工具 journal、轨迹、计划与研究文件
+
+artifacts/rsi/<run-id>/
+├── run.json               任务输入来源与启动选择
+├── inputs/                当前部署方输入
+├── input-revisions/       输入的完整历史版本
+├── input-events.jsonl     输入版本事件
+├── sessions/<session-id>/ 原生会话记录、控制台及 workspace 链接
+├── .host/                 私有状态、锁与发布事务
+├── fixtures/              隔离检查记录
+├── retained-knowledge/    显式保留的不可变研究知识快照
+├── retained.json          发布源码与知识选择的结果
+├── supervision.json       Host 监督状态
+├── model-usage.jsonl       模型调用记录
+├── session-events.jsonl    会话生命周期
+└── gateway-events.jsonl    请求、错误与耗时
 ```
 
-旧版候选工作区实际位于 `versions/worktrees/<session_id>/source/`，`candidates/<session_id>/workspace` 是 Host 便捷链接。Docker 只挂载 source/；Git 元数据留在其父目录，不在挂载范围内。即刻修改要由 Agent 显式提交才能形成新版本。
+运行目录按 Host 本地时间命名为 `run-YYYYMMDD-HHMMSS-ffffff`，重名时原子追加序号。`artifacts/rsi/latest-run.txt` 只帮助定位最近运行。恢复和新任务均显式指定来源。
 
-从 Git 发布的研究 run 使用根目录下的 `workspace/<run-id>/<session-id>/` 存放研究代码、checkpoint、记忆与轨迹。容器继续使用 `/workspace`，Harness 从 `artifacts/published-harness/v2/<commit>/` 只读加载，同一提交只缓存一份。Host 元数据和审计记录仍在 `artifacts/rsi/`。迁移后的夜间记录位于 `artifacts/night-window/`，项目级历史作业索引位于 `artifacts/project-job-index.json`。清理旧源码或工作树前需验证可恢复性，并保留研究文件、作业归属及原始证据。
+研究工作区独立于 Harness 源码缓存。`artifacts/published-harness/v2/<commit>/` 保存固定发布源码；原地升级继续使用同一研究目录。升级边界保存在 `.host/release-upgrades/`，事件保存在 `.host/release-events.jsonl`。私有状态、认证和锁不作为研究产物分享。
 
-历史 `run-*` 内的文件用于复核，保持原样。运行结束后，由候选维护流程提取有价值的源码、说明和来源记录，原始日志仍留在原目录。恢复入口继续读取原路径。
+## 其他产物
 
-## 生成代码与报告
+| 路径 | 用途 |
+| --- | --- |
+| `artifacts/validation/` | 测试、部署预检、恢复和安装验证 |
+| `artifacts/deployment/` | 构建材料、迁移清单与部署修复 |
+| `artifacts/night-window/` | 夜间调度与发布选择 |
+| `artifacts/remote-runtime/` | 执行端作业、租约、显存预算与导出授权 |
+| `artifacts/project-job-index.json` | 项目历史远程作业索引 |
+| `artifacts/models/`、`artifacts/datasets/` | 可选的公共权重和数据 |
+| `reports/` | 本地展示报告及其构建结果 |
 
-旧版生成 Harness 的代码随 run 保存。旧版运行使用 `versions/` 记录候选 commit，并以独立 worktree 执行；`retained.json` 定位 Agent 明确选择的结果。下一轮显式传入选定 run 目录即可加载，无需另外维护一份人工源码归档。评测绑定、版本选择和搜索策略由 Agent 使用 Host 接口组织，见[开发路线](roadmap.md)。
+所有 Controller 必须共用配置的执行端资源根目录；切换源码版本不创建另一套 GPU 锁。远程数据和导出快照留在执行端，`retained.json` 只保存选定引用。
 
-报告采用 Data 插件的工程结构：业务正文与图表放在 `src/content/`，审阅数据放在 `src/data.json`，共享 runtime 与构建校验文件保持插件原样。Data 的机器级预览服务状态留在仓库外。报告工程不复制进冷启动执行工作区。
+历史档案保留用于复核。旧 builder、本地容器和旧生成 Harness 格式不进入当前启动路径。需要继续的研究由维护者离线整理为当前原生 schema，并保留整理前的记录和校验清单。
 
-整个 `reports/` 目录仅保留在本地，由 `.gitignore` 排除；克隆仓库后不会获得报告工程。公开文档不链接本地报告文件。
-
-## 迁移与清理约定
-
-新增记录按用途写入已有分类，不以一次临时任务的名称继续扩展 `artifacts/` 顶层。验证输出放在 `validation/`，构建或迁移材料放在 `deployment/`。
-
-移动历史档案前先检查活动进程与路径引用，记录旧路径、目标路径和内容校验结果；档案内原有绝对路径保留为当时的历史记录。更改便捷指针和当前使用说明。共享远程资源锁需要单独执行端迁移，不随本地目录整理移动。
-
-清理时先确认保留的候选与原始证据已经独立保存，再决定过期检查和重复工作区的保留周期。源码归档与删除运行证据分开处理。
-
-跨轮接续直接使用选定的原始 run 目录。临时人工组装的交接包与重复源码副本，在确认原始代码和证据完整、自动历史交接可用且无活动引用后可以删除；`artifacts/rsi/` 中的原始档案继续供接续与验收。
-
-启动流程与参数见[使用教程](tutorial.md)，执行单元和调用关系见[系统架构](architecture.md)。`continuation.py` 负责跨轮结果的机械保存与读取；`retained.json` 是运行结果，Agent 的记忆实现仍归属其生成的 Harness。
-
-第一阶段的 `agent-inputs/phase-one/instructions.md`（或专项目录）映射到 `inputs/phase-instructions.md`；新第二阶段没有这层，直接注入 SOUL、goal、acceptance 及仅第二阶段选择的 `agent-inputs/shared/protocol.md`。execution 保持挂载可读。目标与验收仍从 `agent-inputs/<phase>/` 读取，不存在额外 common Prompt。普通 worker 创建被拒绝；当前 Agent 自行完成局部实现和验证。旧自定义输入快照可保留显式的阶段层，恢复不改写历史。
-
-每轮 `.host/` 由 Host 私有维护，保存恢复所需身份与注册表、进程锁；不挂载给 Agent，不作为可分享产物。`resume-events.jsonl` 记录原 run 内的恢复事件。
-
-
-执行端大文件数据留在 `artifacts/remote-runtime/runs/<来源run>/readonly-exports/<export_id>/`；根下 `readonly-exports/` 保存授权与状态。它们由固定 Controller 管理，不与本地源码版本混放。retained.json 的 remote_exports 只记录 Agent 选定的引用，不复制二进制；跨轮引用要求这些数据和授权继续保留。
+部署参数从 `.env.example` 复制配置，读取规则见[环境配置](setup.md)。Agent 输入版本与文件清单见[输入管理](agent-inputs.md)。报告目录保持 Git 忽略，公开文档只引用仓库内可获得的说明。

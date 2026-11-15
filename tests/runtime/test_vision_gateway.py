@@ -79,7 +79,7 @@ def client_for(tmp_path, *, response=None, forbidden=False, context_budget=None,
         forward_model=forward,
         remote_call=remote,
         usage_log=tmp_path / "usage.jsonl",
-        phase_instructions="PRIVATE_MAIN_PHASE",
+        task_instructions="PRIVATE_MAIN_PHASE",
         human_feedback=feedback,
         role_models={
             "worker": {

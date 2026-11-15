@@ -1,4 +1,4 @@
-"""Explicit sealed assets and linear successor validation stay identity-scoped."""
+"""Host startup grants selected sealed assets before native execution."""
 
 from argparse import Namespace
 
@@ -10,23 +10,24 @@ from a3_research_agent.execution.controller import store as job_store
 from a3_research_agent.execution.exports import operations as job_exports
 from a3_research_agent.execution.exports.readonly import ReadonlyExports
 from a3_research_agent.host.gateway.app import create_app
-from a3_research_agent.host.sessions.versions import CandidateVersions
 
 
 class Sandbox:
-    def __init__(self, versions, exports, identifier):
-        self.versions, self.exports, self.identifier = versions, exports, identifier
+    def __init__(self, exports, identifier):
+        self.exports, self.identifier = exports, identifier
         self.tokens = {}
         self.fail = False
 
-    def create_version(self, owner, command, token, version_id):
+    def check_capacity(self):
+        pass
+
+    def create(self, owner, command, files, token, *, inputs=None):
         # The read grant must exist before this candidate can run any code.
         self.exports.data_path(owner, self.identifier)
         if self.fail:
             raise RuntimeError("controlled launch failure")
         self.tokens[owner] = token
-        self.versions.checkout(owner, version_id, owner)
-        return {"session_id": owner, "version_id": version_id}
+        return {"session_id": owner, "status": "created"}
 
     def status(self, owner, session):
         return {"status": "running"}
@@ -44,8 +45,7 @@ def setup(tmp_path):
         "main", "run-one", store.outputs(job), job["job_id"], "outputs", "weights.bin"
     )
     exports.seal(record["export_id"])
-    versions = CandidateVersions(tmp_path / "versions")
-    backend = Sandbox(versions, exports, record["export_id"])
+    backend = Sandbox(exports, record["export_id"])
 
     def remote(operation, request):
         try:
@@ -57,8 +57,7 @@ def setup(tmp_path):
         model_name="test",
         sessions={"main-token": "main", "other-token": "other"},
         main_owner="main",
-        sandbox=backend,
-        versions=versions,
+        session_runtime=backend,
         forward_model=lambda **kwargs: pytest.fail("No model calls in this test"),
         remote_call=remote,
         usage_log=tmp_path / "usage.jsonl",
@@ -70,69 +69,22 @@ def auth(token):
     return {"Authorization": "Bearer " + token}
 
 
-def test_direct_candidate_receives_only_requested_export_and_can_forward_after_promotion(tmp_path):
+def test_host_start_grants_only_selected_export_before_process_starts(tmp_path):
     client, backend, exports, identifier = setup(tmp_path)
-    main = auth("main-token")
-    baseline = client.post("/versions", headers=main, json={"files": {"entry.py": "pass"}}).json()
-    response = client.post(
-        "/evolution/trials",
-        headers=main,
-        json={
-            "baseline_version": baseline["version_id"],
-            "checklist": "fixture",
-            "command": ["true"],
-            "files": {"entry.py": "pass"},
-            "read_only_exports": [identifier],
-        },
-    )
-    assert response.status_code == 200, response.text
-    child = response.json()["session_id"]
-    child_auth = auth(backend.tokens[child])
-    assert (
-        client.get("/jobs/exports", headers=child_auth).json()["exports"][0]["export_id"]
-        == identifier
-    )
-    assert client.get(f"/jobs/exports/{identifier}", headers=auth("other-token")).status_code == 200
-    assert (
-        client.post(
-            f"/jobs/exports/{identifier}/grants", headers=main, json={"session_id": "other"}
-        ).status_code
-        == 403
-    )
-    assert (
-        client.post(
-            f"/jobs/exports/{identifier}/grants", headers=child_auth, json={"session_id": "other"}
-        ).status_code
-        == 403
-    )
-    retained = client.post(
-        f"/evolution/trials/{child}/decision",
-        headers=main,
-        json={"retain": True, "reason": "fixture", "evidence": ["result.json"]},
-    )
-    assert retained.status_code == 200
-    next_child = host_create_session(
+    result = host_create_session(
         client,
-        headers=child_auth,
-        json={
-            "command": ["true"],
-            "files": {"entry.py": "pass"},
-            "read_only_exports": [identifier],
-        },
+        headers=auth("main-token"),
+        json={"command": ["true"], "files": {}, "read_only_exports": [identifier]},
     )
-    assert next_child.status_code == 200, next_child.text
-    next_id = next_child.json()["session_id"]
-    exports.data_path(next_id, identifier)
-    assert (
-        client.delete(
-            f"/jobs/exports/{identifier}/grants/{child}", headers=auth(backend.tokens[next_id])
-        ).status_code
-        == 403
-    )
-    exports.data_path(child, identifier)
+    assert result.status_code == 200
+    session = result.json()["session_id"]
+    exports.data_path(session, identifier)
+    own = auth(backend.tokens[session])
+    assert client.get(f"/jobs/exports/{identifier}", headers=own).status_code == 200
+    assert client.post("/sessions", headers=own, json={"command": ["true"]}).status_code == 405
     assert (
         client.post(
-            f"/jobs/exports/{identifier}/grants", headers=main, json={"session_id": child}
+            f"/jobs/exports/{identifier}/grants", headers=own, json={"session_id": "outsider"}
         ).status_code
         == 403
     )
@@ -152,48 +104,3 @@ def test_failed_candidate_launch_rolls_back_its_export_access(tmp_path):
     )
     assert response.status_code == 409
     assert exports.load(identifier)["readers"] == ["main"]
-
-
-def test_trial_can_explicitly_deliver_and_delete_its_own_binary_result(tmp_path, monkeypatch):
-    client, backend, exports, identifier = setup(tmp_path)
-    baseline = client.post(
-        "/versions", headers=auth("main-token"), json={"files": {"entry.py": "pass"}}
-    ).json()["version_id"]
-    response = client.post(
-        "/evolution/trials",
-        headers=auth("main-token"),
-        json={
-            "baseline_version": baseline,
-            "checklist": "Return fixture evidence",
-            "command": ["true"],
-            "files": {"entry.py": "pass"},
-            "read_only_exports": [identifier],
-        },
-    )
-    child = response.json()["session_id"]
-    source = tmp_path / "worker-result.bin"
-    source.write_bytes(b"worker result")
-    record = exports.create(child, "run-one", source, "child-job", "outputs", "worker-result.bin")
-    exports.seal(record["export_id"])
-    assert (
-        client.get(f"/jobs/exports/{record['export_id']}", headers=auth("main-token")).status_code
-        == 200
-    )
-    delivery = client.post(
-        f"/jobs/exports/{record['export_id']}/grants",
-        headers=auth(backend.tokens[child]),
-        json={"session_id": "main"},
-    )
-    assert delivery.status_code == 200
-    assert (
-        client.get(f"/jobs/exports/{record['export_id']}", headers=auth("main-token")).status_code
-        == 200
-    )
-    monkeypatch.setattr(job_exports, "active_jobs", lambda store, **kwargs: [])
-    assert (
-        client.delete(
-            f"/jobs/exports/{record['export_id']}", headers=auth(backend.tokens[child])
-        ).status_code
-        == 200
-    )
-    assert source.read_bytes() == b"worker result"

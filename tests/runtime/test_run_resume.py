@@ -1,55 +1,64 @@
+"""Resume accepts only an explicit current native Host checkpoint."""
+
 import json
 
 import pytest
+from native_run_support import native_run
 
 from a3_research_agent.host.runs.resume import load_resume_state
-from a3_research_agent.host.runs.state import RunStateStore
 
 
-def old_run(tmp_path):
-    run = tmp_path / "run-original-timestamp"
-    (run / "inputs").mkdir(parents=True)
-    (run / "startup.json").write_text(json.dumps({"run_id": run.name, "model": "test/model"}))
-    (run / "inputs/deployment.json").write_text(json.dumps({"gateway": "http://original:12345"}))
-    (run / "evolution.json").write_text(
-        json.dumps({"main_owner": "candidate-main", "trials": {}, "transitions": []})
+def test_missing_host_checkpoint_is_not_rebuilt_from_history(tmp_path):
+    run, _, _, store, _ = native_run(tmp_path)
+    store.path.unlink()
+    (run / "trajectory.json").write_text('{"model":"configured/model"}')
+    with pytest.raises(ValueError, match="saved Host checkpoint"):
+        load_resume_state(run, store, "configured/model")
+    assert not store.path.exists()
+
+
+def test_native_resume_preserves_same_scope_and_checkpoint_without_writes(tmp_path):
+    run, workspace, state, store, _ = native_run(tmp_path)
+    before = {
+        path.relative_to(run): path.read_bytes()
+        for path in run.rglob("*")
+        if path.is_file() and not path.is_symlink()
+    }
+    assert load_resume_state(run, store, state["model"]) == state
+    assert all((run / name).read_bytes() == raw for name, raw in before.items())
+    assert (
+        json.loads((workspace / "checkpoint.json").read_text())[0]["content"]
+        == "existing research and observations"
     )
-    directory = run / "candidates/candidate-main"
-    directory.mkdir(parents=True)
-    (directory / "session.json").write_text(
-        json.dumps({"owner": "candidate-main", "closed": True, "version_id": "old-version"})
-    )
-    (run / "session-events.jsonl").write_text(
-        json.dumps({"event": "created", "session_id": "candidate-main", "parent": run.name}) + "\n"
-    )
-    return run
 
 
-def test_import_old_host_metadata_preserves_scope_directory_and_endpoint(tmp_path):
-    run = old_run(tmp_path)
-    before = {p.relative_to(run): p.read_bytes() for p in run.rglob("*") if p.is_file()}
-    state = load_resume_state(run, RunStateStore(run), "test/model")
-    assert state["run_id"] == run.name
-    assert state["endpoint"] == "http://original:12345"
-    assert state["gateway"]["evolution"]["main_owner"] == "candidate-main"
-    assert "candidate-main" in state["gateway"]["sessions"].values()
-    assert state["gateway"]["children"]["candidate-main"]["version_id"] == "old-version"
-    assert all((run / name).read_bytes() == data for name, data in before.items())
-    assert list(tmp_path.iterdir()) == [run]
-    assert load_resume_state(run, RunStateStore(run), "test/model") == state
+@pytest.mark.parametrize("change", ["model", "pin", "schema", "backend", "completed", "identity"])
+def test_invalid_native_resume_is_rejected_without_mutation(tmp_path, change):
+    run, _, state, store, _ = native_run(tmp_path)
+    model = state["model"]
+    if change == "model":
+        model = "different/model"
+    elif change == "pin":
+        state["harness_commit"] = "b" * 40
+    elif change == "schema":
+        state["version"] = 0
+    elif change == "backend":
+        state["backend"] = "docker"
+    elif change == "completed":
+        state["status"] = "completed"
+    elif change == "identity":
+        state["gateway"]["main_owner"] = "unregistered"
+    store.save(state)
+    before = store.path.read_bytes()
+    with pytest.raises(ValueError):
+        load_resume_state(run, store, model)
+    assert store.path.read_bytes() == before
 
 
-def test_resume_refuses_changed_model_without_creating_a_new_run(tmp_path):
-    run = old_run(tmp_path)
-    with pytest.raises(ValueError, match="original model"):
-        load_resume_state(run, RunStateStore(run), "other/model")
-    assert list(tmp_path.iterdir()) == [run]
-    assert not RunStateStore(run).path.exists()
-
-
-def test_saved_host_rejects_adapter_change(tmp_path):
-    run = old_run(tmp_path)
-    store = RunStateStore(run)
-    load_resume_state(run, store, "test/model", "original_adapter")
-    with pytest.raises(ValueError, match="adapter"):
-        load_resume_state(run, store, "test/model", "changed_adapter")
+def test_original_startup_remains_initial_provenance_after_published_upgrade(tmp_path):
+    run, _, state, store, _ = native_run(tmp_path)
+    startup = run / "startup.json"
+    startup.write_text(json.dumps({"run_id": run.name, "harness_commit": "b" * 40}))
+    before = startup.read_bytes()
+    assert load_resume_state(run, store, state["model"]) == state
+    assert startup.read_bytes() == before

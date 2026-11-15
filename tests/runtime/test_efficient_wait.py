@@ -9,6 +9,7 @@ from a3_research_agent.harness import waiting
 
 def load(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("A3_INPUT_ROOT", str(tmp_path / "inputs"))
     return waiting
 
 
@@ -363,7 +364,7 @@ def test_two_waits_in_one_model_batch_keep_prebatch_cursor(tmp_path, monkeypatch
     import ast
     from types import SimpleNamespace
 
-    from a3_research_agent.harness import planning
+    from a3_research_agent.harness import job_tools, planning, research_web, workspace_tools
 
     m, clock = setup_wait(tmp_path, monkeypatch)
     from pathlib import Path
@@ -375,6 +376,9 @@ def test_two_waits_in_one_model_batch_keep_prebatch_cursor(tmp_path, monkeypatch
         x for x in ast.parse(source).body if isinstance(x, ast.FunctionDef) and x.name == "tool"
     )
     namespace = {
+        "job_tools": job_tools,
+        "workspace_tools": workspace_tools,
+        "research_web": research_web,
         "web_tools": None,
         "skill_tools": None,
         "WAIT_CURSOR": "a" * 64,

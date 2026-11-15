@@ -60,7 +60,7 @@ python -m a3_dual_arm_sim.workflows.benchmark_cookie_batch_cli \
 
 `POST /vision/inspect` 的接口约定是提交一个问题和 1–6 帧已有 PNG/JPEG 的引用；部署前核对当前 Host 是否实际提供该路由。`GET /vision/status` 可读取传输能力与上限，但不证明提供商实际看到了图像。它不自动下载或遍历视频。由当前 Agent 在自己的授权作业中，从已有录像提取围绕疑问的帧并保留来源、原帧索引和转换记录；这一步不需要重新运行 Policy。
 
-该接口复用现有作业产物读取权限。默认从指定作业的 `workspace` 读取，例如 `path: "frames/front_0180.png"`。已经保存的评估帧可以用 `area: "outputs"` 加输出目录下的相对路径直接读取。若只有视频，可由 CPU 作业按需抽帧并保存时间标签。第二阶段按项目读取历史作业和帧，其他读取边界沿用作业权限。
+该接口复用现有作业产物读取权限。默认从指定作业的 `workspace` 读取，例如 `path: "frames/front_0180.png"`。已经保存的评估帧可以用 `area: "outputs"` 加输出目录下的相对路径直接读取。若只有视频，可由 CPU 作业按需抽帧并保存时间标签。按项目读取历史作业和帧，其他读取边界沿用作业权限。
 
 ```json
 {

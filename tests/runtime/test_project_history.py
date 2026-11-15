@@ -18,11 +18,13 @@ def test_current_agent_can_reuse_a_historical_job_and_export(tmp_path):
     (private / "state.json").write_text(
         json.dumps(
             {
+                "version": 1,
+                "backend": "process",
                 "run_id": previous.name,
                 "gateway": {
                     "root_owners": [previous.name],
-                    "children": {"old-agent": {"owner": "old-agent"}},
-                    "jobs": {},
+                    "session_records": {"old-agent": {"owner": "old-agent"}},
+                    "jobs": {"old-agent": [historical]},
                 },
             }
         )

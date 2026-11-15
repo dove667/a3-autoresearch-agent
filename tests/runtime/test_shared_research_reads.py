@@ -10,10 +10,13 @@ from a3_research_agent.host.gateway.app import create_app
 
 def test_same_run_peers_read_workspaces_jobs_and_versions_without_cancellation_rights(tmp_path):
     class Sandbox:
+        def check_capacity(self):
+            pass
+
         def __init__(self):
             self.tokens = {}
 
-        def create(self, owner, command, files, token):
+        def create(self, owner, command, files, token, *, inputs=None):
             self.tokens[owner] = token
             return {"session_id": owner}
 
@@ -23,7 +26,7 @@ def test_same_run_peers_read_workspaces_jobs_and_versions_without_cancellation_r
         def artifact(self, owner, session, path):
             return {"data": base64.b64encode(b"shared research").decode()}
 
-    sandbox = Sandbox()
+    session_runtime = Sandbox()
     jobs = {}
 
     def remote(operation, payload):
@@ -38,7 +41,7 @@ def test_same_run_peers_read_workspaces_jobs_and_versions_without_cancellation_r
     app = create_app(
         model_name="fixture",
         sessions={"root-token": "root"},
-        sandbox=sandbox,
+        session_runtime=session_runtime,
         main_owner="root",
         forward_model=lambda **kwargs: {},
         remote_call=remote,
@@ -52,8 +55,8 @@ def test_same_run_peers_read_workspaces_jobs_and_versions_without_cancellation_r
         second = host_create_session(client, headers=root, json={"command": ["true"]}).json()[
             "session_id"
         ]
-        a = {"Authorization": "Bearer " + sandbox.tokens[first]}
-        b = {"Authorization": "Bearer " + sandbox.tokens[second]}
+        a = {"Authorization": "Bearer " + session_runtime.tokens[first]}
+        b = {"Authorization": "Bearer " + session_runtime.tokens[second]}
         job = client.post("/jobs", headers=a, json={"command": ["true"]}).json()["job_id"]
         assert (
             client.get(
@@ -85,4 +88,4 @@ def test_bootstrap_identity_cannot_bypass_single_agent_rule(tmp_path):
         headers={"Authorization": "Bearer token"},
         json={"command": ["true"]},
     )
-    assert response.status_code == 403
+    assert response.status_code == 405

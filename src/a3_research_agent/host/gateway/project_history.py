@@ -31,10 +31,14 @@ def project_job_index(current_run: Path | None) -> tuple[dict[str, str], dict[st
             state = json.loads(state_path.read_text())
         except (OSError, ValueError):
             continue
-        if state.get("run_id") != run.name:
+        if (
+            state.get("run_id") != run.name
+            or state.get("version") != 1
+            or state.get("backend") != "process"
+        ):
             continue
         gateway = state.get("gateway", {})
-        scopes = set(gateway.get("root_owners", [])) | gateway.get("children", {}).keys()
+        scopes = set(gateway.get("root_owners", [])) | gateway.get("session_records", {}).keys()
         for scope in sorted(scopes, key=lambda owner: (owner == run.name, owner)):
             if scope in scope_runs and scope_runs[scope] != run.name:
                 continue

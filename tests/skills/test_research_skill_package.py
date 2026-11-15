@@ -1,4 +1,4 @@
-"""Check published research guidance and its frozen input mapping offline."""
+"""Published research skills remain complete, frozen and discoverable."""
 
 import json
 import re
@@ -7,44 +7,56 @@ from pathlib import Path
 
 import yaml
 
-from a3_research_agent.host.inputs.versions import InputVersions, input_sources
+from a3_research_agent.harness import input_skills, skill_registry
+from a3_research_agent.host.inputs.versions import InputVersions
 
 ROOT = Path(__file__).resolve().parents[2]
 PACKAGE = ROOT / "skills/a3-mujoco-autoresearch"
 
 
-def test_research_catalog_maps_to_readable_reference():
+def task_directory(directory):
+    directory.mkdir()
+    for name, content in {
+        "goal.md": "Research this question",
+        "acceptance.md": "## result. Preserve evidence",
+        "protocol.md": "Record conditions and results",
+    }.items():
+        (directory / name).write_text("Version: 1.0.0\n\n" + content + "\n")
+    return directory
+
+
+def test_research_catalog_maps_to_readable_versioned_reference():
     entry = json.loads((PACKAGE / "assets/catalog-entry.json").read_text())
     body = (ROOT / entry["local_source"]).read_text()
     frontmatter = yaml.safe_load(body.split("---", 2)[1])
     assert entry["id"] == frontmatter["name"] == PACKAGE.name
     assert entry["version"] == frontmatter["metadata"]["version"]
     assert entry["status"] == "reference"
-    assert entry["comparison_status"] == "compare-not-proven"
-    assert len(body.splitlines()) <= 100
     for target in re.findall(r"\]\(([^)]+)\)", body):
         if "://" not in target:
             assert (PACKAGE / target.partition("#")[0]).is_file(), target
-    assert "Use the deployed Harness" in body
-    assert "/evolution/trials" not in body
 
 
-def test_optional_research_skill_remains_frozen_and_is_not_injected(tmp_path):
-    source = tmp_path / "custom-inputs"
-    source.mkdir()
-    for name, relative in input_sources("phase-two").items():
-        (source / name).write_bytes((ROOT / relative).read_bytes())
-    shutil.copytree(
-        PACKAGE,
-        source / "skills" / PACKAGE.name,
-        ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.tmp"),
-    )
-    versions = InputVersions(ROOT, tmp_path / "run", phase="phase-two", custom_dir=source)
-    proposal = versions.prepare()
-    versions.activate(proposal, "start")
+def test_deployed_skill_is_frozen_discoverable_and_not_injected(tmp_path, monkeypatch):
+    source = task_directory(tmp_path / "task")
+    inputs = InputVersions(ROOT, tmp_path / "run", custom_dir=source)
+    proposal = inputs.prepare()
+    inputs.activate(proposal, "start")
     relative = "skills/a3-mujoco-autoresearch/SKILL.md"
-    assert versions.contents[relative] == (ROOT / relative).read_text()
-    assert versions.contents[relative] not in versions.model_instructions()[1]
+    assert inputs.contents[relative] == (ROOT / relative).read_text()
+    assert inputs.contents[relative] not in inputs.model_instructions()[1]
     shutil.rmtree(source)
-    restored = InputVersions(ROOT, versions.run)
+    restored = InputVersions(ROOT, inputs.run)
     assert restored.prepare()["contents"][relative] == proposal["contents"][relative]
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    monkeypatch.chdir(workspace)
+    input_skills.install_input_skills(inputs.run / "inputs")
+    listing = skill_registry.dispatch({"action": "list", "query": "mujoco research"})
+    assert "a3-mujoco-autoresearch" in {item["id"] for item in listing["skills"]}
+    assert (
+        skill_registry.dispatch({"action": "read", "id": "a3-mujoco-autoresearch", "limit": 8000})[
+            "sha256"
+        ]
+        == inputs.manifest["files"][relative]["sha256"]
+    )

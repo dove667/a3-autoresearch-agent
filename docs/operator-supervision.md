@@ -1,8 +1,8 @@
 # 外界监督与运行干预
 
-Version: 0.2.7
+Version: 0.2.8
 
-本文件面向用户、父助手与 Host 操作者，不是研究 Agent 的输入，不加入 input manifest。Agent 的反馈处理规则在阶段 Prompt，接口与状态技术事实在 execution；文档职责与装载链见 [Agent 输入管理](agent-inputs.md)。
+本文件面向用户、父助手与 Host 操作者，不是研究 Agent 的输入，不加入 input manifest。Agent 的反馈处理规则在 SOUL 与任务协议，接口与状态技术事实在 execution；文档职责与装载链见 [Agent 输入管理](agent-inputs.md)。
 
 ## 夜间研究与白天维护
 
@@ -12,7 +12,7 @@ Version: 0.2.7
 
 日间复核从同一研究身份的 `trajectory.jsonl`、`model-usage.jsonl`、`gateway-events.jsonl` 和 Controller 作业终态入手。按症状选择可重复的失败序列，用受控状态验证修复，再用正式夜间日志核对真实调用次数、耗时和研究产出。输入 token 与缓存命中分别统计。工具等待产生的 Host 请求属于基础设施流量，模型唤醒次数由 Responses 请求记录核对。
 
-### 发布新版 Harness 时使用新上下文
+### 原地发布新版 Harness
 
 白天完成验证后，选择已推送到 `origin/main` 的完整 Git 提交 SHA。交接 Markdown 只写 `## 已核对结论` 和 `## 待办`，每节至少一项。为结论附实验报告与版本，为待办附原作业 ID、checkpoint 或已经授权的资产引用。
 
@@ -26,9 +26,19 @@ uv run python -m a3_research_agent.cli.night_release "artifacts/rsi/<锚点run>"
   --commit <已发布提交SHA> --handoff <交接.md> --confirm <发布摘要>
 ```
 
-确认固定启动命令、Git 提交、当前第二阶段输入和交接正文。21:00 有待发布版本时，定时器用 `--run-harness` 建立新 run，模型上下文从当前目标和审核后的交接开始。Git 发布从固定提交只读加载 Harness，每个新 run 在项目根目录的 `workspace/` 下建立独立研究目录。新上下文只接收审核后的输入与交接。未发布新版时，定时器恢复上一次选定的 run。发布内容损坏或新 run 启动不完整时停止并保留现场，便于排查。
+确认固定启动命令、Git 提交、当前任务输入与通用指引和交接正文。21:00 有待发布版本时，定时器在暂停的原 run 上应用发布，再恢复同一主身份和研究工作区。Harness 从固定 Git 提交只读加载；对话、checkpoint、记忆、skills、计划和作业台账继续使用原文件。升级前归档旧源码指针、输入版本和 checkpoint 边界，交接正文通过独立 feedback ID 与 SHA 登记。未发布新版时直接恢复当前 run。
 
-旧 run 的轨迹、作业归属和产物留在原处，远程在途作业继续执行。第二阶段的新 run 可用交接引用查找本项目历史作业和产物，在新作业里用只读快照复用历史资产。遇到仍不可读的依赖时，Agent 停止受阻研究线并向操作者报告。若 Mac 重启，用原锚点重新启动定时器；它按锚点选择已发布版本及当前 run。迁移后的发布记录位于 `artifacts/night-window/<锚点run>/`。
+轨迹、作业归属和产物留在原处，远程在途作业继续执行。Agent 继续使用原身份管理这些作业，在新作业里用只读快照复用历史资产。遇到仍不可读的依赖时，Agent 停止受阻研究线并向操作者报告。若 Mac 重启，用原锚点重新启动定时器；它按锚点选择已发布版本及当前 run。迁移后的发布记录位于 `artifacts/night-window/<锚点run>/`。
+
+也可在维护窗口离线应用已冻结的发布，再按原来的启动命令恢复：
+
+```bash
+uv run python -m a3_research_agent.cli.apply_release "artifacts/rsi/<run-id>" \
+  "<冻结发布目录>" --digest <发布摘要>
+```
+
+原地升级要求 run 已暂停并取得排他锁。普通恢复沿用原模型；明确应用发布时，可采用当前部署配置中的模型与参数，并归档前值。升级事务未完成时，普通恢复会停止并保留现场；用同一发布摘要继续处理。原生 Agent 在本地 Python 环境执行，旧容器须先保存退出记录并回收。
+
 
 ## 低频弱监督与批准边界
 
@@ -48,7 +58,7 @@ uv run python -m a3_research_agent.cli.night_release "artifacts/rsi/<锚点run>"
 
 ## 热加载版本化输入
 
-按 [版本规则](agent-inputs.md#需要维护版本的内容) 修改源文件并递增版本；编辑不会自动影响运行中的实验。先预览：
+按 [版本规则](agent-inputs.md#版本与发布记录) 修改源文件并递增版本；编辑不会自动影响运行中的实验。先预览：
 
 ```bash
 uv run python -m a3_research_agent.cli.reload_inputs "artifacts/rsi/<run-id>"
@@ -60,11 +70,11 @@ uv run python -m a3_research_agent.cli.reload_inputs "artifacts/rsi/<run-id>"
 uv run python -m a3_research_agent.cli.reload_inputs "artifacts/rsi/<run-id>" --confirm <预览摘要>
 ```
 
-自定义 run 默认仍读取其冻结版本。要在获准后换为另一套完整目录，预览和确认两次命令都增加 `--agent-inputs-dir <完整目录>`；Host 仅允许保持当前阶段、profile 与文件名集合的替换，检查 UTF-8、符号链接、版本及内容摘要。目录参数只在操作者控制入口生效，Agent 无权选择来源。旧 revision 保留，新版本发布后恢复不依赖外部源目录。这个入口不更新 Agent 工作区中的技能副本或索引；如需更新它们，须在已批准范围内显式完成并核对实际版本。
+自定义 run 默认仍读取其冻结版本。要在获准后换为另一套完整目录，预览和确认两次命令都增加 `--agent-inputs-dir <完整目录>`；Host 检查完整任务输入与公共文件清单，检查 UTF-8、符号链接、版本及内容摘要。目录参数只在操作者控制入口生效，Agent 无权选择来源。旧 revision 保留，新版本发布后恢复不依赖外部源目录。这个入口不更新 Agent 工作区中的技能副本或索引；如需更新它们，须在已批准范围内显式完成并核对实际版本。
 
-确认绑定具体文件内容，预览后源文件变化会使旧摘要失效。操作者认证保存在 Host 私有状态，Agent 令牌不能更新输入。已发出的模型请求按旧版本返回，下次请求使用新版本；原对话与 Agent 代码不重写。热加载不会重建已有 Python 对象、切换模型或镜像；bootstrap 运行参数和固定基础设施代码变更通过停止/恢复应用，相关中断也须事先获批。
+确认绑定具体文件内容，预览后源文件变化会使旧摘要失效。操作者认证保存在 Host 私有状态，Agent 令牌不能更新输入。已发出的模型请求按旧版本返回，下次请求使用新版本；原对话与 Agent 代码不重写。热加载不会重建已有 Python 对象、切换模型或镜像；运行参数和固定基础设施代码变更通过停止/恢复应用，相关中断也须事先获批。
 
-发布后检查 input manifest 的 active、revision/generation 和 input-events；按对应模型用量的 input_revision 核对实际采用版本。失败或回滚如实记录，不声称已生效。更多快照与历史记录见 [输入管理](agent-inputs.md#启动与恢复记录)。
+发布后检查 input manifest 的 active、revision/generation 和 input-events；按对应模型用量的 input_revision 核对实际采用版本。失败或回滚如实记录，不声称已生效。更多快照与历史记录见 [输入管理](agent-inputs.md#发布-harness-与恢复)。
 
 ## 恢复时加入人类反馈
 
@@ -131,7 +141,7 @@ Phase 2 goal/acceptance 0.4.0 将 A–D 定义为研究里程碑：完整科学�
 暂停过的 run 可用 `bash scripts/start-rsi.sh --night-window --resume-from artifacts/rsi/<run-id>`
 继续运行。窗口固定为北京时间 21:00（含）到次日 09:00（不含）。到点后启动器向 Host
 发送正常中断信号，保存 checkpoint 并关闭本地 Agent。远端 Controller 继续执行已提交的
-作业。21:00 按发布记录选择新 run 或恢复当前 run。白天只保留等待窗口的启动器。启动器退出或机器重启后，
+作业。21:00 按发布记录原地升级并恢复当前 run。白天只保留等待窗口的启动器。启动器退出或机器重启后，
 需要重新运行该命令。若固定发布版因耗尽模型请求重试而退出，启动器核对当次的上游失败记录和已保存的
 checkpoint，在窗口内以 30 秒至 5 分钟的退避间隔接续同一 run。其他退出仍保留现场。可在本地 `.env` 设置
 `A3_NIGHT_WINDOW_RUN_ID` 为对应 run 目录名，要求该 run 使用夜间入口恢复。

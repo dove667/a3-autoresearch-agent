@@ -3,7 +3,14 @@ import pathlib
 
 import pytest
 
-from a3_research_agent.harness import planning, skill_registry
+from a3_research_agent.harness import (
+    job_tools,
+    planning,
+    research_web,
+    skill_registry,
+    tool_contracts,
+    workspace_tools,
+)
 
 ROOT = pathlib.Path(__file__).resolve().parents[2] / "src/a3_research_agent/harness"
 
@@ -27,6 +34,10 @@ def functions():
         "skill_tools": None,
         "skill_registry": skill_registry,
         "planning": planning,
+        "job_tools": job_tools,
+        "workspace_tools": workspace_tools,
+        "research_web": research_web,
+        "tool_contracts": tool_contracts,
     }
     exec(compile(ast.Module(body=nodes, type_ignores=[]), "trusted-agent-functions", "exec"), ns)  # noqa: S102
     return ns
@@ -74,13 +85,17 @@ def test_schema_exposes_actual_bounded_parameters():
 
 
 def test_input_header_names_the_canonical_manifest_path(tmp_path):
-    from test_input_versions import sources
+    from task_input_support import deployment_source, task_inputs
 
     from a3_research_agent.host.inputs.versions import InputVersions
 
-    v = InputVersions(sources(tmp_path), tmp_path / "run")
+    v = InputVersions(
+        deployment_source(tmp_path / "source"),
+        tmp_path / "run",
+        custom_dir=task_inputs(tmp_path / "task"),
+    )
     v.activate(v.prepare(), "start")
-    assert "/run/input/input-manifest.json" in v.model_instructions()[1]
+    assert "A3_INPUT_ROOT 下 input-manifest.json" in v.model_instructions()[1]
 
 
 def test_real_progress_validation_does_not_mutate_state(tmp_path, monkeypatch):
