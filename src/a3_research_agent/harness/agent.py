@@ -52,7 +52,8 @@ def req(method, path, data=None, *, timeout=300):
 def request_model(request):
     """Retry transient model transport failures before publishing tool calls."""
     retryable_statuses = {408, 429, 500, 502, 503, 504}
-    for attempt in range(1, 5):
+    attempt, delay = 0, 5
+    while True:
         try:
             # Allow the Host's upstream request to finish before the client times out.
             response = req("POST", "/v1/responses", request, timeout=960)
@@ -62,20 +63,18 @@ def request_model(request):
             urllib.error.URLError,
             http.client.HTTPException,
         ) as error:
-            if attempt == 4:
-                raise
             failure = {"error_type": type(error).__name__}
         else:
-            if response.get("http_error") not in retryable_statuses:
+            status = response.get("http_error")
+            if status is None:
                 return response
-            if attempt == 4:
-                raise RuntimeError(
-                    f"Model request retries exhausted: HTTP {response['http_error']}"
-                )
-            failure = {"http_status": response["http_error"]}
-        delay = 5 * 2 ** (attempt - 1)
+            if status not in retryable_statuses:
+                raise RuntimeError(f"Model request rejected: HTTP {status}")
+            failure = {"http_status": status}
+        attempt += 1
         log({"model_retry": attempt, "delay_seconds": delay, **failure})
         time.sleep(delay)
+        delay = min(120, delay * 2)
 
 
 def log(x):

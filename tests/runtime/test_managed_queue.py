@@ -146,3 +146,10 @@ def test_server_assigns_available_gpu_capacity_instead_of_small_client_cap(tmp_p
     resolved = managed_queue.automatic_gpu_budget(JobStore(tmp_path), payload, options(tmp_path))
     assert resolved["gpu_memory_mb"] == 12288
     assert payload["gpu_memory_mb"] == 2048
+
+
+def test_operator_can_keep_a_fixed_gpu_reservation(tmp_path):
+    args = options(tmp_path)
+    args.fixed_gpu_reservation = True
+    payload = dict(request(), gpu=True, gpu_memory_mb=2800)
+    assert managed_queue.automatic_gpu_budget(JobStore(tmp_path), payload, args) == payload

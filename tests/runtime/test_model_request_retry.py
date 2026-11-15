@@ -34,16 +34,16 @@ def test_model_request_recovers_with_same_input(monkeypatch, failure):
     assert "input" not in log.call_args.args[0]
 
 
-def test_model_timeout_exhaustion_remains_recoverable(monkeypatch):
-    transport = Mock(side_effect=TimeoutError("slow"))
+def test_model_recovers_past_four_failures_with_capped_backoff(monkeypatch):
+    response = {"status": "completed"}
+    transport = Mock(side_effect=[TimeoutError("slow"), {"http_error": 502}] * 4 + [response])
     sleep = Mock()
     monkeypatch.setattr(agent, "req", transport)
     monkeypatch.setattr(agent.time, "sleep", sleep)
     monkeypatch.setattr(agent, "log", Mock())
-    with pytest.raises(TimeoutError):
-        agent.request_model({})
-    assert transport.call_count == 4
-    assert [c.args[0] for c in sleep.call_args_list] == [5, 10, 20]
+    assert agent.request_model({}) == response
+    assert transport.call_count == 9
+    assert [c.args[0] for c in sleep.call_args_list] == [5, 10, 20, 40, 80, 120, 120, 120]
 
 
 @pytest.mark.parametrize("status", [400, 401, 403, 413, 422])
@@ -51,18 +51,19 @@ def test_permanent_http_failures_do_not_retry(monkeypatch, status):
     response = {"http_error": status}
     transport = Mock(return_value=response)
     monkeypatch.setattr(agent, "req", transport)
-    assert agent.request_model({}) == response
+    with pytest.raises(RuntimeError, match=f"HTTP {status}"):
+        agent.request_model({})
     transport.assert_called_once()
 
 
-def test_http_retry_exhaustion_stops_instead_of_entering_empty_response_loop(monkeypatch):
+def test_model_retry_wait_can_be_interrupted(monkeypatch):
     transport = Mock(return_value={"http_error": 503})
     monkeypatch.setattr(agent, "req", transport)
-    monkeypatch.setattr(agent.time, "sleep", Mock())
+    monkeypatch.setattr(agent.time, "sleep", Mock(side_effect=KeyboardInterrupt))
     monkeypatch.setattr(agent, "log", Mock())
-    with pytest.raises(RuntimeError, match="HTTP 503"):
+    with pytest.raises(KeyboardInterrupt):
         agent.request_model({})
-    assert transport.call_count == 4
+    assert transport.call_count == 1
 
 
 def test_job_submission_timeout_is_not_retried(monkeypatch):

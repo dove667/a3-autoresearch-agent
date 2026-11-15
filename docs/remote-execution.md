@@ -117,6 +117,8 @@ python3 src/a3_research_agent/execution/images/verify.py \
 
 --share-gpus 开启同卡多作业；--max-gpus 限制整机本项目活动物理卡数。--gpu-memory-mb 是每个新作业缺省的显存峰值预留，Agent 可通过 gpu_memory_mb 提供实际预计值；--gpu-capacity-mb 限制每卡总预留（0 表示按设备容量减缓冲），--gpu-headroom-mb 保留显存缓冲，单位均为 MiB。它们由对应的 A3_REMOTE_SHARE_GPUS、A3_REMOTE_MAX_GPUS、A3_REMOTE_GPU_MEMORY_MB、A3_REMOTE_GPU_CAPACITY_MB、A3_REMOTE_GPU_HEADROOM_MB 提供。
 
+通过 Controller CLI 提交已测得峰值的轻量作业时，可用 `--fixed-gpu-reservation` 保留单作业指定的额度，允许同卡调度多个托管作业。Controller 仍会检查设备实际余量、现有租约和安全缓冲。
+
 调度器读取 nvidia-smi 的整卡实际显存，并用本项目 Docker 的进程归属区分已兑现预留和尚未加载的预留。外部占用计入整卡实际显存，本项目已加载的预留不重复计算。可用量取两项余量中的较小值：每卡预留上限减去本项目预留总额，以及物理显存减去缓冲、整卡实际占用和尚未兑现的预留。`--gpu-headroom-mb` 默认 2048，即 2 GiB；每卡预留上限与物理缓冲分别计算。没有空间时返回等待，已在运行的作业退出后名额自动释放。
 
 共享模式允许与外部进程同卡，按上述显存余量准入，不设外部占用量或 GPU 利用率门槛。本项目同时使用的物理卡数仍受 --max-gpus 限制；外部进程不计入该卡数，控制器不调整外部进程。独占模式与独占租约仍保留原有约束。

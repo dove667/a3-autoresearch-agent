@@ -26,6 +26,10 @@ uv run mini --help
 
 这两个变量用于下面的命令示例。模型名称、适配器和认证方式需要与所选服务兼容。可用适配器见[模型注册入口](../third_party/mini-swe-agent/src/minisweagent/models/__init__.py)，接入说明见[上游模型指南](../third_party/mini-swe-agent/docs/models/quickstart.md)及对应服务的文档。凭据使用环境变量或服务支持的用户配置目录保存。
 
+`.env.example` 按模型 API、角色与推理、上下文预算、网页检索 API、本地接续和远程资源分组。维护本地 `.env` 时保持字段、顺序和注释一致，实际凭据与私人部署路径填在 `.env`，模板使用空密钥和通用占位符。
+
+使用自定义 Responses 上游时，设置 `MODEL_CLASS=litellm_response`，并填写 `A3_UPSTREAM_RESPONSES_BASE_URL`、`A3_UPSTREAM_RESPONSES_MODEL` 和 `A3_UPSTREAM_RESPONSES_API_KEY`。基础地址包含服务要求的版本前缀，例如 `https://provider.example/v1`，Host 在其后追加 `/responses`。该配置统一覆盖主模型、辅助模型和摘要模型的实际上游模型；各角色仍可指定思考强度。`A3_UPSTREAM_RESPONSES_READ_TIMEOUT_SECONDS` 控制读取超时。配置在下次启动 Host 时加载。
+
 ```bash
 : "${MODEL_NAME:?请先设置模型标识}"
 : "${MODEL_CLASS:?请先设置模型适配器}"

@@ -1,3 +1,7 @@
+import json
+
+import httpx
+import pytest
 from fastapi.testclient import TestClient
 
 from a3_research_agent.host.gateway.app import create_app
@@ -44,6 +48,22 @@ def test_model_credentials_and_selection_stay_on_host(tmp_path):
     assert requests[0]["model"] == "private-provider/model"
     assert "api_key" not in requests[0]
     assert client.post("/v1/responses", json={"input": "probe"}).status_code == 401
+
+
+@pytest.mark.parametrize("upstream_status", [400, 429, 502])
+def test_gateway_records_upstream_http_status_without_provider_details(tmp_path, upstream_status):
+    def forward(**_):
+        request = httpx.Request("POST", "https://provider.example/responses")
+        response = httpx.Response(upstream_status, request=request, text="private provider detail")
+        response.raise_for_status()
+
+    response = client_for(tmp_path, forward=forward).post(
+        "/v1/responses", headers={"Authorization": "Bearer token-a"}, json={"input": "probe"}
+    )
+    assert response.status_code == upstream_status
+    records = (tmp_path / "gateway-events.jsonl").read_text()
+    assert json.loads(records.splitlines()[-1])["upstream_status"] == upstream_status
+    assert "private provider detail" not in records + response.text
 
 
 def test_model_request_cannot_override_upstream_or_use_hosted_tools(tmp_path):

@@ -107,6 +107,13 @@ class NightSchedule:
         state = read_json(self.state, {"current": self.anchor.name})
         return workspace_path(self.anchor.parent, state["current"])
 
+    def record_started_release(self, run: Path) -> None:
+        state = read_json(self.state, {})
+        if state.get("target") == run.name:
+            write_atomic(
+                self.state, encoded({"current": run.name, "release": state["target_release"]})
+            )
+
     def select(self) -> tuple[list[str], Path, dict[str, str]]:
         state = read_json(self.state, {"current": self.anchor.name})
         current = workspace_path(self.anchor.parent, state["current"])
@@ -117,7 +124,7 @@ class NightSchedule:
                 if RunStateStore(target).load().get("status") != "suspended":
                     raise RuntimeError(f"Released run requires recovery: {target}")
                 state = {"current": target.name, "release": state["target_release"]}
-                write_atomic(self.state, encoded(state))
+                self.record_started_release(target)
                 current = target
                 target_name = None
             elif not target.is_dir() or any(target.iterdir()):

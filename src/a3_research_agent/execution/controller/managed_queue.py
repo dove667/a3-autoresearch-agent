@@ -108,7 +108,7 @@ def automatic_gpu_budget(store, request, args):
     """Assign available capacity; optional legacy memory values are minimum hints."""
     from a3_research_agent.execution.scheduling.gpu import active_jobs, select_shared_gpu
 
-    if not request["gpu"] or not args.share_gpus:
+    if not request["gpu"] or not args.share_gpus or getattr(args, "fixed_gpu_reservation", False):
         return request
     minimum = min(request.get("gpu_memory_mb") or 8192, args.gpu_capacity_mb or 8192)
     report = {}

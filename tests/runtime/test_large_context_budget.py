@@ -117,7 +117,7 @@ def test_host_configuration_validates_separate_hard_limit(monkeypatch):
         cm.configure(lambda *a: bad)
 
 
-def test_env_template_publishes_explicit_500k_context_budget():
+def test_env_template_publishes_binary_aligned_context_budget():
     from pathlib import Path
 
     from dotenv import dotenv_values
@@ -134,15 +134,17 @@ def test_env_template_publishes_explicit_500k_context_budget():
             "A3_CONTEXT_TARGET_TOKENS",
         )
     } == {
-        "A3_MODEL_CONTEXT_TOKENS": "500000",
-        "A3_WORKER_CONTEXT_TOKENS": "500000",
-        "A3_SUMMARY_CONTEXT_TOKENS": "500000",
-        "A3_CONTEXT_TRIGGER_TOKENS": "400000",
-        "A3_CONTEXT_TARGET_TOKENS": "32000",
+        "A3_MODEL_CONTEXT_TOKENS": "262144",
+        "A3_WORKER_CONTEXT_TOKENS": "262144",
+        "A3_SUMMARY_CONTEXT_TOKENS": "524288",
+        "A3_CONTEXT_TRIGGER_TOKENS": "196608",
+        "A3_CONTEXT_TARGET_TOKENS": "32768",
     }
     budget = read_context_budget(values)
-    assert budget == settings()
-    assert budget["summary_context_tokens"] == 500000
+    assert budget["main_context_tokens"] == budget["worker_context_tokens"] == 256 * 1024
+    assert budget["summary_context_tokens"] == 512 * 1024
+    assert budget["trigger_tokens"] == 192 * 1024
+    assert budget["target_tokens"] == 32 * 1024
 
 
 def test_worker_receives_its_own_smaller_admission_window(tmp_path):

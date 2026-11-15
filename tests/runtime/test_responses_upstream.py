@@ -1,7 +1,52 @@
+from copy import deepcopy
+from unittest.mock import Mock
+
 import httpx
 import pytest
 
 from a3_research_agent.host.models import upstream
+
+
+def test_chatgpt_replays_external_tool_history_without_changing_checkpoint(monkeypatch):
+    monkeypatch.delenv("A3_UPSTREAM_RESPONSES_BASE_URL", raising=False)
+    reasoning = {"type": "reasoning", "encrypted_content": "native"}
+    message = {"type": "message", "id": "msg_native", "role": "assistant"}
+    call = {
+        "type": "function_call",
+        "id": "call_old",
+        "call_id": "call_old",
+        "name": "read",
+        "arguments": "{}",
+        "namespace": None,
+    }
+    result = {"type": "function_call_output", "call_id": "call_old", "output": "done"}
+    history = [
+        {"type": "reasoning", "role": "assistant", "content": []},
+        {
+            "type": "message",
+            "id": "external_id",
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": "Earlier work"}],
+        },
+        call,
+        result,
+        reasoning,
+        message,
+    ]
+    checkpoint = deepcopy(history)
+    default = Mock()
+    forward = upstream.configured_upstream(default)
+    forward(model="chatgpt/example", input=history)
+    assert default.call_args.kwargs["input"] == [
+        {"role": "assistant", "content": "Earlier work"},
+        {key: call[key] for key in ("type", "call_id", "name", "arguments")},
+        result,
+        reasoning,
+        message,
+    ]
+    assert history == checkpoint
+    forward(model="other/example", input=history)
+    assert default.call_args.kwargs["input"] == checkpoint
 
 
 @pytest.mark.parametrize("read_timeout", [None, "300"])

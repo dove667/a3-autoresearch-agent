@@ -43,6 +43,7 @@ def main() -> None:
     parser.add_argument("--share-gpus", action="store_true")
     parser.add_argument("--max-gpus", type=int, default=4)
     parser.add_argument("--gpu-memory-mb", type=int, default=512)
+    parser.add_argument("--fixed-gpu-reservation", action="store_true")
     parser.add_argument("--gpu-headroom-mb", type=int, default=2048)
     parser.add_argument("--gpu-capacity-mb", type=int, default=0)
     parser.add_argument("--run-storage-bytes", type=int, default=0)

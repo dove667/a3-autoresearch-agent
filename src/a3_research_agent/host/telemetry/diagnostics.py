@@ -8,9 +8,17 @@ import time
 import uuid
 from pathlib import Path
 
+import httpx
 from fastapi import FastAPI
 
 CURRENT_REQUEST = contextvars.ContextVar("gateway_request", default=None)
+
+
+def upstream_status(error: Exception) -> int | None:
+    if isinstance(error, httpx.HTTPStatusError):
+        return error.response.status_code
+    status = getattr(error, "status_code", None)
+    return status if type(status) is int else None
 
 
 class GatewayDiagnostics:
@@ -29,8 +37,8 @@ class GatewayDiagnostics:
         request = CURRENT_REQUEST.get()
         if request is not None:
             request.update(error_layer=layer, error_type=type(error).__name__)
-            status = getattr(error, "status_code", None)
-            if type(status) is int:
+            status = upstream_status(error)
+            if status is not None:
                 request["upstream_status"] = status
             if layer == "remote_transport" and isinstance(error, subprocess.CalledProcessError):
                 request["transport_exit_code"] = error.returncode

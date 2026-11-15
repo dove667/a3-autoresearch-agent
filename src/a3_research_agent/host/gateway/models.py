@@ -12,7 +12,7 @@ from a3_research_agent.host.models.settings import (
     validate_model_request_options,
 )
 from a3_research_agent.host.models.vision import prepare_vision_request
-from a3_research_agent.host.telemetry.diagnostics import CURRENT_REQUEST
+from a3_research_agent.host.telemetry.diagnostics import CURRENT_REQUEST, upstream_status
 from a3_research_agent.token_count import count_tokens, estimate_request_tokens
 
 from .instructions import MODEL_FIELDS, SUMMARY_INSTRUCTIONS
@@ -151,6 +151,9 @@ class ModelRoutes:
                     "wall_seconds": time.monotonic() - started,
                 }
             self.diagnostics.error("model_provider", error)
+            status = upstream_status(error)
+            if status is not None and 400 <= status < 500:
+                raise HTTPException(status, "Model upstream request failed") from None
             raise HTTPException(502, "Model forwarding failed") from None
         if self.human_feedback is not None:
             self.human_feedback.forwarded(feedback_ids)

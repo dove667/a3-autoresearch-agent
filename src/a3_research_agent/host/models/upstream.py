@@ -5,10 +5,40 @@ import os
 import httpx
 
 
+def chatgpt_history(items: list) -> list:
+    """Replay portable messages and tool calls from a Responses-compatible upstream."""
+    history = []
+    for item in items:
+        if isinstance(item, dict):
+            kind = item.get("type")
+            item_id = item.get("id") or ""
+            if kind == "reasoning" and not item.get("encrypted_content"):
+                continue
+            if kind == "message" and item.get("role") == "assistant" and item_id:
+                if not item_id.startswith("msg_"):
+                    text = "\n".join(
+                        part["text"]
+                        for part in item["content"]
+                        if part.get("type") == "output_text"
+                    )
+                    item = {"role": "assistant", "content": text}
+            elif kind == "function_call" and item_id.startswith("call_"):
+                # External providers can reuse a call ID as the response item ID.
+                item = {key: item[key] for key in ("type", "call_id", "name", "arguments")}
+        history.append(item)
+    return history
+
+
 def configured_upstream(default):
     base_url = os.environ.get("A3_UPSTREAM_RESPONSES_BASE_URL", "").rstrip("/")
     if not base_url:
-        return default
+
+        def forward_default(*, model, **arguments):
+            if model.startswith("chatgpt/") and isinstance(arguments.get("input"), list):
+                arguments["input"] = chatgpt_history(arguments["input"])
+            return default(model=model, **arguments)
+
+        return forward_default
     api_key = os.environ.get("A3_UPSTREAM_RESPONSES_API_KEY", "").strip()
     upstream_model = os.environ.get("A3_UPSTREAM_RESPONSES_MODEL", "").strip()
     if not api_key or not upstream_model:

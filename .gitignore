@@ -15,6 +15,7 @@ __pycache__/
 build/
 dist/
 .DS_Store
+.vscode/
 /human-feedback.md
 
 # Recovery-harness runtime artefacts (workspace state, never source)
