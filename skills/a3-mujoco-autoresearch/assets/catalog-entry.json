@@ -1,6 +1,6 @@
 {
   "id": "a3-mujoco-autoresearch",
-  "version": "0.1.15",
+  "version": "0.1.16",
   "status": "reference",
   "comparison_status": "compare-not-proven",
   "description": "A3 MuJoCo autoresearch and model training: ACT, Diffusion/Flow, VLA, world models, diagnostics and paired evaluation.",
@@ -35,6 +35,10 @@
   ],
   "evidence_status": "literature-and-source-inspected; offline-helper-tests; no-local-policy-comparison",
   "version_history": [
+    {
+      "version": "0.1.16",
+      "change": "Link consolidated Agent-authored operational skills and replace historical skill integration and identity assumptions with the current native single-Agent contract."
+    },
     {
       "version": "0.1.15",
       "change": "Resolve episode executor and output paths from the actual job backend and environment."

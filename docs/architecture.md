@@ -29,7 +29,7 @@ flowchart LR
 
 ## 发布、工作区与恢复
 
-操作者从明确的 Git commit 发布 Harness。固定源码缓存在 `artifacts/published-harness/v2/<commit>/`，研究文件保存于 `workspace/<run-id>/<session-id>/`。每轮只运行一个研究 Agent。
+操作者从明确的 Git commit 发布 Harness。固定源码缓存在 `.runtime/published-harness/v2/<commit>/`，研究文件保存于 `workspace/<run-id>/<session-id>/`，模型执行记录按开始时间归档到 `trajectories/YYYY-MM-DD_HH-MM-SS-ffffff/`。私有 workspace 映射固定资源身份与研究目录。每轮只运行一个研究 Agent。
 
 Host 的 `launch.py` 负责启动装配；`sessions/processes.py` 负责创建、观察、停止及恢复原生进程；`sessions/workspace.py` 负责工作区定位、受限文件读取和持久写入。进程以 PID、启动标识和实际命令核对身份，避免停止其他进程。
 
@@ -63,7 +63,7 @@ Controller 实例共用资源根目录和调度锁。独占模式持有整卡租
 
 长期记忆保存 Agent 主动提炼的经验及来源；Recall 从原始轨迹检索相关历史，默认搜索可用范围并返回有界片段。研究计划保存任务状态及修订。原地升级继续使用这些文件。
 
-预设输入与发布包交付项目方法 skills，Agent 自写 skills 保存在研究工作区。技能目录和引用文件一起版本化；更新输入会重新发现完整目录。Agent 使用多关键词检索并按需读取正文和附件。
+Host 从根目录 `skills/` 发现包含 `SKILL.md` 与 `assets/catalog-entry.json` 的完整方法包，随公共输入和发布包交付正文、引用文件及 helper，并分别记录版本和文件哈希。Agent 自写 skills 保存在研究工作区；输入更新和安装保留其局部修订，将新部署参考包独立保存。Agent 使用多关键词检索并按需读取正文和附件。
 
 显式新任务从选定 run 的 `retained.json` 装载发布版本与 Agent 声明保留的研究知识。知识快照保存选中文件及校验值，新任务初始化自己的对话、计划和作业登记。
 

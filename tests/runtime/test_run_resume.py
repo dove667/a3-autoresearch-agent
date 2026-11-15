@@ -62,3 +62,47 @@ def test_original_startup_remains_initial_provenance_after_published_upgrade(tmp
     before = startup.read_bytes()
     assert load_resume_state(run, store, state["model"]) == state
     assert startup.read_bytes() == before
+
+
+def test_relocated_trajectory_retains_resource_identity_and_research_workspace(tmp_path):
+    from a3_research_agent.host.published_harness import (
+        project_for_run,
+        research_workspace,
+        run_identity,
+    )
+    from a3_research_agent.host.runs.state import RunStateStore
+
+    run, workspace, state, _, _ = native_run(tmp_path)
+    startup = (run / "startup.json").read_bytes()
+    checkpoint = (workspace / "checkpoint.json").read_bytes()
+    relocated = run.with_name("2026-11-10_21-27-31-654793")
+    run.rename(relocated)
+    store = RunStateStore(relocated)
+
+    assert project_for_run(relocated) == tmp_path / "project"
+    assert run_identity(relocated) == state["run_id"]
+    assert research_workspace(relocated, state["gateway"]["main_owner"]) == workspace
+    assert load_resume_state(relocated, store, state["model"]) == state
+    assert (workspace / "checkpoint.json").read_bytes() == checkpoint
+    assert (relocated / "startup.json").read_bytes() == startup
+    assert state["gateway"]["jobs"] == {"main": ["owned-job"]}
+
+
+def test_retired_artifact_run_location_is_rejected(tmp_path):
+    from a3_research_agent.host.published_harness import project_for_run
+
+    with pytest.raises(ValueError, match="under trajectories"):
+        project_for_run(tmp_path / "artifacts/rsi/run-existing")
+
+
+@pytest.mark.parametrize("base", ["../other", "/workspace/run", "workspace/../other", "other/run"])
+def test_persistent_workspace_mapping_cannot_escape_project_workspace(tmp_path, base):
+    from a3_research_agent.host.published_harness import MARKER, research_workspace
+
+    run, _, _, _, _ = native_run(tmp_path)
+    marker = run / MARKER
+    metadata = json.loads(marker.read_text())
+    metadata["workspace_root"] = base
+    marker.write_text(json.dumps(metadata))
+    with pytest.raises(ValueError):
+        research_workspace(run, "main")

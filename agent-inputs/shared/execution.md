@@ -1,6 +1,6 @@
 # Host提供的执行与验收入口
 
-Version: 0.22.0
+Version: 0.22.1
 
 部署方运行 Host Gateway、模型认证与远程资源调度。已发布的 Harness 在本地原生进程运行，
 通过固定工具访问研究工作区、只读输入与远程作业。研究逻辑、反思方法和实验选择由 Agent 执行。
@@ -77,7 +77,7 @@ gateway 地址和本身份的令牌由 `A3_GATEWAY_URL`、`A3_GATEWAY_TOKEN` 环
 
 POST 不接受未列出的字段。字段不合法返回 HTTP 422，不发送上游请求。fetch 与搜索尝试分开计数；两者均只由 Host 访问固定 Tavily API，旧的直接网页 HTTP 抓取路线不再用于 `/web/fetch`。部署方可显式配置 `A3_TAVILY_HTTP_PROXY`，仅允许无凭据数字回环 HTTP 代理，通过固定 `api.tavily.com:443` CONNECT 隧道保持端到端 TLS 校验；不把 key 放入 CONNECT，也不允许 Agent 指定代理、任意上游或代理头。没有配置时直连 Tavily，不改变其他链路或系统代理。网页限制只约束本接口，不代表候选容器存在通用出站防火墙；远程作业的离线限制保持不变。
 
-两个 POST 均可加布尔字段 `refresh`（默认 false）：true 明确跳过缓存并请求提供商，可能消耗 credit。默认 Host 私有、同项目跨 run 缓存成功搜索和提取正文，容量 `A3_WEB_CACHE_MAX_BYTES=500000000`，搜索 TTL `A3_WEB_SEARCH_TTL_SECONDS=86400`，正文 TTL `A3_WEB_FETCH_TTL_SECONDS=604800`；容量 0 关闭全部缓存，单项 TTL 为 0 关闭该操作的缓存；配置均为非负整数，缓存目录为项目 `artifacts/web-cache`。同键并发未命中合并为单次获取。LRU 淘汰不限制研究请求总数，过期不静默回退，失败不缓存。缓存只保存公开结果及必要时间信息，不存 key 或原始查询元数据；目录与锁有少量文件系统开销。命中也需通过既有身份与启用／凭据检查，缓存不构成绕过权限或凭据的路径。
+两个 POST 均可加布尔字段 `refresh`（默认 false）：true 明确跳过缓存并请求提供商，可能消耗 credit。默认 Host 私有、同项目跨 run 缓存成功搜索和提取正文，容量 `A3_WEB_CACHE_MAX_BYTES=500000000`，搜索 TTL `A3_WEB_SEARCH_TTL_SECONDS=86400`，正文 TTL `A3_WEB_FETCH_TTL_SECONDS=604800`；容量 0 关闭全部缓存，单项 TTL 为 0 关闭该操作的缓存；配置均为非负整数，缓存目录为项目根目录 `web-cache/`。同键并发未命中合并为单次获取。LRU 淘汰不限制研究请求总数，过期不静默回退，失败不缓存。缓存只保存公开结果及必要时间信息，不存 key 或原始查询元数据；目录与锁有少量文件系统开销。命中也需通过既有身份与启用／凭据检查，缓存不构成绕过权限或凭据的路径。
 
 ### 成功与错误
 

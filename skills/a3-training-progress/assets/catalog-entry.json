@@ -1,0 +1,16 @@
+{
+  "id": "a3-training-progress",
+  "version": "0.1.0",
+  "status": "reference",
+  "description": "Use when A3 training logs are too large to inspect directly, progress looks stalled or malformed and nonfinite records need investigation.",
+  "keywords": [
+    "training",
+    "progress",
+    "log",
+    "NaN",
+    "malformed",
+    "status"
+  ],
+  "local_source": "skills/a3-training-progress/SKILL.md",
+  "provenance": "Consolidated historical Agent-authored research lessons, reviewed against the current native Harness interfaces."
+}

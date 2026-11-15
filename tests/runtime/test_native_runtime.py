@@ -38,7 +38,7 @@ while True: time.sleep(.05)
     public = tmp_path / "reference"
     public.mkdir()
     return ProcessRuntime(
-        root=tmp_path / "artifacts/rsi/run-unit/sessions",
+        root=tmp_path / "trajectories/run-unit/sessions",
         inputs=inputs,
         public_a3=public,
         endpoint="http://127.0.0.1:49123",
@@ -140,6 +140,9 @@ def test_native_child_uses_fixed_source_scoped_env_and_keeps_logs(tmp_path, monk
         assert record["environment"]["A3_GATEWAY_TOKEN"] == "scoped-token"
         assert record["environment"]["A3_WORKSPACE"] == str(workspace)
         assert record["environment"]["A3_INPUT_ROOT"] == str(local.inputs)
+        assert record["environment"]["A3_RUN_DIR"] == str(workspace / "results")
+        assert local.console_path("main").is_relative_to(tmp_path / "runs/run-unit")
+        assert not (local.root / "main/console.log").exists()
         assert str(workspace) not in record["path"]
         assert local.status("main", "main")["status"] == "running"
         assert local.stop("main", "main")["status"] == "exited"

@@ -1,0 +1,16 @@
+{
+  "id": "a3-policy-integration",
+  "version": "0.1.0",
+  "status": "reference",
+  "description": "Use when an A3 policy adapter, checkpoint, task condition or generated episode runner changes, or a policy appears to ignore the task instruction.",
+  "keywords": [
+    "adapter",
+    "task",
+    "instruction",
+    "condition",
+    "pin",
+    "checkpoint"
+  ],
+  "local_source": "skills/a3-policy-integration/SKILL.md",
+  "provenance": "Consolidated historical Agent-authored research lessons, reviewed against the current native Harness interfaces."
+}

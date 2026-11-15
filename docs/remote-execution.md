@@ -13,19 +13,19 @@ Host控制器负责独立作业的执行和资源分配。模型服务、凭据�
 在服务器仓库根目录设置部署变量，个人路径与镜像名称保存在 Git 忽略的配置中：
 
 ```bash
-export JOB_ROOT="$PWD/artifacts/remote-runtime"
+export JOB_ROOT="$PWD/remote-runtime"
 export CONTROLLER="$PWD/src/a3_research_agent/execution/controller/__main__.py"
 export RUNTIME_IMAGE='<runtime-image>'
 ```
 
 本地 `.env` 中的 `A3_REMOTE_CONTROLLER`、`A3_REMOTE_RUN_ROOT`、`A3_REMOTE_IMAGE` 分别填写
-这三个变量在服务器上的值。`artifacts/remote-runtime/` 保存作业元数据、独立实验工作区和共享资源锁，
+这三个变量在服务器上的值。`remote-runtime/` 保存作业元数据、独立实验工作区和共享资源锁，
 不进入 Git。镜像由服务器 Docker 管理，Git 更新源码时保留现有镜像与运行数据。
 
 需要构建镜像时，指定已有 A3 checkout 和尚未存在的构建目录：
 
 ```bash
-export BUILD_CONTEXT="$PWD/artifacts/deployment/builds/runtime"
+export BUILD_CONTEXT="$PWD/runs/builds/runtime"
 python3 src/a3_research_agent/execution/images/prepare.py \
   --project "$A3_PROJECT" \
   --context "$BUILD_CONTEXT" \
@@ -101,13 +101,13 @@ python3 src/a3_research_agent/execution/images/verify.py \
   --image "$RUNTIME_IMAGE" --output "$VERIFICATION_REPORT"
 ```
 
-集成检查提交临时实验，先检查公共参考文件及模块、示例两种评测入口，再验证工作区隔离、只读基线、归属拒绝、产物回传、CUDA、EGL 相机、资源限额，以及两个控制器竞争同一张 GPU。退出时取消本次仍在运行的作业。请在存在空闲 GPU 时运行；部署路径和验证记录保存在 ignored artifacts 中。
+集成检查提交临时实验，先检查公共参考文件及模块、示例两种评测入口，再验证工作区隔离、只读基线、归属拒绝、产物回传、CUDA、EGL 相机、资源限额，以及两个控制器竞争同一张 GPU。退出时取消本次仍在运行的作业。请在存在空闲 GPU 时运行；部署路径和验证记录保存在 Git 忽略的 `runs/` 中。
 
 ## 项目内的资产与运行存储
 
 模型和数据放在部署方指定的项目数据目录中，通过 --models-root、--datasets-root 分别只读挂载到 /models、/datasets，不复制到镜像或每个作业。所有挂载路径由 Host 配置提供。公共数据由部署方提供；Agent 自己生成的数据写入自己的输出目录。
 
-带 run_id 的新作业保存在 `artifacts/remote-runtime/runs/<run-id>/<owner>/jobs/<job-id>/`，同身份输出保存在相邻 outputs/。普通 job 之间可以复用同身份输出；不同身份无共享写目录。原有作业按其元数据保留原位置。
+带 run_id 的新作业保存在 `remote-runtime/runs/<run-id>/<owner>/jobs/<job-id>/`，同身份输出保存在相邻 outputs/。普通 job 之间可以复用同身份输出；不同身份无共享写目录。原有作业按其元数据保留原位置。
 
 --run-storage-bytes 设置本地 run 文件与每轮新增远程数据、输出的合计额度，0 表示关闭限制。公共只读资产与通过符号链接引用的原始起点不计入；所有身份和作业的可写文件按逻辑字节数合计，符号链接不跟随。提交前检查已有内容与上传文件；Host 每五秒通过仅供部署方使用的 usage 操作报告本地占用，远程使用最近报告与远程文件之和。运行中由独立 watcher 每秒扫描，到额后正常停止自己的作业并保留证据。并发写入和停止期间允许短暂超额，因此不宣称文件系统级硬配额。额度不足返回 storage_limit，运行中超额以 failed 和明确原因保存。
 

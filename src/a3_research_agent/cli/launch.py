@@ -87,9 +87,16 @@ def launch_main() -> None:
             args.initial_feedback = args.custom_input_proposal["contents"].get(
                 "initial-feedback.md"
             )
-        from a3_research_agent.host.published_harness import COMMAND, native_source, run_commit
+        from a3_research_agent.host.published_harness import (
+            COMMAND,
+            native_source,
+            project_for_run,
+            run_commit,
+        )
         from a3_research_agent.host.runs.continuation import HarnessStart
 
+        if args.resume_from and project_for_run(args.resume_from.resolve()) != root:
+            raise ValueError("Resume must select a trajectory in the configured project")
         start = resolve_harness_start(args.run_harness) if args.run_harness else None
         if args.harness_commit:
             start = HarnessStart(
@@ -123,7 +130,7 @@ def launch_main() -> None:
         from a3_research_agent.cli.night_release import night_state_directory, read_json
 
         schedule = read_json(
-            night_state_directory(root / "artifacts/rsi" / scheduled_run) / "night-schedule.json",
+            night_state_directory(root / "trajectories" / scheduled_run) / "night-schedule.json",
             {},
         )
         protected = {scheduled_run, schedule.get("current")}
@@ -191,8 +198,7 @@ def launch_main() -> None:
             )
         )
         return
-    run_root = root / "artifacts"
-    run_root /= "rsi"
+    run_root = root / "trajectories"
     run = args.resume_from.resolve() if args.resume_from else create_run_directory(run_root)
     with RunLease(run):
         launch_run(args, run, a3, start)

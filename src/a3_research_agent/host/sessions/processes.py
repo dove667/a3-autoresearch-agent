@@ -13,6 +13,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from a3_research_agent.host.published_harness import COMMAND, research_workspace
+from a3_research_agent.host.runs.directories import debug_directory
 from a3_research_agent.workspace.paths import workspace_path
 
 from .workspace import (
@@ -77,11 +78,15 @@ class ProcessRuntime:
         if self.root.name != "sessions":
             raise ValueError("Session metadata must use the current run/sessions layout")
         self.public_a3, self.endpoint = Path(public_a3), endpoint
+        self.logs = debug_directory(self.root.parent)
         self.python = str(Path(python or sys.executable).absolute())
         self.records = {}
         self.lock = threading.RLock()
         self.root.mkdir(parents=True, exist_ok=True)
         self._processes = {}
+
+    def console_path(self, owner):
+        return self.logs / owner / "console.log"
 
     def owned(self, owner, session_id):
         record = self.records.get(session_id)
@@ -169,7 +174,7 @@ class ProcessRuntime:
         if state["status"] not in {"exited", "dead"}:
             raise RuntimeError("Cannot archive a local process that may still be executing")
         session_workspace(self.root, record["owner"]).resolve(strict=True)
-        console = self.root / record["owner"] / "console.log"
+        console = self.console_path(record["owner"])
         if not console.exists():
             write_durable(console, "")
         with console.open("rb") as stream:
@@ -220,7 +225,7 @@ class ProcessRuntime:
             "A3_REFERENCE_ROOT": str(self.public_a3.resolve()),
             "A3_HARNESS_ROOT": str(self.published_source.resolve()),
             "A3_PROJECT_ROOT": str(self.public_a3.resolve()),
-            "A3_RUN_DIR": str(workspace / "artifacts"),
+            "A3_RUN_DIR": str(workspace / "results"),
             "A3_GOAL_FILE": str(inputs / "goal.md"),
             "A3_ACCEPTANCE_FILE": str(inputs / "acceptance.md"),
             "A3_DEPLOYMENT_FILE": str(inputs / "deployment.json"),
@@ -303,7 +308,9 @@ class ProcessRuntime:
             self.save_record(record)
             handle = None
             try:
-                with (directory / "console.log").open("ab") as output:
+                console = self.console_path(owner)
+                console.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+                with console.open("ab") as output:
                     handle = subprocess.Popen(
                         [self.python, *COMMAND[1:]],
                         cwd=workspace,
@@ -340,7 +347,7 @@ class ProcessRuntime:
             if record.get("closed"):
                 return {"session_id": session_id, "status": "closed"}
             state = self.collect_exit(record)
-            console = self.root / session_id / "console.log"
+            console = self.console_path(session_id)
             output = ""
             if console.is_file():
                 with console.open("rb") as stream:

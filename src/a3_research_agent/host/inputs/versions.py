@@ -15,18 +15,30 @@ SHARED_INPUT_SOURCES = {
     "workspace-instructions.md": "agent-inputs/shared/workspace.md",
 }
 TASK_INPUTS = {"goal.md", "acceptance.md", "protocol.md"}
-DEPLOYED_SKILLS = ("a3-mujoco-autoresearch",)
 
 
 def deployment_input_sources(source_root: Path) -> dict[str, str]:
     """Add declared reference packages without changing the required task contract."""
     sources = dict(SHARED_INPUT_SOURCES)
-    for identifier in DEPLOYED_SKILLS:
-        directory = source_root / "skills" / identifier
-        if not directory.exists():
-            raise ValueError(f"Missing deployed skill reference: {identifier}")
-        if directory.is_symlink() or (source_root / "skills").is_symlink():
+    root = source_root / "skills"
+    if root.is_symlink():
+        raise ValueError("Deployed skill references cannot be symlinks")
+    if not root.is_dir():
+        raise ValueError("Missing deployed skill reference directory")
+    directories = []
+    for directory in sorted(root.iterdir()):
+        if directory.name.startswith(".") or directory.name == "__pycache__":
+            continue
+        if directory.is_symlink():
             raise ValueError("Deployed skill references cannot be symlinks")
+        if directory.is_dir():
+            if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", directory.name):
+                raise ValueError("Invalid deployed skill reference name")
+            directories.append(directory)
+    if not directories:
+        raise ValueError("No deployed skill references")
+    for directory in directories:
+        identifier = directory.name
         selected = []
         for path in sorted(directory.rglob("*")):
             relative = path.relative_to(source_root)

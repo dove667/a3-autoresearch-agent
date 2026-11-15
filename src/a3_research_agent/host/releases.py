@@ -17,6 +17,7 @@ from a3_research_agent.host.published_harness import (
     project_for_run,
     replace_run_pin,
     run_commit,
+    run_identity,
 )
 from a3_research_agent.host.runs.checkpoints import require_tool_results
 from a3_research_agent.host.runs.state import RunLease, RunStateStore
@@ -108,7 +109,7 @@ def apply_release(
     with RunLease(run):
         store = RunStateStore(run)
         state = store.load()
-        if state.get("run_id") != run.name or state.get("status") != "suspended":
+        if state.get("run_id") != run_identity(run) or state.get("status") != "suspended":
             raise ValueError("In-place release requires the original suspended run")
         if state.get("version") != 1 or state.get("backend") != "process":
             raise ValueError("Release requires a current native run")
@@ -124,7 +125,7 @@ def apply_release(
             raise ValueError("Only existing published Harness workspaces support in-place releases")
         actor = state["gateway"]["main_owner"]
         child = state["gateway"].get("session_records", {}).get(actor)
-        if actor == run.name or not child or child.get("closed"):
+        if actor == run_identity(run) or not child or child.get("closed"):
             raise ValueError("Release requires the current nonclosed research identity")
         workspace = session_workspace(run / "sessions", actor)
         checkpoint_boundary(workspace)
@@ -223,7 +224,7 @@ def apply_release(
             "status": "complete",
             "upgrade_id": identifier,
             "release_digest": digest,
-            "run_id": run.name,
+            "run_id": run_identity(run),
             "main_owner": actor,
             "previous_commit": pending["previous_commit"],
             "commit": commit,

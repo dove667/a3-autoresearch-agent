@@ -43,7 +43,7 @@ A3_CONTEXT_TARGET_TOKENS='32768'
 
 本地不需要 Docker。Host 在项目 Python 环境中创建一个原生研究进程，固定发布源码与可写研究目录分开保存。研究进程的工作区、输入和 A3 参考源码路径由 Host 配置，并在每轮 `runtime_paths` 中提供。
 
-A3 仓库、SSH 目标和远程路径由 `.env` 指定。运行产物保存到 `artifacts/`，研究文件保存到 `workspace/`；两者和 `.env` 都保持 Git 忽略。
+A3 仓库、SSH 目标和远程路径由 `.env` 指定。模型执行记录保存到 `trajectories/`，研究文件保存到 `workspace/`，调试日志和维护验证保存到 `runs/`。Host 状态与可重建源码缓存位于 `.runtime/`，网页内容缓存位于 `web-cache/`。这些目录和 `.env` 都保持 Git 忽略。
 
 启动时 Host 加载项目根 `.env`；`A3_RSI_ENV_FILE` 可选择另一份完整配置，文件值覆盖同名进程环境变量。现有部署只修改所需项，保留凭据与私人路径。
 

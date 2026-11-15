@@ -65,7 +65,8 @@ def test_supervisor_records_changes_instead_of_identical_heartbeats(tmp_path):
     sessions[0]["status"] = "exited"
     supervisor.record("supervising", {}, sessions)
     events = [
-        json.loads(line) for line in (tmp_path / "supervisor-events.jsonl").read_text().splitlines()
+        json.loads(line)
+        for line in (tmp_path / "logs/supervisor-events.jsonl").read_text().splitlines()
     ]
     assert [event["sessions"][0]["status"] for event in events] == ["running", "exited"]
 

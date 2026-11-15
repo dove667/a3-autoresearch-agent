@@ -8,8 +8,13 @@ __pycache__/
 .env.*
 !.env.example
 /AGENTS.md
-/artifacts/*
-!/artifacts/README.md
+/runs/
+/.runtime/
+/web-cache/
+/remote-runtime/
+/models/
+/datasets/
+/model-cache/
 /report/
 /reports/
 build/
@@ -29,3 +34,5 @@ operational-state.json
 /.superpowers/
 
 /workspace/
+
+/trajectories/

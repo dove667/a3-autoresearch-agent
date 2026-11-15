@@ -1,0 +1,17 @@
+{
+  "id": "a3-job-recovery",
+  "version": "0.1.0",
+  "status": "reference",
+  "description": "Use when submitting A3 research scripts, reconciling an unknown submission, diagnosing queued jobs or inspecting execution health without opening held-out scores.",
+  "keywords": [
+    "job",
+    "submission",
+    "unknown",
+    "queued",
+    "source",
+    "ledger",
+    "timeout"
+  ],
+  "local_source": "skills/a3-job-recovery/SKILL.md",
+  "provenance": "Consolidated historical Agent-authored research lessons, reviewed against the current native Harness interfaces."
+}

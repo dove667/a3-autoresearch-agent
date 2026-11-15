@@ -17,7 +17,7 @@ cp .env.example .env
 按[环境配置](docs/setup.md)填写模型认证、项目路径和远程资源配置。恢复已保存的研究：
 
 ```bash
-bash scripts/start-rsi.sh --resume-from "artifacts/rsi/<run-id>"
+bash scripts/start-rsi.sh --resume-from "trajectories/<开始时间>"
 ```
 
 首次使用已发布的 Harness 时，指定完整 Git 提交：

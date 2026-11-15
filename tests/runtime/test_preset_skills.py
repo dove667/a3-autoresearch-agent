@@ -6,7 +6,7 @@ import shutil
 from pathlib import Path
 
 import pytest
-from task_input_support import task_inputs
+from task_input_support import deployment_source, task_inputs
 
 from a3_research_agent.cli.night_release import (
     night_state_directory,
@@ -61,13 +61,13 @@ def test_published_release_carries_the_same_research_skill_tree(tmp_path, monkey
     monkeypatch.setattr("a3_research_agent.cli.night_release.native_source", lambda *args: ROOT)
     handoff = tmp_path / "handoff.md"
     handoff.write_text("## 已核对结论\n\n已有实验已保存。\n\n## 待办\n\n继续研究。\n")
-    anchor = tmp_path / "project/artifacts/rsi/run-original"
+    anchor = tmp_path / "project/trajectories/run-original"
     current = InputVersions(ROOT, anchor, custom_dir=task_inputs(tmp_path / "task"))
     current.activate(current.prepare(), "start")
     proposal = prepare_release(ROOT, handoff, commit="a" * 40, run=anchor)
     assert f"{SKILL}/SKILL.md" in proposal["inputs"]
     assert f"{SKILL}/scripts/compare_evaluations.py" in proposal["inputs"]
-    anchor = tmp_path / "project/artifacts/rsi/run-original"
+    anchor = tmp_path / "project/trajectories/run-original"
     publish_release(anchor, proposal, proposal["digest"])
     inputs = night_state_directory(anchor) / "night-releases" / proposal["digest"] / "inputs"
     contents = {
@@ -88,7 +88,40 @@ def test_published_release_carries_the_same_research_skill_tree(tmp_path, monkey
     workspace.mkdir()
     monkeypatch.chdir(workspace)
     input_skills.install_input_skills(selected.run / "inputs")
-    assert skill_registry.dispatch({"action": "list"})["total"] == 1
+    assert skill_registry.dispatch({"action": "list"})["total"] == len(
+        list((ROOT / "skills").glob("*/assets/catalog-entry.json"))
+    )
+
+
+def test_new_reviewed_package_is_discovered_without_a_runtime_allowlist(tmp_path):
+    root = deployment_source(tmp_path / "repo")
+    package = root / "skills/learned-method"
+    (package / "assets").mkdir(parents=True)
+    (package / "SKILL.md").write_text("# Reusable learned method\n")
+    (package / "assets/catalog-entry.json").write_text(
+        json.dumps(
+            {
+                "id": "learned-method",
+                "version": "0.1.0",
+                "status": "reference",
+                "local_source": "skills/learned-method/SKILL.md",
+                "description": "Learned method",
+            }
+        )
+    )
+    versions = InputVersions(root, tmp_path / "run", custom_dir=task_inputs(tmp_path / "task"))
+    proposal = versions.prepare()
+    assert proposal["contents"]["skills/learned-method/SKILL.md"] == "# Reusable learned method\n"
+    assert proposal["files"]["skills/learned-method/SKILL.md"]["version"] == "0.1.0"
+
+
+def test_incomplete_new_package_is_rejected_instead_of_silently_omitted(tmp_path):
+    root = deployment_source(tmp_path / "repo")
+    package = root / "skills/incomplete-method"
+    package.mkdir()
+    (package / "SKILL.md").write_text("# Unregistered method\n")
+    with pytest.raises(ValueError, match="incomplete"):
+        InputVersions(root, None, custom_dir=task_inputs(tmp_path / "task"))
 
 
 @pytest.mark.parametrize("change", ["edit", "add", "remove"])

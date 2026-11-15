@@ -46,7 +46,7 @@ def prepare_release(
 
 def night_state_directory(anchor: Path) -> Path:
     """Keep scheduler state separate from the persistent research workspace."""
-    return anchor.parent.parent / "night-window" / anchor.name
+    return project_for_run(anchor) / ".runtime/night-window" / anchor.name
 
 
 def publish_release(anchor: Path, proposal: dict, confirm: str) -> None:
@@ -164,11 +164,11 @@ def main() -> None:
         root = project_for_run(anchor)
     except ValueError as error:
         parser.error(str(error))
-    if anchor.parent != root / "artifacts/rsi" or not (
+    if anchor.parent != root / "trajectories" or not (
         (anchor / "startup.json").is_file()
         or (night_state_directory(anchor) / "night-schedule.json").is_file()
     ):
-        parser.error("Select an existing night-window anchor under artifacts/rsi")
+        parser.error("Select an existing night-window anchor under trajectories")
     try:
         state = read_json(
             night_state_directory(anchor) / "night-schedule.json", {"current": anchor.name}

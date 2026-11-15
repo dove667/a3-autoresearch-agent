@@ -9,7 +9,8 @@ import time
 from copy import deepcopy
 from pathlib import Path
 
-from a3_research_agent.host.published_harness import COMMAND, run_commit
+from a3_research_agent.host.published_harness import COMMAND, run_commit, run_identity
+from a3_research_agent.host.runs.directories import debug_directory
 from a3_research_agent.host.runs.state import RunStateStore
 from a3_research_agent.host.sessions.workspace import (
     exit_archived,
@@ -31,7 +32,7 @@ def load_resume_state(run: Path, store: RunStateStore, model: str) -> dict:
         or state.get("backend") != "process"
     ):
         raise ValueError("Unsupported native Host checkpoint schema")
-    if state.get("run_id") != run.name or state.get("model") != model:
+    if state.get("run_id") != run_identity(run) or state.get("model") != model:
         raise ValueError("Resume must retain the saved run and model")
     if state.get("status") == "completed":
         raise ValueError("This run has ended; select its retained Harness for a new run")
@@ -42,7 +43,7 @@ def load_resume_state(run: Path, store: RunStateStore, model: str) -> dict:
     source = startup.get("harness_commit") if isinstance(startup, dict) else None
     if (
         not isinstance(startup, dict)
-        or startup.get("run_id") != run.name
+        or startup.get("run_id") != run_identity(run)
         or not isinstance(source, str)
         or not re.fullmatch(r"[a-f0-9]{40}", source)
     ):
@@ -134,7 +135,7 @@ def preflight_blocked_resume(
         "outcome.json": workspace_path(run, "outcome.json").read_text(),
         "supervision.json": workspace_path(run, "supervision.json").read_text(),
     }
-    console = workspace_path(run, f"sessions/{actor}/console.log")
+    console = workspace_path(debug_directory(run), f"{actor}/console.log")
     if console.is_file():
         snapshots["console.log"] = console.read_text()
     return {
@@ -178,7 +179,7 @@ def _feedback_retry(run, workspace, actor, feedback, host_outcome, supervision):
     if (
         metadata.get("status") != "complete"
         or metadata.get("main_owner") != actor
-        or metadata.get("run_id") != run.name
+        or metadata.get("run_id") != run_identity(run)
         or metadata.get("event") != "explicit_blocked_resume"
     ):
         raise ValueError(error)
@@ -269,7 +270,7 @@ def begin_blocked_resume(
     metadata = {
         "status": "pending",
         "event": "explicit_blocked_resume",
-        "run_id": run.name,
+        "run_id": run_identity(run),
         "main_owner": actor,
         "input_manifest": input_manifest,
         "feedback": feedback_registration,
@@ -290,7 +291,9 @@ def begin_blocked_resume(
         attempt / "gateway-child.json",
         json.dumps(state["gateway"]["session_records"][actor], indent=2),
     )
-    with (run / "session-events.jsonl").open("a") as stream:
+    logs = debug_directory(run)
+    logs.mkdir(mode=0o700, parents=True, exist_ok=True)
+    with (logs / "session-events.jsonl").open("a") as stream:
         stream.write(
             json.dumps({**metadata, "attempt": str(attempt.relative_to(run)), "time": time.time()})
             + "\n"

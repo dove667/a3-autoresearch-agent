@@ -4,11 +4,18 @@ import os
 from datetime import datetime
 from pathlib import Path
 
+from a3_research_agent.host.published_harness import project_for_run
+
+
+def debug_directory(run: Path) -> Path:
+    """Keep Host diagnostics separate from model execution evidence."""
+    return project_for_run(run) / "runs" / run.name
+
 
 def create_run_directory(root: Path) -> Path:
     """Reserve a directory named with the Host's local start time."""
     root.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now().strftime("run-%Y%m%d-%H%M%S-%f")
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S-%f")
     sequence = 1
     while True:
         name = timestamp if sequence == 1 else f"{timestamp}-{sequence}"

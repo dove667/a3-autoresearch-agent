@@ -69,7 +69,7 @@ def published_run(tmp_path, monkeypatch, request):
     git("update-ref", "refs/remotes/origin/main", commit)
     shutil.copytree(ROOT / "agent-inputs", root / "agent-inputs")
     shutil.copytree(ROOT / "skills", root / "skills", ignore=shutil.ignore_patterns("__pycache__"))
-    run = root / "artifacts/rsi/run-existing"
+    run = root / "trajectories/run-existing"
     run.mkdir(parents=True)
     actor = "candidate-main"
     workspace = research_workspace(run, actor)
@@ -448,7 +448,7 @@ def test_real_fresh_published_host_saves_provenance_before_native_start(
         ],
         check=True,
     )
-    run = root / "artifacts/rsi/run-fresh"
+    run = root / "trajectories/run-fresh"
     run.mkdir()
     for name, value in env.items():
         monkeypatch.setenv(name, value)
@@ -579,4 +579,36 @@ def test_night_release_cli_derives_project_from_anchor_when_installed(
     )
     night_release.main()
     assert "Release digest:" in capsys.readouterr().out
-    assert (root / "artifacts/published-harness").is_dir()
+    assert (root / ".runtime/published-harness").is_dir()
+
+
+def test_release_after_trajectory_rename_keeps_workspace_mapping(published_run):
+    from a3_research_agent.host.published_harness import MARKER, run_identity
+
+    root, run, workspace, _, commit, *_ = published_run
+    protected = {
+        name: (workspace / name).read_bytes()
+        for name in (
+            "checkpoint.json",
+            "memory.jsonl",
+            "research/train.py",
+            "trajectory.jsonl",
+        )
+    }
+    original_identity = run_identity(run)
+    relocated = run.with_name("2026-11-10_21-27-31-654793")
+    run.rename(relocated)
+    handoff = root / "relocation-handoff.md"
+    handoff.write_text("## 已核对结论\n\n保留既有研究状态。\n\n## 待办\n\n继续研究。\n")
+    proposal = prepare_release(root, handoff, commit=commit, run=relocated)
+    publish_release(relocated, proposal, proposal["digest"])
+    directory = night_state_directory(relocated) / "night-releases" / proposal["digest"]
+    from a3_research_agent.host.releases import apply_release
+
+    apply_release(relocated, directory, proposal["digest"], environment={"MODEL_NAME": "new/model"})
+    marker = json.loads((relocated / MARKER).read_text())
+    assert marker["run_id"] == original_identity
+    assert marker["workspace_root"] == f"workspace/{original_identity}"
+    assert research_workspace(relocated, "candidate-main") == workspace
+    for name, content in protected.items():
+        assert (workspace / name).read_bytes() == content

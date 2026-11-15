@@ -63,7 +63,7 @@ def test_fresh_published_commit_launches_explicit_task_without_docker(published_
     runtime_for(root, calls, monkeypatch)
     launch.launch_main()
     _args, run, _, start = calls[-1]
-    assert run.name.startswith("run-")
+    assert run.parent == root / "trajectories"
     assert start.harness_commit == commit and start.command == COMMAND
     assert start.files == {"checkpoint.json": "[]"}
 
@@ -162,3 +162,16 @@ def test_fresh_published_source_accepts_complete_custom_inputs(
     assert args.custom_input_proposal["contents"]["goal.md"].startswith("Version: 1.0.0")
     assert start.harness_commit == commit and json.loads(start.files["checkpoint.json"]) == []
     assert original == {path.name: path.read_bytes() for path in inputs.iterdir()}
+
+
+def test_retired_artifact_run_directory_is_rejected_before_deployment(published_run, monkeypatch):
+    root, run, *_ = published_run
+    retired = root / "artifacts/rsi" / run.name
+    retired.parent.mkdir(parents=True)
+    run.rename(retired)
+    calls = []
+    monkeypatch.setattr(sys, "argv", ["launch", "--resume-from", str(retired)])
+    runtime_for(root, calls, monkeypatch)
+    with pytest.raises(SystemExit) as error:
+        launch.launch_main()
+    assert error.value.code == 2 and not calls

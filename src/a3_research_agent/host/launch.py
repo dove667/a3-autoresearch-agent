@@ -26,9 +26,10 @@ from a3_research_agent.host.published_harness import (
     pin_run,
     project_for_run,
     run_commit,
+    run_identity,
 )
 from a3_research_agent.host.runs.continuation import import_retained_exports, publish_run_result
-from a3_research_agent.host.runs.directories import local_storage_bytes
+from a3_research_agent.host.runs.directories import debug_directory, local_storage_bytes
 from a3_research_agent.host.runs.resume import (
     begin_blocked_resume,
     finish_blocked_resume,
@@ -68,7 +69,7 @@ def launch_run(args, run: Path, a3: Path, start) -> None:
     )
     resuming = args.resume_from is not None
     package = (start.command, start.files) if start else None
-    run_id = run.name
+    run_id = run_identity(run)
     inputs, public_a3 = run / "inputs", run / "public/a3"
     store = RunStateStore(run)
     saved, session_runtime, blocked_plan, registration, feedback_content = (
@@ -166,9 +167,7 @@ def launch_run(args, run: Path, a3: Path, start) -> None:
     human_feedback = HumanFeedback(run)
     if feedback_content is not None:
         registration = human_feedback.register_content(feedback_content, actor)
-    web_gateway = WebGateway(
-        run / ".host/web", WebConfig.from_env(), cache_root=root / "artifacts/web-cache"
-    )
+    web_gateway = WebGateway(run / ".host/web", WebConfig.from_env(), cache_root=root / "web-cache")
     blocked_attempt = (
         begin_blocked_resume(
             run, saved, store, session_runtime, blocked_plan, input_versions.manifest, registration
@@ -186,6 +185,7 @@ def launch_run(args, run: Path, a3: Path, start) -> None:
         context_budget=context_budget,
         remote_call=remote_for_run,
         usage_log=run / "model-usage.jsonl",
+        debug_root=debug_directory(run),
         session_runtime=session_runtime,
         fixtures=fixtures,
         initial_inputs=inputs,
@@ -282,7 +282,9 @@ def launch_run(args, run: Path, a3: Path, start) -> None:
                         "mode": "published-harness",
                         **settings,
                         "package": str(args.run_harness or getattr(args, "harness_commit", None)),
-                        "parent_run": start.previous_run.name if start.previous_run else None,
+                        "parent_run": run_identity(start.previous_run)
+                        if start.previous_run
+                        else None,
                         "source_version": start.source_version,
                         "harness_commit": commit,
                         "task_context": task_context,
@@ -342,6 +344,7 @@ def launch_run(args, run: Path, a3: Path, start) -> None:
         ) as client:
             outcome = RunSupervisor(
                 run=run,
+                log_directory=debug_directory(run),
                 workspace=result_workspace(),
                 required_checks=input_versions.acceptance_checks,
                 sessions=lambda: supervised_sessions(client),

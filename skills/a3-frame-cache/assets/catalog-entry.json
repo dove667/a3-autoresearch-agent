@@ -1,0 +1,16 @@
+{
+  "id": "a3-frame-cache",
+  "version": "0.1.0",
+  "status": "reference",
+  "description": "Use when repeated video decoding limits A3 training, several trainers share decoded frames, cache storage grows or training stops during cache publication.",
+  "keywords": [
+    "cache",
+    "video",
+    "frame",
+    "decode",
+    "eviction",
+    "training"
+  ],
+  "local_source": "skills/a3-frame-cache/SKILL.md",
+  "provenance": "Consolidated historical Agent-authored research lessons, reviewed against the current native Harness interfaces."
+}

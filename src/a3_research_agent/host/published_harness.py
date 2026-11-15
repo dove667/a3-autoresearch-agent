@@ -16,16 +16,36 @@ MARKER = ".host/research-workspace.json"
 
 
 def project_for_run(run: Path) -> Path:
-    if run.parent.name != "rsi" or run.parent.parent.name != "artifacts":
-        raise ValueError("Published Harness runs must live under artifacts/rsi")
-    return run.parents[2]
+    if run.parent.name != "trajectories":
+        raise ValueError("Published Harness runs must live under trajectories")
+    return run.parents[1]
+
+
+def run_metadata(run: Path) -> dict:
+    marker = workspace_path(run, MARKER)
+    metadata = json.loads(marker.read_text()) if marker.is_file() else {}
+    if not isinstance(metadata, dict) or (
+        "run_id" in metadata and not isinstance(metadata["run_id"], str)
+    ):
+        raise ValueError("Invalid research workspace metadata")
+    return metadata
+
+
+def run_identity(run: Path) -> str:
+    """Keep resource ownership stable when an operator relocates a trajectory."""
+    identity = run_metadata(run).get("run_id", run.name)
+    if not isinstance(identity, str) or not re.fullmatch(r"[a-zA-Z0-9_-]{1,100}", identity):
+        raise ValueError("Invalid research run identity")
+    return identity
 
 
 def run_commit(run: Path) -> str | None:
     marker = workspace_path(run, MARKER)
     if not marker.is_file():
         return None
-    commit = json.loads(marker.read_text())["commit"]
+    commit = run_metadata(run).get("commit")
+    if commit is None:
+        return None
     if not isinstance(commit, str) or not re.fullmatch(r"[a-f0-9]{40}", commit):
         raise ValueError("Invalid pinned Harness commit")
     return commit
@@ -35,7 +55,10 @@ def pin_run(run: Path, commit: str) -> None:
     existing = run_commit(run)
     if existing is not None and existing != commit:
         raise ValueError("Cannot change a run's pinned Harness")
-    write_atomic(workspace_path(run, MARKER), json.dumps({"commit": commit}).encode())
+    metadata = run_metadata(run)
+    metadata.update(commit=commit, run_id=run_identity(run))
+    metadata.setdefault("workspace_root", f"workspace/{run_identity(run)}")
+    write_atomic(workspace_path(run, MARKER), json.dumps(metadata).encode())
 
 
 def replace_run_pin(run: Path, previous: str, commit: str) -> None:
@@ -44,13 +67,23 @@ def replace_run_pin(run: Path, previous: str, commit: str) -> None:
         raise ValueError("Published Harness pin changed during release")
     if not re.fullmatch(r"[a-f0-9]{40}", commit):
         raise ValueError("Invalid published Harness release commit")
-    write_atomic(workspace_path(run, MARKER), json.dumps({"commit": commit}).encode())
+    write_atomic(
+        workspace_path(run, MARKER), json.dumps({**run_metadata(run), "commit": commit}).encode()
+    )
 
 
 def research_workspace(run: Path, session: str) -> Path:
     if not re.fullmatch(r"[a-zA-Z0-9_-]{1,100}", session):
         raise ValueError("Invalid research workspace identity")
-    return workspace_path(project_for_run(run), f"workspace/{run.name}/{session}")
+    root = project_for_run(run)
+    base = run_metadata(run).get("workspace_root", f"workspace/{run_identity(run)}")
+    if (
+        not isinstance(base, str)
+        or len(Path(base).parts) != 2
+        or Path(base).parts[0] != "workspace"
+    ):
+        raise ValueError("Invalid persistent research workspace root")
+    return workspace_path(root, f"{base}/{session}")
 
 
 def pinned_resume(workspace: Path) -> tuple[list[str], dict[str, str]]:
@@ -92,7 +125,7 @@ def published_source(root: Path, commit: str) -> Path:
         timeout=30,
     )
     # Earlier cache entries omitted the shared tokenizer module.
-    source = workspace_path(root, f"artifacts/published-harness/v2/{commit}")
+    source = workspace_path(root, f".runtime/published-harness/v2/{commit}")
     source.parent.mkdir(parents=True, exist_ok=True)
     with tarfile.open(fileobj=io.BytesIO(archive)) as tree:
         files = {}

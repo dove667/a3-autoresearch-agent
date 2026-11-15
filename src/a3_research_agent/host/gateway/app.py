@@ -41,6 +41,7 @@ class Gateway(
         forward_model: Callable,
         remote_call: Callable,
         usage_log: Path,
+        debug_root: Path | None = None,
         session_runtime=None,
         fixtures=None,
         initial_inputs: Path | None = None,
@@ -63,6 +64,8 @@ class Gateway(
         self.forward_model = forward_model
         self.remote_call = remote_call
         self.usage_log = usage_log
+        self.debug_root = debug_root if debug_root is not None else usage_log.parent / "logs"
+        self.debug_root.mkdir(mode=0o700, parents=True, exist_ok=True)
         self.session_runtime = session_runtime
         self.fixtures = fixtures
         self.initial_inputs = initial_inputs
@@ -93,7 +96,7 @@ class Gateway(
         self.app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None, lifespan=self.lifespan)
         self.telemetry = TrajectoryTelemetry()
         self.diagnostics = GatewayDiagnostics(
-            self.usage_log.with_name("gateway-events.jsonl"), self.telemetry.record
+            self.debug_root / "gateway-events.jsonl", self.telemetry.record
         )
         self.diagnostics.attach(self.app)
         self.log_lock = threading.Lock()
@@ -207,6 +210,7 @@ def create_app(
     forward_model: Callable,
     remote_call: Callable,
     usage_log: Path,
+    debug_root: Path | None = None,
     session_runtime=None,
     fixtures=None,
     initial_inputs: Path | None = None,
@@ -230,6 +234,7 @@ def create_app(
         forward_model=forward_model,
         remote_call=remote_call,
         usage_log=usage_log,
+        debug_root=debug_root,
         session_runtime=session_runtime,
         fixtures=fixtures,
         initial_inputs=initial_inputs,

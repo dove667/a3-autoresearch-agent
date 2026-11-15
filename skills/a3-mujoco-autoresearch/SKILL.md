@@ -2,7 +2,7 @@
 name: a3-mujoco-autoresearch
 description: Develop and improve learned policies for the A3 dual-arm MuJoCo cookie-packing project. Use for method selection, ACT/Diffusion/Flow/VLA/world-model experiments, data and training diagnostics, paired closed-loop evaluation, and reusable research experience. Applies to research planning or authorized execution, not permission to start training or change the benchmark.
 metadata:
-  version: 0.1.15
+  version: 0.1.16
 ---
 
 # A3 MuJoCo autoresearch
@@ -25,6 +25,8 @@ For ACT without native language inputs, implement a trainable task-ID/embedding 
 
 Verify the actual training forward and deployed runner-to-adapter-to-model path. Check condition gradients where trainable, compare a fixed observation under different task conditions, and evaluate task-appropriate behavior after training. Changed outputs alone do not prove learned task following. Save the task map or prompt format, tokenizer revision, truncation policy and preprocessing with the model. See [training diagnostics](references/training-diagnostics.md#task-conditioning-from-data-to-actions), [ACT](references/act-chunking.md) and [VLA](references/vla.md). Historical unconditioned checkpoints keep their original meaning and results.
 
+For a concrete adapter or instruction-delivery repair, read `a3-policy-integration` with the skills tool. It covers the deployed call chain and hash-pinned generated runners.
+
 ## Execute research in one Agent
 
 The current Agent implements, trains, evaluates and fixes its own scripts. Do not create ordinary `/sessions` workers or delegate research to an orchestrator. Use the deployed Harness. Save reproduction details for tool, context, scheduling or recovery failures for the maintainers. Preserve scientific evidence, memory, resource limits and explicit cross-run asset grants.
@@ -43,6 +45,8 @@ Scientific `success:false` remains a completed observation when the command and 
 Reuse completed reports, reconcile uncertain submissions before retrying, and keep diagnostic throughput
 runs separate from registered scientific evaluations. Compare valid episodes per wall time with matched
 workloads; raising CPU use alone does not establish an improvement.
+
+Read `a3-job-recovery` for uncertain submissions and batch health, `a3-training-progress` for large logs, and `a3-frame-cache` when repeated decoding is the measured bottleneck. Discover and read them with the skills tool.
 
 ## Select a research branch
 
@@ -82,7 +86,7 @@ Run independent Policy experiments in parallel when resources permit. Record the
 
 ## Evaluate without moving the target
 
-For the repository's phase-two protocol 0.3.0/0.3.1 (the latter changes references only), development subsets are allowed. A formal complete grid is six task/difficulty cells × 20 episodes, same policy snapshot, paired baseline/candidate scenarios. Keep 2×5 at 500 steps and 2×10 at 3200, 20 Hz, and the declared task instructions/conditions. The final-test set is not a tuning set. Re-read the active protocol if it differs.
+Read the active task protocol for its development subsets, formal grid, paired scenarios, step limits, control frequency and task instructions. Record the complete conditions with the same policy snapshot before a comparison. Keep final-test scenarios reserved for their declared use.
 
 Use [evaluation helper](references/evaluation-helper.md) for strict offline comparison of **explicitly normalized** reports. It validates keys and scientific comparability, reports cell results, computes full-grid G only for complete balanced coverage, and resamples paired scenario seeds together. It does not run simulation, authenticate provenance, certify acceptance, or decide whether to adopt a candidate.
 
@@ -90,8 +94,8 @@ Use [evaluation helper](references/evaluation-helper.md) for strict offline comp
 
 Promote a method into a locally validated recipe only after linking actual code/config/data versions and evidence. Keep evidence levels distinct: `literature`, `implementation-inspected`, `offline-helper-tested`, `local-rollout-tested`, and `paired-local-improvement`. Add applicability, counterexamples and invalidation conditions; amend or retire stale advice rather than append contradictory rules. Preserve raw evidence outside the skill and reference it. Do not turn a single seed's gain into a universal hyperparameter.
 
-When retained or handed off, include this entrypoint, referenced files and helper code, plus any required skill catalog and dependency declarations. Follow the verified [F integration contract](references/integration.md) and supplied catalog fragment; the mere presence of this directory is not proof it is loaded by an Agent.
+When retained or handed off, include this entrypoint, referenced files and helper code, plus the skill catalog and dependency declarations. Follow the current [integration contract](references/integration.md). Read `a3-model-provenance` with the skills tool to link checkpoints, aliases, conditions and results.
 
-## Research access within one run
+## Research access
 
-Registered research identities in the same run may read each other's code, memory, visible traces, logs, artifacts, job status and read-only exports already authorized to that run. Use the Host interfaces with your own token and keep provenance. Workspace writes remain owner-only; job cancellation and other management require ownership or adopted linear lineage. Other runs, external users and Host credentials remain protected.
+Use the current research identity's workspace and Host-authorized jobs and exports. Keep source provenance when reusing data or results. Request an explicit grant for cross-run assets. Report missing access through the operator rather than reaching into another identity's files or credentials.

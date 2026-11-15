@@ -50,6 +50,30 @@ def test_model_credentials_and_selection_stay_on_host(tmp_path):
     assert client.post("/v1/responses", json={"input": "probe"}).status_code == 401
 
 
+def test_debug_events_are_separate_from_model_execution_records(tmp_path):
+    trajectory = tmp_path / "trajectories/experiment"
+    trajectory.mkdir(parents=True)
+    logs = tmp_path / "runs/experiment"
+    app = create_app(
+        model_name="configured/model",
+        sessions={"token": "research"},
+        forward_model=lambda **kwargs: {"id": "response", "output": []},
+        remote_call=lambda operation, payload: payload,
+        usage_log=trajectory / "model-usage.jsonl",
+        debug_root=logs,
+    )
+    response = TestClient(app).post(
+        "/v1/responses",
+        headers={"Authorization": "Bearer token"},
+        json={"input": "Inspect the supplied evidence"},
+    )
+    assert response.status_code == 200
+    assert (trajectory / "model-usage.jsonl").is_file()
+    assert (logs / "gateway-events.jsonl").is_file()
+    assert not (trajectory / "gateway-events.jsonl").exists()
+    assert not (logs / "model-usage.jsonl").exists()
+
+
 @pytest.mark.parametrize("upstream_status", [400, 429, 502])
 def test_gateway_records_upstream_http_status_without_provider_details(tmp_path, upstream_status):
     def forward(**_):
@@ -61,7 +85,7 @@ def test_gateway_records_upstream_http_status_without_provider_details(tmp_path,
         "/v1/responses", headers={"Authorization": "Bearer token-a"}, json={"input": "probe"}
     )
     assert response.status_code == upstream_status
-    records = (tmp_path / "gateway-events.jsonl").read_text()
+    records = (tmp_path / "logs/gateway-events.jsonl").read_text()
     assert json.loads(records.splitlines()[-1])["upstream_status"] == upstream_status
     assert "private provider detail" not in records + response.text
 

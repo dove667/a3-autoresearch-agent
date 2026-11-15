@@ -1,0 +1,16 @@
+{
+  "id": "a3-model-provenance",
+  "version": "0.1.0",
+  "status": "reference",
+  "description": "Use when registering a trained policy, reporting model comparisons or reconciling model names, intermediate checkpoints and historical experiment aliases.",
+  "keywords": [
+    "model",
+    "checkpoint",
+    "lineage",
+    "identity",
+    "alias",
+    "reproducibility"
+  ],
+  "local_source": "skills/a3-model-provenance/SKILL.md",
+  "provenance": "Consolidated historical Agent-authored research lessons, reviewed against the current native Harness interfaces."
+}

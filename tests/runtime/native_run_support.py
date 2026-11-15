@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from a3_research_agent.host.published_harness import COMMAND, pin_run, research_workspace
+from a3_research_agent.host.runs.directories import debug_directory
 from a3_research_agent.host.runs.state import RunStateStore
 from a3_research_agent.host.sessions.processes import ProcessRuntime
 
@@ -12,7 +13,7 @@ COMMIT = "a" * 40
 
 def native_run(tmp_path: Path, *, name="run-current", actor="main", stopped=False):
     root = tmp_path / "project"
-    run = root / "artifacts/rsi" / name
+    run = root / "trajectories" / name
     run.mkdir(parents=True)
     pin_run(run, COMMIT)
     workspace = research_workspace(run, actor)
@@ -65,7 +66,9 @@ def native_run(tmp_path: Path, *, name="run-current", actor="main", stopped=Fals
         "published_source": str(source),
     }
     (session / "session.json").write_text(json.dumps(record))
-    (session / "console.log").write_text("saved native process console\n")
+    console = debug_directory(run) / actor / "console.log"
+    console.parent.mkdir(parents=True)
+    console.write_text("saved native process console\n")
     (run / "startup.json").write_text(
         json.dumps({"version": 1, "run_id": run.name, "harness_commit": COMMIT})
     )

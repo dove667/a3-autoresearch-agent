@@ -26,7 +26,7 @@ def test_diagnostic_log_correlates_errors_without_saving_payload_or_exception(tm
         headers={"Authorization": "Bearer PRIVATE_AUTH_TOKEN"},
     )
     assert response.status_code == 502
-    text = (tmp_path / "gateway-events.jsonl").read_text()
+    text = (tmp_path / "logs/gateway-events.jsonl").read_text()
     events = [json.loads(line) for line in text.splitlines()]
     assert [event["event"] for event in events] == ["started", "finished"]
     assert events[-1]["request_id"] == response.headers["X-Request-ID"]

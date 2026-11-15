@@ -96,7 +96,7 @@ class GatewayState:
             "parent": record["parent"],
             "time": time.time(),
         }
-        with self.log_lock, self.usage_log.with_name("session-events.jsonl").open("a") as stream:
+        with self.log_lock, (self.debug_root / "session-events.jsonl").open("a") as stream:
             stream.write(json.dumps(entry) + "\n")
         self.save_checkpoint()
 

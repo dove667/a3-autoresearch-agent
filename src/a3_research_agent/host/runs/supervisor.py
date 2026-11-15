@@ -76,6 +76,7 @@ class RunSupervisor:
         result_workspace: Callable[[], Path] | None = None,
         input_manifest: Callable[[], dict] | None = None,
         on_finishing: Callable[[], None] | None = None,
+        log_directory: Path | None = None,
     ):
         self.run_directory = run
         self.workspace = workspace
@@ -87,6 +88,7 @@ class RunSupervisor:
         self.input_manifest = input_manifest
         self.on_finishing = on_finishing
         self.last_event = None
+        self.log_directory = log_directory if log_directory is not None else run / "logs"
 
     def record(self, phase: str, outcome: dict, sessions: list[dict]) -> None:
         state = {
@@ -105,7 +107,8 @@ class RunSupervisor:
             {key: value for key, value in state.items() if key != "updated_at"}, sort_keys=True
         )
         if event != self.last_event:
-            with (self.run_directory / "supervisor-events.jsonl").open("a") as stream:
+            self.log_directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+            with (self.log_directory / "supervisor-events.jsonl").open("a") as stream:
                 stream.write(json.dumps(state, ensure_ascii=False) + "\n")
             self.last_event = event
 

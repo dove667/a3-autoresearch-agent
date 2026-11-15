@@ -12,7 +12,7 @@ from a3_research_agent.host.sessions.workspace import (
 
 
 def test_current_session_link_resolves_only_to_its_research_directory(tmp_path):
-    root = tmp_path / "artifacts/rsi/run-unit/sessions"
+    root = tmp_path / "trajectories/run-unit/sessions"
     directory = root / "main"
     directory.mkdir(parents=True)
     target = tmp_path / "workspace/run-unit/main"

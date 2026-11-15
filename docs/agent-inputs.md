@@ -39,7 +39,9 @@ Harness 源码由明确的 Git commit 固定。普通恢复要求完整模型设
 
 ## 方法技能与研究记忆
 
-当前公共输入和夜间发布包携带 `skills/a3-mujoco-autoresearch/` 的正文、参考资料、JSON 模板及 Python helper。整包使用 `assets/catalog-entry.json` 的语义版本，每个文件单独记录 SHA256；增删或修改附件也需递增包版本。
+Host 从根目录 `skills/` 发现经过审核的完整方法包，要求每包包含 `SKILL.md` 和 `assets/catalog-entry.json`。当前包覆盖 MuJoCo 研究流程、Policy 集成、作业恢复、帧缓存、训练进度和模型来源核对。公共输入与夜间发布包携带各包正文、参考资料、模板和 helper。
+
+整包使用 `assets/catalog-entry.json` 的语义版本，每个文件单独记录 SHA256；增删或修改附件也需递增包版本。
 
 Harness 启动时安装方法包，通过 `skills(action="list")` 检索，按需读取正文和附件。多关键词分别匹配并排序。恢复保留 Agent 已修改的技能副本，新部署参考包以独立版本加入。任务输入还可以交付额外的明确选中方法包。
 

@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[2]
 @pytest.fixture
 def release(tmp_path, monkeypatch):
     monkeypatch.setattr("a3_research_agent.cli.night_release.native_source", lambda *args: ROOT)
-    anchor = tmp_path / "project/artifacts/rsi/run-original"
+    anchor = tmp_path / "project/trajectories/run-original"
     (anchor / ".host").mkdir(parents=True)
     (anchor / ".host/state.json").write_text('{"status":"suspended"}')
     handoff = tmp_path / "handoff.md"
@@ -26,6 +26,10 @@ def release(tmp_path, monkeypatch):
 
 def test_release_freezes_current_phase_and_profile_and_requires_exact_digest(release):
     anchor, handoff = release
+    assert (
+        night_state_directory(anchor)
+        == anchor.parent.parent / ".runtime/night-window" / anchor.name
+    )
     from task_input_support import task_inputs
 
     from a3_research_agent.host.inputs.versions import InputVersions
@@ -87,6 +91,7 @@ def test_published_git_source_excludes_live_checkout_and_unpublished_commits(tmp
     unpublished = git("rev-parse", "HEAD")
     (tmp_path / ".env").write_text("PRIVATE=private")
     source = published_source(tmp_path, commit)
+    assert source == tmp_path / ".runtime/published-harness/v2" / commit
     pinned_agent = source / "a3_research_agent/harness/agent.py"
     assert pinned_agent.read_text() == "print('published')\n"
     assert (source / "a3_research_agent/token_count.py").read_text() == "MARKER = 'published'\n"

@@ -19,21 +19,21 @@ Version: 0.2.8
 用最初绑定定时启动器的 run 作为锚点。先预览，再用返回的摘要确认发布：
 
 ```bash
-uv run python -m a3_research_agent.cli.night_release "artifacts/rsi/<锚点run>" \
+uv run python -m a3_research_agent.cli.night_release "trajectories/<开始时间>" \
   --commit <已发布提交SHA> --handoff <交接.md>
 
-uv run python -m a3_research_agent.cli.night_release "artifacts/rsi/<锚点run>" \
+uv run python -m a3_research_agent.cli.night_release "trajectories/<开始时间>" \
   --commit <已发布提交SHA> --handoff <交接.md> --confirm <发布摘要>
 ```
 
 确认固定启动命令、Git 提交、当前任务输入与通用指引和交接正文。21:00 有待发布版本时，定时器在暂停的原 run 上应用发布，再恢复同一主身份和研究工作区。Harness 从固定 Git 提交只读加载；对话、checkpoint、记忆、skills、计划和作业台账继续使用原文件。升级前归档旧源码指针、输入版本和 checkpoint 边界，交接正文通过独立 feedback ID 与 SHA 登记。未发布新版时直接恢复当前 run。
 
-轨迹、作业归属和产物留在原处，远程在途作业继续执行。Agent 继续使用原身份管理这些作业，在新作业里用只读快照复用历史资产。遇到仍不可读的依赖时，Agent 停止受阻研究线并向操作者报告。若 Mac 重启，用原锚点重新启动定时器；它按锚点选择已发布版本及当前 run。迁移后的发布记录位于 `artifacts/night-window/<锚点run>/`。
+轨迹、作业归属和产物留在原处，远程在途作业继续执行。Agent 继续使用原身份管理这些作业，在新作业里用只读快照复用历史资产。遇到仍不可读的依赖时，Agent 停止受阻研究线并向操作者报告。若 Mac 重启，用原锚点重新启动定时器；它按锚点选择已发布版本及当前 run。迁移后的发布记录位于 `.runtime/night-window/<锚点run>/`。
 
 也可在维护窗口离线应用已冻结的发布，再按原来的启动命令恢复：
 
 ```bash
-uv run python -m a3_research_agent.cli.apply_release "artifacts/rsi/<run-id>" \
+uv run python -m a3_research_agent.cli.apply_release "trajectories/<开始时间>" \
   "<冻结发布目录>" --digest <发布摘要>
 ```
 
@@ -61,13 +61,13 @@ uv run python -m a3_research_agent.cli.apply_release "artifacts/rsi/<run-id>" \
 按 [版本规则](agent-inputs.md#版本与发布记录) 修改源文件并递增版本；编辑不会自动影响运行中的实验。先预览：
 
 ```bash
-uv run python -m a3_research_agent.cli.reload_inputs "artifacts/rsi/<run-id>"
+uv run python -m a3_research_agent.cli.reload_inputs "trajectories/<开始时间>"
 ```
 
 核对警告、原版本、新版本和内容摘要，将具体变更与影响交用户批准；获批后使用预览返回的完整摘要发布：
 
 ```bash
-uv run python -m a3_research_agent.cli.reload_inputs "artifacts/rsi/<run-id>" --confirm <预览摘要>
+uv run python -m a3_research_agent.cli.reload_inputs "trajectories/<开始时间>" --confirm <预览摘要>
 ```
 
 自定义 run 默认仍读取其冻结版本。要在获准后换为另一套完整目录，预览和确认两次命令都增加 `--agent-inputs-dir <完整目录>`；Host 检查完整任务输入与公共文件清单，检查 UTF-8、符号链接、版本及内容摘要。目录参数只在操作者控制入口生效，Agent 无权选择来源。旧 revision 保留，新版本发布后恢复不依赖外部源目录。这个入口不更新 Agent 工作区中的技能副本或索引；如需更新它们，须在已批准范围内显式完成并核对实际版本。
@@ -82,7 +82,7 @@ uv run python -m a3_research_agent.cli.reload_inputs "artifacts/rsi/<run-id>" --
 
 ```bash
 bash scripts/start-rsi.sh \
-  --resume-from "artifacts/rsi/<run-id>" \
+  --resume-from "trajectories/<开始时间>" \
   --feedback-file human-feedback.md
 ```
 
@@ -101,14 +101,14 @@ Host 读取当次 UTF-8 文本（最多 64 KiB），保存内容副本、SHA256 
 Host 已运行新版反馈接口时，可以让实验继续执行，通过独立终端把同一个 `human-feedback.md` 中的最新内容送给当前主 Agent。先预览：
 
 ```bash
-uv run python -m a3_research_agent.cli.reload_feedback "artifacts/rsi/<run-id>" \
+uv run python -m a3_research_agent.cli.reload_feedback "trajectories/<开始时间>" \
   --feedback-file human-feedback.md
 ```
 
 命令显示正文、接收身份与摘要，尚不注入。核对正文、身份、摘要并取得本次用户明确批准后，使用显示的摘要确认：
 
 ```bash
-uv run python -m a3_research_agent.cli.reload_feedback "artifacts/rsi/<run-id>" \
+uv run python -m a3_research_agent.cli.reload_feedback "trajectories/<开始时间>" \
   --feedback-file human-feedback.md --confirm <预览摘要>
 ```
 
@@ -138,7 +138,7 @@ Phase 2 goal/acceptance 0.4.0 将 A–D 定义为研究里程碑：完整科学�
 
 ## 夜间运行窗口
 
-暂停过的 run 可用 `bash scripts/start-rsi.sh --night-window --resume-from artifacts/rsi/<run-id>`
+暂停过的 run 可用 `bash scripts/start-rsi.sh --night-window --resume-from trajectories/<开始时间>`
 继续运行。窗口固定为北京时间 21:00（含）到次日 09:00（不含）。到点后启动器向 Host
 发送正常中断信号，保存 checkpoint 并关闭本地 Agent。远端 Controller 继续执行已提交的
 作业。21:00 按发布记录原地升级并恢复当前 run。白天只保留等待窗口的启动器。启动器退出或机器重启后，
