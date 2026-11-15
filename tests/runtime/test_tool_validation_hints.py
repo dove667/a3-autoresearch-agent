@@ -5,11 +5,13 @@ import pytest
 
 from a3_research_agent.harness import (
     job_tools,
-    planning,
     research_web,
     skill_registry,
     tool_contracts,
     workspace_tools,
+)
+from a3_research_agent.harness import (
+    plan as planning,
 )
 
 ROOT = pathlib.Path(__file__).resolve().parents[2] / "src/a3_research_agent/harness"

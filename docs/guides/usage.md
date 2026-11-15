@@ -45,7 +45,7 @@ uv run mini
 bash start-autoresearch.sh --resume-from "trajectories/<开始时间>"
 ```
 
-恢复使用同一个 run 和主身份，接续 `trajectories/<开始时间>/conversation/` 中的运行状态、对话、checkpoint 和调用 journal，继续 `workspace/` 的研究文件、根 `skills/` 和长期经验，并读取项目顶层 `plan.json` 的最新研究计划。原生进程中断时保留工具 journal；已保存的结果在恢复时重新交付，结果未知的调用先检查实际状态。
+恢复使用同一个 run 和主身份，接续 `trajectories/<开始时间>/conversation/` 中的运行状态、对话、checkpoint 和调用 journal，继续 `workspace/` 的研究文件、根 `skills/` 和长期经验，并读取项目顶层 `plan/current.json` 的最新研究计划。原生进程中断时保留工具 journal；已保存的结果在恢复时重新交付，结果未知的调用先检查实际状态。
 
 远程作业在本地 Agent 暂停期间可以继续运行。恢复后通过原 job ID 接回状态与产物，按既有结果推进研究。普通恢复沿用原模型与适配器；明确维护发布时可更新部署配置并记录前值。
 
@@ -59,7 +59,7 @@ bash start-autoresearch.sh --resume-from "trajectories/<开始时间>"
 bash start-autoresearch.sh --harness-commit <新发布提交SHA>
 ```
 
-新运行从空模型上下文开始，继续使用原 `workspace/`、`plan.json`、`skills/` 和 `memory/`。无需把旧代码、技能和实验材料重新复制进 trajectory。需要接续原对话时，明确指定旧运行使用手动恢复；每日研究默认新建运行。
+新运行从空模型上下文开始，继续使用原 `workspace/`、`plan/current.json`、`skills/` 和 `memory/`。无需把旧代码、技能和实验材料重新复制进 trajectory。需要接续原对话时，明确指定旧运行使用手动恢复；每日研究默认新建运行。
 
 ## 夜间窗口与防休眠
 
@@ -89,7 +89,7 @@ nohup bash start-autoresearch.sh --night-window --harness-commit <已发布提�
 
 采集与评估通过[episode 执行器](../reference/episode-executor.md)管理完成台账和并发。作业脚本从环境读取 `A3_OUTPUTS`、`A3_EPISODE_EXECUTOR` 及资产路径，避免沿用另一后端的路径。
 
-研究计划由 Agent 编写，通过 `plan(action="show")` 查看、`plan(action="update", revision=..., ...)` 修改，统一保存到项目顶层 `plan.json`，路径由 `runtime_paths.plan` 提供。新运行、恢复和发布升级共用最新计划，先核对计划中的既有 job；各次运行的开始、修订和停止快照保存在对应 trajectory 的 `plan-snapshots/`。操作进展与研究状态由 `progress` 保存到当前 `conversation/`。恢复和接续清单由程序生成，`files` 只列出工作区研究文件。
+研究计划按长期方向、研究路线与假设、执行步骤三层组织，由 Agent 编写，通过 `plan(action="show")` 查看、`plan(action="update", revision=..., ...)` 修改，统一保存到项目顶层 `plan/current.json`，路径由 `runtime_paths.plan` 提供。关键结果返回后，Agent 读取原始产物，通过 `plan(action="review", revision=..., id=<路线ID>, conclusion=..., evidence=[...], decision="continue"|"pause"|"complete")` 保存复盘和路线决策。每轮上下文包含计划摘要与待复盘作业，新运行、恢复和发布升级共用最新计划，先核对计划中的既有 job 并重新检查阻塞；各次运行的开始、修订和停止快照保存在对应 trajectory 的 `plan-snapshots/`。操作进展与研究状态由 `progress` 保存到当前 `conversation/`。恢复和接续清单由程序生成，`files` 只列出工作区研究文件。
 
 长期经验由 `memory` 保存；`recall` 从原始历史检索观测。根 `skills/` 是唯一技能库，通过 `skills` 先看目录摘要，再读正文和所需附件；同一工具也负责更新正文、附件和归档。工作上下文达到压缩门槛后必须生成完整摘要，32k 等目标预算覆盖整个下一轮输入；机制见[上下文与记忆](../reference/context-and-memory.md)。
 
@@ -104,7 +104,7 @@ Agent 用 `progress(action="outcome", status="continue", reason=...)` 保存继�
 - `trajectories/<开始时间>/`：输入版本、Host 事件、模型用量与会话登记。
 - `workspace/scripts/<模型或方法>/<可选研究系列>/<用途>/`：采集、训练、评估与审计源码。
 - `workspace/experiments/<日期-实验名>/`：实验配置、结果、图表、录像与分析，关联 job/export 和源码哈希。
-- `plan.json`：跨运行共用的最新研究计划，通过 `plan` 工具管理。
+- `plan/current.json`：跨运行共用的最新研究计划，通过 `plan` 工具管理。
 - `trajectories/<开始时间>/plan-snapshots/`：该次运行期间的计划历史快照。
 - `trajectories/<开始时间>/conversation/`：接续清单、研究状态、checkpoint、journal、原始消息和压缩状态。
 - `skills/`：由 `skills` 工具管理的唯一方法库。

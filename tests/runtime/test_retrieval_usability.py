@@ -1,9 +1,10 @@
 import json
 
-from a3_research_agent.harness import agent, planning
+from a3_research_agent.harness import agent
 from a3_research_agent.harness import history as recall
 from a3_research_agent.harness import long_term_memory as memory
 from a3_research_agent.harness import operational_state as state
+from a3_research_agent.harness import plan as planning
 
 
 def test_recall_without_a_guessed_window_finds_older_observations(tmp_path, monkeypatch):

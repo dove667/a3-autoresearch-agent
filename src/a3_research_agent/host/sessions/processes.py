@@ -13,7 +13,8 @@ import uuid
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from a3_research_agent.harness import plan_store, state_paths
+from a3_research_agent.harness import state_paths
+from a3_research_agent.harness.plan import store as plan_store
 from a3_research_agent.host.published_harness import (
     COMMAND,
     conversation_root,
@@ -85,7 +86,7 @@ class ProcessRuntime:
         if self.root.name != "sessions":
             raise ValueError("Session metadata must use the current run/sessions layout")
         self.state_root = conversation_root(self.root.parent)
-        self.plan_file = workspace_path(project_for_run(self.root.parent), "plan.json")
+        self.plan_file = workspace_path(project_for_run(self.root.parent), "plan/current.json")
         self.plan_snapshots = workspace_path(self.root.parent, "plan-snapshots")
         self.public_a3, self.endpoint = Path(public_a3), endpoint
         self.logs = debug_directory(self.root.parent)

@@ -3,7 +3,7 @@
 import os
 from pathlib import Path
 
-from .plan_store import checked_path
+from .plan.store import checked_path
 
 
 def _root(name):

@@ -1,24 +1,11 @@
-"""Persistent research planning and its view of observed remote work."""
+"""Validate research direction, route and execution-step patches."""
 
 import re
-
-from a3_research_agent.harness import operational_state as operational
-from a3_research_agent.harness import paths, plan_store
-from a3_research_agent.harness.context import manager
-
-
-def plan_file():
-    return paths.plan_file()
-
 
 STATUSES = ("pending", "active", "blocked", "done", "skipped")
 ID = re.compile(r"[A-Za-z0-9_-]{1,48}")
 JOB_ID = re.compile(r"[0-9a-f]{32}")
 MAX_STEPS = 20
-
-
-def load():
-    return plan_store.load(plan_file())
 
 
 def bounded_text(value, limit, name, *, required=False):
@@ -39,6 +26,8 @@ def bounded_list(value, limit, valid, name):
 
 def merge_step(previous, changes):
     defaults = {
+        "route": "",
+        "priority": 0,
         "task": "",
         "criterion": "",
         "status": "pending",
@@ -50,6 +39,9 @@ def merge_step(previous, changes):
     if changes.keys() - defaults.keys() - {"id"}:
         raise ValueError("Unknown step field")
     step = {**defaults, **previous, **{key: value for key, value in changes.items() if key != "id"}}
+    step["route"] = bounded_text(step["route"], 48, "route")
+    if type(step["priority"]) is not int or not 0 <= step["priority"] <= 100:
+        raise ValueError("priority must be an integer from 0 to 100")
     for name, limit in (("task", 200), ("criterion", 240), ("progress", 300)):
         step[name] = bounded_text(step[name], limit, name, required=name != "progress")
     step["depends_on"] = bounded_list(step["depends_on"], 8, ID.fullmatch, "dependency IDs")
@@ -92,7 +84,12 @@ def revise(plan, arguments):
     changes = arguments.get("steps", [])
     if not isinstance(changes, list) or len(changes) > MAX_STEPS:
         raise ValueError(f"Supply at most {MAX_STEPS} step updates")
-    goal = bounded_text(arguments.get("goal", plan["goal"]), 300, "goal", required=True)
+    goal = bounded_text(
+        arguments.get("goal", arguments.get("direction", {}).get("objective", plan["goal"])),
+        1200,
+        "goal",
+        required=True,
+    )
     reason = bounded_text(arguments.get("reason", ""), 240, "reason")
     steps = plan["steps"].copy()
     archived = bounded_list(arguments.get("archive", []), MAX_STEPS, ID.fullmatch, "archive IDs")
@@ -122,89 +119,66 @@ def revise(plan, arguments):
     if route_changed and not reason:
         raise ValueError("Give a reason when revising the goal, route or a closed step")
     validate_dependencies(steps)
-    return {**plan, "goal": goal, "reason": reason, "steps": steps}
-
-
-def view(plan=None, *, jobs=None, compact=False):
-    plan = load() if plan is None else plan
-    if jobs is None:
-        jobs = operational.load().get("jobs", {}) if plan["steps"] else {}
-    ready = []
-    steps = {}
-    for key, step in plan["steps"].items():
-        pending = [dep for dep in step["depends_on"] if plan["steps"][dep]["status"] != "done"]
-        observed = {job: jobs.get(job, {}).get("status", "unobserved") for job in step["jobs"]}
-        if (
-            step["status"] in ("pending", "active")
-            and not pending
-            and all(
-                status in operational.TERMINAL_JOB_STATES or status == "unobserved"
-                for status in observed.values()
-            )
-        ):
-            ready.append(key)
-        steps[key] = {**step, "unmet_dependencies": pending, "observed_jobs": observed}
-    result = {
-        "notice": "Agent-authored plan. Job status is last observed. Verify evidence before closing.",
-        "revision": plan["revision"],
-        "goal": plan["goal"],
-        "reason": plan["reason"],
-        "ready": ready,
-        "counts": {
-            status: sum(step["status"] == status for step in steps.values()) for status in STATUSES
-        },
-    }
-    if compact:
-        ordered = ready + [
-            key for key, step in steps.items() if key not in ready and step["status"] == "active"
-        ]
-        ordered += [
-            key
-            for key, step in steps.items()
-            if key not in ordered and step["status"] in ("pending", "blocked")
-        ]
-        visible = {key: steps[key] for key in ordered[:5]}
-        while visible and manager.size({**result, "steps": visible}) > 5500:
-            del visible[next(reversed(visible))]
-        result["omitted_steps"] = len(steps) - len(visible)
-        steps = visible
-    return {**result, "steps": steps}
-
-
-def dispatch(arguments):
-    with plan_store.locked(plan_file()):
-        return dispatch_locked(arguments)
-
-
-def dispatch_locked(arguments):
-    action = arguments.get("action")
-    plan = load()
-    plan_store.snapshot(plan_file(), paths.plan_snapshots_root())
-    if action == "show":
-        result = view(plan)
-        key = arguments.get("id")
-        if key is not None:
-            if not isinstance(key, str) or key not in result["steps"]:
-                return {"error": "unknown_plan_step"}
-            result["steps"] = {key: result["steps"][key]}
-        return result
-    if action != "update":
-        return {"error": "plan_validation", "hint": "Use show or update"}
-    revision = arguments.get("revision")
-    if type(revision) is not int or revision != plan["revision"]:
-        return {
-            "error": "stale_plan_revision",
-            "revision": plan["revision"],
-            "hint": "Show the plan first",
+    direction = {**plan.get("direction", {"objective": "", "metrics": [], "gaps": []})}
+    patch = arguments.get("direction", {})
+    if not isinstance(patch, dict) or patch.keys() - direction.keys():
+        raise ValueError("direction accepts objective, metrics and gaps")
+    direction.update(patch)
+    direction["objective"] = bounded_text(direction["objective"], 1200, "objective")
+    for field in ("metrics", "gaps"):
+        direction[field] = bounded_list(
+            direction[field], 20, lambda x: bool(x.strip()) and len(x) <= 600, field
+        )
+    routes = {key: dict(value) for key, value in plan.get("routes", {}).items()}
+    patches = arguments.get("routes", [])
+    if not isinstance(patches, list):
+        raise ValueError("routes must be a list of patches")  # noqa: TRY004
+    for patch in patches:
+        if not isinstance(patch, dict):
+            raise ValueError("Each route must be an object")  # noqa: TRY004
+        key = patch.get("id", "")
+        if not isinstance(key, str) or not ID.fullmatch(key):
+            raise ValueError("Each route requires a stable ID")
+        previous = routes.get(key, {})
+        route = {
+            "question": "",
+            "hypothesis": "",
+            "experiment": "",
+            "decision_rule": "",
+            "status": "proposed",
+            "priority": 0,
+            "conclusion": "",
+            "evidence": [],
+            **previous,
         }
-    try:
-        proposed = revise(plan, arguments)
-    except ValueError as error:
-        return {"error": "plan_validation", "hint": str(error)}
-    if proposed["goal"] != plan["goal"] or proposed["steps"] != plan["steps"]:
-        if plan["revision"]:
-            manager.archive(plan, "plan-revision")
-        proposed["revision"] += 1
-        plan_store.save(plan_file(), proposed, paths.plan_snapshots_root())
-        plan = proposed
-    return view(plan, compact=True)
+        if patch.keys() - route.keys() - {"id"}:
+            raise ValueError("Unknown route field")
+        route.update({k: v for k, v in patch.items() if k != "id"})
+        for field in ("question", "hypothesis", "experiment", "decision_rule", "conclusion"):
+            route[field] = bounded_text(route[field], 1200, field, required=field != "conclusion")
+        if route["status"] not in ("proposed", "active", "paused", "completed"):
+            raise ValueError("Invalid route status")
+        if type(route["priority"]) is not int or not 0 <= route["priority"] <= 100:
+            raise ValueError("priority must be an integer from 0 to 100")
+        route["evidence"] = bounded_list(
+            route["evidence"], 20, lambda x: bool(x.strip()) and len(x) <= 600, "route evidence"
+        )
+        if route["status"] == "completed" and not (route["conclusion"] and route["evidence"]):
+            raise ValueError("Completed routes require conclusion and evidence")
+        if (
+            previous
+            and any(route[f] != previous[f] for f in ("hypothesis", "experiment", "decision_rule"))
+            and not reason
+        ):
+            raise ValueError("Give reason when changing a research route")
+        routes[key] = route
+    if any(step.get("route") and step["route"] not in routes for step in steps.values()):
+        raise ValueError("Step route must identify an existing research route")
+    return {
+        **plan,
+        "goal": goal,
+        "direction": direction,
+        "routes": routes,
+        "reason": reason,
+        "steps": steps,
+    }

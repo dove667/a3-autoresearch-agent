@@ -155,7 +155,7 @@ def test_native_child_uses_fixed_source_scoped_env_and_keeps_logs(tmp_path, monk
         assert record["environment"]["A3_WORKSPACE"] == str(workspace)
         assert workspace == tmp_path / "workspace"
         assert record["environment"]["A3_STATE_ROOT"] == str(local.state_root)
-        assert record["environment"]["A3_PLAN_FILE"] == str(tmp_path / "plan.json")
+        assert record["environment"]["A3_PLAN_FILE"] == str(tmp_path / "plan/current.json")
         assert record["environment"]["A3_PLAN_SNAPSHOTS_ROOT"] == str(
             tmp_path / "trajectories/run-unit/plan-snapshots"
         )
@@ -192,10 +192,14 @@ def test_native_runs_share_one_plan_but_have_separate_snapshot_directories(tmp_p
     )
     first_env = first.environment(tmp_path / "workspace", first.inputs, "first")
     second_env = second.environment(tmp_path / "workspace", second.inputs, "second")
-    assert first_env["A3_PLAN_FILE"] == second_env["A3_PLAN_FILE"] == str(tmp_path / "plan.json")
+    assert (
+        first_env["A3_PLAN_FILE"]
+        == second_env["A3_PLAN_FILE"]
+        == str(tmp_path / "plan/current.json")
+    )
     assert first_env["A3_PLAN_SNAPSHOTS_ROOT"] != second_env["A3_PLAN_SNAPSHOTS_ROOT"]
     assert second.plan_snapshots == tmp_path / "trajectories/run-next/plan-snapshots"
-    assert not (tmp_path / "plan.json").exists()
+    assert not (tmp_path / "plan/current.json").exists()
 
 
 def test_native_start_stop_and_resume_snapshot_current_shared_plan_without_restoring_history(
@@ -209,6 +213,7 @@ def test_native_start_stop_and_resume_snapshot_current_shared_plan_without_resto
         )
 
     first_plan = plan(5)
+    local.plan_file.parent.mkdir(parents=True, exist_ok=True)
     local.plan_file.write_text(first_plan)
     try:
         workspace = launch(local)
@@ -530,6 +535,7 @@ def test_fresh_daily_run_uses_existing_workspace_and_new_context(tmp_path, monke
     (workspace / "scripts").mkdir(parents=True)
     source = workspace / "scripts/train.py"
     source.write_text("preserved research")
+    local.plan_file.parent.mkdir(parents=True, exist_ok=True)
     local.plan_file.write_text(
         '{"version":1,"revision":8,"goal":"Continue","reason":"","steps":{}}'
     )

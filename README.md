@@ -20,7 +20,7 @@ cp .env.example .env
 bash start-autoresearch.sh --harness-commit <已发布提交SHA>
 ```
 
-新 run 共用根目录 `workspace/`、`plan.json`、`memory/` 和 `skills/`。
+新 run 共用根目录 `workspace/`、`plan/current.json`、`memory/` 和 `skills/`。
 
 独立开发或体验原始 mini-SWE-agent：
 

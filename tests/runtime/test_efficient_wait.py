@@ -369,7 +369,8 @@ def test_two_waits_in_one_model_batch_keep_prebatch_cursor(tmp_path, monkeypatch
     import ast
     from types import SimpleNamespace
 
-    from a3_research_agent.harness import job_tools, planning, research_web, workspace_tools
+    from a3_research_agent.harness import job_tools, research_web, workspace_tools
+    from a3_research_agent.harness import plan as planning
 
     m, clock = setup_wait(tmp_path, monkeypatch)
     from pathlib import Path

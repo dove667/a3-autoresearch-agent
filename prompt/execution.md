@@ -1,6 +1,6 @@
 # 研究工具与执行约定
 
-Version: 0.26.0
+Version: 0.27.0
 
 本文件按当前操作查阅。工具定义提供参数、类型与限制；这里说明跨工具流程及直接使用 `gateway` 的入口。
 `input-manifest.json` 的 `execution_index` 给出章节字符 `offset/end` 和全文 SHA256，可用 `read` 分页定位；索引 `truncated:true` 时从 `next_offset` 续读。
@@ -123,7 +123,26 @@ backbone、tokenizer 和预训练资源由部署者预置；缺项记录资产�
 
 ## 保存进展与暂停
 
-研究计划统一保存在项目顶层 `plan.json`，`runtime_paths.plan` 给出路径。通过 `plan(action="show")` 查看、`plan(action="update", revision=..., ...)` 修改，普通文件工具不直接修改它。新运行与恢复先读取最新计划，核对已有 job 状态；进展记录用 `progress` 维护。保存研究状态调用 `progress`，参数例如：
+研究计划统一保存在项目顶层 `plan/current.json`，`runtime_paths.plan` 给出路径，普通文件工具不直接修改。每次调用携带简短计划视图；用 `plan(action="show")` 展开完整计划，修改使用返回的当前 `revision`。按下面的顺序使用：
+
+1. 新 run 读取计划，查询原 job 与产物，复查旧阻塞。保留已有研究进展。
+2. `update` 的 `direction` 保存目标文本 `objective`、指标列表 `metrics`、能力缺口列表 `gaps`；`routes` 按稳定 `id` 局部更新 `question`、`hypothesis`、`experiment`、`decision_rule`、`priority` 和 `status`。优先级为 0–100，数值越大越优先；路线状态为 `proposed`、`active`、`paused`、`completed`。长期目标遵循 SOUL，当前方法写入路线。
+3. `steps` 按稳定 `id` 局部更新，填写 `route`、`task`、`criterion`，按需添加 `depends_on`、`jobs`、`progress`、`evidence` 和 `priority`。步骤完成需证据；阻塞写原因，继续独立工作。
+4. `review_due` 出现后，读取真实结果，再用 `review` 记录结论并决定路线。路线 `id` 与当前 `revision` 必填；`decision` 选 `continue`、`pause` 或 `complete`，附 `conclusion`、`evidence`、`reason`。复盘记录保存在共享计划中；关联步骤已观察到的终态作业状态随复盘登记。新结果改变假设时修改路线及下一步。
+
+例如，读取计划后，用当前 revision 建立一条路线和一个步骤：
+
+```json
+{"action":"update","revision":0,"direction":{"objective":"提高两类任务全量评测的入盒准确率与通过率","metrics":["分任务及难度报告入盒准确率和通过率"],"gaps":["放置失败机制待验证"]},"routes":[{"id":"placement","question":"放置阶段为什么失败？","hypothesis":"训练与推理的任务条件不一致","experiment":"对照实际模型输入，并在相同seed下配对评估修复","decision_rule":"输入一致且配对通过率改善则扩大评测，否则检查替代解释","status":"active","priority":80}],"steps":[{"id":"inspect-input","route":"placement","task":"比较训练与推理输入","criterion":"保存两端实际样本、字段及差异报告"}]}
+```
+
+关键结果复盘示例；revision 与证据路径换成当前实际值：
+
+```json
+{"action":"review","revision":1,"id":"placement","decision":"continue","conclusion":"发现任务条件缺失，先修复并配对验证收益","evidence":["experiments/2026-01-01-input-check/results/report.json"],"reason":"输入差异支持当前假设，闭环收益待验证"}
+```
+
+工具只检查结构和引用要求，结果解释与路线选择由你完成。遇到 `stale_plan_revision`，重新 `show` 后合并修改。运行操作进展用 `progress` 保存，参数例如：
 
 ```json
 {"action":"outcome","status":"continue","reason":"已保存当前结果与后续研究方向"}
@@ -131,7 +150,7 @@ backbone、tokenizer 和预训练资源由部署者预置；缺项记录资产�
 
 需要人工处理的外部阻塞用 `status:"blocked"`，附 `external_blocker`：`kind`、`requires_human:true`、`reason`、`required_action`、`evidence`；kind 为 authentication、permission、unavailable_service 或 missing_resource，证据必须是工作区内实际存在的非空文件。正常排队与待完成研究继续推进。
 
-Host 在进程停止后保存暂停状态和在途作业。运行状态、continuation/resume 清单、checkpoint 与工具 journal 由程序保存在当前 trajectory 的 `conversation/`，无需手写这些 JSON。共享计划在 `plan-snapshots/` 保存当时的历史版本，后续运行继续使用根 `plan.json` 的最新内容。接续清单自动记录工作区研究文件；技能、长期记忆和远程 exports 分别持续保存在各自的系统中。
+Host 在进程停止后保存暂停状态和在途作业。运行状态、continuation/resume 清单、checkpoint 与工具 journal 由程序保存在当前 trajectory 的 `conversation/`，无需手写这些 JSON。共享计划在 `plan-snapshots/` 保存当时的历史版本，后续运行继续使用根 `plan/current.json` 的最新内容。接续清单自动记录工作区研究文件；技能、长期记忆和远程 exports 分别持续保存在各自的系统中。
 
 先保存计划、证据、记忆和恢复状态，再退出。需要主动停止时，单独调用 `POST /sessions/self/stop`，正文 `{"reason":"状态已保存"}`；进程可能在收到响应前结束。保存状态后仍需进程实际停止，Host 才记录退出结果。操作者暂停会保留在途作业，恢复时查询原编号。
 

@@ -1,6 +1,6 @@
 # 研究工作区
 
-Version: 0.6.1
+Version: 0.7.0
 
 本地原生进程只提供文件与研究工具，没有本地 bash 或 Python 执行入口。仿真、训练、评估及脚本执行通过远程作业完成。运行状态 `runtime_paths` 给出实际路径：
 
@@ -10,7 +10,7 @@ Version: 0.6.1
 | `inputs` | 只读提示词与 `input-manifest.json` |
 | `reference` | 只读 A3 参考源码、接口文档与 examples |
 | `state` | 当前运行的程序档案，普通文件工具只读 |
-| `plan` | 项目顶层 `plan.json`，使用 `plan` 工具管理 |
+| `plan` | 项目顶层 `plan/current.json`，使用 `plan` 工具管理 |
 | `skills` | 统一技能库，使用 `skills` 工具管理 |
 | `memory` | 跨会话经验库，使用 `memory` 工具管理 |
 
@@ -21,7 +21,7 @@ Version: 0.6.1
 
 用 `workspace_files` 将 `scripts/` 中的源码附加到远程作业。需要多个依赖时一并附加；通过 `destination` 明确远程文件位置，并让命令、导入及相对路径与目标位置一致。大文件留在执行端，用 job/export ID 和哈希关联本地实验记录。每天的新 run 共用这个工作区、根计划、记忆和技能，使用新的模型上下文；启动后先读取共享计划，核对既有作业与产物。
 
-项目顶层 `plan.json` 是跨运行共用的研究计划，`runtime_paths.plan` 给出文件路径。Agent 通过 `plan(action="show")` 查看、`plan(action="update", revision=..., ...)` 修改目标、步骤、依赖、进展和作业引用，普通文件工具不直接修改它。新运行、恢复和 Harness 升级都读取这份最新计划；先核对计划中的既有 job，再决定后续操作。Harness 在当前 trajectory 的 `plan-snapshots/` 保存开始、修订和停止时的历史快照。
+项目顶层 `plan/current.json` 是跨运行共用的研究计划，`runtime_paths.plan` 给出文件路径。Agent 通过 `plan(action="show")` 查看、`plan(action="update", revision=..., ...)` 修改长期方向、研究路线和执行步骤，用 `plan(action="review", ...)` 保存结果复盘与路线决策，普通文件工具不直接修改它。新运行、恢复和 Harness 升级都读取这份最新计划；先核对计划中的既有 job，再决定后续操作。Harness 在当前 trajectory 的 `plan-snapshots/` 保存开始、修订和停止时的历史快照。
 
 接续与恢复清单、运行状态，以及 checkpoint、工具 journal、原始消息、执行日志、预检回执和上下文档案，也由 Harness 保存到该 `conversation/`。`context-history/...` 与 `.autorun-spill/...` 是相对 `runtime_paths.state` 的原文引用；使用 `recall` 检索，或拼接该根目录后用 `read` 分页核对。普通文件工具不能修改程序档案。
 

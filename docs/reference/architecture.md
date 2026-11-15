@@ -29,7 +29,7 @@ flowchart LR
 
 ## 发布、每日运行与恢复
 
-操作者从明确的 Git commit 发布 Harness。固定源码缓存在 `.runtime/published-harness/v2/<commit>/`，研究文件保存于根目录唯一的 `workspace/`；机器对话状态保存在 `trajectories/<开始时间>/conversation/`；根 `skills/`、`memory/entries.jsonl` 与 `plan.json` 分别保存技能、主动长期经验和跨运行研究计划。私有 workspace 映射固定资源身份与研究目录。每天创建新的 run 和模型上下文，每轮只运行一个研究 Agent。A3 参考源码按内容保存于共享 `.runtime/reference-sources/`，各次运行的 `public/a3` 链接到对应只读版本，避免重复仓库副本。
+操作者从明确的 Git commit 发布 Harness。固定源码缓存在 `.runtime/published-harness/v2/<commit>/`，研究文件保存于根目录唯一的 `workspace/`；机器对话状态保存在 `trajectories/<开始时间>/conversation/`；根 `skills/`、`memory/entries.jsonl` 与 `plan/current.json` 分别保存技能、主动长期经验和跨运行研究计划。私有 workspace 映射固定资源身份与研究目录。每天创建新的 run 和模型上下文，每轮只运行一个研究 Agent。A3 参考源码按内容保存于共享 `.runtime/reference-sources/`，各次运行的 `public/a3` 链接到对应只读版本，避免重复仓库副本。
 
 Host 的 `launch.py` 负责启动装配；`sessions/processes.py` 负责创建、观察、停止及恢复原生进程；`sessions/workspace.py` 负责工作区定位、受限文件读取和持久写入。进程以 PID、启动标识和实际命令核对身份，避免停止其他进程。
 
@@ -63,7 +63,7 @@ Controller 实例共用资源根目录和调度锁。独占模式持有整卡租
 
 `memory` 管理主动经验、适用条件与来源；`recall` 检索原始执行历史。Host 用 `A3_STATE_ROOT` 指定当前 `conversation/`，其中保存 `history.jsonl`、`context-history/` 和大工具结果。逻辑归档引用以 `runtime_paths.state` 为基准，保留原文哈希，可通过普通文件工具只读核对。
 
-`plan` 工具维护根 `plan.json`，由 `runtime_paths.plan` 提供实际路径。每次启动、计划修订和停止时，在当前 trajectory 的 `plan-snapshots/` 保存历史快照；新运行和恢复读取根计划的最新内容。`conversation/` 集中保存接续与恢复清单、运行状态、checkpoint、工具 journal、轨迹、操作台账、压缩事务和故障记录。`progress` 维护运行进展，恢复清单由程序生成。`workspace/scripts/` 按模型或方法、研究系列和用途保存源码，`workspace/experiments/<日期-实验名>/` 保存实验配置、结果与分析。Host 恢复与离线发布继续使用原会话状态和研究文件。
+`plan` 工具维护根 `plan/current.json` 中的长期方向、研究路线与假设、执行步骤和复盘记录，每次模型请求携带计划摘要及待复盘作业。Agent 依据结果调用 `review` 保存结论并选择继续、暂停或完成路线。`runtime_paths.plan` 提供实际路径。每次启动、计划修订和停止时，在当前 trajectory 的 `plan-snapshots/` 保存历史快照；新运行和恢复读取根计划的最新内容。`conversation/` 集中保存接续与恢复清单、运行状态、checkpoint、工具 journal、轨迹、操作台账、压缩事务和故障记录。`progress` 维护运行进展，恢复清单由程序生成。`workspace/scripts/` 按模型或方法、研究系列和用途保存源码，`workspace/experiments/<日期-实验名>/` 保存实验配置、结果与分析。Host 恢复与离线发布继续使用原会话状态和研究文件。
 
 根 `skills/` 是唯一技能库，所有技能使用相同工具权限。`skills` 先返回摘要，再按需读取正文和附件；修改使用当前哈希，自动递增包版本并把完整旧包归档到 `.runtime/skill-revisions/`。技能库独立于三个 prompt 的发布快照。
 

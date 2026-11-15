@@ -51,7 +51,7 @@ and marking it done. The plan tracks Agent claims and observed job states.
 
 The Agent authors the plan through `plan(action="show")` and
 `plan(action="update", revision=..., ...)`. The Harness persists it in
-the project-root `plan.json`, exposed as `runtime_paths.plan`. New runs, resume
+the project-root `plan/current.json`, exposed as `runtime_paths.plan`. New runs, resume
 and maintenance releases read this shared latest plan. At start, revision and stop,
 the runtime preserves an immutable revision/hash snapshot under the trajectory's
 `plan-snapshots/`. Each night starts a new run and empty model context; shared workspace, plan, memory and skills carry research progress. Same-day interruption recovery remains an explicit option. The Agent updates its route from new evidence while retaining prior
@@ -244,11 +244,26 @@ Experiment configurations, results, figures, videos and analysis stay in
 `workspace/experiments/<date-name>/`, with job/export IDs and source hashes. Skills use the single root
 `skills/` library.
 
-The Host sets `A3_PLAN_FILE` to the project-root `plan.json`; the `plan` tool
-reads and updates this shared research plan. Ordinary file tools do not modify it.
-Each trajectory retains its historical snapshots under `plan-snapshots/`; old
-`conversation/research-plan.json` files remain historical material. Read the latest
-plan and reconcile its existing jobs before further submissions.
+The Host sets `A3_PLAN_FILE` to the project-root `plan/current.json`. The `plan`
+tool maintains three levels: `direction` contains the long-term objective, metric
+list and capability gaps; stable-ID `routes` contain research questions,
+hypotheses, experiments, decision rules and priorities; `steps` contain route
+links, completion criteria, dependencies, job IDs and evidence. Priorities range
+from 0 to 100, with higher values first.
+
+Use `show` before `update`, then pass the current revision and patch only changed
+fields. Updates use a file lock and atomic publication; stale revisions require a
+fresh read and merge. After inspecting a significant result, use `review` with the
+route `id`, current `revision`, `conclusion`, `evidence` and a decision of
+`continue`, `pause` or `complete`. Reviews persist across runs and record the last
+observed terminal statuses of associated jobs. Each model request includes a
+compact planning view; `review_due` highlights observed terminal jobs not yet
+covered by a review. The Agent interprets results and chooses scientific actions.
+
+New runs read the same plan, reconcile existing jobs and reconsider old blockers
+before choosing their next experiment. Ordinary file tools do not modify the plan.
+Each trajectory retains immutable revision snapshots under `plan-snapshots/`;
+old `conversation/research-plan.json` files remain historical material.
 
 The `progress` tool maintains run metadata. The Agent records its
 research status with `progress(action="outcome", status="continue"|"blocked",
@@ -299,3 +314,5 @@ Resume and maintenance releases preserve the current conversation state. Future
 sessions share research files in `workspace/`, the root skill library and active
 long-term experience in `memory/entries.jsonl`. Operational records remain with
 the run that produced them.
+
+The current plan retains the latest 20 review receipts and a job-status review index. Earlier complete revisions remain in each run’s immutable plan snapshots. Automatic context shows concise direction and route fields; `plan(action="show")` returns full detail.

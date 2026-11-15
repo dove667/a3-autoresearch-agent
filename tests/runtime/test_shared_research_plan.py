@@ -5,7 +5,9 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
-from a3_research_agent.harness import agent, paths, plan_store, planning
+from a3_research_agent.harness import agent, paths
+from a3_research_agent.harness import plan as planning
+from a3_research_agent.harness.plan import store as plan_store
 
 
 def first_plan():

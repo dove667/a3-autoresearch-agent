@@ -19,7 +19,6 @@ from a3_research_agent.harness import (
     lifecycle,
     long_term_memory,
     operational_state,
-    planning,
     research_web,
     skill_registry,
     tool_contracts,
@@ -28,6 +27,9 @@ from a3_research_agent.harness import (
 )
 from a3_research_agent.harness import (
     paths as runtime_paths,
+)
+from a3_research_agent.harness import (
+    plan as planning,
 )
 from a3_research_agent.harness.context import compaction
 from a3_research_agent.harness.context import manager as context_manager
@@ -382,7 +384,7 @@ def spec(name, props, required):
                 "a3-preflight.json in the job workspace, and exit before production. After "
                 "completion use action=submit with the same job and preflight_id."
             ),
-            "plan": "Show or update the persistent research plan. Update with the current revision and patch steps by stable ID. Each new step needs task and criterion. Use depends_on for real prerequisites, jobs for submitted Controller IDs, progress for counts or blockers, and evidence when done. Give reason for route changes or archiving done/skipped steps. Show can select a single ID. Ready steps are included in the decision context; use wait when submitted work must finish.",
+            "plan": "Manage the shared three-level research plan: direction (objective, metrics, gaps), routes (question, hypothesis, experiment, decision_rule), and execution steps linked by route ID. Start each run with show. Patch only changed fields. Higher priority (0..100) comes first. After terminal job results, use review with route id, decision continue/pause/complete, conclusion and evidence; then update next steps. Review records the last observed terminal jobs, not scientific verification. Show or update the persistent research plan. Update with the current revision and patch steps by stable ID. Each new step needs task and criterion. Use depends_on for real prerequisites, jobs for submitted Controller IDs, progress for counts or blockers, and evidence when done. Give reason for route changes or archiving done/skipped steps. Show can select a single ID. Ready steps are included in the decision context; use wait when submitted work must finish.",
             "progress": (
                 "Use list/update for operational items and workspace evidence. Use action=outcome "
                 "with status=continue and reason to save research progress, or status=blocked with "
@@ -457,11 +459,41 @@ tools = (
         spec(
             "plan",
             {
-                "action": {"type": "string", "enum": ["show", "update"]},
+                "action": {"type": "string", "enum": ["show", "update", "review"]},
                 "revision": {"type": "integer", "minimum": 0},
                 "goal": S,
                 "reason": S,
                 "id": S,
+                "direction": {
+                    "type": "object",
+                    "properties": {"objective": S, "metrics": strings(20), "gaps": strings(20)},
+                    "additionalProperties": False,
+                },
+                "routes": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": S,
+                            "question": S,
+                            "hypothesis": S,
+                            "experiment": S,
+                            "decision_rule": S,
+                            "status": {
+                                "type": "string",
+                                "enum": ["proposed", "active", "paused", "completed"],
+                            },
+                            "priority": {"type": "integer", "minimum": 0, "maximum": 100},
+                            "conclusion": S,
+                            "evidence": strings(20),
+                        },
+                        "required": ["id"],
+                        "additionalProperties": False,
+                    },
+                },
+                "decision": {"type": "string", "enum": ["continue", "pause", "complete"]},
+                "conclusion": S,
+                "evidence": strings(20),
                 "archive": strings(planning.MAX_STEPS),
                 "steps": {
                     "type": "array",
@@ -470,6 +502,8 @@ tools = (
                         "type": "object",
                         "properties": {
                             "id": S,
+                            "route": S,
+                            "priority": {"type": "integer", "minimum": 0, "maximum": 100},
                             "task": S,
                             "criterion": S,
                             "status": {"type": "string", "enum": list(planning.STATUSES)},
