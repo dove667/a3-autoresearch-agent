@@ -202,3 +202,34 @@ def test_run_scoped_correction_only_supersedes_within_its_applicable_runs(tmp_pa
     # Archiving the correction does not restore the earlier conclusion within that run.
     assert invoke(tmp_path, "list")["items"] == []
     assert invoke(tmp_path, "list", run="day-two")["items"][0]["id"] == original["id"]
+
+
+def test_unrelated_semantic_neighbor_is_not_presented_as_experience(tmp_path):
+    from a3_research_agent.harness.memory import retrieval
+
+    entry = {
+        "id": "note",
+        "text": "optimizer failure",
+        "scope": "ACT",
+        "kind": "lesson",
+        "tags": [],
+        "refs": [],
+    }
+
+    class Encoder:
+        def __call__(self, texts):
+            return [[0.3, 0.9539392014] for _ in texts]
+
+        def query(self, text):
+            return [1.0, 0.0]
+
+    assert (
+        retrieval.rank(
+            [entry],
+            "chocolate cake recipe",
+            root=tmp_path,
+            embedder=Encoder(),
+            model_id="test-negative",
+        )
+        == []
+    )

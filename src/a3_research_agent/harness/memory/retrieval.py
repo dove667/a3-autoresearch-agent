@@ -115,7 +115,7 @@ def rank(entries, query, *, root, embedder=None, model_id="none"):
         overlap = sum(token in body for token in query_tokens) / max(1, len(query_tokens))
         lexical = min(1.0, overlap + (0.25 if normalized_query in body else 0))
         similarity = semantic.get(entry["id"])
-        if not lexical and (similarity is None or similarity < 0.25):
+        if not lexical and (similarity is None or similarity < 0.35):
             continue
         score = 0.5 * lexical + 0.5 * max(0, similarity) if similarity is not None else lexical
         scored.append((entry, score, similarity))
