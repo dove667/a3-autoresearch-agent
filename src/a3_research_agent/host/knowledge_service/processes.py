@@ -30,7 +30,7 @@ def wait_ready(endpoint, token, process, timeout=120):
         while time.monotonic() < deadline:
             if process.poll() is not None:
                 raise RuntimeError(
-                    "Local embedding process exited before readiness; inspect memory logs"
+                    "Local embedding process exited before readiness; inspect knowledge-service logs"
                 )
             try:
                 response = client.get(

@@ -1,74 +1,47 @@
-# Data, training and control diagnostics
+# 数据、训练与控制诊断
 
-These are evidence-guided probes, not a fixed ritual to repeat every run. Select, adapt or skip them by expected information benefit, total implementation/validation cost and dependencies. Sources checked 2026-11-02: [robomimic datasets](https://robomimic.github.io/docs/tutorials/dataset_contents.html), [sequence dataset](https://robomimic.github.io/docs/modules/dataset.html), [PyTorch AMP](https://docs.pytorch.org/docs/stable/notes/amp_examples.html), [checkpointing](https://docs.pytorch.org/tutorials/beginner/saving_loading_models.html), [reproducibility](https://docs.pytorch.org/docs/stable/notes/randomness.html), [MuJoCo state](https://mujoco.readthedocs.io/en/stable/programming/simulation.html). Pin APIs to installed versions.
+按当前症状选择检查，完成后保存实际输入、结果和来源。先利用已有数据、日志和轨迹。
 
-## Data before capacity
+## 数据和时序
 
-Inventory trajectory count/length, task/layout coverage, camera completeness, action ranges, holds, failures and recoveries. Split entire episodes and related collection/scenario groups before constructing temporal windows or fitting statistics. Near-duplicate demonstrations crossing splits invalidate independence; adjacent-frame splits leak almost identical chunks.
-
-Plot synchronized state, predicted/applied targets and images at approach, grasp, lift/transfer, release and termination. Check RGB/BGR, HWC/CHW, value range, camera order and time alignment. Distinguish action playback (controller validity) from state playback (scene inspection). A visually plausible replay of states doesn't prove recorded actions work.
-
-Use training-only normalization and round-trip tests. Log near-constant dimensions, clipping frequency and values outside train support. Action chunk padding must not cross episodes; test start/end indices and masks with synthetic short episodes. Action-dimension padding for pretrained models is a different axis from terminal time padding. Check camera augmentations for temporal/geometric consistency and whether critical fingers/edges survive cropping.
-
-Treat filtering as reversible masks with reasons. Removing all failed/slow trajectories can remove recovery behavior and difficult cases. Balance phases only when the data support reliable phase labels; compare at matched exposure. Don't call repeated held-out evaluation “untouched test” after using it for targeted fixes.
+- 按完整episode及关联采集/场景组划分训练和评测，再生成时间窗口、拟合归一化统计。相邻帧跨split会泄漏近似相同的动作chunk。
+- 抽查同步图像、state、原始预测与applied action：RGB/BGR、HWC/CHW、范围、相机顺序、时间戳及抓取/放置阶段。
+- 对归一化做round-trip测试，记录常量维度、裁剪和超出训练范围的值。chunk时间padding不越过episode边界；检查短episode的起止索引和mask。
+- 统计任务、难度、动作范围、失败与恢复覆盖。过滤规则保存为可撤销mask并记录原因；全部删除失败轨迹可能同时删去恢复行为。
 
 ## Task conditioning from data to actions
 
-Trace the declared task from dataset metadata through the sampled batch, preprocessing and model forward, then from the benchmark instruction through runner, adapter and inference forward. Both paths must use the same task semantics, mapping and fusion/tokenization. Inspect the tensors actually consumed by the action predictor; a label in metadata, a sampler stratum or a discarded batch field does not satisfy this requirement.
+训练侧沿metadata → sampled batch → processor → forward核对，推理侧沿instruction → runner → adapter → forward核对。两侧任务映射、融合位置及归一化顺序一致。
 
-For ACT, add a learned task-ID condition when the architecture has no language input. Include its parameters in optimization, checkpoint save/reload and deployment; keep its fusion position relative to state normalization identical. For language policies, verify nonempty real task text, tokenizer/processor revision, attention masks and truncation preserve the distinguishing instruction. Fail clearly on unknown conditions. Do not silently reuse an unconditioned adapter or pass an empty instruction.
+ACT无语言输入时，可实现并联合训练task-ID条件；保存并重载embedding、映射和fusion配置。语言Policy检查真实tokens、mask和截断是否保留区分任务的部分。空指令或未知条件应明确报错。
 
-Exercise the actual model and entrypoint in addition to synthetic plumbing checks. Test condition gradients where applicable and a fixed observation with changed task input, then assess whether the trained policy performs the requested task in matched closed-loop comparisons. A nonzero gradient or changed output demonstrates an active path; task-appropriate behavior requires behavioral evidence. Preserve existing unconditioned results as their original experiments.
+检查实际梯度和真实模型调用；固定观察改变任务输入，随后做训练后的闭环比较。具体接入步骤用 `a3-policy-integration`；[ACT](act-chunking.md)和[VLA](vla.md)分别说明模型侧条件。
 
-## Visual process evidence
+## 优化器与学习信号
 
-Prefer an original episode's existing video and trace when a grasp, transfer, placement or stagnation hypothesis needs visual evidence. Select useful step/time intervals rather than recording every rollout or using a fixed frame checklist. The current research Agent chooses the question, extracts frames in its authorized job, performs the diagnosis and evaluates findings. Final target count alone cannot localize failure. Missing action in sparse frames is not proof it never happened; report occlusion, sampling gaps and conflicting signals.
+小batch拟合用于定位学习路径。拟合失败时先查目标尺度、mask、梯度连接、冻结参数、增强和索引，再考虑扩大模型。
 
-A3 source `7c34d38e58b6d94e76a9dec8b2b3bbc912263e38` provides `CookieBatchBenchmark.diagnostic_dir` and `EpisodeDiagnostic`. The native benchmark CLI accepts `--diagnostic-dir`, creates per-seed camera MP4s, `trace.jsonl`, `success_diagnostics.json`, and `result.json` on a normal return; it forces `workers=1`. The trace aligns before-action images/`observation_before` with distinct `raw_action`, `processed_action`, `applied_action` and after-step state. Its zero-based step indexes the video frame; derive simulation time from the actual control rate, not wall time. Native closing preserves collected diagnostics for unsuccessful episodes, whereas the ordinary dataset recorder can discard failures. Abrupt termination or I/O failure can leave incomplete files.
+记录真实optimizer update数、样本数、各loss分量、LR组、梯度范数/裁剪比例、非有限值、scaler跳步、显存和输入等待。总loss下降可能掩盖夹爪错误或KL项占比。
 
-This diagnostic class does not produce state NPZ automatically. Separate expert scripts expose selected state-save options; those states are not videos or proof of exact replay. If an original episode lacks a recording, state that limitation. Any new rollout, action replay or state reconstruction must be labeled new diagnostic evidence with actual versions and conditions, never the missing original video. Diagnostic capture is optional; preserve the saved scientific comparison conditions. Privileged contact/pose diagnostics must not silently become Policy inputs.
-
-Saved-action replay can avoid new Policy inference when the original actions and compatible initial state are available. The native `a3-sim replay` reads parquet actions without video decoding and disables observation-camera rendering, but restores only its own limited seed/task contract; it does not recover arbitrary benchmark state or offer selected-frame capture. A separate authorized diagnostic driver can step every saved action with `render_cameras=False` and render only requested cameras/steps through MuJoCo's renderer. Verify version/reset/physics/control/action conventions and compare available saved states before treating frames as trajectory-consistent reconstruction. A helper called `ReplayPolicy` or `needs_images=False` is not a native interface in inspected A3 7c34d38. Do not skip intermediate dynamics, silently accept divergence or call reconstructed images original recordings.
-
-Where the deployed Host offers `POST /vision/inspect`, the research Agent can submit one question and 1–6 chronological authorized-job PNG/JPEG references, including job/path, episode, step, simulation time and camera. The existing artifact reader only accesses the specified job's workspace: write frames to `/workspace/frames` and submit relative `frames/...` paths, never absolute `/outputs` paths. The current executor shares `/outputs` within one run/owner scope; a later CPU job in that scope can extract existing video into its own workspace, then reference its own job ID. Workspaces remain job-specific; same-run research identities can read each other's job artifacts; remote job reuse of large files uses the run's authorized sealed input exports. Cross-run materials require explicit import or authorization. Limits are 512 KiB per image, at most 1024 pixels per side and 3 MiB total. The Host validates and normalizes images without metadata, routes a tool-free visual helper and returns analysis with frame provenance and actual model. Main instructions and raw feedback are not automatically attached; images remain untrusted evidence. Base64 stays outside main/summary context. This endpoint neither downloads videos, reruns a Policy nor grants data access; generic gateway use still needs its loaded path allowlist and does not imply a dedicated tool is registered. Check the actual loaded interface before relying on it.
-
-## Optimization probes
-
-A tiny-batch fit answers whether the learning path can represent and optimize examples. It doesn't prove generalization. If it fails: inspect target scale, valid mask, gradient connectivity, frozen parameters, augmentation and indexing before widening the network.
-
-Log actual optimizer updates, examples processed, each loss component, per-component errors, LR groups, preclip gradient norm/clip fraction, nonfinite tensors, scaler-skipped updates, memory and input/compute wait. A scalar total loss can hide gripper errors or KL dominance. Loss improvement is diagnostic; choose policies with closed-loop results.
-
-For mixed precision, unscale before clipping/inspection. During accumulation, keep scale consistent across the effective batch and update optimizer/scaler at that granularity. Autocast doesn't mean every operation must be half precision. Compare suspected numerical issues with a controlled FP32 region/run, not unexplained multiple changes. Scheduler semantics must track actual completed updates, including skipped steps and tail batches.
-
-Increasing accumulation preserves neither identical examples/order nor exact numerical behavior automatically. Record effective batch and compare both matched-work and matched-time learning. Low GPU utilization may be image decode/dataloader/simulation/serialization wait, not insufficient model size.
-
-## Measure the actual experimental cost
-
-Do not infer the critical path from GPU utilization or model size. Use existing telemetry or a bounded representative sample to separate reset/startup, physics, rendering, policy inference, serialization, disk I/O, collection acceptance rate and training. Report actual wall time and controls/second or completed episodes/hour with task, horizon, worker count, effective CPU allocation and concurrency. A short rollout can underestimate long 2×10 episodes or overestimate performance by measuring only startup; give a range and assumptions rather than a precise unsupported full-run estimate.
-
-When a throughput probe already establishes that a full job will be impractical, preserve the partial evidence and estimate remaining time instead of finishing merely to obtain a benchmark number. A canceled probe remains partial; do not convert it into a completed scientific comparison. This is a targeted diagnostic when useful, not mandatory profiling before every experiment.
-
-Reuse compatible collected trajectories and matching incumbent evaluations. Add data where a hypothesis requires new coverage rather than recollecting the entire set. Development can use declared paired subsets; the final full-grid requirement and missing-episode accounting remain unchanged.
-
-Compare worker counts, batching and scheduling by measured completed-work throughput, not nominal parallelism. Record actual CPU allocation and concurrent workload so a hardware or contention change is not mistaken for an algorithmic improvement. Prefer a change that reduces the measured critical path while preserving task conditions and result quality.
+AMP检查时先unscale再clip；梯度累积期间保持有效batch内scale一致。scheduler跟随真实完成的update。控制变量的FP32运行可定位数值问题；同时记录有效batch、样本顺序和完成工作量。
 
 ## Resume and artifact integrity
 
-Weights-only warm start is not exact training continuation. A continuation receipt can include optimizer/scheduler/scaler/EMA state, RNGs, data-sampler position, global step, processors, config and code/data hashes. Multiworker prefetch state makes exact mid-epoch continuation nontrivial: resume at a documented reproducible boundary or state the limitation. Check fresh-process reload outputs before a long job.
+权重warm start和完整续训分别记录。完整续训核对optimizer、scheduler、scaler/EMA、RNG、sampler位置、global step、processor及代码/数据哈希。多worker预取会使精确中途恢复困难，选择可复现边界并做新进程重载检查。
 
-MuJoCo replay may require more than qpos/qvel: integration state, warmstart, controller/task/RNG state and assets/version matter. Preserve the actual state contract rather than promising bitwise replay from a partial vector. Never load untrusted pickle checkpoints merely to inspect metadata.
+MuJoCo重放还依赖完整积分、控制器、任务、RNG状态和版本，qpos/qvel可能不足。不要用未信任的pickle加载来检查元数据。
 
-## Diagnostic map
+## 根据症状选择下一步
 
-| Observation | Discriminating probe | Candidate next action |
-|---|---|---|
-| Low teacher-forced loss, immediate failure | First action before/after processor and environment; timing; arm hold | Fix verified contract mismatch before more training |
-| Approach succeeds, pinch/release fails | Gripper phase errors, occlusion, action age, clipping | Prefix or visual-detail/data-coverage experiment |
-| Inter-arm handoff fails | Joint timelines and contact state under declared observations | Genuine coordinated data/joint modeling, not duplicate left actions |
-| Chunk-boundary jumps | Raw target discontinuity, sampler randomness, stale queue | Same-weight M/aggregation test; then timing-aware integration |
-| Later checkpoints worse | Fixed development rollouts, episode overlap, memorization | Earlier selection or data/regularization comparison |
-| NaNs/random catastrophes | Gradients, masks, scaler skips, physical scales | Isolate numerical issue before architecture changes |
-| High cost, little progress | Examples/s, optimizer/s, dataloader and wait breakdown | Reversible throughput fix with preserved semantics |
-| Count high but complete success low | Release/stability/boundary/slot unmet conditions | Diagnose the predicate; don't redefine it |
+| 症状 | 先检查 |
+| --- | --- |
+| teacher-forced loss低，闭环立即失败 | processor反变换、arm顺序、inactive arm姿态、时间对齐 |
+| 靠近成功，抓取或释放失败 | 夹爪时序、遮挡、动作年龄、clip；[视觉诊断](visual-diagnostics.md) |
+| chunk边界跳变或动作迟钝 | 原始target连续性、队列年龄、执行前缀M和聚合 |
+| 后期checkpoint变差 | 固定开发场景、数据重叠、过拟合及任务覆盖 |
+| NaN或偶发大动作 | mask、梯度、scaler跳步、单位和物理尺度 |
+| 训练日志不更新 | `a3-training-progress` |
+| GPU利用率低或时间长 | 分开测decode、dataloader、推理、仿真和I/O；有解码瓶颈再用 `a3-frame-cache` |
+| 入盒数高但success低 | 原生release、stability、boundary、slot等条件 |
 
-The phase taxonomy is descriptive; use existing observable signals, and mark unknown rather than inferring hidden events from the final count alone.
+记录测量的任务、horizon、CPU/GPU预算、并发和实际wall time；用完成的有效episode或update衡量吞吐。改变worker数或缓存时保留任务条件，避免把资源变化计为算法收益。

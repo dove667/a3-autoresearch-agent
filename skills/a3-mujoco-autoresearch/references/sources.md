@@ -4,10 +4,8 @@ Reviewed 2026-11-02. References are primary papers, author repositories, officia
 
 ## Project sources
 
-- Historical three-page course brief: method families and research workflow.
 - [A3 source snapshot6ff458b](https://github.com/Eter0109/a3_dual_arm_sim/tree/6ff458b0b73b78a3ffd794e8b37fdf297a23af48): contracts, adapters, dataset/training/evaluation surfaces inspected. This is not evidence of server deployment or local assets.
 - LeRobot 0.5.1, commit1396b9fab7aecddd10006c33c47a487ffdcb54b4: [ACT](https://github.com/huggingface/lerobot/blob/1396b9fab7aecddd10006c33c47a487ffdcb54b4/src/lerobot/policies/act/modeling_act.py), [SmolVLA](https://github.com/huggingface/lerobot/blob/1396b9fab7aecddd10006c33c47a487ffdcb54b4/src/lerobot/policies/smolvla/modeling_smolvla.py), [diffusion](https://github.com/huggingface/lerobot/tree/v0.5.1/src/lerobot/policies/diffusion).
-- Historical authorship at RSI source 401edc4 used its then-current phase-two protocol 0.3.0 and SOUL.md 0.1.0. Current research follows SOUL and the saved conditions in [benchmark evaluation](benchmark-evaluation.md).
 
 ## Method mechanisms
 
@@ -30,8 +28,8 @@ Reviewed 2026-11-02. References are primary papers, author repositories, officia
 - [robomimic dataset contents](https://robomimic.github.io/docs/tutorials/dataset_contents.html), [sequence dataset](https://robomimic.github.io/docs/modules/dataset.html): transferable inspection concepts, not a requirement to migrate data format.
 - [PyTorch AMP](https://docs.pytorch.org/docs/stable/notes/amp_examples.html), [checkpointing](https://docs.pytorch.org/tutorials/beginner/saving_loading_models.html), [reproducibility](https://docs.pytorch.org/docs/stable/notes/randomness.html): pin local versions; exact repeatability across platforms not promised.
 - [MuJoCo simulation state](https://mujoco.readthedocs.io/en/stable/programming/simulation.html): integration state is more than qpos/qvel.
-- [SciPy bootstrap](https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.bootstrap.html): pairing/degenerate-sample cautions. Included helper uses a transparent percentile bootstrap, not SciPy/BCa.
+- [SciPy bootstrap](https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.bootstrap.html): pairing/degenerate-sample cautions.
 
-## What has not been established
+## 使用范围
 
-No policy was trained, downloaded or evaluated to author this package. Historical catalog integration and offline helper fixtures are documented in [validation records](validation.md) with their original scope. This package imports no third-party implementation code; linked repositories remain under their own licenses. Future copied/adapted code must retain applicable license notices and provenance.
+模型方法参考需在实际A3数据、adapter和闭环评估中验证。复现实验时固定实现版本和输入条件。具体Policy结果和改进结论保存在研究memory与实验记录中。复制或改编外部源码时保留其许可证和来源。

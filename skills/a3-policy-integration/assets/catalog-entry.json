@@ -1,16 +1,24 @@
 {
   "id": "a3-policy-integration",
-  "version": "0.1.1",
-  "status": "reference",
-  "description": "Use when an A3 policy adapter, checkpoint, task condition or generated episode runner changes, or a policy appears to ignore the task instruction.",
+  "version": "0.1.2",
+  "status": "active",
+  "description": "检查Policy接入：任务指令、ACT条件embedding、processor、adapter和哈希固定runner。Policy input, task conditioning and integration.",
   "keywords": [
     "adapter",
     "task",
     "instruction",
     "condition",
-    "pin",
-    "checkpoint"
+    "checkpoint",
+    "processor",
+    "策略",
+    "适配器",
+    "指令",
+    "任务条件",
+    "embedding",
+    "输入",
+    "哈希",
+    "runner"
   ],
-  "local_source": "skills/a3-policy-integration/SKILL.md",
-  "provenance": "Consolidated historical Agent-authored research lessons, reviewed against the current native Harness interfaces."
+  "provenance": "Consolidated historical Agent-authored research lessons, reviewed against the current native Harness interfaces.",
+  "local_source": "skills/a3-policy-integration/SKILL.md"
 }

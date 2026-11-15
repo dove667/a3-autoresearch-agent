@@ -1,6 +1,6 @@
 # 研究工作区
 
-Version: 0.8.0
+Version: 0.9.0
 
 本地原生进程只提供文件与研究工具，没有本地 bash 或 Python 执行入口。仿真、训练、评估及脚本执行通过远程作业完成。运行状态 `runtime_paths` 给出实际路径：
 
@@ -29,4 +29,6 @@ Version: 0.8.0
 
 `SOUL.md` 定义长期目标与研究原则，`execution.md` 说明工具操作，均由 `inputs` 保存版本快照。本文件在输入快照中名为 `workspace-instructions.md`。跨文件读取时核对 manifest 前后均为 active 且 revision/generation 一致；updating 时等待，版本变化后重读相关内容。
 
-长期记忆服务由 Host 随研究进程启动和关闭。根 `memory/` 保存经验修订与可重建语义索引，模型文件在项目 `model-cache/`；使用 `memory` 工具管理条目、适用运行和来源，普通文件工具不直接改动这些目录。
+知识检索服务由 Host 随研究进程启动和关闭，memory 与 skills 共用一个本地 embedding 进程。根 `memory/` 保存经验修订与可重建语义索引，模型文件在项目 `model-cache/`；使用 `memory` 工具管理条目、适用运行和来源，普通文件工具不直接改动这些目录。
+
+技能语义索引在 `.runtime/skill-index/`，经验向量缓存在 `memory/`。索引均可重建；skill 的正文和附件仍只保存在根 `skills/`，检索不会把整包注入上下文。

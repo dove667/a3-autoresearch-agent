@@ -1,8 +1,7 @@
 # Verified project contract
 
-Inspected 2026-11-02. Upstream A3 source: **6ff458b0b73b78a3ffd794e8b37fdf297a23af48**, [pinned tree](https://github.com/Eter0109/a3_dual_arm_sim/tree/6ff458b0b73b78a3ffd794e8b37fdf297a23af48). Historical authorship used RSI source 401edc4 and its then-current evaluation protocol 0.3.0. For each experiment, record the actual A3 revision, deployed source hashes, dependencies and evaluation settings. Current full-grid conditions are in [benchmark evaluation](benchmark-evaluation.md).
+Inspected 2026-11-02. Upstream A3 source: **6ff458b0b73b78a3ffd794e8b37fdf297a23af48**, [pinned tree](https://github.com/Eter0109/a3_dual_arm_sim/tree/6ff458b0b73b78a3ffd794e8b37fdf297a23af48). For each experiment, record the actual A3 revision, deployed source hashes, dependencies and evaluation settings. Current full-grid conditions are in [benchmark evaluation](benchmark-evaluation.md).
 
-The historical course brief motivates ACT, Diffusion/Flow, VLA, World Model and an autonomous Analyze→Hypothesize→Implement→Train→Evaluate→Reflect→Iterate loop. Its expert-rollout example is background material; benchmark horizons are recorded separately below.
 
 ## Environment and policy boundary
 
@@ -49,7 +48,7 @@ Single CLI resets one inference seed each episode; grid uses scenario seed per e
 
 2×5 transfers 10 of 80 cookies with slot/boundary, release/stability/safety requirements;2×10 transfers 20 with column counts10/10 and different slot requirements. Capture actual success_conditions rather than hardcode a simplified “count equals capacity”. Final cookies_in_target and complete success are separate. Never report peak count as final count.
 
-The full evaluation uses six cells and 120 episodes per fixed policy snapshot, including its processor, code, inference settings and task routing. Source column, task instructions, horizons and reporting are defined in [benchmark evaluation](benchmark-evaluation.md). The optional [evaluation helper](evaluation-helper.md) documents raw schemas, pairing and uncertainty analysis.
+The full evaluation uses six cells and 120 episodes per fixed policy snapshot, including its processor, code, inference settings and task routing. Source column, task instructions, horizons and reporting are defined in [benchmark evaluation](benchmark-evaluation.md).
 
 In the inspected A3 revision, the Pi0.5 benchmark path requires task 2×5 and `pi05_aligned` prompt, despite the README linking a dual-scene checkpoint. `--pi05-scene-mode full` changes robot/cookie/bin/camera arrangements. Report that geometry separately and adapt the model to the saved benchmark conditions before comparing gains.
 

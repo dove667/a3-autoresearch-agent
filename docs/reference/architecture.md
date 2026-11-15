@@ -31,6 +31,8 @@ flowchart LR
 
 操作者从明确的 Git commit 发布 Harness。固定源码缓存在 `.runtime/published-harness/v2/<commit>/`，研究文件保存于根目录唯一的 `workspace/`；机器对话状态保存在 `trajectories/<开始时间>/conversation/`；根 `skills/`、`memory/entries.jsonl` 与 `plan/current.json` 分别保存技能、主动长期经验和跨运行研究计划。私有 workspace 映射固定资源身份与研究目录。每天创建新的 run 和模型上下文，每轮只运行一个研究 Agent。A3 参考源码按内容保存于共享 `.runtime/reference-sources/`，各次运行的 `public/a3` 链接到对应只读版本，避免重复仓库副本。
 
+Host 的 `knowledge_service/` 为 memory 和 skills 共用一个本地 embedding 进程及认证服务；两套索引独立保存。技能检索只交付摘要，正文和附件通过 skills 工具按需读取。
+
 Host 的 `launch.py` 负责启动装配；`sessions/processes.py` 负责创建、观察、停止及恢复原生进程；`sessions/workspace.py` 负责工作区定位、受限文件读取和持久写入。进程以 PID、启动标识和实际命令核对身份，避免停止其他进程。
 
 `--resume-from` 恢复同一 run、身份、工作区、checkpoint、工具 journal 与在途作业。普通恢复要求原发布版本和完整模型配置一致。Host 私有状态和会话记录使用明确的原生 schema；不支持旧 builder 或本地容器记录。

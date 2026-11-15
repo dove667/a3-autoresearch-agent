@@ -54,7 +54,7 @@ def create_knowledge_app(project, run_id, token, embedder):
 
     def authorize(authorization: str = Header(default="")):
         if not secrets.compare_digest(authorization, "Bearer " + token):
-            raise HTTPException(status_code=401, detail="Memory service token required")
+            raise HTTPException(status_code=401, detail="Knowledge service token required")
 
     @app.middleware("http")
     async def limit_body(request: Request, call_next):
@@ -69,11 +69,11 @@ def create_knowledge_app(project, run_id, token, embedder):
             if declared < 0:
                 return JSONResponse({"error": "invalid_content_length"}, status_code=400)
             if declared > 65536:
-                return JSONResponse({"error": "memory_request_too_large"}, status_code=413)
+                return JSONResponse({"error": "knowledge_request_too_large"}, status_code=413)
         body = bytearray()
         async for chunk in request.stream():
             if len(body) + len(chunk) > 65536:
-                return JSONResponse({"error": "memory_request_too_large"}, status_code=413)
+                return JSONResponse({"error": "knowledge_request_too_large"}, status_code=413)
             body.extend(chunk)
         # Starlette's cached request forwards these exact bounded bytes to the route parser.
         request._body = bytes(body)
@@ -117,7 +117,7 @@ def main():
     model = verify_model(model_path(project))
     binary = shutil.which(os.environ.get("A3_EMBEDDING_SERVER", "llama-server"))
     if binary is None:
-        raise RuntimeError("Install llama.cpp or configure A3_EMBEDDING_SERVER for semantic memory")
+        raise RuntimeError("Install llama.cpp or configure A3_EMBEDDING_SERVER for semantic retrieval")
     embedding_token = secrets.token_urlsafe(32)
     embedding_port = free_port()
     environment = {**os.environ, "LLAMA_API_KEY": embedding_token}

@@ -25,6 +25,6 @@ Reuse valid completed episodes from the same snapshot and conditions. Reconcile 
 
 For each cell, report the episode count, final `cookies_in_target`, its mean divided by task capacity (10 or 20), and the original Boolean `success` count/rate. Preserve the native success conditions, including placement, release, stability and safety. Final count and native success remain separately visible.
 
-An overall normalized final-count summary may average the six cell ratios equally. The optional comparison helper calls this historical scalar `G`; it also supports paired scenario analysis. Neither that scalar nor a confidence interval imposes a project completion threshold.
+An overall normalized final-count summary may average the six cell ratios equally. Report paired scenario differences and uncertainty alongside per-cell results; use them to choose the next experiment.
 
 Link the snapshot, dataset, resolved evaluation settings, job IDs and raw episode records. Keep scientific task failures separate from execution failures, and describe behavioral improvements with synchronized visual/action evidence when useful.

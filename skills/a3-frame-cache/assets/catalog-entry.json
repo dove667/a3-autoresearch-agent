@@ -1,16 +1,23 @@
 {
   "id": "a3-frame-cache",
-  "version": "0.1.0",
-  "status": "reference",
-  "description": "Use when repeated video decoding limits A3 training, several trainers share decoded frames, cache storage grows or training stops during cache publication.",
+  "version": "0.1.1",
+  "status": "active",
+  "description": "视频帧缓存：解码瓶颈、共享缓存、容量回收与中断修复，保持训练样本一致。Video decoding and shared frame cache.",
   "keywords": [
     "cache",
     "video",
     "frame",
     "decode",
     "eviction",
-    "training"
+    "training",
+    "缓存",
+    "视频",
+    "帧",
+    "解码",
+    "数据等待",
+    "回收",
+    "磁盘空间"
   ],
-  "local_source": "skills/a3-frame-cache/SKILL.md",
-  "provenance": "Consolidated historical Agent-authored research lessons, reviewed against the current native Harness interfaces."
+  "provenance": "Consolidated historical Agent-authored research lessons, reviewed against the current native Harness interfaces.",
+  "local_source": "skills/a3-frame-cache/SKILL.md"
 }

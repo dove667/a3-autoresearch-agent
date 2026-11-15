@@ -1,6 +1,6 @@
 # 研究工具与执行约定
 
-Version: 0.28.0
+Version: 0.29.0
 
 本文件按当前操作查阅。工具定义提供参数、类型与限制；这里说明跨工具流程及直接使用 `gateway` 的入口。
 `input-manifest.json` 的 `execution_index` 给出章节字符 `offset/end` 和全文 SHA256，可用 `read` 分页定位；索引 `truncated:true` 时从 `next_offset` 续读。
@@ -22,16 +22,23 @@ Version: 0.28.0
 
 ## 技能管理
 
-技能统一通过 `skills` 管理，按需要逐步读取，不将整库或无关附件加入上下文：
+技能保存可复用操作方法。经验结论用 `memory`，未来路线和在途作业用 `plan`。全部技能通过同一个 `skills` 工具管理。
 
-1. `skills(action="list", query="任务或症状")` 搜索名称、摘要和版本；结果分页时用返回的 `next_offset` 继续。
-2. `skills(action="read", id="...")` 读取选中方法的正文；用 `offset/limit` 按字符分页。
-3. 需要模板、参考资料或 helper 时，先 `skills(action="list_resources", id="...")`，再 `skills(action="read_resource", id="...", path="references/...")`。
-4. 新建用 `save(id, description, content, source, keywords)`；修改先 `read`，再以同一 ID 和 `expected_sha256` 保存完整新正文。工具自动更新版本并保存旧包。
-5. 附件用 `write_resource(id, path, content, expected_sha256)` 创建或更新，已有文件必须提供其当前哈希；删除附件用 `delete_resource(id, path, expected_sha256)`。
-6. 过时方法用 `archive(id, expected_sha256)` 归档。默认搜索隐藏归档项，`list(include_archived=true)` 可查看，重新 `save` 可恢复。
+1. 用自然语言找方法：`skills(action="list", query="训练日志一直不更新怎么办", limit=3)`。检索结合语义与关键词，只返回摘要、版本和匹配理由；按 `next_offset` 分页。空 query 列目录。
+2. 选择最相关的一个，用 `skills(action="read", id="...")` 读正文。正文分页使用字符 `offset/limit`，直到所需步骤已读到；不用把全部候选都展开。
+3. 正文要求专题资料时，先 `list_resources(id)` 再 `read_resource(id, path="references/...")`。后台检索可匹配正文，但不会把正文或附件自动交给你。
+4. 改一小段时，先读取当前内容和 SHA256，再调用下面的局部修改接口。新建或整体改写用 `save(id, description, content, source, keywords)`，已有 skill 同样要求 `expected_sha256`。新建前先搜索相似方法，已有同用途方法优先改进原 ID。
+5. 附件新建用 `write_resource`，整体替换、删除分别用 `write_resource`、`delete_resource`，已有文件提供当前附件哈希。归档用 `archive(id, expected_sha256)`；默认检索隐藏归档项，`list(include_archived=true)` 可审核，重新 `save` 可恢复。
 
-所有动作均调用 `skills` 工具。普通 `read/write/edit` 不直接访问技能库或长期记忆。正文和附件返回各自 SHA256，出现 `revision_conflict` 后重读再合并。技能附件作为资料使用，需要执行的研究代码先整理到工作区，再随远程作业提交。
+正文局部修改示例：
+
+```json
+{"action":"edit","id":"a3-training-progress","old_text":"<当前正文中一段精确文字>","new_text":"<替换后的文字>","expected_sha256":"<read返回的完整正文哈希>"}
+```
+
+文本附件局部修改使用 `action="edit_resource"` 并加 `path`；哈希使用 `read_resource` 返回值。默认只接受唯一匹配，确实需要替换所有相同文字时加 `replace_all=true`。无匹配、歧义、过期哈希或二进制附件会拒绝修改；正文 edit 只改 Markdown 内容，名称、描述和版本等受控头部由工具维护。描述或关键词变化使用 save。
+
+每次有效修改自动递增版本，保存完整旧包，下一次检索读取新内容；无变化不产生新版本。遇到 `revision_conflict` 先重读、再合并。列表页 limit 为1–24，正文和附件页 limit 为1–8000字符。普通 `read/write/edit` 不直接接触技能库；需要执行的附件代码先整理到 workspace，再随远程作业提交。
 
 ## 提交与预检
 

@@ -14,7 +14,7 @@ uv sync --python 3.11
 cp .env.example .env
 ```
 
-按[环境配置](docs/guides/setup.md)准备本地记忆 embedding 模型与 llama.cpp，并填写模型认证、项目路径和远程资源配置。每天从明确的发布版本开始新一轮研究：
+按[环境配置](docs/guides/setup.md)准备本地知识检索 embedding 模型与 llama.cpp，并填写模型认证、项目路径和远程资源配置。每天从明确的发布版本开始新一轮研究：
 
 ```bash
 bash start-autoresearch.sh --harness-commit <已发布提交SHA>

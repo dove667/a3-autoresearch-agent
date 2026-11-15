@@ -1,104 +1,27 @@
 {
   "id": "a3-mujoco-autoresearch",
-  "version": "0.1.20",
-  "status": "reference",
-  "comparison_status": "compare-not-proven",
-  "description": "A3 MuJoCo autoresearch and model training: ACT, Diffusion/Flow, VLA, world models, diagnostics and paired evaluation.",
+  "version": "0.1.24",
+  "status": "active",
+  "description": "A3机器人策略实验：选择ACT、扩散/流、VLA方法，诊断数据与训练，做配对闭环评测。Policy methods, training diagnostics and paired evaluation.",
   "keywords": [
     "a3",
     "mujoco",
-    "autoresearch",
-    "training",
     "act",
     "diffusion",
     "flow",
     "vla",
     "world-model",
     "evaluation",
-    "visual-diagnostics",
-    "video",
-    "episode-executor",
-    "parallel",
-    "task-conditioning",
-    "task-id",
-    "language",
-    "instruction"
+    "training",
+    "策略",
+    "训练",
+    "数据",
+    "闭环",
+    "配对评测",
+    "全量评测",
+    "CPU预检",
+    "诊断"
   ],
-  "applicability": "Research planning and authorized execution to improve A3 2x5/2x10 full-evaluation accuracy and success rate. Read SKILL.md and selected references; use available authorized execution tools for helpers.",
-  "local_source": "skills/a3-mujoco-autoresearch/SKILL.md",
   "provenance": "Externally authored baseline from primary-source research and inspected A3/LeRobot code on 2026-11-02; no third-party code copied and no policy training performed.",
-  "evidence": [
-    "skills/a3-mujoco-autoresearch/references/sources.md",
-    "skills/a3-mujoco-autoresearch/references/integration.md",
-    "skills/a3-mujoco-autoresearch/references/validation.md",
-    "skills/a3-mujoco-autoresearch/references/training-diagnostics.md",
-    "skills/a3-mujoco-autoresearch/references/benchmark-evaluation.md"
-  ],
-  "evidence_status": "literature-and-source-inspected; offline-helper-tests; no-local-policy-comparison",
-  "version_history": [
-    {
-      "version": "0.1.17",
-      "change": "Follow the SOUL long-term research goal; consolidate current benchmark conditions and remove separate task-input dependencies. Reuse the shared workspace and independent long-term memory; retain the optional helper historical schema."
-    },
-    {
-      "version": "0.1.16",
-      "change": "Link consolidated Agent-authored operational skills and replace historical skill integration and identity assumptions with the current native single-Agent contract."
-    },
-    {
-      "version": "0.1.15",
-      "change": "Resolve episode executor and output paths from the actual job backend and environment."
-    },
-    {
-      "version": "0.1.0",
-      "change": "Initial externally authored research reference and offline paired-evaluation helper."
-    },
-    {
-      "version": "0.1.1",
-      "change": "Clarify measured end-to-end bottlenecks, simulation/data reuse, partial throughput probes and Host resource-allocation boundary; no new execution or quota authority."
-    },
-    {
-      "version": "0.1.2",
-      "change": "Remove Host quota-setting and resource-administration guidance from the research skill. Retain conditional pipeline measurement, valid reuse, and attributable throughput experiments."
-    },
-    {
-      "version": "0.1.3",
-      "change": "Make the repertoire explicitly non-exhaustive: discover new problems, propose unlisted solutions, test them and revise skill guidance from evidence."
-    },
-    {
-      "version": "0.1.4",
-      "change": "Accept reference-only protocol 0.3.1 in offline helper, retain 0.3.0 support, require matched protocol version and digests; scientific computations unchanged."
-    },
-    {
-      "version": "0.1.5",
-      "change": "Remove an implied preference for cheap deployment probes; compare data, training, deployment and Harness alternatives from expected benefit, total cost, uncertainty and results without a fixed order."
-    },
-    {
-      "version": "0.1.6",
-      "change": "Add optional video/trace process diagnosis and bounded visual inspection; distinguish native diagnostic retention, partial observations and new replay evidence without adding evaluation gates. Native diagnostics source-inspected at A3 7c34d38; no simulation or model experiment performed."
-    },
-    {
-      "version": "0.1.7",
-      "change": "Route independent collection and evaluation episodes through the quota-aware unified executor; preserve protocol parameters and completed results."
-    },
-    {
-      "version": "0.1.8",
-      "change": "Use one research Agent, parallel independent remote jobs and one linear Harness trial; remove worker delegation without changing scientific evaluation requirements."
-    },
-    {
-      "version": "0.1.9",
-      "change": "Share research reads and analyzer reports among registered identities in one run; retain owner/adopted-lineage mutation authority and explicit cross-run grants."
-    },
-    {
-      "version": "0.1.10",
-      "change": "Preserve evidence-backed behavioral policy progress beyond aggregate score and broaden exploration across supported trainable model families."
-    },
-    {
-      "version": "0.1.11",
-      "change": "Require explicit task conditions in actual training and inference action computation, with consistent ACT embeddings or VLA/pi text processing and real-path validation."
-    },
-    {
-      "version": "0.1.18",
-      "change": "Use the single controlled skill library and trajectory-based original history; remove workspace installation and duplicated skill copies."
-    }
-  ]
+  "local_source": "skills/a3-mujoco-autoresearch/SKILL.md"
 }

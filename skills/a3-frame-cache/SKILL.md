@@ -1,28 +1,29 @@
 ---
 name: a3-frame-cache
-description: Use when repeated video decoding limits A3 training, several trainers share decoded frames, cache storage grows or training stops during cache publication.
+description: 视频帧缓存：解码瓶颈、共享缓存、容量回收与中断修复，保持训练样本一致。Video decoding and shared frame cache.
 metadata:
-  version: 0.1.0
+  version: 0.1.1
 ---
 
-# Cache demonstration frames
+# 复用视频解码帧
 
-Reuse decoded pixels while preserving the declared samples, time alignment, augmentation and task conditions. First measure decode time, data wait, update time and the working set on the actual workload.
+适用：已测量到重复解码或数据等待限制训练速度，多训练器需要共享帧，或缓存膨胀、发布中断。先记录decode时间、数据等待、update时间和真实工作集大小。
 
-## Define a reusable entry
+## 保证样本不变
 
-Key entries by source-video digest, exact frame or timestamp selection, decoder version, pixel format and output dimensions. Validate decoded shape and alignment against the source. Apply stochastic augmentation after retrieving the unaugmented frame.
+缓存key包含源视频哈希、帧号或时间选择、解码器版本、像素格式和输出尺寸。随机增强在取出未增强帧后执行。用真实多相机样本检查shape、边界帧和时间对齐。
 
-A full-video cache fits workloads whose decoded working set fits the available storage. A bounded block cache can reduce peak storage; decoding from a preceding keyframe must reproduce the selected frames from a sequential reference decode. Verify boundary frames and timestamps on real multi-camera samples.
+完整视频缓存适合能装下的工作集；容量受限时选择分块缓存。分块从前一个keyframe解码时，应与顺序参考解码选出相同帧。
 
-## Publish and evict safely
+## 安全发布和回收
 
-Use a dedicated cache namespace with an explicit capacity. Write temporary content, validate it, and publish the data and commit metadata under the cache's own locking protocol. Readers accept committed entries and hold the required protection until the frame is copied. Eviction must honor active readers and writers. Different cache implementations need distinct namespaces and locking protocols.
+1. 使用独立命名空间并设置容量。写临时数据，校验后在缓存锁保护下发布数据和commit元数据。
+2. 读者只接受已commit条目，并在复制帧前保持读保护；eviction跳过正在读写的条目。
+3. 写者中断后先确认活动训练器，再持独占维护锁隔离partial/orphan条目。保留元数据，将隔离区计入容量。
+4. 从有哈希的压缩源重建缺失条目，保留已验证的完整条目。不同缓存实现使用各自命名空间和锁协议。
 
-After an interrupted writer, identify active trainers before repair. Under an exclusive maintenance lock, quarantine partial or orphan entries and preserve their metadata. Rebuild missing entries from verified source data; leave committed valid pairs intact. Include quarantine in disk accounting. If a suitable implementation is absent, implement and test these invariants before pointing training at it.
+## 验证收益
 
-## Compare the actual pipeline
+固定数据、sampler、增强、batch、模型、步数和资源，比较冷缓存与热缓存的有效updates/耗时，同时记录decode/write次数和磁盘用量。保留压缩源与轻量索引。
 
-Use matched data, sampler, augmentation, batch size, model, training steps and resource conditions. Record cold and warm cache behavior, actual decodes and writes, disk use and valid updates per elapsed time. Preserve compressed source videos and lightweight indexes.
-
-Keep running training intact. Apply a cache change in a new authorized job or resume from a complete model, optimizer, scheduler and RNG checkpoint. Recheck sample identity after the change.
+在新作业中应用修改；需要续训时使用完整模型、optimizer、scheduler和RNG检查点，并复查样本身份。缓存收益应来自更少重复工作，不能靠改变采样或任务条件获得。

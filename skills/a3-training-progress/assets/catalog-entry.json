@@ -1,16 +1,23 @@
 {
   "id": "a3-training-progress",
-  "version": "0.1.0",
-  "status": "reference",
-  "description": "Use when A3 training logs are too large to inspect directly, progress looks stalled or malformed and nonfinite records need investigation.",
+  "version": "0.1.1",
+  "status": "active",
+  "description": "检查训练是否卡住：大日志、step和loss、checkpoint、NaN、坏行与增长中文件。Training progress and log diagnosis.",
   "keywords": [
     "training",
     "progress",
     "log",
+    "loss",
+    "checkpoint",
     "NaN",
-    "malformed",
-    "status"
+    "训练",
+    "日志",
+    "卡住",
+    "不更新",
+    "进度",
+    "损坏",
+    "非有限值"
   ],
-  "local_source": "skills/a3-training-progress/SKILL.md",
-  "provenance": "Consolidated historical Agent-authored research lessons, reviewed against the current native Harness interfaces."
+  "provenance": "Consolidated historical Agent-authored research lessons, reviewed against the current native Harness interfaces.",
+  "local_source": "skills/a3-training-progress/SKILL.md"
 }

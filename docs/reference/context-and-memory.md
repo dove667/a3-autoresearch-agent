@@ -59,7 +59,7 @@ decisions, job references and results.
 
 The `memory` tool manages shared research experience in `memory/entries.jsonl`.
 Entries have stable IDs, revisions, applicability, evidence references and an active/archived
-lifecycle. The Host starts an authenticated loopback memory worker and a local embedding
+lifecycle. The Host starts an authenticated loopback knowledge worker and a local embedding
 process for each research run, then shuts them down together. Model weights remain cached;
 no external embedding API receives research notes. Current plan focus supplies a small
 retrieved experience view on model requests; complete notes and sources are read on demand.
@@ -333,3 +333,29 @@ long-term experience in `memory/entries.jsonl`. Operational records remain with
 the run that produced them.
 
 The current plan retains the latest 20 review receipts and a job-status review index. Earlier complete revisions remain in each run’s immutable plan snapshots. Automatic context shows concise direction and route fields; `plan(action="show")` returns full detail.
+
+
+## Skill discovery and progressive disclosure
+
+The same authenticated knowledge service provides `/memory` and `/skills/search` using one
+Qwen embedding process. Memory records and skill packages retain separate storage and APIs.
+Shared text normalization and vector caching live in `harness/semantic_index.py`; memory
+ranking remains in `harness/memory/retrieval.py`, and skill discovery in `harness/skill_search.py`.
+
+`skills(action="list", query=...)` searches purpose metadata and private body-section vectors.
+Only ID, version, status, a short description and match reason are delivered. Resources are not
+automatically read or indexed. Read a selected `SKILL.md`, then list and read only needed
+resources. Empty-query listing needs no embedding inference. List pages accept 1–24 entries;
+body and resource reads accept 1–8000 characters.
+
+Skill vectors are cached separately under `.runtime/skill-index/`. Each query snapshots the
+current package under its library lock; archived packages are omitted by default. Content
+hashes refresh changed text while identical vectors are reused, so edits and archive operations
+are reflected on the next query. An unavailable production service returns an explicit error.
+
+For local corrections, `edit` and `edit_resource` replace exact text after checking the current
+body/resource SHA256. A match must be unique unless `replace_all=true` is explicit. Markdown
+body edits preserve managed YAML metadata. Binary resources, stale hashes and missing or
+ambiguous matches are rejected. Complete old packages are retained before each versioned
+transaction; unchanged edits do not increment the version. Use `save` to create a package or
+change its description, keywords or complete body.

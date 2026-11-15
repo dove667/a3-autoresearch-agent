@@ -1,16 +1,23 @@
 {
   "id": "a3-model-provenance",
-  "version": "0.1.0",
-  "status": "reference",
-  "description": "Use when registering a trained policy, reporting model comparisons or reconciling model names, intermediate checkpoints and historical experiment aliases.",
+  "version": "0.1.1",
+  "status": "active",
+  "description": "模型与checkpoint谱系：父模型、权重哈希、数据来源、训练步骤及历史别名。Model identity, lineage and provenance.",
   "keywords": [
     "model",
     "checkpoint",
     "lineage",
     "identity",
     "alias",
-    "reproducibility"
+    "reproducibility",
+    "模型",
+    "来源",
+    "谱系",
+    "父模型",
+    "权重",
+    "检查点",
+    "别名"
   ],
-  "local_source": "skills/a3-model-provenance/SKILL.md",
-  "provenance": "Consolidated historical Agent-authored research lessons, reviewed against the current native Harness interfaces."
+  "provenance": "Consolidated historical Agent-authored research lessons, reviewed against the current native Harness interfaces.",
+  "local_source": "skills/a3-model-provenance/SKILL.md"
 }

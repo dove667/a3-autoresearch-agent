@@ -33,7 +33,7 @@ def verify_model(path):
     path = Path(path)
     if path.is_symlink() or not path.is_file():
         raise ValueError(
-            "Embedding model is absent; run the memory model installer before research"
+            "Embedding model is absent; run the knowledge-service model installer before research"
         )
     if path.stat().st_size != MODEL_BYTES:
         raise ValueError("Embedding model size differs from the reviewed Qwen model")

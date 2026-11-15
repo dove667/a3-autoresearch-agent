@@ -1,43 +1,42 @@
 ---
 name: a3-job-recovery
-description: Use when submitting A3 research scripts, reconciling an unknown submission,
-  diagnosing queued jobs or inspecting execution health without opening held-out scores.
+description: 提交和恢复A3远程作业：源码附件、CPU预检、提交未知、排队、部分回合与失败重试。Job submission, preflight and
+  recovery.
 metadata:
-  version: 0.1.2
+  version: 0.1.3
 ---
 
-# Submit and reconcile research jobs
+# 提交与接续研究作业
 
-The Controller's job ID identifies the execution. Save it with the submitted source receipt and intended outputs before waiting.
+适用：提交研究脚本、提交结果不明、长期排队、执行失败或评测只完成一部分。先确认作业身份，再决定等待、修复或重试。
 
-## Submit the actual source
+## 提交源码
 
-Use the current `job_submit` tool and an argument-array command. Attach a local UTF-8 script under `scripts/` with `workspace_files`; the tool computes its SHA256. `files` contains literal UTF-8 source text. Existing datasets and weights use authorized `input_exports`.
+`command` 使用参数数组，工作区源码必须在 `scripts/`。`workspace_files` 附加真实文件并由工具计算哈希；已有大数据和权重通过已授权 `input_exports` 使用。
 
 ```json
-{
-  "command": ["python", "scripts/act/shared/diagnostics/inspect_data.py"],
-  "gpu": false,
-  "workspace_files": [{"path": "scripts/act/shared/diagnostics/inspect_data.py"}]
-}
+{"command":["python","scripts/act/shared/diagnostics/inspect_data.py"],"gpu":false,"workspace_files":[{"path":"scripts/act/shared/diagnostics/inspect_data.py"}]}
 ```
 
-Check the returned source receipt. Request a GPU for CUDA work; inspect the current tool schema when declaring memory or evaluation requirements. Submit independent ready jobs before waiting, and keep dependent jobs behind their prerequisites.
+使用当前 `job_submit` 工具的其他资源参数。GPU正式作业先按 `preflight` 的当前说明通过CPU预检。保存返回的job ID、源码回执和预期结果位置，绑定到plan后再等待。
 
-## Reconcile before retrying
+## 按状态处理
 
-| Observation | Next action |
+| 观察到的状态 | 下一步 |
 | --- | --- |
-| `queued` or resource contention | Keep the same ID and wait for admission. |
-| `submission_unknown` with a job ID | Query that ID with `job_status`; use `job_list` to reconcile the authorized inventory. |
-| Transport error without an ID | Preserve command, source digest, time and error; inspect the authorized inventory and matching outputs. Ask the operator to resolve identity if ambiguity remains. |
-| Terminal execution error | Inspect logs, source and episode ledger; repair the demonstrated fault and identify work still needing execution. |
-| Scientific `success:false` with a valid report | Retain the completed scientific observation. |
+| `queued`、资源紧张 | 保留同一ID，用 `wait` 等待调度。 |
+| 提交未知但返回ID | 用 `job_status` 查该ID；必要时用 `job_list` 核对当前授权清单。 |
+| 传输失败且没有ID | 保存命令、源码哈希、时间与错误，核对授权清单和输出；身份仍不明确时请操作者处理。 |
+| 终态执行错误 | 读日志、源码和episode ledger，修复已定位问题，仅补做未完成工作。 |
+| 有效报告中 `success:false` | 保存为已完成的实验观测，继续分析失败原因。 |
 
-An absent or stalled output leaves the submission outcome unresolved. Preserve unknown attempts and reconcile them before submitting a replacement.
+输出暂时不存在、日志不动或等待重复返回，都应先查询原作业。不要直接提交等价副本。
 
-## Inspect health with bounded evidence
+## 恢复部分评测
 
-Read `job_status` and the expected manifest and ledger identity. Verify the exact declared episode IDs and count, including missing, duplicate or unexpected entries. For a held-out batch, count execution states and inspect failed or unknown entries while leaving episode scores unopened. Preserve ledger and report digests. Read the current episode-executor recovery contract before resuming: confirmed pending entries can use the same manifest and output directory; reconcile launching, running or failed entries first. Repeated identical wait responses call for checking those exact owned jobs and the current inventory. Record a concrete waiting defect for maintainers.
+1. 用 `job_status` 核对job与manifest身份，读取有界日志。
+2. 根据manifest逐项核对episode ID、完成数、缺失、重复和异常条目。保留ledger及报告哈希。保留集只做运行健康检查时，不打开分数。
+3. 读取当前execution提示词的episode-executor恢复说明；确认pending条目可沿用同manifest和输出目录。launching、running或结果未知条目先核对。
+4. 用 `job_artifact` 分页读取结果。运行中文件可能增长，连续页面需验证来源一致；稳定完成报告保留整体哈希。
 
-Read artifact pages with `job_artifact`; retain the source hash and distinguish a growing file from an immutable completed report. The current deployment input and tool schema define paths and supported operations.
+采集和评测使用部署方提供的 `A3_EPISODE_EXECUTOR`，路径从实际job环境取得。并发由现有资源预算约束；科学失败、执行失败与未知状态分别计数。

@@ -128,4 +128,6 @@ A3 参考源码按实际文件内容生成共享缓存；各次运行的 `public
 
 所有 Controller 共用配置的执行端资源根目录，源码升级继续使用原 GPU 调度锁和作业记录。大文件与只读 exports 留在执行端。原地升级边界保存在 `.host/release-upgrades/`，事件保存在 `.host/release-events.jsonl`。
 
-`memory/entries.jsonl` 追加保存条目版本；`memory/index.sqlite3` 是按模型与内容哈希维护的可重建向量缓存；`memory/sources.json` 连接迁入条目的历史原文。`host/memory/` 管理模型校验、私有服务和进程生命周期；`harness/memory/` 管理条目、检索、来源与受控客户端。
+`memory/entries.jsonl` 追加保存条目版本；`memory/index.sqlite3` 是按模型与内容哈希维护的可重建向量缓存；`memory/sources.json` 连接迁入条目的历史原文。`host/knowledge_service/` 管理模型校验、私有服务和进程生命周期；`harness/memory/` 管理条目、检索、来源与受控客户端。
+
+知识服务通过 `host/knowledge_service/` 共享一个 embedding 进程；`harness/knowledge_client.py` 是受控客户端，`harness/semantic_index.py` 提供通用向量缓存和文本归一化。技能目录与经验库分别保存，技能索引在 `.runtime/skill-index/`，索引不承担版本历史或正文存储。

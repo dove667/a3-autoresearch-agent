@@ -1,18 +1,29 @@
 ---
 name: a3-model-provenance
-description: Use when registering a trained policy, reporting model comparisons or reconciling model names, intermediate checkpoints and historical experiment aliases.
+description: 模型与checkpoint谱系：父模型、权重哈希、数据来源、训练步骤及历史别名。Model identity, lineage and provenance.
 metadata:
-  version: 0.1.0
+  version: 0.1.1
 ---
 
-# Record model identity and lineage
+# 找到结果对应的真实模型
 
-Give each trained model a stable identity linked to an actual loadable checkpoint. Use the active project's naming convention and retain historical aliases in the index.
+适用：checkpoint来源不清、多个历史模型别名、续训/转换/插值，或准备比较和保留Policy。
 
-Record the model family and architecture, parent checkpoint, training job and completion status, data and configuration digests, code and dependency revisions, checkpoint location and SHA256, and evaluation coverage. Include task mappings or prompt formats, preprocessing, normalization and tokenizer or processor versions needed to reproduce inference.
+## 建立一条可复现记录
 
-Name intermediate checkpoints by training run and step. Track collection, evaluation, repairs and visual analysis as work linked to a model. For interpolation or conversion, record the parent models and transformation. For interrupted, failed or unresolved training, keep its actual state and available checkpoints visible.
+为每个实际可加载checkpoint保存稳定ID。最少记录：
 
-Maintain a compact index as work completes. When an old experiment label refers to a repair, evaluation or several training attempts, retain it as an alias and identify the actual checkpoint behind each result. Preserve old reports and weights; add the resolved mapping and its sources to the index.
+| 内容 | 记录字段 |
+| --- | --- |
+| 权重 | 路径或export、SHA256、训练run与step、父checkpoint |
+| 训练 | job ID、实际完成状态、数据/配置哈希、源码和依赖版本 |
+| 推理 | 模型结构、adapter、任务映射或prompt、processor/tokenizer、归一化与相机处理 |
+| 结果 | 评测条件、覆盖的任务/难度/seed、原始报告与有用能力 |
 
-Keep the chosen baseline, retained behavioral alternatives and incomplete candidates identifiable. Record evidence and conditions for each useful capability. During a comparison, verify that the checkpoint, adapter, data and task conditions match the declared model identity. Keep unresolved lineage explicit until the original records settle it.
+中间checkpoint按训练run和step区分。转换或插值额外记录父模型、转换方法和输出哈希。中断训练保留真实完成状态和可用权重。
+
+## 对齐历史别名
+
+一个实验标签可能包含多次训练、修复和评估。逐条将旧别名映射到真实checkpoint；收集、视频分析和评估作为关联工作，不另当作模型。把来源不明的部分标记为待核对，沿job、manifest和权重哈希继续查。
+
+比较前核对checkpoint、adapter、数据和任务条件与声明一致。保留baseline、已有能力改进的候选及待验证替代模型。模型索引和实验材料放在工作区，下一步核对任务写入plan，结论或教训写入memory。

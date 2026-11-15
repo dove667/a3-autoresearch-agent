@@ -28,7 +28,7 @@ def group_exists(identifier):
             ["ps", "-axo", "pgid=,stat="], capture_output=True, text=True, check=False, timeout=5
         )
         if observed.returncode:
-            raise RuntimeError("Cannot verify local memory process-group shutdown") from None
+            raise RuntimeError("Cannot verify local knowledge process-group shutdown") from None
         for line in observed.stdout.splitlines():
             fields = line.split()
             if len(fields) == 2 and fields[0] == str(identifier) and not fields[1].startswith("Z"):
@@ -72,7 +72,7 @@ class KnowledgeService:
         verify_model(model_path(self.project))
         if not shutil.which(os.environ.get("A3_EMBEDDING_SERVER", "llama-server")):
             raise RuntimeError(
-                "Install llama.cpp or configure A3_EMBEDDING_SERVER for semantic memory"
+                "Install llama.cpp or configure A3_EMBEDDING_SERVER for semantic retrieval"
             )
         log_path = debug_directory(self.run) / "knowledge-service.log"
         log_path.parent.mkdir(parents=True, exist_ok=True)
