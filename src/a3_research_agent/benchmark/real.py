@@ -204,9 +204,12 @@ def _alive(pid: int) -> bool:
     return True
 
 
-def _kill_pid(pid: int, sig: int) -> None:
+def _kill_pid(pid: int, sig: int, *, group: bool = False) -> None:
     try:
-        os.kill(pid, sig)
+        if group:
+            os.killpg(pid, sig)
+        else:
+            os.kill(pid, sig)
     except ProcessLookupError:
         pass
     except PermissionError:
@@ -227,7 +230,7 @@ def _cleanup_processes(root: Path, run: Path | None) -> None:
         except (OSError, ValueError):
             pid = None
         if pid and _alive(pid):
-            _kill_pid(pid, signal.SIGINT)
+            _kill_pid(pid, signal.SIGINT, group=True)
     # The Host is its own session leader; the fallback covers a crashed launcher.
     for pid_path in root.glob("trajectories/*/.host/knowledge-service.pid"):
         try:
@@ -235,7 +238,7 @@ def _cleanup_processes(root: Path, run: Path | None) -> None:
         except (OSError, ValueError):
             continue
         if _alive(pid):
-            _kill_pid(pid, signal.SIGINT)
+            _kill_pid(pid, signal.SIGINT, group=True)
 
 
 def _stop(endpoint: str, token: str, reason: str) -> str:
