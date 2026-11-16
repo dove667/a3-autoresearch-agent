@@ -71,10 +71,10 @@ trajectories/<开始时间>/
 │   ├── history.jsonl      原始模型消息与工具结果
 │   ├── trajectory.jsonl   模型循环与请求轨迹
 │   ├── operational-state.json
+│   ├── research-receipts.json 近期关键工具观察与原文索引
 │   ├── compaction-*.json  压缩状态与事务
 │   ├── prepared-jobs/     保存的正式请求、CPU预检与提交回执
-│   ├── context-history/   摘要与工具结果引用的原文
-│   └── .autorun-spill/    大工具结果归档
+│   └── context-history/   摘要、校验回执与完整工具输出原文
 ├── plan-snapshots/        该次运行开始、修订和停止时的计划历史快照
 ├── inputs/                当前三个 prompt 的快照
 ├── input-revisions/       不可变输入版本
@@ -90,7 +90,7 @@ trajectories/<开始时间>/
 
 每天的新 run 共用根目录 `workspace/`、`plan/current.json`、`memory/` 和 `skills/`，以空模型上下文读取最新研究进展。一次只有一个研究进程使用它。普通文件工具在这里自由读写研究材料；输入目录、A3 参考源码和当前 run 的 `conversation/` 只读。根 `skills/` 与 `memory/` 通过专用工具访问。
 
-Host 用 `A3_STATE_ROOT` 指定当前 run 的 `conversation/`，并在 `runtime_paths.state` 提供实际路径。`harness/state_paths.py` 统一定位 checkpoint、journal、压缩事务和操作台账；恢复继续读取原状态。`context-history/...`、`.autorun-spill/...` 等逻辑相对来源引用以该路径为基准，原文与内容哈希保持稳定，可通过普通文件工具只读核对。
+Host 用 `A3_STATE_ROOT` 指定当前 run 的 `conversation/`，并在 `runtime_paths.state` 提供实际路径。`harness/state_paths.py` 统一定位 checkpoint、journal、压缩事务和操作台账；恢复继续读取原状态。`context-history/...` 来源引用以该路径为基准，原文与内容哈希保持稳定，可通过普通文件工具只读核对，也可用 recall 检索当前 run 原文。`research-receipts.json` 保存有界的近期工具观察，用于每轮刷新编号、状态和指标；旧观察保留在原始历史和输出归档中。
 
 项目顶层 `plan/current.json` 保存跨运行共用的最新研究计划，记录长期方向、研究路线与假设、执行步骤和结果复盘，关联依赖、优先级、作业与证据。Agent 通过 `plan(action="show")` 查看、`plan(action="update", revision=..., ...)` 修改；Host 通过 `A3_PLAN_FILE` 配置绝对路径，并在 `runtime_paths.plan` 中提供该路径。普通文件工具不直接修改计划。每次运行在 `plan-snapshots/` 按 revision 与内容哈希保留开始、修订和停止时的历史快照；新运行和恢复始终读取根计划。旧 `conversation/research-plan.json` 保留为历史资料。
 

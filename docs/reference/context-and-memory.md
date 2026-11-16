@@ -87,12 +87,18 @@ can read available workspace text, verified historical bundle text or imported-n
 Job references identify the `job_status` tool; use `job_artifact` for referenced results. Unresolved evidence is reported explicitly.
 `recall` searches the current run's original dialogue; it does not search old bundle files.
 
-Use `recall` for original observations retained in the current run's `conversation/history.jsonl`. Without `n`/`m`, it searches the available
-original history; an explicit round window retains its existing meaning. Search
-streams rounds and keeps bounded ranked snippets. Its default evidence mode ranks matching
-snippets and excludes tool arguments and prior retrieval responses. Use
-`mode="raw"` for historical tool traffic. Both modes point to the original round,
-and the complete source history remains on disk.
+Use `recall(keywords=[...])` for current-run observations. Optional `recent_rounds`
+restricts the search to recent decisions. Evidence mode excludes tool arguments
+and retrieval responses; raw mode also searches arguments. Both exclude recall's
+own queries and responses to avoid retrieval echoes.
+
+The history log preserves model-visible messages, including bounded output views.
+Recall follows runtime references into verified original tool JSON and UTF-8
+artifacts, so metrics omitted from previews remain searchable. Search streams
+files and returns bounded `items` with `rounds_ago`, `snippet`, matched terms and
+`source`: path, SHA256, character offset and read limit. Paths are relative to
+`runtime_paths.state`. Missing or corrupt sources appear in `warnings`. Hash
+verification and scanning use the same file descriptor and reject symlinks.
 
 ## Prepare and submit GPU jobs
 
@@ -131,7 +137,12 @@ remaining tokens fund the summary. Its output allocation follows this remaining
 budget and the summary model's actual window; there is no separate fixed 1000- or
 4096-token cap, byte ceiling or fixed short-summary length.
 
-The summary request contains the complete readable source transcript in one pass.
+The summary request contains the complete readable current context in one pass,
+followed by a saved `CURRENT_STATE_REFRESH` frame when available. Its source
+snapshot includes both, so every source index remains inspectable. Previous
+summaries remain part of current context; compression does not reread the entire
+lifetime history. Large outputs contribute semantic facts and partial previews;
+their complete originals are available through recall and read.
 The Host checks its input and requested output together against the configured
 summary window. A complete successful response is required before compacted state
 is published. Temporary failures and incomplete responses use the bounded summary
@@ -139,8 +150,8 @@ retry protocol, preserving the source snapshot and each attempt. Exhausted failu
 keep the checkpoint recoverable and block the decision that requires compaction.
 The runtime does not generate a no-summary archive fallback.
 
-Original messages and tool results remain in `conversation/history.jsonl` and verified source
-snapshots. Large tool results are separately stored losslessly with bounded previews;
+Model-visible messages remain in `conversation/history.jsonl`; complete large
+tool results remain in verified content-addressed files with bounded facts and previews;
 remote text artifacts use character pages with source hashes. This result transport
 keeps the request bounded while preserving access to the actual observations.
 The newest complete tool batch stays paired and visible; its size can make the soft
@@ -152,6 +163,44 @@ loads budgets at startup, and the Harness reads the active contract before decis
 Published code is changed through the stopped-run release procedure; existing
 historical source and checkpoints retain their original versions.
 
+## Source-bound research handoff
+
+The summary model returns a versioned JSON handoff with seven sections: corrected
+goals, experimental results and conditions, failures and rejected approaches,
+active jobs and uncertain submissions, unresolved work, next actions and sources.
+Every item includes its narrative, a one-based source message index and an exact
+source quotation. Empty sections are explicit. The runtime validates schema,
+source bounds, quotations, numeric claims and job IDs before rendering readable
+working memory. Both generated and rendered size must fit the remaining budget.
+Validation failures supply repair feedback for the next attempt; feedback cannot
+be cited as evidence. Completed documents and validation reports are checksummed
+and revalidated on recovery.
+
+These checks catch fabricated quotations and changed values such as accuracy
+0.42 becoming 0.82. They cannot establish every natural-language inference or
+prove that a summary covered every useful observation. The Agent checks primary
+results and persists significant conclusions in plan reviews and memory.
+
+## Fresh facts across repeated compression
+
+Each decision includes a fresh source frame, outside compressed history. It
+carries the current plan, recent route decisions, active job observations, recent
+exact tool receipts and retrieved memory suggestions. The Agent reconciles old
+pending claims against this frame and checks existing job IDs before resubmission.
+
+`conversation/research-receipts.json` indexes up to 96 recent significant tool
+observations, each bound to its complete original output by SHA256. It is recorded
+after the raw tool journal and before bounded result publication; recovery indexes
+the saved result without executing the tool again. The decision frame includes at
+most six recent receipts, four reviews, four closed-route conclusions and 32 active
+job observations, with byte bounds and explicit omission counts. Long conclusions
+are explicitly partial. Read the index or use recall for older output sources,
+and plan show for full decisions.
+
+The index records program observations. Plan manages research decisions, memory
+preserves learned findings, and skills preserve reusable methods. Fresh runs
+rebuild guidance from shared plan and memory; their run-local index starts empty.
+
 ## Deliver observations before compacting them
 
 The Harness prepares context **before** the next model decision. The final complete
@@ -160,12 +209,15 @@ If that batch fits with working-memory headroom, it remains intact while older
 history is archived or summarized. A lower compression target does not justify
 moving that new observation into the summary. Call/result pairing is preserved.
 
-A result too large to fit is retained losslessly in a content-addressed archive,
-with a bounded, explicitly partial head/tail preview and its original character
-count. The preview is not a complete inspection or a new pending research task.
-Retrieve only needed details in small pages. This avoids replacing a requested
-observation with only another archive pointer. Archiving records storage state;
-it does not prove that a model understood the output or completed a check.
+A result exceeding the 12,000-byte inline envelope is retained losslessly in a
+content-addressed archive. Its bounded view prioritizes job/preparation/export
+IDs, status, exit code, errors, metrics and source references before head/tail
+preview text. JSON artifacts expose decoded metrics with their outer receipt.
+Selection is bounded by depth, visit count and 48 facts; omission counts and
+`facts_complete=false` make partial delivery explicit. Long errors have explicitly
+named previews and original lengths. Credential-shaped fields are excluded from
+fact extraction. Read needed pages or search originals with recall. No separate
+spill mechanism is used.
 
 Summary preparation excludes only opaque `encrypted_content` from reasoning
 items. The full original snapshot retains it, recent provider-state items remain
@@ -248,7 +300,7 @@ must preserve the checkpoint/journal and deliberately restart only the owned
 process through the existing stopped-main recovery path; ordinary unpause alone
 is insufficient. Record the intervention in resume feedback.
 
-Offline tests cover archive-only behavior, role/auth boundaries, injection reserves,
+Offline tests cover semantic output views, source-linked handoffs, role/auth boundaries, injection reserves,
 single-pass full-input admission, durable no-replay behavior and storage/journal failure.
 Real validation must separately check actual response models/options, semantic
 corrections/unknowns, source reads, normal tool work after recovery, and reference
@@ -294,7 +346,7 @@ An external blocker uses `status="blocked"`, `reason`, `kind`, `required_action`
 workspace `evidence` paths. The runtime infers the need for operator action and saves
 `run-outcome.json`; resume and continuation manifests are generated automatically.
 
-`context-history/` and `.autorun-spill/` are logical source references relative to
+`context-history/` paths are logical source references relative to
 `runtime_paths.state`. Their contents and hashes remain unchanged. Ordinary file
 tools can read/list/search the current conversation directory but cannot write or
 edit it. Skills and long-term memory use their dedicated tools.

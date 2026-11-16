@@ -61,11 +61,11 @@ Controller 实例共用资源根目录和调度锁。独占模式持有整卡租
 
 ## 上下文、记忆与 skills
 
-上下文压缩目标覆盖下一次完整模型输入，包括固定指令、工具、运行状态、摘要和最近的完整工具回合。摘要输出空间根据压缩目标与实际模型窗口计算；必要压缩只有得到完整摘要后才继续。失败时保存 checkpoint 和诊断供恢复。详见[上下文与记忆](context-and-memory.md)。
+上下文压缩目标覆盖下一次完整模型输入，包括固定指令、工具、运行状态、摘要和最近的完整工具回合。摘要输出空间根据压缩目标与实际模型窗口计算；研究交接按七个部分生成，经过来源摘录、数字和作业编号校验后发布。每轮从最新 plan、近期关键工具回执与 memory 重新组装状态，供 Agent 核对旧摘要。失败时保存 checkpoint 和诊断供恢复。详见[上下文与记忆](context-and-memory.md)。
 
 `memory` 管理主动经验、适用条件与来源；`recall` 检索原始执行历史。Host 用 `A3_STATE_ROOT` 指定当前 `conversation/`，其中保存 `history.jsonl`、`context-history/` 和大工具结果。逻辑归档引用以 `runtime_paths.state` 为基准，保留原文哈希，可通过普通文件工具只读核对。
 
-`plan` 工具维护根 `plan/current.json` 中的长期方向、研究路线与假设、执行步骤和复盘记录，每次模型请求携带计划摘要及待复盘作业。Agent 依据结果调用 `review` 保存结论并选择继续、暂停或完成路线。`runtime_paths.plan` 提供实际路径。每次启动、计划修订和停止时，在当前 trajectory 的 `plan-snapshots/` 保存历史快照；新运行和恢复读取根计划的最新内容。`conversation/` 集中保存接续与恢复清单、运行状态、checkpoint、工具 journal、轨迹、操作台账、压缩事务和故障记录。`progress` 维护运行进展，恢复清单由程序生成。`workspace/scripts/` 按模型或方法、研究系列和用途保存源码，`workspace/experiments/<日期-实验名>/` 保存实验配置、结果与分析。Host 恢复与离线发布继续使用原会话状态和研究文件。
+`plan` 工具维护根 `plan/current.json` 中的长期方向、研究路线与假设、执行步骤和复盘记录，每次模型请求携带计划摘要及待复盘作业。Agent 依据结果调用 `review` 保存结论并选择继续、暂停或完成路线。`runtime_paths.plan` 提供实际路径。每次启动、计划修订和停止时，在当前 trajectory 的 `plan-snapshots/` 保存历史快照；新运行和恢复读取根计划的最新内容。`conversation/` 集中保存接续与恢复清单、运行状态、checkpoint、工具 journal、轨迹、操作台账、压缩事务和故障记录。研究进展统一由 plan 管理，恢复清单由程序生成。`workspace/scripts/` 按模型或方法、研究系列和用途保存源码，`workspace/experiments/<日期-实验名>/` 保存实验配置、结果与分析。Host 恢复与离线发布继续使用原会话状态和研究文件。
 
 根 `skills/` 是唯一技能库，所有技能使用相同工具权限。`skills` 先返回摘要，再按需读取正文和附件；修改使用当前哈希，自动递增包版本并把完整旧包归档到 `.runtime/skill-revisions/`。技能库独立于三个 prompt 的发布快照。
 

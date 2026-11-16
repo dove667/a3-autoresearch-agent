@@ -1,6 +1,6 @@
 # 研究工作区
 
-Version: 0.10.0
+Version: 0.11.0
 
 本地原生进程只提供文件与研究工具，没有本地 bash 或 Python 执行入口。仿真、训练、评估及脚本执行通过远程作业完成。运行状态 `runtime_paths` 给出实际路径：
 
@@ -23,7 +23,7 @@ Version: 0.10.0
 
 项目顶层 `plan/current.json` 是跨运行共用的研究计划，`runtime_paths.plan` 给出文件路径。Agent 通过 `plan(action="show")` 查看、`plan(action="update", revision=..., ...)` 修改长期方向、研究路线和执行步骤，用 `plan(action="review", ...)` 保存结果复盘与路线决策，普通文件工具不直接修改它。新运行、恢复和 Harness 升级都读取这份最新计划；先核对计划中的既有 job，再决定后续操作。Harness 在当前 trajectory 的 `plan-snapshots/` 保存开始、修订和停止时的历史快照。
 
-接续与恢复清单、运行状态，以及 checkpoint、工具 journal、原始消息、执行日志、预检回执和上下文档案，也由 Harness 保存到该 `conversation/`。`context-history/...` 与 `.autorun-spill/...` 是相对 `runtime_paths.state` 的原文引用；使用 `recall` 检索，或拼接该根目录后用 `read` 分页核对。普通文件工具不能修改程序档案。
+接续与恢复清单、运行状态，以及 checkpoint、工具 journal、模型可见历史、执行日志、预检回执和上下文档案，也由 Harness 保存到该 `conversation/`。`context-history/...` 是相对 `runtime_paths.state` 的原文引用；`recall` 会沿引用检索完整工具输出，或拼接该根目录后用 `read` 分页核对。`research-receipts.json` 是程序保存的近期工具观察索引，普通文件工具只读。研究计划和结论仍分别使用 plan 和 memory 管理。
 
 根目录 `skills/` 是唯一技能库，不复制到 workspace。通过技能工具搜索摘要、按需读正文与附件、创建和修改方法；通过 `memory` 工具检索、记录及修正长期经验。它们独立于对话和工作区保存，不随 Harness 发布覆盖。
 
