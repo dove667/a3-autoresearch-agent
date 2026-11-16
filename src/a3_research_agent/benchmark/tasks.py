@@ -75,7 +75,7 @@ TASKS = (
         "并说明下一步应该重跑还是先改配置。",
         [("job_status", lambda args: has_job(args, sandbox.JOB_FAILED))],
         [],
-        [sandbox.JOB_FAILED, ("out of memory", "OOM", "显存", "内存不足")],
+        [sandbox.JOB_FAILED, ("out of memory", "OOM", "显存", "内存不足", "gpu_oom")],
         12,
     ),
     Task(
@@ -84,7 +84,7 @@ TASKS = (
         "上一轮评测的 2×10 入盒数是多少、跑的是哪次实验？数字给我准确的。",
         [],
         [],
-        ["7", "2026-11-10-act-p142"],
+        ["7", ("2026-11-10-act-p142", "act-p142")],
         12,
     ),
     Task(

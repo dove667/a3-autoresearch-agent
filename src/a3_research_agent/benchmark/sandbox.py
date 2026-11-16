@@ -8,7 +8,7 @@ kind of structured error a real run returns.
 import json
 import re
 
-from a3_research_agent.harness import tool_catalog
+from a3_research_agent.harness import job_failure, tool_catalog
 
 JOB_A = "a" * 32
 JOB_B = "b" * 32
@@ -56,6 +56,12 @@ JOBS = {
         "log_path": "logs/train-f.log",
     },
     JOB_TRAIN: {"status": "running", "exit_code": None, "backend": "process"},
+}
+
+ARTIFACTS = {
+    JOB_FAILED: "logs/train-f.log",
+    JOB_A: "experiments/2026-11-10-act-p142/results/report.json",
+    JOB_GPU: "experiments/2026-11-10-act-p142/results/report.json",
 }
 
 PLAN = {
@@ -191,7 +197,11 @@ def job_submit(args):
             return {
                 "ok": False,
                 "error": "gpu_job_needs_preparation",
-                "hint": "Call job_prepare with this GPU request, then job_submit(prepared_id).",
+                "hint": (
+                    "This is a GPU job, so it needs a preparation step first. Send the same "
+                    "request to job_prepare(jobs=[{...}]) — it runs the CPU preflight and returns "
+                    'prepared_id. Then call job_submit(prepared_id="<that id>").'
+                ),
             }
     if isinstance(args.get("jobs"), list):
         return {"ok": True, "jobs": [{"ok": True, "job_id": JOB_A, "status": "queued"}]}
@@ -216,7 +226,14 @@ def job_status(args):
             "error": "invalid_arguments",
             "hint": "job_id must be a 32-character job identifier from a receipt.",
         }
-    return {"ok": True, "job_id": job_id, **JOBS[job_id]}
+    row = JOBS[job_id]
+    result = {"ok": True, "job_id": job_id, **row}
+    if row["status"] == "failed" and job_id in ARTIFACTS:
+        result["log_tail"] = FILES[ARTIFACTS[job_id]]
+        diagnosis = job_failure.diagnose(result)
+        if diagnosis:
+            result["diagnosis"] = diagnosis
+    return result
 
 
 def job_wait(args):
@@ -285,13 +302,6 @@ def job_list(args):
             for job, row in JOBS.items()
         },
     }
-
-
-ARTIFACTS = {
-    JOB_FAILED: "logs/train-f.log",
-    JOB_A: "experiments/2026-11-10-act-p142/results/report.json",
-    JOB_GPU: "experiments/2026-11-10-act-p142/results/report.json",
-}
 
 
 def job_artifact(args):

@@ -252,7 +252,21 @@ def submit_request(args, workspace, *, default_gpu=False):
     return body
 
 
+GPU_NEEDS_PREPARATION = (
+    "This is a GPU job, so it needs a preparation step first. Send the same request to "
+    'job_prepare(jobs=[{...}]) (or job_prepare(command, attachments,...)) — it runs the CPU '
+    "preflight and returns prepared_id. Then call job_submit(prepared_id=\"<that id>\")."
+)
+BATCH_HINT = (
+    "Independent commands can go in one call: job_submit(jobs=[{...}, {...}]) submits them "
+    "together and returns one result per job."
+)
+
+
 def submission_result(result):
+    if isinstance(result, dict) and result.get("ok") and isinstance(result.get("job_id"), str):
+        # One call per independent command multiplies latency; say the cheaper route once.
+        return {**result, "batch_hint": BATCH_HINT}
     if not isinstance(result, dict) or result.get("http_error") != 502:
         return result
     try:
@@ -395,7 +409,7 @@ def batch(name, args, request, root):
                     results.append(
                         {
                             "error": "gpu_job_needs_preparation",
-                            "hint": "Prepare GPU work with job_prepare(jobs=[...]) first.",
+                            "hint": GPU_NEEDS_PREPARATION,
                         }
                     )
                     continue
@@ -426,10 +440,7 @@ def dispatch(name, args, request, *, workspace=None):
                 return job_preparation.submit(args["prepared_id"], request, root)
             job = submit_request(args, root)
             if job["gpu"]:
-                fail(
-                    "gpu_job_needs_preparation",
-                    "Call job_prepare with this GPU request, then job_submit(prepared_id).",
-                )
+                fail("gpu_job_needs_preparation", GPU_NEEDS_PREPARATION)
             return submission_result(request("POST", "/jobs", job))
         if name == "job_artifact":
             return artifact(args, request)
