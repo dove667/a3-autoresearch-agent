@@ -89,6 +89,7 @@ def test_endless_reading_ends_with_a_demanded_answer():
     assert notices[-1] == drift.ANSWER_NOTICE
     assert guard.wants_answer()
     assert guard.snapshot()["answers"] == 1
+    assert guard.snapshot()["reading"] == 0
 
 
 def test_an_answer_resumes_tool_use_and_resets_the_reading_count():
@@ -117,3 +118,11 @@ def test_only_a_few_answers_are_demanded_before_the_process_ends():
     assert guard.snapshot()["answers"] == drift.MAX_ANSWERS
     assert not guard.wants_answer()
     assert guard.stalled()
+
+
+def test_a_repeated_read_loop_still_ends_in_a_demanded_answer():
+    guard = drift.DriftGuard()
+    same = {"name": "read", "arguments": json.dumps({"path": "f"})}
+    notices = [guard.observe([same], False) for _ in range(drift.ANSWER_TURNS)]
+    assert drift.ANSWER_NOTICE in notices
+    assert guard.wants_answer()

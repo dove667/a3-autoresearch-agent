@@ -129,21 +129,22 @@ class DriftGuard:
         polled = any(name in POLLING_TOOLS for name, _ in signature)
         drifted = invalid or (self.repeat >= 1 and not polled)
         self.incidents = self.incidents + 1 if drifted else 0
+        notice = None
         if drifted and self.incidents <= self.max_incidents:
             self.force = self.force_attempts
             if invalid:
-                return INVALID_NOTICE
-            return REPEAT_NOTICE if repeated else NO_TOOL_NOTICE
-        return self.demand_answer()
+                notice = INVALID_NOTICE
+            else:
+                notice = REPEAT_NOTICE if repeated else NO_TOOL_NOTICE
+        return self.demand_answer() or notice
 
     def demand_answer(self):
         """Long stretches of reading end with a message instead of more reading."""
         if self.answers >= self.max_answers or self.reading < ANSWER_TURNS:
             return None
-        if self.reading % ANSWER_TURNS:
-            return None
         self.answers += 1
         self.demanding = True
+        self.reading = 0
         return ANSWER_NOTICE
 
     def exploration(self, calls):
