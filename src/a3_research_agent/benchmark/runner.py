@@ -49,7 +49,13 @@ def post(url, key, body, attempts=7):
             )
             response.raise_for_status()
             return response
-        except (httpx.ConnectError, httpx.ReadError, httpx.RemoteProtocolError) as error:
+        except (
+            httpx.ConnectError,
+            httpx.ReadError,
+            httpx.ReadTimeout,
+            httpx.RemoteProtocolError,
+            httpx.TimeoutException,
+        ) as error:
             last = error
             if index + 1 < attempts:
                 time.sleep(min(60, 5 * 2**index))
