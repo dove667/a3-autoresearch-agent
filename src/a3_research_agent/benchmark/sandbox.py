@@ -20,7 +20,10 @@ PREPARED = "prepared-" + "e" * 32
 
 FILES = {
     "bench/task.md": ("# 任务\n\n把 bench/measure.txt 里的入盒数报给我，并说明它来自哪次评测。\n"),
-    "bench/measure.txt": "run=2026-11-10-act-p142\nseed=10010\ncookies_in_target=7\nmax_score=20\n",
+    "bench/measure.txt": (
+        "run=2026-11-10-act-p142\ntask=2x10\nseeds=10010-10015\n"
+        "cookies_in_target=7\nepisodes=120\nmax_score=20\n"
+    ),
     "logs/train-f.log": (
         "step 4200/5000 loss 0.031\n"
         "RuntimeError: CUDA out of memory. Tried to allocate 2.00 GiB "
@@ -140,15 +143,41 @@ def read(args):
 
 
 def list_dir(args):
+    """List a real directory tree built from the fixture files."""
     prefix = (args.get("path") or "").strip("/")
-    names = sorted(path for path in FILES if path.startswith(prefix)) if prefix else sorted(FILES)
-    if not names:
-        return {"ok": True, "path": prefix, "entries": []}
-    entries = [
-        {"name": path.split("/")[-1], "path": path, "type": "file"}
-        for path in names[: args.get("limit", 50)]
-    ]
-    return {"ok": True, "path": prefix, "entries": entries}
+    if prefix in (".", "./"):
+        prefix = ""
+    entries = {}
+    for path in FILES:
+        if not path.startswith(prefix):
+            continue
+        rest = path[len(prefix) :].lstrip("/")
+        if not rest:
+            continue
+        head = rest.split("/")[0]
+        if "/" in rest:
+            entries.setdefault(head, {"name": head, "path": f"{prefix}/{head}".lstrip("/"),
+                                      "type": "directory"})
+        else:
+            entries[head] = {"name": head, "path": path, "type": "file"}
+    ordered = sorted(entries.values(), key=lambda entry: (entry["type"] != "directory", entry["name"]))
+    return {"ok": True, "path": prefix, "entries": ordered[: args.get("limit", 50)]}
+
+
+def search_files(args):
+    """Search the fixture text, so a lookup can succeed or fail honestly."""
+    query = str(args.get("query") or "")
+    if not query:
+        return {"ok": False, "error": "missing_arguments", "hint": "query is required."}
+    matches = []
+    for path, text in FILES.items():
+        if not path.startswith((args.get("path") or "").strip("/")):
+            continue
+        for number, line in enumerate(text.splitlines(), 1):
+            if query.lower() in line.lower():
+                matches.append({"path": path, "line": number, "text": line[:200]})
+                break
+    return {"ok": True, "query": query, "matches": matches[:10]}
 
 
 def job_submit(args):
@@ -258,8 +287,33 @@ def job_list(args):
     }
 
 
+ARTIFACTS = {
+    JOB_FAILED: "logs/train-f.log",
+    JOB_A: "experiments/2026-11-10-act-p142/results/report.json",
+    JOB_GPU: "experiments/2026-11-10-act-p142/results/report.json",
+}
+
+
 def job_artifact(args):
-    return {"ok": True, "job_id": args.get("job_id"), "path": "logs/train-f.log", "bytes": 210}
+    job_id = args.get("job_id")
+    # The tool takes an explicit path; a fixture file is enough to serve it.
+    requested = (args.get("path") or "").strip("/")
+    path = ARTIFACTS.get(job_id)
+    if requested in FILES and (path is None or requested.endswith(path.split("/")[-1])):
+        path = requested
+    if path is None:
+        return {
+            "ok": False,
+            "error": "artifact_not_found",
+            "hint": "This job has no stored artifact; check its status first.",
+        }
+    return {
+        "ok": True,
+        "job_id": job_id,
+        "path": path,
+        "content": _page(FILES[path]),
+        "bytes": len(FILES[path]),
+    }
 
 
 def job_cancel(args):
@@ -318,7 +372,7 @@ def generic_ok(args):
 HANDLERS = {
     "read": read,
     "list": list_dir,
-    "search_files": lambda args: {"ok": True, "matches": [], "note": "no match in fixtures"},
+    "search_files": search_files,
     "job_submit": job_submit,
     "job_prepare": job_prepare,
     "job_status": job_status,

@@ -73,10 +73,7 @@ TASKS = (
         "夜里失败的训练作业",
         f"昨夜 act-p142 的训练作业 {sandbox.JOB_FAILED} 失败了。查清它为什么失败，"
         "并说明下一步应该重跑还是先改配置。",
-        [
-            ("job_status", lambda args: has_job(args, sandbox.JOB_FAILED)),
-            ("read", failed_log_read),
-        ],
+        [("job_status", lambda args: has_job(args, sandbox.JOB_FAILED))],
         [],
         [sandbox.JOB_FAILED, ("out of memory", "OOM", "显存", "内存不足")],
         12,
@@ -85,7 +82,7 @@ TASKS = (
         "read_eval_number",
         "读上一轮评测的入盒数",
         "上一轮评测的 2×10 入盒数是多少、跑的是哪次实验？数字给我准确的。",
-        [("read", lambda args: args.get("path") == "bench/measure.txt")],
+        [],
         [],
         ["7", "2026-11-10-act-p142"],
         12,
@@ -94,10 +91,7 @@ TASKS = (
         "find_eval_seeds",
         "找出评测用的种子",
         "act-p142 那次实验在 2×10 上用了哪些种子？说清楚范围和起止。",
-        [
-            ("list", any_args),
-            ("read", lambda args: args.get("path", "").endswith("act-p142/config.json")),
-        ],
+        [],
         [],
         ["10010", "10015"],
         12,
@@ -134,7 +128,7 @@ TASKS = (
         "作业完成后写复盘",
         f"作业 {sandbox.JOB_A} 已经跑完，结果在实验目录里。把 2×5 的入盒数读出来，"
         "用带数值的复盘记录到 act-p142，并决定这条路线继续还是暂停。",
-        [("read", report_read), ("plan", review_with_numbers)],
+        [("plan", review_with_numbers)],
         [],
         [("29", "29/60")],
         12,

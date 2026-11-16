@@ -10,7 +10,7 @@ def main():
     parser.add_argument("--model", help="Override the configured upstream model")
     parser.add_argument("--only", help="Comma-separated task ids")
     parser.add_argument("--out", help="Output directory under runs/checks")
-    parser.add_argument("--jobs", type=int, default=4, help="Tasks to run side by side")
+    parser.add_argument("--jobs", type=int, default=12, help="Tasks to run side by side")
     parser.add_argument("--turns", type=int, help="Override every task's turn budget")
     parser.add_argument(
         "--no-answer-budget",

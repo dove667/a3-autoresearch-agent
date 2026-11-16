@@ -277,7 +277,7 @@ def _run_task(task, url, key, model, tools, answers, started):
     }
 
 
-def run(model=None, only=None, output=None, answers=True, jobs=4, turns=None):
+def run(model=None, only=None, output=None, answers=True, jobs=12, turns=None):
     url, key, configured = endpoint()
     tools = tool_catalog.TOOLS
     selected = [
