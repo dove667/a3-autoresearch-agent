@@ -37,7 +37,19 @@ A3_CONTEXT_TRIGGER_TOKENS='196608'
 A3_CONTEXT_TARGET_TOKENS='32768'
 ```
 
-窗口、触发值和目标值彼此独立。压缩目标覆盖下一轮完整输入；摘要只使用扣除固定指令、工具、运行状态和最近完整回合后的空间。完整机制见[上下文管理](../reference/context-and-memory.md)。模型、推理参数、路由与预算在普通恢复时保持一致，显式维护发布可以更新并归档前值。
+窗口、触发值和目标值彼此独立。压缩目标覆盖下一轮完整输入；摘要只使用扣除固定指令、工具、运行状态和最近完整回合后的空间。完整机制见[上下文管理](../reference/context-and-memory.md)。
+
+使用较弱的主模型时，把摘要路由固定到更强的模型，并把触发点放低；摘要质量不再跟随主模型，剩余不测由程序降级交接兜底：
+
+```dotenv
+A3_SUMMARY_MODEL_NAME='provider/strong-summary-model'
+A3_MODEL_CONTEXT_TOKENS='1048576'
+A3_SUMMARY_CONTEXT_TOKENS='1048576'
+A3_CONTEXT_TRIGGER_TOKENS='131072'
+A3_CONTEXT_TARGET_TOKENS='32768'
+```
+
+评估一个候选模型时，先看 `conversation/research-ledger.jsonl` 的作业与压缩事件，以及 trajectory 中 `model_drift`、`tool_choice_unsupported` 和 `summary_mode="degraded"` 的出现频率，再决定是否调整提示词或工具面。模型、推理参数、路由与预算在普通恢复时保持一致，显式维护发布可以更新并归档前值。
 
 ## 本地进程与研究目录
 
