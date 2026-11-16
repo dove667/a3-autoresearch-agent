@@ -194,13 +194,15 @@ def job_submit(args):
         entries = args.get("jobs") or [args]
         gpu = any(isinstance(item, dict) and item.get("gpu") for item in entries)
         if gpu:
+            # The Harness prepares an unprepared GPU submit itself; mirror that here.
             return {
-                "ok": False,
-                "error": "gpu_job_needs_preparation",
+                "ok": True,
+                "prepared_id": PREPARED,
+                "preflight_job_id": JOB_B,
+                "status": "prepared_pending_preflight",
                 "hint": (
-                    "This is a GPU job, so it needs a preparation step first. Send the same "
-                    "request to job_prepare(jobs=[{...}]) — it runs the CPU preflight and returns "
-                    'prepared_id. Then call job_submit(prepared_id="<that id>").'
+                    "The GPU request is prepared and its CPU preflight is running. When "
+                    "preflight_job_id finishes cleanly, call job_submit(prepared_id=...)."
                 ),
             }
     if isinstance(args.get("jobs"), list):

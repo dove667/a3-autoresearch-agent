@@ -13,7 +13,7 @@ def test_every_task_is_unique_and_checkable():
     assert len(ids) == len(set(ids)) == 12
     for task in TASKS:
         assert task.prompt.strip()
-        names = [name for name, _ in task.expect]
+        names = [entry[0] for entry in task.expect if not callable(entry)]
         advertised = {
             tool["name"]
             for tool in __import__(
@@ -61,16 +61,17 @@ def test_a_lookup_counts_when_its_fact_is_stated():
     assert not score("find_eval_seeds", looked, "不知道")[0]
 
 
-def test_batch_task_requires_one_call_with_two_jobs():
-    assert score(
-        "batch_two_trainings",
-        [call("job_submit", {"jobs": [{"command": ["echo", "a"]}, {"command": ["echo", "b"]}]})],
-    )[0]
-    single = [
+def test_both_seeds_must_be_submitted():
+    batched = [
+        call("job_submit", {"jobs": [{"command": ["echo", "a"]}, {"command": ["echo", "b"]}]}),
+    ]
+    separate = [
         call("job_submit", {"command": ["echo", "a"]}),
         call("job_submit", {"command": ["echo", "b"]}),
     ]
-    assert not score("batch_two_trainings", single)[0]
+    assert score("batch_two_trainings", batched)[0]
+    assert score("batch_two_trainings", separate)[0]
+    assert not score("batch_two_trainings", separate[:1])[0]
 
 
 def test_a_smoke_test_must_not_go_through_gpu_preparation():
@@ -140,13 +141,13 @@ def test_a_new_experiment_is_recorded_on_its_route():
     assert not score("add_next_experiment", elsewhere)[0]
 
 
-def test_sandbox_refuses_a_gpu_submit_that_skips_the_preflight():
+def test_sandbox_prepares_a_gpu_submit_by_itself():
     invalid = []
     direct = sandbox.execute(
         {"name": "job_submit", "arguments": json.dumps({"command": ["train"], "gpu": True})}, invalid
     )
-    assert direct["error"] == "gpu_job_needs_preparation"
-    assert "job_prepare" in direct["hint"]
+    assert direct["status"] == "prepared_pending_preflight"
+    assert direct["prepared_id"] == sandbox.PREPARED
     prepared = sandbox.execute(
         {"name": "job_submit", "arguments": json.dumps({"prepared_id": sandbox.PREPARED})}, invalid
     )

@@ -440,7 +440,19 @@ def dispatch(name, args, request, *, workspace=None):
                 return job_preparation.submit(args["prepared_id"], request, root)
             job = submit_request(args, root)
             if job["gpu"]:
-                fail("gpu_job_needs_preparation", GPU_NEEDS_PREPARATION)
+                # A prepared step is procedure, not a decision: do it here instead of
+                # making the model remember two calls for the same request.
+                prepared = job_preparation.prepare(job, request)
+                if prepared.get("error"):
+                    return prepared
+                return {
+                    **prepared,
+                    "status": "prepared_pending_preflight",
+                    "hint": (
+                        "The GPU request is prepared and its CPU preflight is running. When "
+                        "preflight_job_id finishes cleanly, call job_submit(prepared_id=...)."
+                    ),
+                }
             return submission_result(request("POST", "/jobs", job))
         if name == "job_artifact":
             return artifact(args, request)

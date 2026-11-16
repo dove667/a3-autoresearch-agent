@@ -132,9 +132,27 @@ def answer_text(output):
     return " ".join(piece for piece in pieces if piece).strip()
 
 
+def _arguments(calls):
+    parsed = []
+    for call in calls:
+        try:
+            value = json.loads(call["arguments"] or "{}")
+        except ValueError:
+            continue
+        if isinstance(value, dict):
+            parsed.append((call["name"], value))
+    return parsed
+
+
 def matches(calls, expect):
+    """Expected entries are a (tool, predicate) pair or a rule over every call."""
     index = 0
-    for name, predicate in expect:
+    for entry in expect:
+        if callable(entry):
+            if not entry(_arguments(calls)):
+                return False
+            continue
+        name, predicate = entry
         while index < len(calls):
             call = calls[index]
             index += 1

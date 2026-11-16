@@ -35,6 +35,14 @@ def cpu_only(args):
     return "prepared_id" not in args and not args.get("gpu") and "jobs" not in args
 
 
+def both_seeds_submitted(calls):
+    """Two seeds are out whether they went in one batched call or two calls."""
+    submits = [args for name, args in calls if name == "job_submit"]
+    batched = sum(len(args["jobs"]) for args in submits if isinstance(args.get("jobs"), list))
+    single = sum(1 for args in submits if not isinstance(args.get("jobs"), list))
+    return batched >= 2 or single >= 2
+
+
 def step_on_route(args):
     steps = args.get("steps")
     return (
@@ -108,8 +116,8 @@ TASKS = (
     Task(
         "batch_two_trainings",
         "两个种子并排训练",
-        "seed 10010 和 10011 的两条 CPU 训练命令互不依赖，用最少的一次调用一起提交。",
-        [("job_submit", lambda args: batch_of(args, 2))],
+        "seed 10010 和 10011 的两条 CPU 训练命令互不依赖，都要提交出去。",
+        [both_seeds_submitted],
         [],
         [],
         6,
@@ -117,8 +125,8 @@ TASKS = (
     Task(
         "gpu_prepare_then_submit",
         "GPU 训练先预检后提交",
-        "要把 2×10 的温启动训练放到 GPU 上跑。按流程先做准备和 CPU 预检，预检通过后再正式提交。",
-        [("job_prepare", any_args), ("job_submit", prepared)],
+        "把 2×10 的温启动训练放到 GPU 上跑。准备好、预检通过之后正式提交，把作业号给我。",
+        [("job_submit", prepared)],
         [],
         [],
         12,
