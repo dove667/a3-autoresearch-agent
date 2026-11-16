@@ -217,9 +217,7 @@ def test_saved_complete_summary_survives_a_smaller_summary_model_window(tmp_path
     assert replay == text
 
 
-def test_failed_summary_blocks_compaction_instead_of_publishing_archive_notice(
-    tmp_path, monkeypatch
-):
+def test_failed_summary_publishes_a_source_quoted_degraded_handoff(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     local_config(monkeypatch)
     original = history()
@@ -230,12 +228,14 @@ def test_failed_summary_blocks_compaction_instead_of_publishing_archive_notice(
     )
     fork.start(original)
     fork.wait(5)
-    with pytest.raises(cm.ContextPending) as pending:
-        fork.before_request(original)
-    assert pending.value.blocked is True and len(calls) == 1
+    candidate, record = fork.before_request(original)
+    assert record["kind"] == "applied" and len(calls) == 1
     saved = json.loads((tmp_path / "conversation/compaction-result.json").read_text())
-    assert saved["status"] == "blocked" and "replacement" not in saved
-    assert json.loads((tmp_path / "conversation/checkpoint.json").read_text()) == original
+    assert saved["status"] == "ready"
+    from a3_research_agent.harness.context import summary as research_summary
+
+    assert research_summary.DEGRADED_NOTICE in candidate[0]["content"]
+    assert "[source " in candidate[0]["content"]
 
 
 def test_interrupted_fork_restarts_only_the_pure_summary(tmp_path, monkeypatch):

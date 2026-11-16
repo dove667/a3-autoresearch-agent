@@ -131,6 +131,10 @@ class SummaryRetry(ContextPending):
     """A durable retry schedule for a read-only summary request."""
 
 
+class SummaryStateError(ContextError):
+    """Saved summary state is damaged; research must not overwrite it silently."""
+
+
 def size(value):
     return len(json.dumps(value, ensure_ascii=False).encode("utf-8"))
 
@@ -297,20 +301,20 @@ def full_summary(messages, source, req, *, output_tokens=None):
                 == hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
             )
         except (OSError, ValueError, KeyError, TypeError) as error:
-            raise ContextError(
+            raise SummaryStateError(
                 "Invalid summary request record; original snapshot retained"
             ) from error
         if not valid or state.get("fingerprint") != fingerprint:
-            raise ContextError("Summary request record checksum mismatch")
+            raise SummaryStateError("Summary request record checksum mismatch")
         if state.get("status") == "completed":
             try:
                 research_summary.validate(state.get("document"), readable)
                 if research_summary.render(state["document"]) != state["summary"]:
                     raise research_summary.SummaryValidationError("saved_summary_render_mismatch")
             except research_summary.SummaryValidationError as error:
-                raise ContextError("Saved summary failed source validation") from error
+                raise SummaryStateError("Saved summary failed source validation") from error
             if metric(state["summary"]) > output_tokens:
-                raise ContextError("Saved summary exceeds the current context-token budget")
+                raise SummaryStateError("Saved summary exceeds the current context-token budget")
             return state["summary"], state.get("usage"), cost
         if state.get("retry_contract") != retry_contract:
             archive(state, "superseded-summary-request")
@@ -468,6 +472,64 @@ def full_summary(messages, source, req, *, output_tokens=None):
         )
         if not retryable or validation_attempts >= SUMMARY_REPAIR_ATTEMPTS:
             raise ContextError(failure + "; original snapshot retained; record=" + record)
+
+
+def degraded_handoff(messages, output_tokens):
+    """Program-built excerpt handoff used when the model summary cannot be repaired."""
+    document, rendered = research_summary.degraded(
+        messages, fits=lambda value: metric(value) <= output_tokens
+    )
+    report = research_summary.validate(document, messages)
+    usage = {
+        "a3_summary_degraded": True,
+        "a3_summary_entries": report["entries"],
+        "a3_summary_cited": report["cited_messages"],
+    }
+    return rendered, usage, 0
+
+
+def breaker_state():
+    """Read the degraded-summary circuit breaker; unreadable state never blocks."""
+    try:
+        value = json.loads(state_paths.path(state_paths.SUMMARY_BREAKER).read_text())
+    except (OSError, ValueError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def record_summary_failure(reason):
+    """Stop repeating an unrepairable summary request on the same model route."""
+    route = TOKEN_CONFIG.get("model_routes_sha256")
+    previous = breaker_state()
+    failures = previous.get("failures", 0) + 1 if previous.get("route") == route else 1
+    state = {
+        "version": 1,
+        "route": route,
+        "failures": failures,
+        "reason": str(reason)[:300],
+        "skip_until": time.time() + 1800 if failures >= 2 else 0,
+    }
+    try:
+        atomic(state_paths.path(state_paths.SUMMARY_BREAKER), json.dumps(state))
+    except OSError:
+        return state
+    return state
+
+
+def clear_summary_failure():
+    path = state_paths.path(state_paths.SUMMARY_BREAKER)
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def summary_suspended():
+    state = breaker_state()
+    return (
+        state.get("route") == TOKEN_CONFIG.get("model_routes_sha256")
+        and float(state.get("skip_until", 0) or 0) > time.time()
+    )
 
 
 def memory_message(summary, source):
@@ -762,9 +824,28 @@ def prepare(messages, tools, req, *, extra_messages=None, budget_limit=None, for
     output_tokens = target - message_cost([memory_message("", source)] + required_tail)
     if output_tokens <= 0:
         raise ContextError("Fresh observations leave no summary space in the context target")
-    summary, usage, summary_cost = full_summary(
-        summary_messages, source, req, output_tokens=output_tokens
-    )
+    summary_mode, degraded_reason = "model", None
+    if summary_suspended():
+        summary_mode = "degraded"
+        degraded_reason = "summary_breaker_open"
+        summary, usage, summary_cost = degraded_handoff(summary_messages, output_tokens)
+    else:
+        try:
+            summary, usage, summary_cost = full_summary(
+                summary_messages, source, req, output_tokens=output_tokens
+            )
+            clear_summary_failure()
+        except SummaryRetry:
+            raise
+        except SummaryStateError:
+            raise
+        except ContextError as error:
+            # An unrepairable handoff must not stop overnight research: rebuild a
+            # verifiable excerpt handoff from the same sources and keep going.
+            summary_mode = "degraded"
+            degraded_reason = str(error)[:300]
+            summary, usage, summary_cost = degraded_handoff(summary_messages, output_tokens)
+            record_summary_failure(degraded_reason)
     memory = memory_message(summary, source)
     tail_target = target - message_cost([memory])
     cut = _token_tail_boundary(work, tail_target, fresh if required_tail else len(work))
@@ -777,6 +858,8 @@ def prepare(messages, tools, req, *, extra_messages=None, budget_limit=None, for
     record = {
         "source": source,
         "summary": summary,
+        "summary_mode": summary_mode,
+        "degraded_reason": degraded_reason,
         "before_estimated_bytes": before,
         "after_estimated_bytes": size(candidate),
         "tools_estimated_bytes": overhead,

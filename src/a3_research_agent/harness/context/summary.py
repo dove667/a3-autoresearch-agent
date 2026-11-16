@@ -92,6 +92,184 @@ def parse(text, messages):
     return document, render(document), report
 
 
+DEGRADED_NOTICE = "程序自动降级交接：模型摘要未通过校验，以下为原文摘录。"
+
+
+def _quote(document, section, index, texts, quote):
+    """Keep only quotes that really occur in their cited message."""
+    if not isinstance(quote, str):
+        return False
+    quote = quote.strip()
+    if not quote or quote not in texts[index]:
+        return False
+    document[section].append({"text": DEGRADED_NOTICE + quote, "source": index + 1, "quote": quote})
+    return True
+
+
+def _excerpt(raw, needle, limit):
+    index = raw.find(needle)
+    if index < 0:
+        return None
+    return raw[index : index + limit]
+
+
+def _excerpt_job(raw, job, status, limit=240):
+    """Prefer the occurrence that also shows the observed job status."""
+    start = 0
+    while True:
+        index = raw.find(job, start)
+        if index < 0:
+            return _excerpt(raw, job, limit)
+        window = raw[index : index + limit]
+        if not status or status in window:
+            return window
+        start = index + 1
+
+
+def _literal(value):
+    return json.dumps(value, ensure_ascii=False)
+
+
+def _operational_view(messages):
+    """Find the newest per-decision state refresh, which carries plan and jobs."""
+    for index in range(len(messages) - 1, -1, -1):
+        content = messages[index].get("content")
+        if messages[index].get("role") != "user" or not isinstance(content, str):
+            continue
+        try:
+            value = json.loads(content)
+        except (ValueError, TypeError):
+            continue
+        if isinstance(value, dict) and value.get("frame") == "CURRENT_STATE_REFRESH":
+            return index, value
+    return None, None
+
+
+def _from_operational(document, index, value, texts):
+    plan = value.get("research_plan") or {}
+    facts = value.get("research_facts") or {}
+    direction = plan.get("direction") or {}
+    objective = direction.get("objective")
+    if isinstance(objective, str) and objective.strip():
+        _quote(
+            document,
+            "goal_corrections",
+            index,
+            texts,
+            _excerpt(texts[index], _literal(objective), len(_literal(objective))),
+        )
+    steps = plan.get("steps") or {}
+    for key in [*(plan.get("focus") or []), *(plan.get("ready") or [])][:3]:
+        task = (steps.get(key) or {}).get("task")
+        if isinstance(task, str) and task.strip():
+            _quote(
+                document,
+                "next_actions",
+                index,
+                texts,
+                _excerpt(texts[index], _literal(task), len(_literal(task))),
+            )
+    for job, status in list((facts.get("active_jobs") or {}).items())[:8]:
+        _quote(
+            document,
+            "active_jobs",
+            index,
+            texts,
+            _excerpt_job(texts[index], job, status if isinstance(status, str) else None),
+        )
+    for item in (plan.get("review_due") or [])[:3]:
+        if isinstance(item, dict) and isinstance(item.get("step"), str):
+            _quote(
+                document, "open_questions", index, texts, _excerpt(texts[index], item["step"], 240)
+            )
+
+
+def _tool_sections(messages, names):
+    """Classify recent results by tool so a degraded handoff stays useful."""
+    sections = {}
+    for message in messages:
+        if message.get("type") != "function_call_output":
+            continue
+        raw = message.get("output")
+        if not isinstance(raw, str) or not raw.strip():
+            continue
+        name = names.get(message.get("call_id"), "")
+        try:
+            value = json.loads(raw)
+        except (ValueError, TypeError):
+            value = None
+        if isinstance(value, dict) and (
+            value.get("ok") is False or value.get("status") in {"failed", "cancelled"}
+        ):
+            section = "failures"
+        elif name in {"job_status", "job_wait", "job_list", "job_submit", "job_prepare"}:
+            section = "active_jobs"
+        elif name in {"read", "list", "search_files", "write", "edit"}:
+            section = "sources"
+        else:
+            section = "results"
+        sections.setdefault(section, []).append(message.get("call_id"))
+    return sections
+
+
+def degraded(messages, *, fits=None, quote_limit=200, entries=8):
+    """Rebuild a verifiable handoff from its own sources without a model call.
+
+    Used only when the model summary cannot be repaired: every entry is a verbatim
+    excerpt of the cited message, so provenance still holds and research continues.
+    """
+    texts = [source_text(message) for message in messages]
+    names = {
+        message.get("call_id"): message.get("name")
+        for message in messages
+        if message.get("type") == "function_call"
+    }
+    document = {"version": VERSION, **{section: [] for section in SECTIONS}}
+    index, value = _operational_view(messages)
+    if value is not None:
+        _from_operational(document, index, value, texts)
+    sections = _tool_sections(messages, names)
+    emitted = 0
+    for section in ("failures", "results", "active_jobs", "sources"):
+        call_ids = set(sections.get(section, []))
+        for position in range(len(messages) - 1, -1, -1):
+            message = messages[position]
+            if message.get("call_id") not in call_ids:
+                continue
+            raw = message.get("output")
+            if not isinstance(raw, str):
+                continue
+            if _quote(document, section, position, texts, raw.strip()[:quote_limit]):
+                emitted += 1
+            if emitted >= entries:
+                break
+        if emitted >= entries:
+            break
+    if not any(document[section] for section in SECTIONS):
+        _quote(document, "sources", len(messages) - 1, texts, texts[-1][:quote_limit])
+    rendered = render(document)
+
+    def too_long():
+        return bool(fits is not None and not fits(rendered))
+
+    while too_long() and sum(len(document[section]) for section in SECTIONS) > 1:
+        for section in reversed(list(SECTIONS)):
+            if document[section]:
+                document[section].pop()
+                break
+        rendered = render(document)
+    while too_long() and any(
+        len(item["quote"]) > 40 for section in SECTIONS for item in document[section]
+    ):
+        for section in SECTIONS:
+            for item in document[section]:
+                if len(item["quote"]) > 40:
+                    item["quote"] = item["quote"][:40]
+                    item["text"] = DEGRADED_NOTICE + item["quote"]
+        rendered = render(document)
+    return document, render(document)
+
+
 def render(document):
     lines = ["Research handoff. Source numbers refer to the archived summary transcript."]
     for section, title in SECTIONS.items():

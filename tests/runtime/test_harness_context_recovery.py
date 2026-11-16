@@ -93,16 +93,15 @@ def test_same_deterministic_budget_error_does_not_spend_again_on_restart(tmp_pat
         return completed(args[-1])
 
     first = load_context()
-    with pytest.raises(first.ContextError):
-        first.prepare(messages(600000), [], provider)
-    spent = len(calls)
+    # Input above the summary window is detected before dispatch: rebuild excerpts.
+    prepared, record = first.prepare(messages(600000), [], provider)
+    assert not calls and record["summary_mode"] == "degraded" and first.paired(prepared)
     restarted = load_context()
-    with pytest.raises(restarted.ContextError):
-        restarted.prepare(messages(600000), [], provider)
-    assert len(calls) == spent
+    prepared, record = restarted.prepare(messages(600000), [], provider)
+    assert not calls and record["summary_mode"] != "model"
 
 
-def test_persistent_invalid_summary_has_cross_restart_call_bound(tmp_path, monkeypatch):
+def test_persistent_invalid_summary_degrades_with_bounded_model_calls(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     calls = []
 
@@ -110,10 +109,12 @@ def test_persistent_invalid_summary_has_cross_restart_call_bound(tmp_path, monke
         calls.append(args)
         return {"status": "completed", "output": []}
 
+    record = None
     for _ in range(10):
         context = load_context()
-        with pytest.raises(context.ContextError):
-            context.prepare(messages(), [], invalid)
+        prepared, record = context.prepare(messages(), [], invalid)
+        assert context.paired(prepared)
+    assert record["summary_mode"] == "degraded"
     assert len(calls) <= 8
 
 
@@ -266,7 +267,7 @@ def test_summary_headroom_does_not_recursively_split_a_feasible_plan(tmp_path, m
     assert len(calls) <= 8
 
 
-def test_oversized_summary_is_diagnosed_and_restart_is_bounded(tmp_path, monkeypatch):
+def test_oversized_summary_degrades_and_restart_is_bounded(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     calls = []
 
@@ -278,8 +279,8 @@ def test_oversized_summary_is_diagnosed_and_restart_is_bounded(tmp_path, monkeyp
 
     for _ in range(10):
         context = load_context()
-        with pytest.raises(context.ContextError):
-            context.prepare(messages(50000), [], provider)
+        prepared, record = context.prepare(messages(50000), [], provider)
+        assert context.paired(prepared) and record["summary_mode"] == "degraded"
     assert len(calls) <= 8
     failure_records = list(
         (tmp_path / "conversation/context-history").glob("summary-failure-*.json")
@@ -410,10 +411,13 @@ def test_token_mode_persistent_failure_remains_bounded_across_restart(
             "a3_research_agent.token_count", fromlist=["count_tokens"]
         ).count_tokens
         context.configure(lambda *args, **kwargs: config)
-        with pytest.raises(context.ContextError):
+        try:
             context.prepare(
                 messages(80000), [], lambda *args, **kwargs: requests.append(args) or failure
             )
+        except context.ContextError:
+            # Transport failures keep their retry contract; unusable output degrades.
+            pass
     assert len(requests) <= 8
 
 
@@ -499,7 +503,7 @@ def test_failed_summary_remains_failed_after_restart(tmp_path, monkeypatch):
         restarted.prepare(messages(), [], lambda *a, **kwargs: pytest.fail("unexpected retry"))
 
 
-def test_persistently_overlong_summary_still_blocks_with_original_evidence(tmp_path, monkeypatch):
+def test_persistently_overlong_summary_degrades_with_original_evidence(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     calls = []
     original = messages()
@@ -512,8 +516,8 @@ def test_persistently_overlong_summary_still_blocks_with_original_evidence(tmp_p
 
     for _ in range(5):
         context = load_context()
-        with pytest.raises(context.ContextError):
-            context.prepare(original, [], invalid)
+        prepared, record = context.prepare(original, [], invalid)
+        assert context.paired(prepared) and record["summary_mode"] == "degraded"
     assert len(calls) <= 8
     assert len(calls) == 1
     assert json.loads(state_paths.path(calls[0]["source"]).read_text()) == original
