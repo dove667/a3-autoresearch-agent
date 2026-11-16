@@ -1,0 +1,637 @@
+"""Run benchmark tasks through the real Host, real tools and real remote execution.
+
+A task gets a thin project root: its own ``workspace`` and ``plan``, while the
+project's memory, skills, prompts, embedding model and published source are shared
+read-only. One real Host process runs per root, so tasks can run in parallel without
+inventing a fake tool server.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import signal
+import subprocess
+import sys
+import time
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass, field
+from pathlib import Path
+
+import httpx
+
+from a3_research_agent.host.published_harness import published_source
+from a3_research_agent.project import checkout_root
+
+REPO = checkout_root() or Path(__file__).resolve().parents[3]
+SHARED = {
+    "A3_BENCHMARK_MEMORY_ROOT": REPO / "memory",
+    "A3_BENCHMARK_SKILLS_ROOT": REPO / "skills",
+    "A3_BENCHMARK_SKILLS_HISTORY_ROOT": REPO / ".runtime/skill-revisions",
+    "A3_BENCHMARK_SKILLS_INDEX_ROOT": REPO / ".runtime/skill-index",
+    "A3_BENCHMARK_READONLY_KNOWLEDGE": "1",
+    "A3_BENCHMARK_PUBLISHED_HARNESS_ROOT": REPO / ".runtime/published-harness",
+    "A3_EMBEDDING_MODEL": REPO / "model-cache/qwen3-embedding-0.6b/model.gguf",
+}
+
+
+@dataclass
+class RealTask:
+    id: str
+    title: str
+    question: str
+    objective: str
+    route: str
+    task: str
+    criterion: str
+    instructions: str
+    fixtures: tuple[tuple[str, str], ...]
+    done: Callable[[Path, dict], bool]
+    score: Callable[[Path, dict, Path], tuple[bool, str]]
+    timeout: int = 900
+    require_review: bool = False
+    tags: tuple[str, ...] = field(default_factory=tuple)
+
+
+def _set_env(path: Path, values: dict[str, str]) -> None:
+    from dotenv import set_key
+
+    for key, value in values.items():
+        set_key(str(path), key, str(value), quote_mode="never")
+
+
+def _copy_fixture(source: Path, target: Path) -> None:
+    if source.is_dir():
+        shutil.copytree(source, target, symlinks=False)
+    else:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
+
+
+def _plan_for(task: RealTask) -> dict:
+    return {
+        "version": 2,
+        "revision": 1,
+        "direction": {
+            "objective": task.objective,
+            "metrics": [task.title],
+            "gaps": [],
+        },
+        "routes": {
+            task.route: {
+                "question": task.question,
+                "hypothesis": "真实 workspace 中的证据足以回答该问题",
+                "experiment": "使用真实工具读取、执行或记录，不依赖外部提示",
+                "decision_rule": "按 TASK.md 与完成判据核对证据",
+                "status": "active",
+                "priority": 0,
+                "conclusion": "",
+                "evidence": [],
+            }
+        },
+        "steps": {
+            task.id: {
+                "route": task.route,
+                "priority": 0,
+                "task": task.task,
+                "criterion": task.criterion,
+                "status": "pending",
+                "depends_on": [],
+                "jobs": [],
+                "progress": "",
+                "evidence": [],
+            }
+        },
+        "reason": "benchmark task",
+        "reviews": [],
+        "reviewed_jobs": {},
+    }
+
+
+def materialize(task: RealTask, root: Path, model: str | None = None) -> Path:
+    """Create only the parts that differ per task; knowledge stays shared."""
+    if root.exists():
+        shutil.rmtree(root)
+    root.mkdir(parents=True)
+    (root / "workspace").mkdir()
+    (root / "plan").mkdir()
+    (root / "trajectories").mkdir()
+    (root / ".runtime").mkdir()
+    (root / ".git").symlink_to(REPO / ".git")
+    (root / "prompt").symlink_to(REPO / "prompt")
+    (root / ".runtime/reference-sources").symlink_to(REPO / ".runtime/reference-sources")
+    for source, destination in task.fixtures:
+        _copy_fixture(REPO / source, root / "workspace" / destination)
+    (root / "workspace/TASK.md").write_text(task.instructions, encoding="utf-8")
+    (root / "plan/current.json").write_text(
+        json.dumps(_plan_for(task), ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    shutil.copy2(REPO / ".env", root / ".env")
+    values = {name: str(path) for name, path in SHARED.items()}
+    if model:
+        values.update(
+            {
+                "MODEL_NAME": model,
+                "A3_UPSTREAM_RESPONSES_MODEL": model,
+                "A3_WORKER_MODEL_NAME": model,
+                "A3_SUMMARY_MODEL_NAME": model,
+            }
+        )
+    _set_env(root / ".env", values)
+    os.chmod(root / ".env", 0o600)
+    return root
+
+
+def _read_json(path: Path) -> dict:
+    try:
+        value = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _run_state(root: Path) -> tuple[Path | None, dict]:
+    for state_path in (root / "trajectories").glob("*/.host/state.json"):
+        state = _read_json(state_path)
+        if state.get("endpoint") and isinstance(state.get("gateway"), dict):
+            return state_path.parent.parent, state
+    return None, {}
+
+
+def _main_token(state: dict) -> str | None:
+    gateway = state.get("gateway") or {}
+    owner = gateway.get("main_owner")
+    for token, value in (gateway.get("sessions") or {}).items():
+        if value == owner:
+            return token
+    return next(iter(gateway.get("sessions") or {}), None)
+
+
+def _start(root: Path, commit: str) -> subprocess.Popen:
+    log = (root / "host.log").open("w")
+    env = {**os.environ, "PYTHONPATH": str(REPO / "src")}
+    return subprocess.Popen(
+        [
+            sys.executable,
+            "-m",
+            "a3_research_agent.cli.launch",
+            "--project-root",
+            str(root),
+            "--harness-commit",
+            commit,
+        ],
+        cwd=root,
+        env=env,
+        stdout=log,
+        stderr=subprocess.STDOUT,
+        start_new_session=True,
+    )
+
+
+def _alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _kill_pid(pid: int, sig: int) -> None:
+    try:
+        os.kill(pid, sig)
+    except ProcessLookupError:
+        pass
+    except PermissionError:
+        pass
+
+
+def _cleanup_processes(root: Path, run: Path | None) -> None:
+    """Stop Host children even when the Host did not get a chance to shut down."""
+    if run is not None:
+        for record_path in run.glob("sessions/*/session.json"):
+            record = _read_json(record_path)
+            pid = (record.get("process") or {}).get("pid")
+            if isinstance(pid, int) and _alive(pid):
+                _kill_pid(pid, signal.SIGINT)
+        pid_path = run / ".host/knowledge-service.pid"
+        try:
+            pid = int(pid_path.read_text().strip())
+        except (OSError, ValueError):
+            pid = None
+        if pid and _alive(pid):
+            _kill_pid(pid, signal.SIGINT)
+    # The Host is its own session leader; the fallback covers a crashed launcher.
+    for pid_path in root.glob("trajectories/*/.host/knowledge-service.pid"):
+        try:
+            pid = int(pid_path.read_text().strip())
+        except (OSError, ValueError):
+            continue
+        if _alive(pid):
+            _kill_pid(pid, signal.SIGINT)
+
+
+def _stop(endpoint: str, token: str, reason: str) -> str:
+    try:
+        response = httpx.post(
+            endpoint + "/sessions/self/stop",
+            headers={"Authorization": "Bearer " + token},
+            json={"reason": reason},
+            timeout=30,
+        )
+        return f"stop {response.status_code}"
+    except Exception as error:  # noqa: BLE001 - report the failed stop, keep evidence
+        return f"stop failed: {type(error).__name__}"
+
+
+def _calls(run: Path) -> list[dict]:
+    path = run / "conversation/trajectory.jsonl"
+    calls = []
+    try:
+        lines = path.read_text().splitlines()
+    except OSError:
+        return calls
+    for line in lines:
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(row, dict) and isinstance(row.get("tool"), str):
+            calls.append(row)
+    return calls
+
+
+def _wait(root: Path, process: subprocess.Popen, task: RealTask, deadline: float) -> tuple[bool, bool, str]:
+    done = False
+    while time.monotonic() < deadline:
+        if process.poll() is not None:
+            return done, False, "host exited"
+        plan = _read_json(root / "plan/current.json")
+        if task.done(root, plan):
+            done = True
+            # Give the Agent a short turn to record its review or stop itself.
+            time.sleep(45)
+            return done, True, "done"
+        time.sleep(2)
+    return done, False, "timeout"
+
+
+def run_task(task: RealTask, output: Path, commit: str, model: str | None) -> dict:
+    started = time.monotonic()
+    root = (output / task.id).resolve()
+    materialize(task, root, model)
+    process = _start(root, commit)
+    run = state = {}
+    timed_out = False
+    error = ""
+    try:
+        deadline = time.monotonic() + task.timeout
+        while time.monotonic() < deadline:
+            run, state = _run_state(root)
+            if run:
+                break
+            if process.poll() is not None:
+                raise RuntimeError("Host exited before creating a run")
+            time.sleep(2)
+        else:
+            raise RuntimeError("Host did not create a run in time")
+        completed, reached, reason = _wait(root, process, task, deadline)
+        if not reached:
+            timed_out = reason == "timeout"
+        token = _main_token(state)
+        stop = "not needed"
+        if process.poll() is None:
+            if token:
+                stop = _stop(state["endpoint"], token, "benchmark task complete")
+            else:
+                stop = "no main token"
+        try:
+            process.wait(timeout=45)
+        except subprocess.TimeoutExpired:
+            # SIGINT lets launch_run run its finally block and suspend the Agent.
+            process.send_signal(signal.SIGINT)
+            try:
+                process.wait(timeout=45)
+            except subprocess.TimeoutExpired:
+                process.terminate()
+                try:
+                    process.wait(timeout=20)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+        _cleanup_processes(root, run or None)
+        plan = _read_json(root / "plan/current.json")
+        passed, detail = task.score(root, plan, run)
+        calls = _calls(run)
+        if task.require_review and not plan.get("reviews"):
+            passed = False
+            detail = f"{detail}; no plan review" if detail else "no plan review"
+        return {
+            "id": task.id,
+            "title": task.title,
+            "passed": passed,
+            "detail": detail,
+            "completed": completed,
+            "timed_out": timed_out,
+            "stop": stop,
+            "seconds": round(time.monotonic() - started, 1),
+            "run": str(run),
+            "root": str(root),
+            "plan_revision": plan.get("revision"),
+            "plan_step": (plan.get("steps") or {}).get(task.id, {}).get("status"),
+            "reviews": len(plan.get("reviews") or []),
+            "calls": len(calls),
+            "call_names": [call.get("tool") for call in calls],
+        }
+    except Exception as error_value:  # noqa: BLE001 - one broken task must not end the batch
+        return {
+            "id": task.id,
+            "title": task.title,
+            "passed": False,
+            "detail": f"运行错误：{type(error_value).__name__}: {error_value}",
+            "completed": False,
+            "timed_out": timed_out,
+            "stop": error,
+            "seconds": round(time.monotonic() - started, 1),
+            "run": str(run) if run else "",
+            "root": str(root),
+            "calls": len(_calls(run)) if run else 0,
+            "call_names": [],
+        }
+    finally:
+        if process.poll() is None:
+            process.send_signal(signal.SIGINT)
+            try:
+                process.wait(timeout=45)
+            except subprocess.TimeoutExpired:
+                process.terminate()
+                try:
+                    process.wait(timeout=20)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+        _cleanup_processes(root, run or None)
+        with (root / "host.log").open("a") as stream:
+            stream.write("\n--- runner finished ---\n")
+
+
+def report(results: list[dict], directory: Path, commit: str) -> dict:
+    passed = sum(1 for row in results if row["passed"])
+    summary = {
+        "passed": passed,
+        "total": len(results),
+        "score": f"{passed}/{len(results)}",
+        "tool_calls": sum(row.get("calls", 0) for row in results),
+        "harness_commit": commit,
+    }
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / "results.json").write_text(
+        json.dumps({"summary": summary, "tasks": results}, ensure_ascii=False, indent=2)
+    )
+    lines = [
+        "# 真实 Harness Benchmark",
+        "",
+        f"- 通过 {summary['score']}；工具调用 {summary['tool_calls']} 次；Harness {commit[:12]}",
+        "",
+        "| 任务 | 结果 | 轮次/调用 | 说明 |",
+        "|---|---|---|---|",
+    ]
+    for row in results:
+        lines.append(
+            f"| {row['title']} | {'通过' if row['passed'] else '失败'} | "
+            f"{row.get('plan_revision', '-')}/{row.get('calls', 0)} | {row.get('detail', '')} |"
+        )
+    (directory / "report.md").write_text("\n".join(lines) + "\n")
+    return summary
+
+
+def run(
+    only: list[str] | None = None,
+    output: Path | None = None,
+    jobs: int = 2,
+    timeout: int | None = None,
+    model: str | None = None,
+    commit: str | None = None,
+) -> dict:
+    selected = [task for task in TASKS if not only or task.id in only]
+    if timeout:
+        selected = [
+            RealTask(**{**task.__dict__, "timeout": timeout}) for task in selected
+        ]
+    commit = commit or subprocess.check_output(
+        ["git", "-C", str(REPO), "rev-parse", "HEAD"], text=True
+    ).strip()
+    published_source(REPO, commit)
+    directory = (output or Path("runs/checks") / f"real-benchmark-{time.strftime('%Y-%m-%d_%H-%M-%S')}").resolve()
+    directory.mkdir(parents=True, exist_ok=True)
+    results = []
+    with ThreadPoolExecutor(max_workers=max(1, jobs)) as pool:
+        futures = {
+            pool.submit(run_task, task, directory, commit, model): task for task in selected
+        }
+        for future in as_completed(futures):
+            row = future.result()
+            results.append(row)
+            print(
+                f"{'PASS' if row['passed'] else 'FAIL'} {row['id']}: {row['detail']}",
+                flush=True,
+            )
+            report(results, directory, commit)
+    results.sort(key=lambda row: [task.id for task in TASKS].index(row["id"]))
+    summary = report(results, directory, commit)
+    summary["directory"] = str(directory)
+    print(json.dumps(summary, ensure_ascii=False))
+    return summary
+
+
+def _json_file(root: Path, path: str) -> dict:
+    return _read_json(root / "workspace" / path)
+
+
+def _read_baseline_done(root: Path, plan: dict) -> bool:
+    value = _json_file(root, "results/bench-baseline.json")
+    return (
+        value.get("case") == "expert_development"
+        and value.get("seeds") == [31000, 31001, 31002]
+        and value.get("native_successes") == 3
+    )
+
+
+def _read_baseline_score(root: Path, plan: dict, run: Path) -> tuple[bool, str]:
+    value = _json_file(root, "results/bench-baseline.json")
+    if (
+        value.get("case") == "expert_development"
+        and value.get("seeds") == [31000, 31001, 31002]
+        and value.get("native_successes") == 3
+    ):
+        review = "review" if plan.get("reviews") else "no review"
+        return True, f"真实 results.json 读取正确；{review}"
+    return False, f"结果文件不符合：{value}"
+
+
+TASKS = (
+    RealTask(
+        "read_baseline",
+        "读取真实基线结果",
+        "真实 ACT baseline 的 expert_development 用了哪些 seed，native_successes 是多少？",
+        "完成 benchmark：读取真实基线结果并写出结构化结论",
+        "bench-read",
+        "按 workspace/TASK.md 核对真实基线结果，写出 results/bench-baseline.json，plan review 后 session_stop。",
+        "结果文件 native_successes=3 且 seeds=[31000,31001,31002]。",
+        "# Benchmark task\n\n"
+        "读取 `experiments/2026-11-03-act-baseline/results/results.json`，确认 "
+        "`cases.expert_development` 的 seeds 与 native_successes。\n\n"
+        "把结果写入 `results/bench-baseline.json`，格式：\n"
+        '`{"case":"expert_development","seeds":[31000,31001,31002],"native_successes":3}`\n\n'
+        "完成后用 `plan(action=\"review\")` 记录结论、evidence 和 metrics，然后调用 "
+        "`session_stop(reason=\"benchmark task complete\")`。\n",
+        (
+            ("workspace/experiments/2026-11-03-act-baseline/results/results.json",
+             "experiments/2026-11-03-act-baseline/results/results.json"),
+            ("workspace/experiments/2026-11-03-act-baseline/config.json",
+             "experiments/2026-11-03-act-baseline/config.json"),
+        ),
+        _read_baseline_done,
+        _read_baseline_score,
+        timeout=900,
+        tags=("read", "real-workspace"),
+    ),
+)
+
+
+
+def _read_config_done(root: Path, plan: dict) -> bool:
+    value = _json_file(root, "results/bench-config.json")
+    return value.get("seed_start") == 21000 and value.get("development_seeds") == [
+        31000,
+        31001,
+        31002,
+    ]
+
+
+def _read_config_score(root: Path, plan: dict, run: Path) -> tuple[bool, str]:
+    value = _json_file(root, "results/bench-config.json")
+    if value.get("seed_start") == 21000 and value.get("development_seeds") == [
+        31000,
+        31001,
+        31002,
+    ]:
+        return True, "真实 config.json 读取正确"
+    return False, f"结果文件不符合：{value}"
+
+
+def _memory_done(root: Path, plan: dict) -> bool:
+    value = _json_file(root, "results/bench-memory.json")
+    return value.get("id") == "d9ebbacf33e6" and "11/120" in str(value) and "7/120" in str(value)
+
+
+def _memory_score(root: Path, plan: dict, run: Path) -> tuple[bool, str]:
+    value = _json_file(root, "results/bench-memory.json")
+    if value.get("id") == "d9ebbacf33e6" and "11/120" in str(value) and "7/120" in str(value):
+        return True, "真实 memory 检索正确"
+    return False, f"结果文件不符合：{value}"
+
+
+def _skill_done(root: Path, plan: dict) -> bool:
+    value = _json_file(root, "results/bench-skill.json")
+    text = json.dumps(value, ensure_ascii=False)
+    return value.get("skill") == "a3-mujoco-autoresearch" and "配对" in text and "闭环" in text
+
+
+def _skill_score(root: Path, plan: dict, run: Path) -> tuple[bool, str]:
+    value = _json_file(root, "results/bench-skill.json")
+    text = json.dumps(value, ensure_ascii=False)
+    if value.get("skill") == "a3-mujoco-autoresearch" and "配对" in text and "闭环" in text:
+        return True, "真实 skill 读取正确"
+    return False, f"结果文件不符合：{value}"
+
+TASKS += (
+    RealTask(
+        "read_config",
+        "读取真实实验配置",
+        "真实 ACT baseline 的数据 seed_start 和 development seeds 是多少？",
+        "完成 benchmark：读取真实实验配置并写出结构化结论",
+        "bench-config",
+        "按 workspace/TASK.md 读取真实 config.json，写出 results/bench-config.json。",
+        "结果文件 seed_start=21000 且 development_seeds=[31000,31001,31002]。",
+        "# Benchmark task\n\n"
+        "读取 `experiments/2026-11-03-act-baseline/config.json`，确认 `data.seed_start` "
+        "与 `development_evaluation.seeds`。\n\n"
+        "把结果写入 `results/bench-config.json`，格式：\n"
+        '`{"seed_start":21000,"development_seeds":[31000,31001,31002]}`\n\n'
+        "完成后调用 `session_stop(reason=\"benchmark task complete\")`。\n",
+        (
+            ("workspace/experiments/2026-11-03-act-baseline/config.json",
+             "experiments/2026-11-03-act-baseline/config.json"),
+        ),
+        _read_config_done,
+        _read_config_score,
+        tags=("read", "real-workspace"),
+    ),
+    RealTask(
+        "memory_pair_result",
+        "检索真实跨轮记忆",
+        "真实 memory 中 2×10 配对结果的 ID 和两个入盒数是什么？",
+        "完成 benchmark：从共享 memory 检索真实配对结论",
+        "bench-memory",
+        "按 workspace/TASK.md 使用 memory 工具找到 2×10 配对结果，写出 results/bench-memory.json。",
+        "结果文件 id=d9ebbacf33e6，且包含 11/120 与 7/120。",
+        "# Benchmark task\n\n"
+        "使用 `memory(action=\"search\", query=\"2×10 配对 入盒\")` 找到记录 2×10 "
+        "配对结果的条目，再用 `memory(action=\"read\", id=...)` 核对内容。\n\n"
+        "把结果写入 `results/bench-memory.json`，至少包含：\n"
+        '`{"id":"d9ebbacf33e6","result":"2x10 5k 11/120, 20k 7/120"}`\n\n'
+        "memory 是共享只读知识，不要写入或修改。完成后调用 "
+        "`session_stop(reason=\"benchmark task complete\")`。\n",
+        (),
+        _memory_done,
+        _memory_score,
+        tags=("memory", "shared-knowledge"),
+    ),
+    RealTask(
+        "skill_method",
+        "读取真实方法技能",
+        "真实技能库中 A3 策略实验的配对/闭环方法要点是什么？",
+        "完成 benchmark：从共享 skills 读取真实方法规范",
+        "bench-skill",
+        "按 workspace/TASK.md 使用 skills 工具读取 a3-mujoco-autoresearch，写出 results/bench-skill.json。",
+        "结果文件 skill=a3-mujoco-autoresearch，且包含配对与闭环。",
+        "# Benchmark task\n\n"
+        "使用 `skills(action=\"list\", query=\"A3 策略实验 配对 闭环\")` 找到方法技能，"
+        "再 `skills(action=\"read\", id=\"a3-mujoco-autoresearch\")` 读取正文。\n\n"
+        "把要点写入 `results/bench-skill.json`，至少包含：\n"
+        '`{"skill":"a3-mujoco-autoresearch","points":["配对比较","闭环评测"]}`\n\n'
+        "skills 是共享只读知识，不要修改。完成后调用 "
+        "`session_stop(reason=\"benchmark task complete\")`。\n",
+        (),
+        _skill_done,
+        _skill_score,
+        tags=("skills", "shared-knowledge"),
+    ),
+)
+
+def main():
+    import argparse
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--only", help="Comma-separated task ids")
+    parser.add_argument("--out", type=Path, help="Output directory")
+    parser.add_argument("--jobs", type=int, default=2, help="Parallel real Hosts")
+    parser.add_argument("--timeout", type=int, help="Per-task wall seconds")
+    parser.add_argument("--model", help="Override the deployment model")
+    parser.add_argument("--commit", help="Published Harness commit (default HEAD)")
+    args = parser.parse_args()
+    run(
+        only=[item for item in (args.only or "").split(",") if item],
+        output=args.out,
+        jobs=args.jobs,
+        timeout=args.timeout,
+        model=args.model,
+        commit=args.commit,
+    )
+
+
+if __name__ == "__main__":
+    main()
+

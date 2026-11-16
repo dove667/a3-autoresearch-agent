@@ -65,6 +65,22 @@ def process_state(status, exit_code=None):
     }
 
 
+def benchmark_root(name, fallback):
+    """Let an explicit benchmark root share read-only knowledge across projects.
+
+    Production leaves the variables unset, so the per-project layout remains the
+    only default. Benchmark runs set an absolute directory only when they need the
+    same memory/skills source across otherwise independent project roots.
+    """
+    value = os.environ.get(name)
+    if not value:
+        return fallback
+    path = Path(value)
+    if not path.is_absolute() or path.is_symlink() or not path.is_dir():
+        raise ValueError(f"{name} must name an absolute real directory")
+    return path.resolve()
+
+
 class ProcessRuntime:
     """Execute published code with explicit local process ownership and exit evidence."""
 
@@ -255,8 +271,21 @@ class ProcessRuntime:
         directories = {name: self.state_root / name for name in (".home", ".tmp", ".cache")}
         for directory in directories.values():
             directory.mkdir(parents=True, exist_ok=True)
-        memory = workspace_path(project_for_run(self.root.parent), "memory").resolve()
+        memory = benchmark_root(
+            "A3_BENCHMARK_MEMORY_ROOT",
+            workspace_path(project_for_run(self.root.parent), "memory").resolve(),
+        )
         memory.mkdir(exist_ok=True)
+        skills = benchmark_root(
+            "A3_BENCHMARK_SKILLS_ROOT",
+            workspace_path(project_for_run(self.root.parent), "skills").resolve(),
+        )
+        skills_history = benchmark_root(
+            "A3_BENCHMARK_SKILLS_HISTORY_ROOT",
+            workspace_path(
+                project_for_run(self.root.parent), ".runtime/skill-revisions"
+            ).resolve(),
+        )
         return {
             "PATH": str(Path(self.python).parent) + os.pathsep + os.defpath,
             "HOME": str(directories[".home"]),
@@ -275,14 +304,8 @@ class ProcessRuntime:
             "A3_STATE_ROOT": str(self.state_root),
             "A3_PLAN_FILE": str(self.plan_file),
             "A3_PLAN_SNAPSHOTS_ROOT": str(self.plan_snapshots),
-            "A3_SKILLS_ROOT": str(
-                workspace_path(project_for_run(self.root.parent), "skills").resolve()
-            ),
-            "A3_SKILLS_HISTORY_ROOT": str(
-                workspace_path(
-                    project_for_run(self.root.parent), ".runtime/skill-revisions"
-                ).resolve()
-            ),
+            "A3_SKILLS_ROOT": str(skills),
+            "A3_SKILLS_HISTORY_ROOT": str(skills_history),
             "A3_MEMORY_ROOT": str(memory),
             **self.knowledge_environment,
             "A3_INPUT_ROOT": str(inputs),

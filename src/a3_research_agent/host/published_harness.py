@@ -2,6 +2,7 @@
 
 import io
 import json
+import os
 import re
 import subprocess
 import tarfile
@@ -118,8 +119,16 @@ def published_source(root: Path, commit: str) -> Path:
         ],
         timeout=30,
     )
-    # Earlier cache entries omitted the shared tokenizer module.
-    source = workspace_path(root, f".runtime/published-harness/v2/{commit}")
+    # Earlier cache entries omitted the shared tokenizer module. A benchmark root
+    # may point at the project's existing cache so parallel roots share one source.
+    cache = os.environ.get("A3_BENCHMARK_PUBLISHED_HARNESS_ROOT")
+    if cache:
+        source = Path(cache)
+        if not source.is_absolute() or source.is_symlink() or not source.is_dir():
+            raise ValueError("Benchmark published-Harness cache must be an absolute real directory")
+        source = source / "v2" / commit
+    else:
+        source = workspace_path(root, f".runtime/published-harness/v2/{commit}")
     source.parent.mkdir(parents=True, exist_ok=True)
     with tarfile.open(fileobj=io.BytesIO(archive)) as tree:
         files = {}

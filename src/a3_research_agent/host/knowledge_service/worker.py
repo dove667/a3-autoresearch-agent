@@ -48,9 +48,26 @@ def embedding_command(binary, model, port):
     ]
 
 
+def configured_root(name, default):
+    """Use the same shared knowledge roots as the Agent when configured."""
+    value = os.environ.get(name)
+    if value:
+        path = Path(value)
+        if not path.is_absolute() or path.is_symlink():
+            raise ValueError(f"{name} must be an absolute real directory")
+        return path.resolve()
+    return Path(default).resolve()
+
+
 def create_knowledge_app(project, run_id, token, embedder):
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     sources = MemorySources(project, run_id)
+    memory_root = configured_root("A3_MEMORY_ROOT", project / "memory")
+    skills_root = configured_root("A3_SKILLS_ROOT", project / "skills")
+    history_root = configured_root(
+        "A3_SKILLS_HISTORY_ROOT", project / ".runtime/skill-revisions"
+    )
+    index_root = configured_root("A3_SKILLS_INDEX_ROOT", project / ".runtime/skill-index")
 
     def authorize(authorization: str = Header(default="")):
         if not secrets.compare_digest(authorization, "Bearer " + token):
@@ -87,7 +104,7 @@ def create_knowledge_app(project, run_id, token, embedder):
     def memory(arguments: dict):
         return dispatch(
             arguments,
-            root=project / "memory",
+            root=memory_root,
             run_id=run_id,
             embedder=embedder,
             model_id=MODEL_ID,
@@ -98,9 +115,9 @@ def create_knowledge_app(project, run_id, token, embedder):
     def skills(arguments: dict):
         return skill_search.search(
             arguments,
-            root=project / "skills",
-            history_root=project / ".runtime/skill-revisions",
-            index_root=project / ".runtime/skill-index",
+            root=skills_root,
+            history_root=history_root,
+            index_root=index_root,
             embedder=embedder,
             model_id=MODEL_ID,
         )
@@ -140,7 +157,7 @@ def main():
         endpoint = f"http://127.0.0.1:{embedding_port}"
         wait_ready(endpoint, embedding_token, process)
         embedder = LlamaEmbedder(endpoint, embedding_token)
-        warm_index(project / "memory", embedder, MODEL_ID)
+        warm_index(configured_root("A3_MEMORY_ROOT", project / "memory"), embedder, MODEL_ID)
         app = create_knowledge_app(project, run_id, token, embedder)
         server = uvicorn.Server(
             uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning", access_log=False)

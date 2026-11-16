@@ -62,10 +62,30 @@ class KnowledgeService:
 
     @property
     def environment(self):
+        def shared(benchmark_name, runtime_name, default):
+            value = os.environ.get(benchmark_name) or os.environ.get(runtime_name)
+            return str(Path(value).expanduser().resolve()) if value else str(default)
+
         return {
             "A3_KNOWLEDGE_SERVICE_URL": self.endpoint,
             "A3_KNOWLEDGE_SERVICE_TOKEN": self.token,
             "A3_RUN_ID": self.run_id,
+            "A3_MEMORY_ROOT": shared(
+                "A3_BENCHMARK_MEMORY_ROOT", "A3_MEMORY_ROOT", self.project / "memory"
+            ),
+            "A3_SKILLS_ROOT": shared(
+                "A3_BENCHMARK_SKILLS_ROOT", "A3_SKILLS_ROOT", self.project / "skills"
+            ),
+            "A3_SKILLS_HISTORY_ROOT": shared(
+                "A3_BENCHMARK_SKILLS_HISTORY_ROOT",
+                "A3_SKILLS_HISTORY_ROOT",
+                self.project / ".runtime/skill-revisions",
+            ),
+            "A3_SKILLS_INDEX_ROOT": shared(
+                "A3_BENCHMARK_SKILLS_INDEX_ROOT",
+                "A3_SKILLS_INDEX_ROOT",
+                self.project / ".runtime/skill-index",
+            ),
         }
 
     def __enter__(self):
@@ -94,6 +114,9 @@ class KnowledgeService:
                 start_new_session=True,
             )
             wait_ready(self.endpoint, self.token, self.process, timeout=180)
+            pid_path = self.run / ".host/knowledge-service.pid"
+            pid_path.parent.mkdir(parents=True, exist_ok=True)
+            pid_path.write_text(str(self.process.pid))
         except BaseException:
             self.close()
             raise
@@ -118,6 +141,7 @@ class KnowledgeService:
             if self.log is not None:
                 self.log.close()
                 self.log = None
+            (self.run / ".host/knowledge-service.pid").unlink(missing_ok=True)
             self.process = None
 
     def __exit__(self, exc_type, exc, traceback):

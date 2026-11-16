@@ -1,5 +1,6 @@
 """Controlled, versioned research lessons with hybrid local retrieval."""
 
+import os
 import time
 import uuid
 
@@ -196,6 +197,17 @@ def warm_index(root, embedder, model_id):
 
 
 def dispatch(arguments, *, root, run_id="", embedder=None, model_id="none", source_reader=None):
+    action = arguments.get("action", "read") if isinstance(arguments, dict) else ""
+    if os.environ.get("A3_BENCHMARK_READONLY_KNOWLEDGE") == "1" and action in {
+        "write",
+        "update",
+        "archive",
+        "restore",
+    }:
+        return {
+            "error": "benchmark_read_only",
+            "hint": "Benchmark Agents share read-only memory; do not modify the knowledge base.",
+        }
     try:
         if not isinstance(arguments, dict):
             raise MemoryError("memory_validation", "Memory arguments must be an object")

@@ -181,6 +181,19 @@ def replace_text(raw, args):
 
 
 def dispatch(args, *, root=None, history_root=None):
+    action = args.get("action") if isinstance(args, dict) else None
+    if os.environ.get("A3_BENCHMARK_READONLY_KNOWLEDGE") == "1" and action in {
+        "save",
+        "edit",
+        "edit_resource",
+        "write_resource",
+        "delete_resource",
+        "archive",
+    }:
+        return {
+            "error": "benchmark_read_only",
+            "hint": "Benchmark Agents share read-only skills; do not modify the skill library.",
+        }
     try:
         explicit_root = root is not None
         root, history_root = configured_roots(root, history_root)
