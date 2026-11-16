@@ -22,6 +22,7 @@ from pathlib import Path
 
 import httpx
 
+from a3_research_agent.host.knowledge_service.lifecycle import KnowledgeService
 from a3_research_agent.host.published_harness import published_source
 from a3_research_agent.project import checkout_root
 
@@ -136,6 +137,9 @@ def materialize(task: RealTask, root: Path, model: str | None = None) -> Path:
     )
     shutil.copy2(REPO / ".env", root / ".env")
     values = {name: str(path) for name, path in SHARED.items()}
+    for key in ("A3_KNOWLEDGE_SERVICE_URL", "A3_KNOWLEDGE_SERVICE_TOKEN"):
+        if os.environ.get(key):
+            values[key] = os.environ[key]
     if model:
         values.update(
             {
@@ -434,19 +438,28 @@ def run(
     published_source(REPO, commit)
     directory = (output or Path("runs/checks") / f"real-benchmark-{time.strftime('%Y-%m-%d_%H-%M-%S')}").resolve()
     directory.mkdir(parents=True, exist_ok=True)
+    # One local embedding service serves every task Host in this batch. Per-run
+    # services would load the same model and index once per parallel task.
+    for name, path in SHARED.items():
+        os.environ.setdefault(name, str(path))
+    shared_run = directory / "trajectories" / "shared-knowledge"
+    shared_run.mkdir(parents=True, exist_ok=True)
     results = []
-    with ThreadPoolExecutor(max_workers=max(1, jobs)) as pool:
-        futures = {
-            pool.submit(run_task, task, directory, commit, model): task for task in selected
-        }
-        for future in as_completed(futures):
-            row = future.result()
-            results.append(row)
-            print(
-                f"{'PASS' if row['passed'] else 'FAIL'} {row['id']}: {row['detail']}",
-                flush=True,
-            )
-            report(results, directory, commit)
+    with KnowledgeService(REPO, shared_run, "benchmark") as knowledge:
+        os.environ["A3_KNOWLEDGE_SERVICE_URL"] = knowledge.endpoint
+        os.environ["A3_KNOWLEDGE_SERVICE_TOKEN"] = knowledge.token
+        with ThreadPoolExecutor(max_workers=max(1, jobs)) as pool:
+            futures = {
+                pool.submit(run_task, task, directory, commit, model): task for task in selected
+            }
+            for future in as_completed(futures):
+                row = future.result()
+                results.append(row)
+                print(
+                    f"{'PASS' if row['passed'] else 'FAIL'} {row['id']}: {row['detail']}",
+                    flush=True,
+                )
+                report(results, directory, commit)
     results.sort(key=lambda row: [task.id for task in TASKS].index(row["id"]))
     summary = report(results, directory, commit)
     summary["directory"] = str(directory)

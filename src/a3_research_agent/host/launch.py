@@ -152,8 +152,19 @@ def _launch_run(args, run: Path, a3: Path, start, services) -> None:
             endpoint=endpoint,
             published_source=pinned_source,
         )
-    knowledge = services.enter_context(KnowledgeService(root, run, run_id))
-    session_runtime.knowledge_environment = knowledge.environment
+    external_knowledge_url = os.environ.get("A3_KNOWLEDGE_SERVICE_URL", "").strip()
+    external_knowledge_token = os.environ.get("A3_KNOWLEDGE_SERVICE_TOKEN", "").strip()
+    if external_knowledge_url and external_knowledge_token:
+        # One service can serve several benchmark Hosts; each Host must not start
+        # another embedding model and index over the same read-only knowledge.
+        session_runtime.knowledge_environment = {
+            "A3_KNOWLEDGE_SERVICE_URL": external_knowledge_url,
+            "A3_KNOWLEDGE_SERVICE_TOKEN": external_knowledge_token,
+            "A3_RUN_ID": run_id,
+        }
+    else:
+        knowledge = services.enter_context(KnowledgeService(root, run, run_id))
+        session_runtime.knowledge_environment = knowledge.environment
     task_instructions = input_versions.model_instructions()[1]
 
     def remote_for_run(operation, payload):
