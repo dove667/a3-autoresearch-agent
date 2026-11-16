@@ -14,6 +14,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import threading
 import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -286,6 +287,21 @@ def _retries(run: Path) -> int:
     return sum(1 for row in _trajectory(run) if row.get("model_retry"))
 
 
+def _watchdog(process: subprocess.Popen) -> None:
+    """Interrupt a Host even while its Agent is blocked in a model request."""
+    if process.poll() is not None:
+        return
+    process.send_signal(signal.SIGINT)
+    try:
+        process.wait(timeout=30)
+    except subprocess.TimeoutExpired:
+        process.terminate()
+        try:
+            process.wait(timeout=20)
+        except subprocess.TimeoutExpired:
+            process.kill()
+
+
 def _wait(root: Path, process: subprocess.Popen, task: RealTask, deadline: float) -> tuple[bool, bool, str]:
     done = False
     while time.monotonic() < deadline:
@@ -306,6 +322,9 @@ def run_task(task: RealTask, output: Path, commit: str, model: str | None) -> di
     root = (output / task.id).resolve()
     materialize(task, root, model)
     process = _start(root, commit)
+    watchdog = threading.Timer(max(1, task.timeout), _watchdog, args=(process,))
+    watchdog.daemon = True
+    watchdog.start()
     run = state = {}
     timed_out = False
     error = ""
@@ -385,6 +404,7 @@ def run_task(task: RealTask, output: Path, commit: str, model: str | None) -> di
             "model_retries": _retries(run) if run else 0,
         }
     finally:
+        watchdog.cancel()
         if process.poll() is None:
             process.send_signal(signal.SIGINT)
             try:
