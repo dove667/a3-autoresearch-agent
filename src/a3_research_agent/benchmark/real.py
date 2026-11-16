@@ -124,7 +124,11 @@ def materialize(task: RealTask, root: Path, model: str | None = None) -> Path:
     (root / ".runtime/reference-sources").symlink_to(REPO / ".runtime/reference-sources")
     for source, destination in task.fixtures:
         _copy_fixture(REPO / source, root / "workspace" / destination)
-    (root / "workspace/TASK.md").write_text(task.instructions, encoding="utf-8")
+    (root / "workspace/TASK.md").write_text(
+        "工作区根是 read/list 的默认目录；下面的路径相对它，不要加 `workspace/` 前缀。\n\n"
+        + task.instructions,
+        encoding="utf-8",
+    )
     (root / "plan/current.json").write_text(
         json.dumps(_plan_for(task), ensure_ascii=False, indent=2), encoding="utf-8"
     )
@@ -477,7 +481,7 @@ TASKS = (
         "真实 ACT baseline 的 expert_development 用了哪些 seed，native_successes 是多少？",
         "完成 benchmark：读取真实基线结果并写出结构化结论",
         "bench-read",
-        "按 workspace/TASK.md 核对真实基线结果，写出 results/bench-baseline.json，plan review 后 session_stop。",
+        "按 TASK.md 核对真实基线结果，写出 results/bench-baseline.json，plan review 后 session_stop。",
         "结果文件 native_successes=3 且 seeds=[31000,31001,31002]。",
         "# Benchmark task\n\n"
         "读取 `experiments/2026-11-03-act-baseline/results/results.json`，确认 "
@@ -553,7 +557,7 @@ TASKS += (
         "真实 ACT baseline 的数据 seed_start 和 development seeds 是多少？",
         "完成 benchmark：读取真实实验配置并写出结构化结论",
         "bench-config",
-        "按 workspace/TASK.md 读取真实 config.json，写出 results/bench-config.json。",
+        "按 TASK.md 读取真实 config.json，写出 results/bench-config.json。",
         "结果文件 seed_start=21000 且 development_seeds=[31000,31001,31002]。",
         "# Benchmark task\n\n"
         "读取 `experiments/2026-11-03-act-baseline/config.json`，确认 `data.seed_start` "
@@ -575,7 +579,7 @@ TASKS += (
         "真实 memory 中 2×10 配对结果的 ID 和两个入盒数是什么？",
         "完成 benchmark：从共享 memory 检索真实配对结论",
         "bench-memory",
-        "按 workspace/TASK.md 使用 memory 工具找到 2×10 配对结果，写出 results/bench-memory.json。",
+        "按 TASK.md 使用 memory 工具找到 2×10 配对结果，写出 results/bench-memory.json。",
         "结果文件 id=d9ebbacf33e6，且包含 11/120 与 7/120。",
         "# Benchmark task\n\n"
         "使用 `memory(action=\"search\", query=\"2×10 配对 入盒\")` 找到记录 2×10 "
@@ -595,7 +599,7 @@ TASKS += (
         "真实技能库中 A3 策略实验的配对/闭环方法要点是什么？",
         "完成 benchmark：从共享 skills 读取真实方法规范",
         "bench-skill",
-        "按 workspace/TASK.md 使用 skills 工具读取 a3-mujoco-autoresearch，写出 results/bench-skill.json。",
+        "按 TASK.md 使用 skills 工具读取 a3-mujoco-autoresearch，写出 results/bench-skill.json。",
         "结果文件 skill=a3-mujoco-autoresearch，且包含配对与闭环。",
         "# Benchmark task\n\n"
         "使用 `skills(action=\"list\", query=\"A3 策略实验 配对 闭环\")` 找到方法技能，"
@@ -643,7 +647,7 @@ TASKS += (
         "通过真实 job_submit/job_wait 跑一个 CPU 作业，返回作业号和退出码。",
         "完成 benchmark：通过真实远端执行一次 CPU 作业",
         "bench-job",
-        "按 workspace/TASK.md 提交并等待一个真实 CPU 作业，写出 results/bench-job.json。",
+        "按 TASK.md 提交并等待一个真实 CPU 作业，写出 results/bench-job.json。",
         "结果文件 job_id 为 32 位，status=completed，exit_code=0。",
         """# Benchmark task
 
@@ -660,6 +664,194 @@ TASKS += (
         _cpu_job_score,
         timeout=900,
         tags=("job", "remote"),
+    ),
+)
+
+
+
+def _plan_add_done(root: Path, plan: dict) -> bool:
+    return any(
+        key != "plan_add_step"
+        and isinstance(step, dict)
+        and step.get("route") == "bench-plan"
+        and "exit 0" in str(step.get("criterion", ""))
+        for key, step in (plan.get("steps") or {}).items()
+    )
+
+
+def _plan_add_score(root: Path, plan: dict, run: Path) -> tuple[bool, str]:
+    for key, step in (plan.get("steps") or {}).items():
+        if key != "plan_add_step" and step.get("route") == "bench-plan" and "exit 0" in str(
+            step.get("criterion", "")
+        ):
+            return True, f"plan 新增步骤 {key} 并写入判据"
+    return False, "plan 没有新增带判据的步骤"
+
+
+def _job_failure_done(root: Path, plan: dict) -> bool:
+    value = _json_file(root, "results/bench-failure.json")
+    return (
+        isinstance(value.get("job_id"), str)
+        and len(value["job_id"]) == 32
+        and value.get("exit_code") == 1
+        and any(word in str(value.get("diagnosis", "")).lower() for word in ("out of memory", "oom", "显存"))
+    )
+
+
+def _job_failure_score(root: Path, plan: dict, run: Path) -> tuple[bool, str]:
+    value = _json_file(root, "results/bench-failure.json")
+    if (
+        isinstance(value.get("job_id"), str)
+        and len(value["job_id"]) == 32
+        and value.get("exit_code") == 1
+        and any(word in str(value.get("diagnosis", "")).lower() for word in ("out of memory", "oom", "显存"))
+    ):
+        return True, "真实失败作业已诊断"
+    return False, f"结果文件不符合：{value}"
+
+
+def _batch_jobs_done(root: Path, plan: dict) -> bool:
+    value = _json_file(root, "results/bench-batch.json")
+    jobs = value.get("jobs")
+    return (
+        isinstance(jobs, list)
+        and len(jobs) == 2
+        and all(
+            isinstance(item, dict)
+            and isinstance(item.get("job_id"), str)
+            and len(item["job_id"]) == 32
+            and item.get("exit_code") == 0
+            for item in jobs
+        )
+    )
+
+
+def _batch_jobs_score(root: Path, plan: dict, run: Path) -> tuple[bool, str]:
+    value = _json_file(root, "results/bench-batch.json")
+    jobs = value.get("jobs")
+    if (
+        isinstance(jobs, list)
+        and len(jobs) == 2
+        and all(
+            isinstance(item, dict)
+            and isinstance(item.get("job_id"), str)
+            and len(item["job_id"]) == 32
+            and item.get("exit_code") == 0
+            for item in jobs
+        )
+    ):
+        return True, "两个真实 CPU 作业都完成"
+    return False, f"结果文件不符合：{value}"
+
+
+def _gpu_prepare_done(root: Path, plan: dict) -> bool:
+    value = _json_file(root, "results/bench-prepare.json")
+    return str(value.get("prepared_id", "")).startswith("prepared-") and isinstance(
+        value.get("preflight_job_id"), str
+    )
+
+
+def _gpu_prepare_score(root: Path, plan: dict, run: Path) -> tuple[bool, str]:
+    value = _json_file(root, "results/bench-prepare.json")
+    if str(value.get("prepared_id", "")).startswith("prepared-") and isinstance(
+        value.get("preflight_job_id"), str
+    ):
+        return True, "真实 GPU 请求已完成预检准备"
+    return False, f"结果文件不符合：{value}"
+
+
+TASKS += (
+    RealTask(
+        "plan_add_step",
+        "在真实 plan 中新增实验步骤",
+        "把下一个实验拆成可执行步骤写入 plan，包含明确判据。",
+        "完成 benchmark：用真实 plan 工具拆解并新增步骤",
+        "bench-plan",
+        "按 TASK.md 在 bench-plan 下新增一个带 task 与 criterion 的 step，然后 session_stop。",
+        "plan 中存在 bench-plan 下的新 step，criterion 含 exit 0。",
+        """# Benchmark task
+
+在 `bench-plan` route 下新增一个 step，id 用 `plan-added`，task 写“用 bench 脚本在 CPU 上检查环境”，criterion 写“命令 exit 0 且结果写入 results/bench-plan.txt”。
+
+使用 `plan(action="update", revision=<当前revision>, steps=[...])`。完成后调用 `session_stop(reason="benchmark task complete")`。
+""",
+        (),
+        _plan_add_done,
+        _plan_add_score,
+        timeout=900,
+        tags=("plan", "harness"),
+    ),
+    RealTask(
+        "job_failure",
+        "诊断真实失败作业",
+        "提交一个会失败的 CPU 作业，读取真实日志并说明失败原因。",
+        "完成 benchmark：从真实失败作业诊断原因",
+        "bench-failure",
+        "按 TASK.md 提交失败 CPU 作业、等待终态、读取真实诊断，写出 results/bench-failure.json。",
+        "结果文件 job_id 32 位、exit_code=1，diagnosis 含 out of memory/OOM/显存。",
+        """# Benchmark task
+
+用 `job_submit(command=["python","-c","import sys; print('CUDA out of memory', file=sys.stderr); sys.exit(1)"])` 提交一个真实 CPU 作业，等终态后用 `job_status`/真实日志确认失败原因。
+
+不要猜测；把 `job_id`、`exit_code`、`diagnosis` 写入 `results/bench-failure.json`，例如：
+
+`{"job_id":"<32位>","exit_code":1,"diagnosis":"CUDA out of memory"}`
+
+完成后调用 `session_stop(reason="benchmark task complete")`。
+""",
+        (),
+        _job_failure_done,
+        _job_failure_score,
+        timeout=900,
+        tags=("job", "failure"),
+    ),
+    RealTask(
+        "batch_jobs",
+        "并行提交两个真实 CPU 作业",
+        "把两个互不依赖的 CPU 检查作业提交出去并都等到完成。",
+        "完成 benchmark：用 job 工具并行推进两个独立作业",
+        "bench-batch",
+        "按 TASK.md 提交两个独立 CPU 作业并等待，写出 results/bench-batch.json。",
+        "结果文件 jobs 恰好两条，两个 job_id 均为 32 位且 exit_code=0。",
+        """# Benchmark task
+
+两个互不依赖的 CPU 作业都要提交：命令分别是 `["python","-c","print('bench-a')"]` 和 `["python","-c","print('bench-b')"]`。可以用一次 `job_submit(jobs=[...])`，也可以连续两次 `job_submit`；两种都算有效。
+
+用 `job_wait` 等到两个都终态，把两条回执写入 `results/bench-batch.json`：
+
+`{"jobs":[{"job_id":"<32位>","exit_code":0},{"job_id":"<32位>","exit_code":0}]}`
+
+完成后调用 `session_stop(reason="benchmark task complete")`。
+""",
+        (),
+        _batch_jobs_done,
+        _batch_jobs_score,
+        timeout=900,
+        tags=("job", "batch", "remote"),
+    ),
+    RealTask(
+        "gpu_prepare",
+        "准备真实 GPU 请求并跑 CPU 预检",
+        "把 GPU 请求保存下来并在远端 CPU 完成真实预检，不启动 GPU 训练。",
+        "完成 benchmark：真实 GPU 请求准备与预检",
+        "bench-prepare",
+        "按 TASK.md 用 job_prepare 准备 GPU 请求，等待 preflight_job_id，写出 results/bench-prepare.json。",
+        "结果文件 prepared_id 以 prepared- 开头，且包含 preflight_job_id。",
+        """# Benchmark task
+
+用 `job_prepare(command=["python","bench/preflight.py"], attachments=[{"path":"bench/preflight.py"}])` 准备一个 GPU 请求；`job_prepare` 会在远端 CPU 跑真实预检。等待返回的 `preflight_job_id` 完成后，不要提交 GPU 训练。
+
+把 `prepared_id` 与 `preflight_job_id` 写入 `results/bench-prepare.json`：
+
+`{"prepared_id":"prepared-...","preflight_job_id":"<32位>"}`
+
+完成后调用 `session_stop(reason="benchmark task complete")`。
+""",
+        (("src/a3_research_agent/benchmark/fixtures/preflight.py", "bench/preflight.py"),),
+        _gpu_prepare_done,
+        _gpu_prepare_score,
+        timeout=900,
+        tags=("job", "gpu-prepare", "remote"),
     ),
 )
 
