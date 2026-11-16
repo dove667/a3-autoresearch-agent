@@ -33,6 +33,7 @@ HARNESS_MODULES = (
     "context/compaction.py",
     "context/manager.py",
     "context/facts.py",
+    "context/recovery.py",
     "context/summary.py",
     "context/source_search.py",
     "context/tool_output.py",

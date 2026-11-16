@@ -50,7 +50,7 @@ def test_400k_transcript_is_sent_whole_once_and_replayed_without_provider(tmp_pa
     ]
     requests = []
 
-    def provider(method, path, body):
+    def provider(method, path, body, **kwargs):
         assert path == "/v1/summary"
         assert set(body) == {"transcript", "source", "max_output_tokens"}
         assert json.loads(body["transcript"]) == [
@@ -67,7 +67,10 @@ def test_400k_transcript_is_sent_whole_once_and_replayed_without_provider(tmp_pa
     assert cm.message_cost(result) + 5000 <= 32000
     assert cm.paired(result)
     replay, _ = cm.prepare(
-        original, [], lambda *a: pytest.fail("replayed provider request"), budget_limit=32000
+        original,
+        [],
+        lambda *a, **kwargs: pytest.fail("replayed provider request"),
+        budget_limit=32000,
     )
     assert replay == result
     assert json.loads(state_paths.path(record["source"]).read_text()) == original
@@ -81,7 +84,7 @@ def test_summary_gateway_accepts_over_500k_characters_within_token_window(tmp_pa
             sessions={"token": "main"},
             main_owner="main",
             usage_log=tmp_path / "usage.jsonl",
-            remote_call=lambda *a: {},
+            remote_call=lambda *a, **kwargs: {},
             context_budget=read_context_budget({"A3_MODEL_CONTEXT_TOKENS": "500000"}),
             forward_model=lambda **kw: calls.append(kw) or completed(),
         )
@@ -111,7 +114,7 @@ def test_summary_gateway_accepts_over_500k_characters_within_token_window(tmp_pa
 def test_old_host_configuration_is_rejected_without_byte_fallback(monkeypatch):
     monkeypatch.setattr(cm, "TOKEN_CONFIG", None)
     with pytest.raises(cm.ContextError):
-        cm.configure(lambda *a: {"http_error": 404})
+        cm.configure(lambda *a, **kwargs: {"http_error": 404})
 
 
 def test_removed_summary_input_setting_is_rejected():
@@ -119,7 +122,7 @@ def test_removed_summary_input_setting_is_rejected():
         read_context_budget({"A3_SUMMARY_INPUT_TOKENS": "48000"})
 
 
-def test_uncertain_pure_summary_has_bounded_retries_without_touching_original(
+def test_uncertain_pure_summary_retries_past_five_minutes_without_touching_original(
     tmp_path, monkeypatch
 ):
     monkeypatch.chdir(tmp_path)
@@ -136,14 +139,21 @@ def test_uncertain_pure_summary_has_bounded_retries_without_touching_original(
     source = cm.archive(original, "snapshot")
     calls = []
 
-    def timeout(*args):
+    def timeout(*args, **kwargs):
         calls.append(args)
         raise TimeoutError("response unknown")
 
-    monkeypatch.setattr(cm.time, "sleep", lambda seconds: None)
-    with pytest.raises(cm.ContextError, match="original snapshot retained"):
-        cm.full_summary(original, source, timeout)
-    with pytest.raises(cm.ContextError, match="bounded attempts"):
-        cm.full_summary(original, source, timeout)
-    assert len(calls) == 3
+    now = [1000.0]
+    monkeypatch.setattr(cm.time, "time", lambda: now[0])
+    for index in range(12):
+        with pytest.raises(cm.SummaryRetry) as pending:
+            cm.full_summary(original, source, timeout)
+        assert len(calls) == index + 1
+        with pytest.raises(cm.SummaryRetry):
+            cm.full_summary(original, source, timeout)
+        assert len(calls) == index + 1
+        now[0] += pending.value.retry_after
+    assert now[0] - 1000 > 300
+    state = json.loads(next(state_paths.path(cm.ROOT).glob("summary-request-*")).read_text())
+    assert state["validation_attempts"] == 0 and state["attempts"] == 12
     assert json.loads(state_paths.path(source).read_text()) == original

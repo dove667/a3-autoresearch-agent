@@ -152,7 +152,7 @@ def test_repeated_compaction_refreshes_exact_metrics_and_closed_work(tmp_path, m
     state = [{"role": "user", "content": "Research work; preserve the evidence."}]
     requests = []
 
-    def provider(method, path, body):
+    def provider(method, path, body, **kwargs):
         requests.append(body)
         return {
             "status": "completed",

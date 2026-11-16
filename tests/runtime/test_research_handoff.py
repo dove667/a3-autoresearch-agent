@@ -125,7 +125,7 @@ def test_numeric_mutation_is_repaired_before_publication(monkeypatch, tmp_path, 
     invalid["results"][0]["text"] = "Accuracy 0.82"
     calls = []
 
-    def provider(method, path, body):
+    def provider(method, path, body, **kwargs):
         calls.append(copy.deepcopy(body))
         return response(json.dumps(invalid if len(calls) == 1 else valid))
 
@@ -141,7 +141,7 @@ def test_numeric_mutation_is_repaired_before_publication(monkeypatch, tmp_path, 
     assert usage["a3_summary_attempts"] == 2
     assert observations == original
     replay, _, _ = manager.full_summary(
-        observations, source, lambda *args: pytest.fail("cached summary replayed")
+        observations, source, lambda *args, **kwargs: pytest.fail("cached summary replayed")
     )
     assert replay == rendered
 
@@ -153,7 +153,7 @@ def test_invalid_summary_never_replaces_checkpoint(monkeypatch, tmp_path, observ
     source = manager.archive(observations, "snapshot")
     calls = []
 
-    def provider(*args):
+    def provider(*args, **kwargs):
         calls.append(args)
         return response(json.dumps(invalid))
 
@@ -174,7 +174,9 @@ def test_feedback_metadata_cannot_be_used_as_evidence(monkeypatch, tmp_path, obs
     value["results"][0]["source"] = 2
     source = manager.archive(observations, "snapshot")
     with pytest.raises(manager.ContextError, match="source_index_invalid"):
-        manager.full_summary(observations, source, lambda *args: response(json.dumps(value)))
+        manager.full_summary(
+            observations, source, lambda *args, **kwargs: response(json.dumps(value))
+        )
 
 
 def test_summary_labels_make_late_sources_explicit(monkeypatch, tmp_path):
@@ -185,7 +187,7 @@ def test_summary_labels_make_late_sources_explicit(monkeypatch, tmp_path):
     payload["results"] = [{"text": "accuracy=0.42", "source": 100, "quote": "accuracy=0.42"}]
     source = manager.archive(messages, "snapshot")
 
-    def provider(method, path, body):
+    def provider(method, path, body, **kwargs):
         numbered = json.loads(body["transcript"])
         assert numbered[-1] == {"source": 100, "message": messages[-1]}
         return response(json.dumps(payload))

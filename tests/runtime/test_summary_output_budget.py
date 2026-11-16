@@ -49,7 +49,7 @@ def summary_client(tmp_path, output_reserve, calls):
             sessions={"token": "main"},
             main_owner="main",
             usage_log=tmp_path / "usage.jsonl",
-            remote_call=lambda *args: {},
+            remote_call=lambda *args, **kwargs: {},
             context_budget=budget,
             forward_model=provider,
         )
@@ -75,7 +75,7 @@ def test_summary_can_complete_beyond_one_thousand_tokens(tmp_path, monkeypatch, 
     ]
     source = cm.archive(original, "snapshot")
 
-    def request(method, path, body):
+    def request(method, path, body, **kwargs):
         response = client.request(
             method, path, json=body, headers={"Authorization": "Bearer token"}
         )
@@ -105,3 +105,19 @@ def test_small_default_reserve_does_not_cap_summary_generation(tmp_path):
     assert response.json()["status"] == "completed"
     assert response.json()["usage"]["output_tokens"] == 1536
     assert calls[0]["max_output_tokens"] == 32000
+
+
+def test_soft_target_does_not_cap_requested_summary_allowance(tmp_path):
+    calls = []
+    client = summary_client(tmp_path, 512, calls)
+    response = client.post(
+        "/v1/summary",
+        headers={"Authorization": "Bearer token"},
+        json={
+            "source": "context-history/snapshot-" + "a" * 64 + ".json",
+            "transcript": "data",
+            "max_output_tokens": 40000,
+        },
+    )
+    assert response.status_code == 200
+    assert calls[0]["max_output_tokens"] == 40000

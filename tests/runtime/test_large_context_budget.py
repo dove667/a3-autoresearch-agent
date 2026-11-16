@@ -95,7 +95,7 @@ def test_hard_budget_wins_over_trigger_hysteresis(token_fork, monkeypatch):
     monkeypatch.setattr(
         cm, "fit_tool_outputs", lambda *a, **k: (_ for _ in ()).throw(cm.ContextError("cannot fit"))
     )
-    with pytest.raises(cm.ContextError, match="hard decision budget"):
+    with pytest.raises(cm.ContextPending, match="summary_pending"):
         fork.before_request([{"role": "user", "content": "fixture", "cost": 429809}])
 
 

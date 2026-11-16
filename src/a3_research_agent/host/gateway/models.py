@@ -123,7 +123,7 @@ class ModelRoutes:
                 else self.token_budget.main_context_tokens
             )
             if role == "summary":
-                output_limit = min(arguments["max_output_tokens"], self.token_budget.target_tokens)
+                output_limit = arguments["max_output_tokens"]
                 summary_instructions = arguments.get("instructions", "")
                 while True:
                     arguments["max_output_tokens"] = output_limit

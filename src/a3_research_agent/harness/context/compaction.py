@@ -1,9 +1,7 @@
-"""Asynchronous soft compaction with a hard decision gate and Host summaries.
+"""Background summaries with resumable waiting at the decision-budget boundary.
 
-The context manager sends one full-transcript summary request and persists its
-outcome. A fork may run ahead while the current decision still fits. At the hard
-limit, wait for a bounded interval or stop honestly with original evidence
-retained; never forward an oversized decision to buy time for a background job.
+Temporary failures retain a scheduled retry. Decisions that still fit may proceed;
+oversized decisions yield control to the run loop until a valid summary is ready.
 """
 
 from __future__ import annotations
@@ -12,6 +10,7 @@ import hashlib
 import json
 import pathlib
 import threading
+import time
 import uuid
 
 from a3_research_agent.harness import history as history_tools
@@ -40,7 +39,7 @@ class ForkCompactor:
         tools=None,
         trigger_tokens=None,
         result_path=RESULT_PATH,
-        hard_wait_seconds=300,
+        clock=time.time,
     ):
         self.req, self.tools = req, list(tools or [])
         self.trigger_tokens = trigger_tokens
@@ -49,7 +48,7 @@ class ForkCompactor:
             if not pathlib.Path(result_path).is_absolute()
             else pathlib.Path(result_path)
         )
-        self.hard_wait_seconds = max(0, min(float(hard_wait_seconds), 300))
+        self.clock = clock
         self._thread, self._lock = None, threading.Lock()
         self.last_error, self._last_after_bytes = None, 0
         self._last_after_tokens = 0
@@ -83,9 +82,7 @@ class ForkCompactor:
             - 16 * len(self.tools)
             - extra_cost
         )
-        if target <= 0:
-            raise cm.ContextError("Operational/tool reserves exhaust compaction target")
-        return min(budget, target)
+        return min(budget, max(1, target))
 
     def before_request(self, messages, *, extra_messages=None):
         if not cm.paired(messages):
@@ -98,23 +95,18 @@ class ForkCompactor:
                     "Compaction result exceeds current decision reserves; originals retained"
                 )
             return candidate, record
-        if record and record.get("kind") == "blocked":
-            raise cm.ContextError("Summary compaction failed; original checkpoint retained")
-        if cm.message_cost(messages) > budget:
-            if not self._busy():
-                self.start(messages, extra_messages=extra_messages, budget=budget)
-            self.wait(self.hard_wait_seconds)
-            candidate, completed = self._apply_if_ready(messages, budget)
-            if (
-                completed
-                and completed.get("kind") == "applied"
-                and cm.message_cost(candidate) <= budget
-            ):
-                return candidate, completed
-            raise cm.ContextError(
-                "Compaction pending or insufficient; hard decision budget preserved"
+        if record and (record.get("kind") == "blocked" or record.get("blocked")):
+            raise cm.ContextPending(
+                record["reason"], retry_after=record.get("retry_after", 30), blocked=True
             )
-        if self._busy():
+        if cm.message_cost(messages) > budget:
+            if not self._busy() and not record:
+                self.start(messages, extra_messages=extra_messages, budget=budget)
+            raise cm.ContextPending(
+                (record or {}).get("reason", "summary_pending"),
+                retry_after=(record or {}).get("retry_after", 1),
+            )
+        if self._busy() or record and record.get("kind") in {"retry_wait", "fork_resumed"}:
             return messages, record
         size = cm.message_cost(messages)
         trigger = budget - (
@@ -134,7 +126,9 @@ class ForkCompactor:
         """Shutdown/recovery publication only: never start a fork or a model call."""
         if not cm.paired(messages):
             raise cm.ContextError("Unsafe tool call/result boundary")
-        candidate, record = self._apply_if_ready(messages, self._budget(extra_messages))
+        candidate, record = self._apply_if_ready(
+            messages, self._budget(extra_messages), resume=False
+        )
         if (
             record
             and record.get("kind") == "applied"
@@ -168,15 +162,14 @@ class ForkCompactor:
         }
         cm.atomic(self.result_path, json.dumps(record))
         hard_budget = budget if budget is not None else self._budget(extra_messages)
-        target = self._target_budget(hard_budget)
-        self._launch(record, snapshot, target)
+        self._launch(record, snapshot, hard_budget)
         return {key: value for key, value in record.items() if key not in {"replacement", "tail"}}
 
-    def _launch(self, record, snapshot, target):
+    def _launch(self, record, snapshot, budget):
         with self._lock:
             self._thread = threading.Thread(
                 target=self._run,
-                args=(record, snapshot, target),
+                args=(record, snapshot, budget),
                 name="compaction-fork",
                 daemon=True,
             )
@@ -220,26 +213,42 @@ class ForkCompactor:
             },
         }
 
-    def _run(self, record, snapshot, target):
+    def _run(self, record, snapshot, budget):
         result = dict(record)
         try:
             prepared, progress = cm.prepare(
                 snapshot,
                 self.tools,
                 self.req,
-                budget_limit=target,
+                budget_limit=budget,
                 force_summary=True,
                 extra_messages=record.get("state_refresh", []),
             )
             if progress is None:
                 raise cm.ContextError("Soft fork produced no compression")
             replacement = list(prepared)
+            result.pop("blocked", None)
             result.update(status="ready", strategy="host_summary", replacement=replacement)
         except Exception as error:  # noqa: BLE001 — a failed summary cannot replace research history.
             self.last_error = type(error).__name__
             for name in ("replacement", "replacement_sha256", "after_bytes"):
                 result.pop(name, None)
-            result.update(status="failed", error_type=type(error).__name__)
+            if isinstance(error, cm.SummaryRetry):
+                result.update(
+                    status="retry_wait",
+                    reason=error.reason,
+                    retry_after=error.retry_after,
+                    next_retry_at=self.clock() + error.retry_after,
+                    retry_count=result.get("retry_count", 0) + 1,
+                    blocked=error.blocked,
+                )
+            else:
+                result.update(
+                    status="blocked",
+                    reason=str(error)[:500],
+                    blocked_context=self._context_signature(budget),
+                )
+            result["error_type"] = type(error).__name__
         if "replacement" in result:
             result["replacement_sha256"] = digest(result["replacement"])
             result["after_bytes"] = cm.size(result["replacement"])
@@ -261,7 +270,23 @@ class ForkCompactor:
         self._last_after_bytes = cm.size(published)
         self._last_after_tokens = cm.message_cost(published)
 
-    def _apply_if_ready(self, messages, budget=None):
+    def _context_signature(self, budget):
+        return digest({"token_contract": cm.TOKEN_CONFIG, "budget": budget})
+
+    def _restart(self, result, archived, budget):
+        running = {**result, "status": "running"}
+        for field in ("reason", "error_type", "retry_after", "next_retry_at", "blocked_context"):
+            running.pop(field, None)
+        cm.atomic(self.result_path, json.dumps(running, ensure_ascii=False))
+        self._launch(running, archived, budget)
+        return {
+            "kind": "fork_resumed",
+            "source": result["source"],
+            "blocked": bool(result.get("blocked")),
+            "reason": "summary_probe_pending",
+        }
+
+    def _apply_if_ready(self, messages, budget=None, *, resume=True):
         result = self._read_result()
         if not result:
             return messages, None
@@ -315,12 +340,34 @@ class ForkCompactor:
             raise cm.ContextError("Compaction source archive changed")
         budget = self._budget() if budget is None else budget
         if active.get("status") == "running":
-            if self._busy():
-                return messages, None
-            self._launch(result, archived, self._target_budget(budget))
-            return messages, {"kind": "fork_resumed", "source": active["source"]}
-        if active.get("status") in {"failed", "blocked"}:
-            return messages, {"kind": "blocked", "reason": "persisted_compaction_failure"}
+            if self._busy() or not resume:
+                return messages, (
+                    {
+                        "kind": "retry_wait",
+                        "reason": "summary_probe_pending",
+                        "blocked": True,
+                        "retry_after": 1,
+                    }
+                    if active.get("blocked")
+                    else None
+                )
+            return messages, self._restart(result, archived, budget)
+        if active.get("status") == "retry_wait":
+            delay = max(0, active["next_retry_at"] - self.clock())
+            if delay == 0 and resume and not self._busy():
+                return messages, self._restart(result, archived, budget)
+            return messages, {
+                "kind": "retry_wait",
+                "reason": active["reason"],
+                "retry_after": max(1, delay),
+                "next_retry_at": active["next_retry_at"],
+                "blocked": bool(active.get("blocked")),
+            }
+        if active.get("status") == "blocked":
+            signature = self._context_signature(budget)
+            if active.get("blocked_context") != signature and resume and not self._busy():
+                return messages, self._restart(result, archived, budget)
+            return messages, {"kind": "blocked", "reason": active.get("reason", "summary_blocked")}
         if active.get("status") == "fallback" or active.get("strategy") in {
             "archive_fallback",
             "interrupted",
@@ -342,18 +389,18 @@ class ForkCompactor:
         if not cm.paired(candidate):
             raise cm.ContextError("Compaction would orphan tool results")
         budget = self._budget() if budget is None else budget
-        target = self._target_budget(budget)
-        if cm.message_cost(candidate) > target:
+        soft_target = self._target_budget(budget)
+        if cm.message_cost(candidate) > budget:
             newest = messages[count:]
             old_tail = replacement[1:]
-            remaining = target - cm.message_cost([replacement[0]] + newest)
+            remaining = budget - cm.message_cost([replacement[0]] + newest)
             cut = (
                 cm._token_tail_boundary(old_tail, remaining, len(old_tail))
                 if remaining > 0
                 else None
             )
             candidate = [replacement[0]] + (old_tail[cut:] if cut is not None else []) + newest
-            fitted = cm.fit_tool_outputs(candidate, target, start_index=1)
+            fitted = cm.fit_tool_outputs(candidate, budget, start_index=1)
             # The proposal covers the exact current prefix, including its new tail.
             # Persist before checkpoint publication so either side of a crash replays
             # this representation once, without another summary or duplicated calls.
@@ -383,4 +430,5 @@ class ForkCompactor:
             "strategy": active["strategy"],
             "before_bytes": cm.size(messages),
             "after_bytes": cm.size(candidate),
+            "soft_target_exceeded": cm.message_cost(candidate) > soft_target,
         }

@@ -58,15 +58,16 @@ def test_failed_compaction_preserves_oversized_fresh_batch_and_checkpoint():
         fork = compaction.ForkCompactor(gateway)
         fork.start(messages)
         fork.wait(5)
-        with pytest.raises(cm.ContextError, match="compaction"):
+        with pytest.raises(cm.ContextPending) as pending:
             fork.before_request(messages)
+        assert pending.value.blocked is False
         assert json.loads(state_paths.path("checkpoint.json").read_text()) == messages
         saved = json.loads(state_paths.path("compaction-result.json").read_text())
         assert "replacement" not in saved
         assert json.loads(state_paths.path(saved["source"]).read_text()) == messages
 
 
-def test_hard_wait_timeout_keeps_running_prefix_identity(monkeypatch):
+def test_hard_budget_yields_without_waiting_or_changing_running_prefix(monkeypatch):
     with workspace():
         monkeypatch.setitem(cm.TOKEN_CONFIG, "decision_input_tokens", 31000)
         started, release = (threading.Event(), threading.Event())
@@ -79,15 +80,16 @@ def test_hard_wait_timeout_keeps_running_prefix_identity(monkeypatch):
             return completed("unused background test response")
 
         original = history(rounds=4, filler=5000)
-        fork = compaction.ForkCompactor(Gateway(), hard_wait_seconds=0)
+        fork = compaction.ForkCompactor(Gateway())
         monkeypatch.setattr(fork, "_run", provider)
         fork.start(original)
         assert started.wait(2)
         prefix_hash = compaction.digest(original)
         monkeypatch.setitem(cm.TOKEN_CONFIG, "decision_input_tokens", 11000)
         try:
-            with pytest.raises(cm.ContextError, match="pending|insufficient"):
+            with pytest.raises(cm.ContextPending) as pending:
                 fork.before_request(original)
+            assert pending.value.blocked is False
             assert compaction.digest(original) == prefix_hash
             assert len(calls) == 1
         finally:
@@ -118,6 +120,9 @@ def test_interrupted_fork_fallback_uses_current_operational_reserve(monkeypatch)
             ),
         )
         extra = [{"role": "user", "content": "o" * 7000}]
+        with pytest.raises(cm.ContextPending):
+            fork.before_request(original, extra_messages=extra)
+        fork.wait(5)
         candidate, record = fork.before_request(original, extra_messages=extra)
         assert record["kind"] == "applied" and cm.paired(candidate)
         assert cm.message_cost(candidate) <= fork._budget(extra)
@@ -272,8 +277,8 @@ def test_summary_failure_preserves_original_history_instead_of_building_recall_c
         cm.atomic(state_paths.path("checkpoint.json"), json.dumps(messages))
         compactor.before_request(messages)
         compactor.wait(timeout=10)
-        with pytest.raises(cm.ContextError, match="compaction"):
-            compactor.before_request(messages)
+        same, report = compactor.before_request(messages)
+        assert same is messages and report["kind"] == "retry_wait"
         assert json.loads(state_paths.path("checkpoint.json").read_text()) == messages
         assert "已确认 2x10 任务需 3200 步" in json.dumps(
             memory.dispatch({"action": "list"}, root=paths.memory_root()), ensure_ascii=False

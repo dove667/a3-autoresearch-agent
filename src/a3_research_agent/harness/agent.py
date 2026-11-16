@@ -36,6 +36,7 @@ from a3_research_agent.harness import (
 from a3_research_agent.harness.context import compaction
 from a3_research_agent.harness.context import facts as research_facts
 from a3_research_agent.harness.context import manager as context_manager
+from a3_research_agent.harness.context import recovery as context_recovery
 from a3_research_agent.harness.memory import client as memory_client
 
 BASE = None
@@ -368,19 +369,10 @@ def main() -> None:
             lifecycle.self_status(req)
             try:
                 context_manager.configure(req)
-            except Exception as e:  # noqa: BLE001 - preserve the checkpoint when Host budgets are unknown
-                log({"context_config_error": type(e).__name__, "state": "checkpoint preserved"})
-                context_manager.atomic(
-                    state_paths.path(state_paths.CONTEXT_FAILURE),
-                    json.dumps(
-                        {
-                            "error": "context_config_unavailable",
-                            "state": "original checkpoint preserved",
-                        }
-                    ),
-                )
-                save_manifest()
-                break
+            except Exception as e:
+                raise context_manager.ContextPending(
+                    "Context configuration unavailable: " + type(e).__name__, retry_after=5
+                ) from e
             operational = operational_message()
             state_reference = context_manager.archive(operational, "operational-view")
             # Asynchronous fork: this decision keeps the full history; a finished
@@ -394,6 +386,7 @@ def main() -> None:
             if prepared_messages is not messages:
                 messages = prepared_messages
                 checkpoint(messages)
+            context_recovery.clear(log=log)
             request = {
                 "model": "openai/sandbox-model",
                 "instructions": INSTRUCTIONS,
@@ -459,6 +452,16 @@ def main() -> None:
                     }
                 )
                 checkpoint(messages)
+        except context_manager.ContextError as error:
+            try:
+                context_recovery.wait(error, req, log=log)
+            except (KeyboardInterrupt, lifecycle.ResearchStopped):
+                log({"interrupted": True, "phase": "context_wait", "state": "operator stopped"})
+                break
+            continue
+        except lifecycle.ResearchStopped:
+            log({"interrupted": True, "phase": loop_phase, "state": "operator stopped"})
+            break
         except KeyboardInterrupt:
             log(
                 {

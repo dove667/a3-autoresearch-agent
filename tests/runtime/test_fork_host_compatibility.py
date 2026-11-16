@@ -111,7 +111,7 @@ def test_real_host_summary_protocol_role_and_feedback(modules, tmp_path):
     )
     paths = []
 
-    def req(method, path, data=None):
+    def req(method, path, data=None, **kwargs):
         paths.append(path)
         response = client.request(
             method, path, headers={"Authorization": "Bearer token"}, json=data
@@ -174,7 +174,7 @@ def test_hard_budget_wait_is_bounded_and_never_returns_oversize(modules):
     cm.TOKEN_CONFIG["decision_input_tokens"] = 7000
     release = threading.Event()
 
-    def provider(*args):
+    def provider(*args, **kwargs):
         assert release.wait(5)
         return {
             "status": "completed",
@@ -194,7 +194,7 @@ def test_hard_budget_wait_is_bounded_and_never_returns_oversize(modules):
             ],
         }
 
-    fork = modules["compaction"].ForkCompactor(provider, hard_wait_seconds=0)
+    fork = modules["compaction"].ForkCompactor(provider)
     try:
         with pytest.raises(cm.ContextError):
             fork.before_request(
@@ -210,7 +210,7 @@ def test_replacement_replays_after_crash_before_checkpoint_and_acknowledges_afte
     cm, module = modules["context_manager"], modules["compaction"]
     calls = []
 
-    def provider(*args):
+    def provider(*args, **kwargs):
         calls.append(args)
         return {
             "status": "completed",
@@ -270,7 +270,7 @@ def test_interrupted_fork_resumes_pure_summary_and_preserves_source(modules):
     original = tool_history(6, 100)
     calls = []
     fork = module.ForkCompactor(
-        lambda *args: (
+        lambda *args, **kwargs: (
             calls.append(args)
             or {
                 "status": "completed",
@@ -387,7 +387,7 @@ def test_real_token_host_budget_includes_tools_and_operational_frame(
         )
     )
 
-    def req(method, path, data=None):
+    def req(method, path, data=None, **kwargs):
         response = client.request(
             method, path, json=data, headers={"Authorization": "Bearer token"}
         )
@@ -510,12 +510,12 @@ def test_archive_only_preserves_original_goal_and_worker_assignment_bytes(module
 
 
 def test_hard_limit_waits_for_slow_summary_without_oversize_decision(modules, monkeypatch):
-    """Simulate a 60s summary deadline without sleeping for a minute."""
+    """A slow summary yields control until its complete result can be applied."""
     cm, module = modules["context_manager"], modules["compaction"]
     cm.TOKEN_CONFIG["decision_input_tokens"] = 7000
     release = threading.Event()
 
-    def provider(*args):
+    def provider(*args, **kwargs):
         assert release.wait(5)
         return {
             "status": "completed",
@@ -536,18 +536,15 @@ def test_hard_limit_waits_for_slow_summary_without_oversize_decision(modules, mo
         }
 
     fork = module.ForkCompactor(provider)
-    actual_wait = fork.wait
-
-    def virtual_wait(timeout=None):
-        if timeout is not None and timeout >= 60:
-            release.set()
-            actual_wait(5)
-
-    monkeypatch.setattr(fork, "wait", virtual_wait)
     try:
+        with pytest.raises(cm.ContextPending) as pending:
+            fork.before_request(tool_history())
+        assert pending.value.blocked is False
+        release.set()
+        fork.wait(5)
         result, record = fork.before_request(tool_history())
-        assert cm.paired(result) and cm.message_cost(result) <= fork._budget()
         assert record["kind"] == "applied"
+        assert cm.message_cost(result) <= cm.decision_budget([])
     finally:
         release.set()
-        actual_wait(5)
+        fork.wait(5)

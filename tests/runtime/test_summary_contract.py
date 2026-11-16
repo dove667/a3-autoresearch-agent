@@ -28,7 +28,7 @@ def host(tmp_path, provider, **settings):
             sessions={"token": "main"},
             main_owner="main",
             usage_log=tmp_path / "usage.jsonl",
-            remote_call=lambda *args: {},
+            remote_call=lambda *args, **kwargs: {},
             context_budget=read_context_budget({"A3_MODEL_CONTEXT_TOKENS": "500000", **settings}),
             forward_model=provider,
         )
@@ -36,7 +36,7 @@ def host(tmp_path, provider, **settings):
 
 
 def endpoint(client):
-    def request(method, path, body=None):
+    def request(method, path, body=None, **kwargs):
         response = client.request(
             method, path, json=body, headers={"Authorization": "Bearer token"}
         )
@@ -79,7 +79,7 @@ def test_host_target_is_total_context_without_adding_injected_reserves(tmp_path)
     assert config["injected_reserve_tokens"] > 0
 
 
-@pytest.mark.parametrize("requested,allowed", [(20000, 20000), (2000000, 32000)])
+@pytest.mark.parametrize("requested,allowed", [(20000, 20000), (2000000, None)])
 def test_host_uses_requested_summary_budget_beyond_old_constant(tmp_path, requested, allowed):
     calls = []
     client = host(
@@ -95,7 +95,10 @@ def test_host_uses_requested_summary_budget_beyond_old_constant(tmp_path, reques
         },
     )
     assert result["status"] == "completed"
-    assert calls[0]["max_output_tokens"] == allowed
+    if allowed is not None:
+        assert calls[0]["max_output_tokens"] == allowed
+    else:
+        assert 32000 < calls[0]["max_output_tokens"] < 500000
 
 
 def test_host_counts_dynamic_output_allowance_inside_summary_window(tmp_path):
@@ -132,7 +135,7 @@ def test_long_complete_summary_fits_total_target_and_preserves_fresh_result(tmp_
     assert len(summary.encode()) > 6000 and count_tokens(summary) > 4096
     calls = []
 
-    def summarize(method, path, body):
+    def summarize(method, path, body, **kwargs):
         calls.append(body)
         assert body["max_output_tokens"] > 4096
         return completed(handoff_from_request(body, summary))
@@ -161,8 +164,10 @@ def test_pure_summary_recovers_transient_error_without_changing_source(tmp_path,
     original = history()
     source = cm.archive(original, "snapshot")
     calls = []
+    now = [1000.0]
+    monkeypatch.setattr(cm.time, "time", lambda: now[0])
 
-    def summarize(*args):
+    def summarize(*args, **kwargs):
         calls.append(args[-1])
         return (
             {"http_error": 500}
@@ -174,6 +179,9 @@ def test_pure_summary_recovers_transient_error_without_changing_source(tmp_path,
             )
         )
 
+    with pytest.raises(cm.SummaryRetry) as pending:
+        cm.full_summary(original, source, summarize, output_tokens=20000)
+    now[0] += pending.value.retry_after
     text, _, _ = cm.full_summary(original, source, summarize, output_tokens=20000)
     assert "original observations" in text and len(calls) == 2
     assert json.loads((state_paths.path(source)).read_text()) == original
@@ -192,7 +200,7 @@ def test_saved_complete_summary_survives_a_smaller_summary_model_window(tmp_path
     text, _, _ = cm.full_summary(
         original,
         source,
-        lambda *args: completed(
+        lambda *args, **kwargs: completed(
             handoff_from_request(
                 args[-1], "Completed state with preserved source and next research action."
             )
@@ -203,7 +211,7 @@ def test_saved_complete_summary_survives_a_smaller_summary_model_window(tmp_path
     replay, _, _ = cm.full_summary(
         original,
         source,
-        lambda *args: pytest.fail("cached summary must not be dispatched again"),
+        lambda *args, **kwargs: pytest.fail("cached summary must not be dispatched again"),
         output_tokens=20000,
     )
     assert replay == text
@@ -218,15 +226,15 @@ def test_failed_summary_blocks_compaction_instead_of_publishing_archive_notice(
     cm.atomic(state_paths.path("checkpoint.json"), json.dumps(original))
     calls = []
     fork = compaction.ForkCompactor(
-        lambda *args: calls.append(args) or {"status": "incomplete", "output": []}
+        lambda *args, **kwargs: calls.append(args) or {"http_error": 422}
     )
     fork.start(original)
     fork.wait(5)
-    with pytest.raises(cm.ContextError, match="summary|compaction"):
+    with pytest.raises(cm.ContextPending) as pending:
         fork.before_request(original)
-    assert 1 < len(calls) <= 3
+    assert pending.value.blocked is True and len(calls) == 1
     saved = json.loads((tmp_path / "conversation/compaction-result.json").read_text())
-    assert saved["status"] in {"failed", "blocked"} and "replacement" not in saved
+    assert saved["status"] == "blocked" and "replacement" not in saved
     assert json.loads((tmp_path / "conversation/checkpoint.json").read_text()) == original
 
 
@@ -236,7 +244,7 @@ def test_interrupted_fork_restarts_only_the_pure_summary(tmp_path, monkeypatch):
     original = history()
     calls = []
     fork = compaction.ForkCompactor(
-        lambda *args: (
+        lambda *args, **kwargs: (
             calls.append(args)
             or completed(
                 handoff_from_request(
@@ -274,7 +282,7 @@ def test_unpublished_legacy_fallback_requires_a_complete_new_summary(tmp_path, m
     original = history()
     legacy = [{"role": "user", "content": "Earlier details not summarized; read original archive."}]
     fork = compaction.ForkCompactor(
-        lambda *args: completed(
+        lambda *args, **kwargs: completed(
             handoff_from_request(
                 args[-1], "Complete summary replaces the obsolete archive-only proposal."
             )

@@ -63,7 +63,7 @@ def test_transient_middle_summary_failure_recovers_in_same_prepare(tmp_path, mon
     context = load_context()
     count = 0
 
-    def provider(*args):
+    def provider(*args, **kwargs):
         nonlocal count
         count += 1
         return {"http_error": 502} if count == 2 else completed(args[-1])
@@ -76,9 +76,11 @@ def test_transient_middle_summary_failure_recovers_in_same_prepare(tmp_path, mon
 def test_completed_summary_is_reused_after_restart(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     context = load_context()
-    result, record = context.prepare(messages(), [], lambda *a: completed(a[-1]))
+    result, record = context.prepare(messages(), [], lambda *a, **kwargs: completed(a[-1]))
     restarted = load_context()
-    replay, _ = restarted.prepare(messages(), [], lambda *a: pytest.fail("duplicate dispatch"))
+    replay, _ = restarted.prepare(
+        messages(), [], lambda *a, **kwargs: pytest.fail("duplicate dispatch")
+    )
     assert replay == result and record["cumulative_summary_calls"] == 1
 
 
@@ -86,7 +88,7 @@ def test_same_deterministic_budget_error_does_not_spend_again_on_restart(tmp_pat
     monkeypatch.chdir(tmp_path)
     calls = []
 
-    def provider(*args):
+    def provider(*args, **kwargs):
         calls.append(args)
         return completed(args[-1])
 
@@ -104,7 +106,7 @@ def test_persistent_invalid_summary_has_cross_restart_call_bound(tmp_path, monke
     monkeypatch.chdir(tmp_path)
     calls = []
 
-    def invalid(*args):
+    def invalid(*args, **kwargs):
         calls.append(args)
         return {"status": "completed", "output": []}
 
@@ -120,7 +122,7 @@ def test_authentication_rejection_is_not_retried_inside_prepare(tmp_path, monkey
     context = load_context()
     calls = []
 
-    def rejected(*args):
+    def rejected(*args, **kwargs):
         calls.append(args)
         return {"http_error": 401}
 
@@ -133,23 +135,23 @@ def test_malformed_provider_response_does_not_repeat_after_restart(tmp_path, mon
     monkeypatch.chdir(tmp_path)
     context = load_context()
     with pytest.raises(context.ContextError):
-        context.prepare(messages(), [], lambda *a: [])
+        context.prepare(messages(), [], lambda *a, **kwargs: [])
     restarted = load_context()
-    with pytest.raises(restarted.ContextError, match="bounded attempts"):
-        restarted.prepare(messages(), [], lambda *a: pytest.fail("duplicate dispatch"))
+    with pytest.raises(restarted.SummaryRetry):
+        restarted.prepare(messages(), [], lambda *a, **kwargs: pytest.fail("duplicate dispatch"))
 
 
 def test_corrupted_summary_record_does_not_allow_repeat_dispatch(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     context = load_context()
-    context.prepare(messages(), [], lambda *a: completed(a[-1]))
+    context.prepare(messages(), [], lambda *a, **kwargs: completed(a[-1]))
     path = next(context.archive_root().glob("summary-request-*.json"))
     state = json.loads(path.read_text())
     state["fingerprint"] = "damaged"
     path.write_text(json.dumps(state))
     restarted = load_context()
     with pytest.raises(restarted.ContextError, match="checksum"):
-        restarted.prepare(messages(), [], lambda *a: pytest.fail("duplicate dispatch"))
+        restarted.prepare(messages(), [], lambda *a, **kwargs: pytest.fail("duplicate dispatch"))
 
 
 def agent_functions(context):
@@ -250,7 +252,7 @@ def test_summary_headroom_does_not_recursively_split_a_feasible_plan(tmp_path, m
     context = load_context()
     calls = []
 
-    def provider(*args):
+    def provider(*args, **kwargs):
         calls.append(args)
         response = completed(args[-1])
         response["output"][0]["content"][0]["text"] = handoff_from_request(
@@ -268,7 +270,7 @@ def test_oversized_summary_is_diagnosed_and_restart_is_bounded(tmp_path, monkeyp
     monkeypatch.chdir(tmp_path)
     calls = []
 
-    def provider(*args):
+    def provider(*args, **kwargs):
         calls.append(args)
         response = completed(args[-1])
         response["output"][0]["content"][0]["text"] = "Unbounded summary. " + "x" * 12000
@@ -359,7 +361,7 @@ def test_token_compaction_uses_summary_operation_and_preserves_pairing(tmp_path,
     context.configure(lambda method, path, data=None: config)
     requests = []
 
-    def provider(method, path, body):
+    def provider(method, path, body, **kwargs):
         requests.append((method, path, body))
         return completed(body)
 
@@ -379,7 +381,7 @@ def test_temporary_config_error_does_not_silently_select_legacy_mode():
         context.metric = __import__(
             "a3_research_agent.token_count", fromlist=["count_tokens"]
         ).count_tokens
-        context.configure(lambda *args: {"http_error": 503})
+        context.configure(lambda *args, **kwargs: {"http_error": 503})
 
 
 @pytest.mark.parametrize("failure", [{"http_error": 502}, {"status": "completed", "output": []}])
@@ -407,9 +409,11 @@ def test_token_mode_persistent_failure_remains_bounded_across_restart(
         context.metric = __import__(
             "a3_research_agent.token_count", fromlist=["count_tokens"]
         ).count_tokens
-        context.configure(lambda *args: config)
+        context.configure(lambda *args, **kwargs: config)
         with pytest.raises(context.ContextError):
-            context.prepare(messages(80000), [], lambda *args: requests.append(args) or failure)
+            context.prepare(
+                messages(80000), [], lambda *args, **kwargs: requests.append(args) or failure
+            )
     assert len(requests) <= 8
 
 
@@ -426,7 +430,7 @@ def test_escaping_heavy_summary_is_sized_like_host_envelope(tmp_path, monkeypatc
             sessions={"token": "main"},
             main_owner="main",
             usage_log=tmp_path / "usage.jsonl",
-            remote_call=lambda *args: {},
+            remote_call=lambda *args, **kwargs: {},
             forward_model=lambda **kw: (
                 provider_calls.append(kw) or completed(json.loads(kw["input"][0]["content"]))
             ),
@@ -441,7 +445,7 @@ def test_escaping_heavy_summary_is_sized_like_host_envelope(tmp_path, monkeypatc
     )
     rejected = []
 
-    def request(method, path, data=None):
+    def request(method, path, data=None, **kwargs):
         response = client.request(
             method, path, headers={"Authorization": "Bearer token"}, json=data
         )
@@ -473,7 +477,7 @@ def test_complete_utf8_summary_can_exceed_old_byte_limit(tmp_path, monkeypatch):
     context = load_context()
     calls = []
 
-    def provider(*args):
+    def provider(*args, **kwargs):
         calls.append(args[-1])
         result = completed(args[-1])
         result["output"][0]["content"][0]["text"] = handoff_from_request(args[-1], text="汉" * 2100)
@@ -489,10 +493,10 @@ def test_failed_summary_remains_failed_after_restart(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     context = load_context()
     with pytest.raises(context.ContextError):
-        context.prepare(messages(), [], lambda *a: {"http_error": 502})
+        context.prepare(messages(), [], lambda *a, **kwargs: {"http_error": 502})
     restarted = load_context()
-    with pytest.raises(restarted.ContextError, match="bounded attempts"):
-        restarted.prepare(messages(), [], lambda *a: pytest.fail("unexpected retry"))
+    with pytest.raises(restarted.SummaryRetry):
+        restarted.prepare(messages(), [], lambda *a, **kwargs: pytest.fail("unexpected retry"))
 
 
 def test_persistently_overlong_summary_still_blocks_with_original_evidence(tmp_path, monkeypatch):
@@ -500,7 +504,7 @@ def test_persistently_overlong_summary_still_blocks_with_original_evidence(tmp_p
     calls = []
     original = messages()
 
-    def invalid(method, path, body):
+    def invalid(method, path, body, **kwargs):
         calls.append(body)
         result = completed(body)
         result["output"][0]["content"][0]["text"] = "汉" * 20000
@@ -525,7 +529,7 @@ def test_unconsumed_tool_result_fits_alone_and_reaches_next_decision(tmp_path, m
         {"type": "function_call", "name": "read", "call_id": "fresh", "arguments": "{}"},
         {"type": "function_call_output", "call_id": "fresh", "output": result_text},
     ]
-    result, _ = context.prepare(original, [], lambda *args: completed(args[-1]))
+    result, _ = context.prepare(original, [], lambda *args, **kwargs: completed(args[-1]))
     assert result[-1]["output"] == result_text
     assert context.paired(result)
 
@@ -543,7 +547,7 @@ def test_complete_fresh_tool_batch_is_not_summarized_to_meet_soft_target(tmp_pat
         for i in range(8)
     ]
     original = [{"role": "user", "content": "old " * 2200}] + calls + outputs
-    result, _ = context.prepare(original, [], lambda *args: completed(args[-1]))
+    result, _ = context.prepare(original, [], lambda *args, **kwargs: completed(args[-1]))
     assert result[-len(calls + outputs) :] == calls + outputs
     assert context.paired(result)
 
@@ -582,7 +586,7 @@ def test_repeated_read_compact_cycles_deliver_new_observation_without_closing_ta
             {"type": "function_call", "name": "read", "call_id": str(i), "arguments": "{}"},
             {"type": "function_call_output", "call_id": str(i), "output": fact},
         ]
-        state, _ = context.prepare(state, [], lambda *args: completed(args[-1]))
+        state, _ = context.prepare(state, [], lambda *args, **kwargs: completed(args[-1]))
         assert state[-1]["output"] == fact
         assert context.paired(state)
     assert not (tmp_path / "conversation/run-outcome.json").exists()
@@ -633,7 +637,7 @@ def test_protected_batch_does_not_carry_avoidable_old_tail(tmp_path, monkeypatch
         {"type": "function_call", "name": "read", "call_id": "fresh", "arguments": "{}"},
         {"type": "function_call_output", "call_id": "fresh", "output": "CURRENT " + "z" * 7500},
     ]
-    result, _ = context.prepare(original + fresh, [], lambda *args: completed(args[-1]))
+    result, _ = context.prepare(original + fresh, [], lambda *args, **kwargs: completed(args[-1]))
     assert result[-2:] == fresh
     assert context.message_cost(result) <= context.decision_budget([])
 
@@ -655,7 +659,7 @@ def test_summary_does_not_spend_calls_on_opaque_provider_ciphertext(tmp_path, mo
     original += [{"role": "user", "content": "Later bounded observation."} for _ in range(6)]
     requests = []
     result, record = context.prepare(
-        original, [], lambda *args: requests.append(args[-1]) or completed(args[-1])
+        original, [], lambda *args, **kwargs: requests.append(args[-1]) or completed(args[-1])
     )
     assert len(requests) == 1
     assert "OPAQUE-CIPHER-SENTINEL" not in json.dumps(requests)
@@ -683,7 +687,7 @@ def test_token_soft_target_does_not_swallow_fresh_batch_with_tools(tmp_path, mon
         {"type": "function_call_output", "call_id": "fresh", "output": "NEW DATA " * 4500},
     ]
     original = [{"role": "user", "content": "old history " * 20000}] + fresh
-    result, record = context.prepare(original, tools, lambda *args: completed(args[-1]))
+    result, record = context.prepare(original, tools, lambda *args, **kwargs: completed(args[-1]))
     assert result[-3:] == fresh
     assert context.paired(result)
     assert context.message_cost(result) <= context.decision_budget(tools)
@@ -723,10 +727,10 @@ def test_invalid_second_manifest_keeps_both_manifests_and_checkpoint(tmp_path, m
 def test_changed_reserve_reuses_same_full_transcript_answer(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     context = load_context()
-    context.prepare(messages(), [], lambda *a: completed(a[-1]))
+    context.prepare(messages(), [], lambda *a, **kwargs: completed(a[-1]))
     context.TOKEN_CONFIG["decision_input_tokens"] = 47000
     result, _ = context.prepare(
-        messages(), [], lambda *a: pytest.fail("reserve change redispatched")
+        messages(), [], lambda *a, **kwargs: pytest.fail("reserve change redispatched")
     )
     assert result
 
@@ -748,7 +752,7 @@ def test_token_target_keeps_useful_tail_instead_of_fixed_six_messages(tmp_path, 
     ]
     calls = []
 
-    def summarize(*args):
+    def summarize(*args, **kwargs):
         calls.append(args)
         return completed(args[-1])
 
