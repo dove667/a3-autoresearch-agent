@@ -4,7 +4,13 @@ import json
 
 import pytest
 
-from a3_research_agent.harness import job_failure, ledger, skill_registry, tool_catalog
+from a3_research_agent.harness import (
+    job_failure,
+    ledger,
+    skill_registry,
+    tool_catalog,
+    tool_results,
+)
 from a3_research_agent.harness import plan as planning
 from a3_research_agent.harness.context import manager as cm
 
@@ -177,3 +183,19 @@ def test_compact_views_stay_inside_their_budget(section):
     if section == "plan":
         assert view["overview"] and view["overview"][0]["id"] == "s1"
         assert view["parallelism"] == {"ready_steps": 1, "active_jobs": 0}
+
+
+def test_controller_rejection_keeps_its_code_without_host_wording():
+    missing = tool_results.normalize(
+        {"http_error": 400, "body": json.dumps({"detail": "FileNotFoundError"})}
+    )
+    assert missing["error"] == "artifact_not_found" and "outputs" in missing["hint"]
+    rejected = tool_results.normalize(
+        {"http_error": 400, "body": json.dumps({"detail": "ValueError"})}
+    )
+    assert rejected["error"] == "artifact_request_rejected"
+    coded = tool_results.normalize(
+        {"http_error": 400, "body": json.dumps({"detail": {"code": "artifact_not_found"}})}
+    )
+    assert coded["error"] == "artifact_not_found"
+    assert tool_results.normalize({"http_error": 400})["error"] == "host_request_failed"

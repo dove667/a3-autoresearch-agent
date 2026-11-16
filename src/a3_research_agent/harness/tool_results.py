@@ -22,6 +22,46 @@ def operation_ids(value):
     }
 
 
+CONTROLLER_ERRORS = {
+    "FileNotFoundError": (
+        "artifact_not_found",
+        (
+            "Not found in the selected area. workspace is this job's input and source "
+            "directory; outputs is the recorded run's shared result directory. Use a relative "
+            "path and select the area explicitly; a missing file is not a reason to rerun "
+            "the job."
+        ),
+    ),
+    "ValueError": (
+        "artifact_request_rejected",
+        (
+            "The Controller rejected this request: check the path, the area and whether the "
+            "job predates recorded outputs; legacy jobs serve workspace files only."
+        ),
+    ),
+}
+
+
+def rejected(status, body, code, hint):
+    """Keep a structured rejection instead of one generic maintainer message."""
+    try:
+        decoded = json.loads(body or "")
+    except (ValueError, TypeError):
+        return code, hint
+    detail = decoded.get("detail") if isinstance(decoded, dict) else None
+    if isinstance(detail, dict):
+        for key in ("error", "code"):
+            candidate = detail.get(key, "")
+            if isinstance(candidate, str) and re.fullmatch(r"[a-z][a-z0-9_]{0,63}", candidate):
+                code = candidate
+                break
+        # Host-supplied hint text may carry private detail; keep our own wording only.
+        return code, hint
+    if isinstance(detail, str) and detail in CONTROLLER_ERRORS:
+        return CONTROLLER_ERRORS[detail]
+    return code, hint
+
+
 def normalize(value):
     if isinstance(value, dict):
         if value.get("status") == "submission_unknown":
@@ -48,17 +88,7 @@ def normalize(value):
             )
             # Unexpected service failures never forward exception strings or diagnostic fields.
             if type(status) is int and 400 <= status < 500:
-                try:
-                    decoded = json.loads(value.get("body", ""))
-                    detail = decoded.get("detail") if isinstance(decoded, dict) else None
-                    if isinstance(detail, dict):
-                        candidate = detail.get("error", "")
-                        if isinstance(candidate, str) and re.fullmatch(
-                            r"[a-z][a-z0-9_]{0,63}", candidate
-                        ):
-                            code = candidate
-                except (ValueError, TypeError):
-                    pass
+                code, hint = rejected(status, value.get("body"), code, hint)
             return failure(code, hint, http_status=status, **operation_ids(value))
         if value.get("reason") == "observation_error" and not value.get("error"):
             return {
