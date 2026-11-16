@@ -254,7 +254,9 @@ def test_report_appearing_after_prepare_is_preserved_without_launch(tmp_path):
 
 
 def test_measurement_loss_stops_new_admission_until_recovery(tmp_path):
-    path = manifest(tmp_path, 8)
+    # Sampling is one per scheduling pass, so the loss window must sit well inside a
+    # batch large enough to keep admitting episodes on fast hosts too.
+    path = manifest(tmp_path, 40)
 
     class IntermittentMonitor(Monitor):
         def __init__(self):
