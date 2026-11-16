@@ -111,3 +111,19 @@ def test_workspace_writer_validates_all_paths_before_writing_any_file(tmp_path):
     with pytest.raises(ValueError):
         write_workspace_files(tmp_path, {"scripts/safe.py": "VALUE = 1", "../escape.py": "bad"})
     assert not (tmp_path / "scripts/safe.py").exists()
+
+
+def test_workspace_prefix_alias_maps_only_when_literal_path_is_absent(tmp_path):
+    from a3_research_agent.harness import file_tools
+
+    root = tmp_path / "workspace"
+    root.mkdir()
+    (root / "TASK.md").write_text("task")
+    result = file_tools.dispatch("read", {"path": "workspace/TASK.md"}, workspace=root, readonly_roots=[root])
+    assert result["content"] == "task"
+    result = file_tools.dispatch("list", {"path": "workspace"}, workspace=root, readonly_roots=[root])
+    assert result["path"] == str(root)
+    (root / "workspace").mkdir()
+    (root / "workspace/real.txt").write_text("real")
+    result = file_tools.dispatch("read", {"path": "workspace/real.txt"}, workspace=root, readonly_roots=[root])
+    assert result["content"] == "real"

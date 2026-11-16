@@ -139,6 +139,28 @@ def write(path, content, expected):
     }
 
 
+def workspace_alias(value, root):
+    """Accept the common ``workspace/...`` prefix only when it is not a real path.
+
+    Weak models often treat the workspace root as a directory named ``workspace``.
+    The canonical tool paths are relative to that root, so map the alias only when
+    the literal path is absent; a real ``workspace/`` subdirectory keeps priority.
+    """
+    if not isinstance(value, str):
+        return value
+    if value == "workspace":
+        alias = "."
+    elif value.startswith("workspace/"):
+        alias = value.removeprefix("workspace/")
+    else:
+        return value
+    if (root / value).exists():
+        return value
+    if alias == "." or (root / alias).exists():
+        return alias
+    return value
+
+
 def dispatch(name, args, *, workspace=None, readonly_roots=None):
     root = Path(workspace).resolve() if workspace is not None else paths.workspace_root()
     readonly = (
@@ -149,11 +171,13 @@ def dispatch(name, args, *, workspace=None, readonly_roots=None):
     readonly = [Path(value).resolve() for value in readonly]
     try:
         if name in workspace_tools.NAMES:
+            args = {**args, "path": workspace_alias(args.get("path", "."), root)}
             return workspace_tools.dispatch(name, args, workspace=root, readonly_roots=readonly)
         fields = {"read": READ_FIELDS, "write": WRITE_FIELDS, "list": LIST_FIELDS}.get(name)
         if fields is None:
             fail("unknown_file_tool", "Use list, read, write, search_files or edit.")
         arguments(args, fields)
+        args = {**args, "path": workspace_alias(args.get("path", "."), root)}
         path = workspace_tools.accessible_path(
             args.get("path", "."), root, readonly, writable=name == "write"
         )
