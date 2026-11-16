@@ -103,7 +103,7 @@ def suggestions(plan, *, limit=3):
     cached = _SUGGESTION_CACHE.get(key)
     if cached and time.monotonic() - cached[0] < 30:
         return cached[1]
-    result = dispatch({"action": "list", "query": query, "limit": limit})
+    result = dispatch({"action": "list", "query": query, "limit": limit}, timeout=5)
     items = [
         {
             "id": item.get("id"),
@@ -180,7 +180,7 @@ def replace_text(raw, args):
     return current.replace(old, new, -1 if replace_all else 1), matches
 
 
-def dispatch(args, *, root=None, history_root=None):
+def dispatch(args, *, root=None, history_root=None, timeout=90):
     action = args.get("action") if isinstance(args, dict) else None
     if os.environ.get("A3_BENCHMARK_READONLY_KNOWLEDGE") == "1" and action in {
         "save",
@@ -226,7 +226,7 @@ def dispatch(args, *, root=None, history_root=None):
                     history_root=history_root,
                     index_root=history_root.parent / "skill-index",
                 )
-            return knowledge_client.call_skill_search(request)
+            return knowledge_client.call_skill_search(request, timeout=timeout)
         with library.locked_library(root, history_root):
             return operate(root, history_root, args, offset, limit)
     except library.SkillError as error:

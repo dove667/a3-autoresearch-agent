@@ -6,7 +6,7 @@ from urllib.parse import urlsplit
 import httpx
 
 
-def call(route, arguments):
+def call(route, arguments, timeout=90):
     if route not in {"/memory", "/skills/search"}:
         raise ValueError("Unsupported knowledge service route")
     url = os.environ.get("A3_KNOWLEDGE_SERVICE_URL", "")
@@ -22,7 +22,7 @@ def call(route, arguments):
             url.rstrip("/") + route,
             json=arguments,
             headers={"Authorization": "Bearer " + token},
-            timeout=90,
+            timeout=timeout,
             trust_env=False,
         )
         response.raise_for_status()
@@ -34,5 +34,5 @@ def call(route, arguments):
         }
 
 
-def call_skill_search(arguments):
-    return call("/skills/search", arguments)
+def call_skill_search(arguments, timeout=90):
+    return call("/skills/search", arguments, timeout=timeout)

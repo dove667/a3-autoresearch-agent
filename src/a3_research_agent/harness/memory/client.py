@@ -8,8 +8,8 @@ from a3_research_agent.harness import knowledge_client
 _CONTEXT_CACHE = {}
 
 
-def call(arguments):
-    return knowledge_client.call("/memory", arguments)
+def call(arguments, timeout=90):
+    return knowledge_client.call("/memory", arguments, timeout=timeout)
 
 
 def suggestions(plan):
@@ -27,7 +27,8 @@ def suggestions(plan):
     cached = _CONTEXT_CACHE.get(key)
     if cached and time.monotonic() - cached[0] < 30:
         return cached[1]
-    result = call({"action": "context", "query": query, "limit": 3})
+    # The per-turn digest is optional: never let a slow index block the decision.
+    result = call({"action": "context", "query": query, "limit": 3}, timeout=5)
     _CONTEXT_CACHE.clear()
     _CONTEXT_CACHE[key] = (time.monotonic(), result)
     return result

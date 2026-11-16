@@ -22,7 +22,7 @@ def test_research_focus_changes_refresh_suggestions_and_writes_invalidate(monkey
     client._CONTEXT_CACHE.clear()
     calls = []
 
-    def request(args):
+    def request(args, **kwargs):
         calls.append(args)
         return {"items": [{"id": "lesson"}]}
 

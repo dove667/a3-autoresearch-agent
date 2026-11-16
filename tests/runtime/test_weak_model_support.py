@@ -142,7 +142,7 @@ def test_ledger_skips_tools_without_observations():
 def test_skill_digest_is_small_and_cached(monkeypatch):
     calls = []
 
-    def dispatch(args):
+    def dispatch(args, **kwargs):
         calls.append(args)
         return {
             "skills": [
@@ -162,7 +162,7 @@ def test_skill_digest_is_small_and_cached(monkeypatch):
 
 def test_unavailable_digest_does_not_raise(monkeypatch):
     monkeypatch.setattr(
-        skill_registry, "dispatch", lambda args: {"error": "knowledge_service_unavailable"}
+        skill_registry, "dispatch", lambda args, **kwargs: {"error": "knowledge_service_unavailable"}
     )
     value = skill_registry.suggestions({"direction": {}, "revision": 1})
     assert value == {"skills": [], "notice": None}
