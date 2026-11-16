@@ -261,21 +261,29 @@ def _stop(endpoint: str, token: str, reason: str) -> str:
         return f"stop failed: {type(error).__name__}"
 
 
-def _calls(run: Path) -> list[dict]:
+def _trajectory(run: Path) -> list[dict]:
     path = run / "conversation/trajectory.jsonl"
-    calls = []
+    rows = []
     try:
         lines = path.read_text().splitlines()
     except OSError:
-        return calls
+        return rows
     for line in lines:
         try:
             row = json.loads(line)
         except ValueError:
             continue
-        if isinstance(row, dict) and isinstance(row.get("tool"), str):
-            calls.append(row)
-    return calls
+        if isinstance(row, dict):
+            rows.append(row)
+    return rows
+
+
+def _calls(run: Path) -> list[dict]:
+    return [row for row in _trajectory(run) if isinstance(row.get("tool"), str)]
+
+
+def _retries(run: Path) -> int:
+    return sum(1 for row in _trajectory(run) if row.get("model_retry"))
 
 
 def _wait(root: Path, process: subprocess.Popen, task: RealTask, deadline: float) -> tuple[bool, bool, str]:
@@ -358,6 +366,7 @@ def run_task(task: RealTask, output: Path, commit: str, model: str | None) -> di
             "reviews": len(plan.get("reviews") or []),
             "calls": len(calls),
             "call_names": [call.get("tool") for call in calls],
+            "model_retries": _retries(run),
         }
     except Exception as error_value:  # noqa: BLE001 - one broken task must not end the batch
         return {
@@ -373,6 +382,7 @@ def run_task(task: RealTask, output: Path, commit: str, model: str | None) -> di
             "root": str(root),
             "calls": len(_calls(run)) if run else 0,
             "call_names": [],
+            "model_retries": _retries(run) if run else 0,
         }
     finally:
         if process.poll() is None:
