@@ -17,4 +17,5 @@ def handoff(
 def handoff_from_request(
     body, text="Preserve the supplied research evidence and continue the pending work."
 ):
-    return handoff(json.loads(body["transcript"]), text)
+    messages = [item["message"] for item in json.loads(body["transcript"]) if "message" in item]
+    return handoff(messages, text)

@@ -132,9 +132,10 @@ def test_numeric_mutation_is_repaired_before_publication(monkeypatch, tmp_path, 
     source = manager.archive(observations, "snapshot")
     rendered, usage, _ = manager.full_summary(observations, source, provider)
     assert len(calls) == 2 and "0.42" in rendered and "0.82" not in rendered
-    assert json.loads(calls[0]["transcript"]) == original
+    numbered = [{"source": index, "message": message} for index, message in enumerate(original, 1)]
+    assert json.loads(calls[0]["transcript"]) == numbered
     repair = json.loads(calls[1]["transcript"])
-    assert repair[:-1] == original
+    assert repair[:-1] == numbered
     assert repair[-1]["type"] == "summary_validation_feedback"
     assert "unsupported_number" in repair[-1]["error"]
     assert usage["a3_summary_attempts"] == 2
@@ -174,3 +175,23 @@ def test_feedback_metadata_cannot_be_used_as_evidence(monkeypatch, tmp_path, obs
     source = manager.archive(observations, "snapshot")
     with pytest.raises(manager.ContextError, match="source_index_invalid"):
         manager.full_summary(observations, source, lambda *args: response(json.dumps(value)))
+
+
+def test_summary_labels_make_late_sources_explicit(monkeypatch, tmp_path):
+    manager = configure_manager(monkeypatch, tmp_path)
+    messages = [{"role": "user", "content": "Earlier observation."} for _ in range(99)]
+    messages.append({"role": "user", "content": "accuracy=0.42"})
+    payload = {"version": 1, **{key: [] for key in summary.SECTIONS}}
+    payload["results"] = [{"text": "accuracy=0.42", "source": 100, "quote": "accuracy=0.42"}]
+    source = manager.archive(messages, "snapshot")
+
+    def provider(method, path, body):
+        numbered = json.loads(body["transcript"])
+        assert numbered[-1] == {"source": 100, "message": messages[-1]}
+        return response(json.dumps(payload))
+
+    rendered, _, _ = manager.full_summary(messages, source, provider)
+    assert "[source 100]" in rendered
+    payload["results"][0]["quote"] = '{"source": 100'
+    with pytest.raises(summary.SummaryValidationError, match="quote_not_in_source"):
+        summary.validate(payload, messages)

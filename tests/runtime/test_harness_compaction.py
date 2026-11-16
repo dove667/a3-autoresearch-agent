@@ -285,20 +285,20 @@ def test_recall_finds_original_text_by_round_window():
     with workspace():
         messages = history()
         recall.append_history_many(messages)
-        hits = recall.recall(["evidence eeeee"], 4, 1)
-        assert hits and all(hit.startswith("[") for hit in hits)
-        assert any("轮前]" in hit for hit in hits)
+        hits = recall.recall_tool({"keywords": ["evidence eeeee"], "recent_rounds": 4})["items"]
+        assert hits and all(1 <= hit["rounds_ago"] <= 4 for hit in hits)
+        assert any("evidence" in hit["snippet"] for hit in hits)
 
 
 def test_recall_reports_missing_keyword():
     with workspace():
         recall.append_history_many(history())
-        hits = recall.recall(["NOT-PRESENT-ANYWHERE"], 6, 1)
-        assert hits and "未找到" in hits[0]
+        result = recall.recall_tool({"keywords": ["NOT-PRESENT-ANYWHERE"], "recent_rounds": 6})
+        assert result["items"] == [] and result["notice"]
 
 
 def test_recall_needs_keywords():
-    assert "不能为空" in recall.recall([], 2, 1)[0]
+    assert recall.recall_tool({"keywords": []})["error"] == "invalid_keywords"
 
 
 def test_memory_write_then_read_and_list():

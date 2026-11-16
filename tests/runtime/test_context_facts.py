@@ -82,6 +82,23 @@ def test_new_plan_decision_replaces_summary_pending_claim(tmp_path, monkeypatch)
     assert facts.view(current, {})["recent_reviews"][0]["decision"] == "continue"
 
 
+def test_long_evidence_paths_do_not_hide_latest_rejection(tmp_path, monkeypatch):
+    monkeypatch.setenv("A3_STATE_ROOT", str(tmp_path))
+    current = plan()
+    current["reviews"] = [
+        {
+            "route": "candidate",
+            "decision": "pause",
+            "conclusion": "否定该候选。" * 150,
+            "evidence": ["非常长的来源路径" * 70] * 4,
+        }
+    ]
+    value = facts.view(current, {})
+    assert value["recent_reviews"][0]["decision"] == "pause"
+    assert value["recent_reviews"][0]["conclusion_complete"] is False
+    assert value["recent_reviews"][0]["omitted_evidence"] == 4
+
+
 def test_receipt_index_is_bounded_and_reports_omissions(tmp_path, monkeypatch):
     monkeypatch.setenv("A3_STATE_ROOT", str(tmp_path))
     for index in range(facts.MAX_RECEIPTS + 2):
@@ -168,7 +185,7 @@ def test_repeated_compaction_refreshes_exact_metrics_and_closed_work(tmp_path, m
         )
         assert cm.paired(state)
         transcript = json.loads(requests[-1]["transcript"])
-        assert transcript[-1] == refresh
+        assert transcript[-1] == {"source": len(transcript), "message": refresh}
         assert json.loads(state_paths.path(record["source"]).read_text())[-1] == refresh
         restored = json.loads(refresh["content"])["research_facts"]
         assert restored["recent_receipts"][0]["facts"]["metrics.accuracy"] == 0.42

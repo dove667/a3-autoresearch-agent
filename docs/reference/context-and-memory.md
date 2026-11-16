@@ -168,7 +168,8 @@ historical source and checkpoints retain their original versions.
 The summary model returns a versioned JSON handoff with seven sections: corrected
 goals, experimental results and conditions, failures and rejected approaches,
 active jobs and uncertain submissions, unresolved work, next actions and sources.
-Every item includes its narrative, a one-based source message index and an exact
+Input messages carry explicit one-based source labels for direct citation.
+Every handoff item includes its narrative, a source message index and an exact
 source quotation. Empty sections are explicit. The runtime validates schema,
 source bounds, quotations, numeric claims and job IDs before rendering readable
 working memory. Both generated and rendered size must fit the remaining budget.

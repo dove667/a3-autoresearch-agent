@@ -236,9 +236,10 @@ def full_summary(messages, source, req, *, output_tokens=None):
     if type(output_tokens) is not int or output_tokens <= 0:
         raise ContextError("Summary requires a positive remaining context-token budget")
     readable = [summary_message(m) for m in messages]
+    numbered = [{"source": index, "message": message} for index, message in enumerate(readable, 1)]
     original = {
         "source": source,
-        "transcript": json.dumps(readable, ensure_ascii=False),
+        "transcript": json.dumps(numbered, ensure_ascii=False),
     }
     request = {**original, "max_output_tokens": output_tokens}
     limit = TOKEN_CONFIG["summary_input_tokens"]
@@ -299,7 +300,7 @@ def full_summary(messages, source, req, *, output_tokens=None):
     while attempts < SUMMARY_ATTEMPTS:
         if validation_feedback:
             request["transcript"] = json.dumps(
-                readable
+                numbered
                 + [
                     {
                         "type": "summary_validation_feedback",

@@ -12,8 +12,6 @@ from collections import Counter
 from a3_research_agent.harness import jsonl_store, state_paths
 
 HISTORY_PATH = state_paths.HISTORY
-SNIPPET_WINDOW = 100
-SNIPPET_LIMIT = 30
 
 
 def append_history(message, path=None):
@@ -188,31 +186,6 @@ def ensure_history(messages, path=None):
 # ----------------------------------------------------------------- rounds ---
 
 
-def _content_text(message):
-    """Flatten one message into searchable text, including tool traffic."""
-    kind = message.get("type")
-    if kind == "function_call":
-        return f"{message.get('name', '')} {message.get('arguments', '')}".strip()
-    if kind == "function_call_output":
-        output = message.get("output", "")
-        return output if isinstance(output, str) else json.dumps(output, ensure_ascii=False)
-    if kind == "reasoning":
-        return ""
-    content = message.get("content")
-    if isinstance(content, str):
-        return content
-    if not isinstance(content, list):
-        return ""
-    parts = []
-    for part in content:
-        if not isinstance(part, dict):
-            continue
-        text = part.get("text")
-        if isinstance(text, str) and text:
-            parts.append(text)
-    return "\n".join(parts)
-
-
 def iter_rounds(messages):
     """Split on completed decision batches as well as explicit user turns.
 
@@ -244,157 +217,7 @@ def iter_rounds(messages):
         yield current
 
 
-def split_rounds(messages):
-    return list(iter_rounds(messages))
-
-
-def round_text(round_messages):
-    return "\n".join(text for text in (_content_text(m) for m in round_messages) if text)
-
-
-def recent_rounds(messages, count=5):
-    """The last ``count`` rounds with their original text (fallback payload)."""
-    rounds = split_rounds(messages)
-    return rounds[-count:] if count > 0 else []
-
-
-def recent_rounds_text(messages, count=5, limit_per_round=4000):
-    blocks = []
-    total = len(split_rounds(messages))
-    for offset, round_messages in enumerate(recent_rounds(messages, count)):
-        text = round_text(round_messages).strip()
-        if not text:
-            continue
-        if len(text) > limit_per_round:
-            text = text[:limit_per_round] + "\n[round truncated]"
-        index = total - len(recent_rounds(messages, count)) + offset + 1
-        blocks.append(f"--- round {index} ---\n{text}")
-    return "\n\n".join(blocks)
-
-
-# ---------------------------------------------------------------- recall ----
-
-
 RETRIEVAL_TOOLS = frozenset({"recall", "memory", "plan", "research_status"})
-
-
-def readable_result(value):
-    if isinstance(value, dict):
-        return "\n".join(f"{key}: {readable_result(item)}" for key, item in value.items())
-    if isinstance(value, list):
-        return "\n".join(map(readable_result, value))
-    if isinstance(value, str):
-        return value
-    return json.dumps(value, ensure_ascii=False)
-
-
-def evidence_text(message, call_names, mode):
-    if mode == "raw":
-        return _content_text(message)
-    kind = message.get("type")
-    if kind == "function_call":
-        return ""
-    if kind == "function_call_output":
-        if call_names.get(message.get("call_id")) in RETRIEVAL_TOOLS:
-            return ""
-        # Tool output is often a JSON string inside the Responses message.
-        text = _content_text(message)
-        try:
-            value = json.loads(text)
-        except ValueError:
-            return text
-        return readable_result(value)
-    return _content_text(message)
-
-
-def recall(
-    keywords,
-    n=None,
-    m=None,
-    *,
-    messages=None,
-    path=None,
-    window=SNIPPET_WINDOW,
-    limit=SNIPPET_LIMIT,
-    mode="evidence",
-):
-    """Search available original history, optionally restricted to relative rounds."""
-    terms = list(
-        dict.fromkeys(term[:160] for key in (keywords or []) for term in str(key).split())
-    )[:12]
-    if not terms:
-        return ["keywords 不能为空：传入 1 个或多个关键字"]
-    try:
-        half = max(1, min(400, int(window)) // 2)
-        limit = max(1, min(SNIPPET_LIMIT, int(limit)))
-        bounds = [None if value is None else max(1, int(value)) for value in (n, m)]
-    except (TypeError, ValueError):
-        return ["n、m、window、limit 必须为整数：1 表示最近一轮"]
-    if mode not in ("evidence", "raw"):
-        return ["mode 必须为 evidence 或 raw"]
-
-    def source():
-        if messages is not None:
-            yield from messages
-            return
-        target = state_paths.path(HISTORY_PATH) if path is None else pathlib.Path(path)
-        if target.is_file():
-            with target.open(encoding="utf-8") as stream:
-                for line in stream:
-                    try:
-                        value = json.loads(line)
-                    except ValueError:
-                        continue
-                    if isinstance(value, dict):
-                        yield value
-
-    # Two bounded passes retain a single round and ranked snippets, rather than
-    # loading the lifetime transcript and every parsed tool result into memory.
-    total_rounds = sum(1 for _ in iter_rounds(source()))
-    if not total_rounds:
-        return ["history.jsonl 中没有可用历史（尚无记录或被清空）"]
-    n_int, m_int = sorted(
-        (bounds[0] if bounds[0] is not None else total_rounds, bounds[1] or 1), reverse=True
-    )
-    pattern = re.compile("|".join(map(re.escape, terms)), re.IGNORECASE)
-    candidates = []
-    for index, group in enumerate(iter_rounds(source())):
-        ago = total_rounds - index
-        if not m_int <= ago <= n_int:
-            continue
-        call_names = {
-            message.get("call_id"): message.get("name")
-            for message in group
-            if message.get("type") == "function_call"
-        }
-        for message in group:
-            original = evidence_text(message, call_names, mode)
-            matches = pattern.finditer(original)
-            match = next(matches, None)
-            if match is None:
-                continue
-            matched_terms = {match.group().casefold()}
-            if len(terms) > 1:
-                for candidate in matches:
-                    matched_terms.add(candidate.group().casefold())
-                    if len(matched_terms) == len(terms):
-                        break
-            # Keep one representative snippet per message; prefer actual tool output.
-            snippet = " ".join(original[max(0, match.start() - half) : match.end() + half].split())
-            is_output = message.get("type") == "function_call_output"
-            candidate = (len(matched_terms), is_output, -ago, snippet)
-            previous = next((hit for hit in candidates if hit[3] == snippet), None)
-            if previous is not None:
-                if previous[:3] >= candidate[:3]:
-                    continue
-                candidates.remove(previous)
-            candidates.append(candidate)
-            candidates.sort(key=lambda hit: hit[:3], reverse=True)
-            del candidates[limit:]
-    if not candidates:
-        return [f"在 {m_int}~{n_int} 轮前范围内未找到关键字：" + ", ".join(terms[:12])]
-    candidates.sort(key=lambda hit: hit[:3], reverse=True)
-    return [f"[{-ago}轮前] …{snippet}…" for _, _, ago, snippet in candidates[:limit]]
 
 
 def recall_tool(arguments):

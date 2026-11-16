@@ -122,8 +122,10 @@ def _decision_view(item):
     text = item.get("conclusion", "")
     value["conclusion_preview"] = text[:300]
     value["conclusion_complete"] = len(text) <= 300
-    value["evidence"] = item.get("evidence", [])[:2]
-    value["omitted_evidence"] = max(0, len(item.get("evidence", [])) - 2)
+    evidence = item.get("evidence", [])
+    # Keep the decision itself visible even when its evidence paths are very long.
+    value["evidence"] = _bounded_items(evidence, 2, 500)
+    value["omitted_evidence"] = len(evidence) - len(value["evidence"])
     return value
 
 

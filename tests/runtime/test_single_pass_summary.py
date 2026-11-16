@@ -53,7 +53,9 @@ def test_400k_transcript_is_sent_whole_once_and_replayed_without_provider(tmp_pa
     def provider(method, path, body):
         assert path == "/v1/summary"
         assert set(body) == {"transcript", "source", "max_output_tokens"}
-        assert json.loads(body["transcript"]) == original
+        assert json.loads(body["transcript"]) == [
+            {"source": index, "message": message} for index, message in enumerate(original, 1)
+        ]
         assert 400000 < cm.request_cost(body) < 491808
         requests.append(body)
         result = completed()

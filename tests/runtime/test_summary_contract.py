@@ -177,7 +177,11 @@ def test_pure_summary_recovers_transient_error_without_changing_source(tmp_path,
     text, _, _ = cm.full_summary(original, source, summarize, output_tokens=20000)
     assert "original observations" in text and len(calls) == 2
     assert json.loads((state_paths.path(source)).read_text()) == original
-    assert json.loads(calls[0]["transcript"]) == json.loads(calls[1]["transcript"]) == original
+    assert (
+        json.loads(calls[0]["transcript"])
+        == json.loads(calls[1]["transcript"])
+        == [{"source": index, "message": message} for index, message in enumerate(original, 1)]
+    )
 
 
 def test_saved_complete_summary_survives_a_smaller_summary_model_window(tmp_path, monkeypatch):

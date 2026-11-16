@@ -87,7 +87,9 @@ def test_summary_can_complete_beyond_one_thousand_tokens(tmp_path, monkeypatch, 
     assert usage["output_tokens"] == 1536
     assert len(calls) == 1
     assert 1536 <= calls[0]["max_output_tokens"] <= 32000
-    assert json.loads(calls[0]["input"][0]["content"])["transcript"] == json.dumps(original)
+    assert json.loads(json.loads(calls[0]["input"][0]["content"])["transcript"]) == [
+        {"source": index, "message": message} for index, message in enumerate(original, 1)
+    ]
     assert json.loads(state_paths.path(source).read_text()) == original
 
 
