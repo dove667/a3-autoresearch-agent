@@ -16,7 +16,7 @@ def main() -> None:
     args = parser.parse_args()
     state = RunStateStore(args.run.resolve()).load()
     port = int(state["endpoint"].rsplit(":", 1)[1])
-    with httpx.Client(
+    with httpx.Client(trust_env=False, 
         base_url=f"http://127.0.0.1:{port}",
         headers={"Authorization": "Bearer " + state["operator_token"]},
         timeout=60,

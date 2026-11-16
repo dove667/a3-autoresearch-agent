@@ -351,7 +351,7 @@ def _launch_run(args, run: Path, a3: Path, start, services) -> None:
                     + "\n"
                 )
         store.update(status="running")
-        with httpx.Client(
+        with httpx.Client(trust_env=False, 
             base_url=endpoint, headers={"Authorization": "Bearer " + token}, timeout=90
         ) as client:
             RunSupervisor(

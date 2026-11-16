@@ -67,6 +67,7 @@ def configured_upstream(default):
             headers={"Authorization": f"Bearer {api_key}"},
             json={**arguments, "model": upstream_model},
             timeout=timeout,
+            trust_env=False,
         )
         response.raise_for_status()
         return response.json()

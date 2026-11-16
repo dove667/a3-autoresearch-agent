@@ -254,6 +254,7 @@ def _stop(endpoint: str, token: str, reason: str) -> str:
             headers={"Authorization": "Bearer " + token},
             json={"reason": reason},
             timeout=30,
+            trust_env=False,
         )
         return f"stop {response.status_code}"
     except Exception as error:  # noqa: BLE001 - report the failed stop, keep evidence

@@ -21,6 +21,29 @@ OPERATIONAL = (
     '"active_jobs": []}, "how_to": "文件用 read/list/search_files；作业用 job_submit/job_prepare/'
     'job_status/job_wait；步骤与复盘用 plan；既有结论用 memory；方法用 skills；原始对话用 recall。"}'
 )
+PROMPT_FILES = ("SOUL.md", "execution.md", "workspace.md")
+
+
+def published_instructions(root=None):
+    """The prompt the deployed Agent actually runs, not a summary of it."""
+    directory = Path(root or Path(__file__).resolve().parents[3] / "prompt")
+    texts = []
+    for name in PROMPT_FILES:
+        try:
+            texts.append((directory / name).read_text().strip())
+        except OSError:
+            return INSTRUCTIONS
+    return "\n\n".join(texts)
+
+
+def operational_view():
+    """The real per-turn refresh when a state root is available."""
+    try:
+        from a3_research_agent.harness import agent
+
+        return agent.operational_message()["content"]
+    except Exception:  # noqa: BLE001 — a probe without a run falls back to the shape
+        return OPERATIONAL
 
 
 def endpoint():
@@ -46,6 +69,7 @@ def post(url, key, body, attempts=7):
                 headers={"Authorization": f"Bearer {key}"},
                 json=body,
                 timeout=httpx.Timeout(120, connect=10, read=180),
+                trust_env=False,
             )
             response.raise_for_status()
             return response
@@ -73,11 +97,13 @@ def ask(url, key, model, messages, tools, turns, answers=True):
     invalid = []
     texts = []
     guard = drift.DriftGuard(remind=answers)
+    instructions = published_instructions()
+    refresh = operational_view()
     for _ in range(turns):
         body = {
             "model": model,
-            "instructions": INSTRUCTIONS,
-            "input": messages + [{"role": "user", "content": OPERATIONAL}],
+            "instructions": instructions,
+            "input": messages + [{"role": "user", "content": refresh}],
             "tools": tools,
         }
         response = post(url, key, body)
