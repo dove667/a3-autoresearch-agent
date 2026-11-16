@@ -1,6 +1,6 @@
 # 研究工具与执行约定
 
-Version: 0.33.0
+Version: 0.34.0
 
 工具定义给出参数、默认值和限制；本文件说明常用流程。所有工具返回 `ok`：成功时直接读取同层结果；失败时读取 `error`、`hint` 和相关编号，修正后再调用。作业的 `status="failed"` 是执行结果，先读日志与证据再判断原因。
 
@@ -87,6 +87,8 @@ GPU 作业先调用 `job_prepare`，同样填写 command、attachments、input_e
 
 `decision="continue"` 必须给出至少一条含数值的 `metrics`，`step` 可选地标明本次结论对应的步骤；暂停或结束路线可以不带 metrics。
 
+`research_plan.next_action` 每轮给出一句“下一步该做什么”：有作业结束时先复盘该路线，有可开工步骤时点名步骤与完成判据，都停着时提示改条件或新增步骤。按它推进，比重新浏览整份计划省轮次。
+
 所有待办和进展都在 plan 中维护。已学到的发现写 memory，稳定可复用的操作方法写 skills。
 
 memory 使用 `search(query="当前研究问题")` 检索摘要，`read(id)` 读正文与 revision；`sources(id)` 列证据，再用 sources(id,ref) 读取来源。当前上下文会提供少量相关经验摘要，先确认 scope。用 write(content,scope,refs,kind) 保存值得跨实验复用的结论；临时观察用 lifetime="run"。update(id,revision,reason,content) 修正，archive／restore(id,revision,reason) 管理有效性。相似写入提示出现时先读原条目；同一发现更新原 ID，独立发现写明区别后 force=true、reason=... 保存。历史条目不授予当前权限。
@@ -98,6 +100,8 @@ skills 使用 `list(query="任务或症状",limit=3)` 找方法，只返回摘�
 ## 长时间研究与上下文压缩
 
 压缩与服务等待由程序自动处理；32k 是压缩目标，必要时会在模型窗口内放宽。恢复决策后先核对最新计划和已有作业，不把服务恢复当成新实验重复提交。
+
+连续多轮只做检索、不改变计划或作业时，程序会在一个回合内不提供工具，要求先用文字给出已知事实、结论和下一步动作；这是提示收敛，不是故障。收到该提示后直接说明结论，再继续原来的工作。
 
 每轮的 CURRENT_STATE_REFRESH 提供最新计划、近期复盘、活动作业和关键工具回执；先用它核对旧摘要里的待办。job 状态是最后一次观察，提交不确定时先查现有编号，不重发。计划显示已结束的路线、memory 中的失败条件和已验证结果，用于避免重复实验。
 

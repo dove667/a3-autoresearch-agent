@@ -17,6 +17,46 @@ def load():
     return plan_store.load(plan_file())
 
 
+def next_action(steps, ready, review_due, routes):
+    """One sentence saying what this turn should advance.
+
+    A weak model reads state well and decides badly; naming the next move in the
+    state view is cheaper than hoping it infers the move from a list of steps.
+    """
+    running = {
+        job: status
+        for key in steps
+        for job, status in (steps[key].get("observed_jobs") or {}).items()
+        if status not in operational.TERMINAL_JOB_STATES and status != "unobserved"
+    }
+    if review_due:
+        item = review_due[0]
+        job, status = next(iter(item["jobs"].items()))
+        route = item.get("route") or "未挂路线"
+        return (
+            f"先复盘 {route}：步骤 {item['step']} 的作业 {job} 已 {status}，"
+            "用实测数值写 plan review（带 metrics），再决定继续还是暂停。"
+        )
+    if ready:
+        key = ready[0]
+        step = steps[key]
+        criterion = (step.get("criterion") or "").strip()
+        line = f"下一步做 {key}：{(step.get('task') or '')[:60]}"
+        if criterion:
+            line += f"（完成判据：{criterion[:60]}）"
+        if running:
+            job, status = next(iter(running.items()))
+            line += f"；同时作业 {job} 在 {status}，出结果后复盘，不要重复提交。"
+        return line.rstrip("。；;.") + "。"
+    if running:
+        job, status = next(iter(running.items()))
+        return f"没有可开工的步骤，作业 {job} 在 {status}：等通知，不要重复提交。"
+    blocked = [key for key, step in steps.items() if step["status"] == "blocked"]
+    if blocked:
+        return f"所有步骤都停着（{blocked[0]} 等）：改变条件或新增可执行步骤，别只重复检查。"
+    return "计划里没有可执行步骤：先 plan update 新增步骤或调整路线，再动手。"
+
+
 def view(plan=None, *, jobs=None, compact=False):
     plan = load() if plan is None else plan
     if jobs is None:
@@ -68,6 +108,7 @@ def view(plan=None, *, jobs=None, compact=False):
         "revision": plan["revision"],
         "reason": plan["reason"],
         "ready": ready,
+        "next_action": next_action(steps, ready, review_due, routes),
         "counts": {
             status: sum(step["status"] == status for step in steps.values()) for status in STATUSES
         },

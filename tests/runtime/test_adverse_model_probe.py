@@ -167,3 +167,37 @@ def test_forced_tool_choice_is_dropped_when_the_provider_rejects_it(tmp_path, mo
     assert "tool_choice" in seen[1]
     assert "tool_choice" not in seen[2]
     assert all("tool_choice" not in request for request in seen[2:])
+
+
+def test_endless_reading_withholds_tools_until_the_model_states_a_conclusion(tmp_path, monkeypatch):
+    runtime(tmp_path, monkeypatch)
+    seen = []
+    reads = [
+        {
+            "status": "completed",
+            "output": [call("read", f"r{index}", json.dumps({"path": f"f{index}"}))],
+        }
+        for index in range(drift.ANSWER_TURNS)
+    ]
+    turns = [
+        *reads,
+        prose(),
+        {"status": "completed", "output": [call("plan", "p2", '{"action":"show"}')]},
+    ]
+    monkeypatch.setattr(agent, "request_model", scripted(turns, seen))
+    monkeypatch.setattr(agent, "dispatch_tool_call", lambda tool_call: {"ok": True, "path": "f"})
+    agent.main()
+
+    # Reading turns keep the tools; the turn after the budget arrives without them.
+    assert all("tools" in request for request in seen[: drift.ANSWER_TURNS])
+    assert "tools" not in seen[drift.ANSWER_TURNS]
+    assert "tool_choice" not in seen[drift.ANSWER_TURNS]
+    # The demanded text answer is not treated as drift: tool use resumes right after.
+    assert "tools" in seen[drift.ANSWER_TURNS + 1]
+    assert "tool_choice" not in seen[drift.ANSWER_TURNS + 1]
+    history = json.dumps(
+        json.loads(agent.state_paths.path(agent.state_paths.CHECKPOINT).read_text()),
+        ensure_ascii=False,
+    )
+    assert drift.ANSWER_NOTICE.strip()[:20] in history
+    assert drift.NO_TOOL_NOTICE.strip()[:20] not in history
