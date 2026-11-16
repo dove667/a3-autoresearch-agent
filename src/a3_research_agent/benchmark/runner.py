@@ -3,6 +3,7 @@
 import json
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import httpx
@@ -31,8 +32,12 @@ def endpoint():
     return base + "/responses", key, model
 
 
-def post(url, key, body, attempts=3):
-    """A dropped TLS session at the provider is retried, not scored as a model failure."""
+def post(url, key, body, attempts=7):
+    """A dropped TLS session at the provider is retried, not scored as a model failure.
+
+    A network outage can last minutes, so the backoff grows to a minute and a run
+    that keeps failing stops with a clear message instead of losing finished tasks.
+    """
     last = None
     for index in range(attempts):
         try:
@@ -46,7 +51,8 @@ def post(url, key, body, attempts=3):
             return response
         except (httpx.ConnectError, httpx.ReadError, httpx.RemoteProtocolError) as error:
             last = error
-            time.sleep(2 * (index + 1))
+            if index + 1 < attempts:
+                time.sleep(min(60, 5 * 2**index))
     raise last
 
 
@@ -203,41 +209,64 @@ def report(results, model, directory):
     return summary
 
 
-def run(model=None, only=None, output=None, answers=True):
+def run_task(task, url, key, model, tools, answers):
+    """One task, scored from what the model actually did."""
+    started = time.monotonic()
+    calls, invalid, text, guard = ask(
+        url,
+        key,
+        model,
+        [{"role": "user", "content": task.prompt}],
+        tools,
+        task.turns,
+        answers=answers,
+    )
+    passed, detail = score(task, calls, invalid, text)
+    if invalid:
+        detail = f"{detail + '; ' if detail else ''}{len(invalid)} bad argument(s)"
+    return {
+        "id": task.id,
+        "title": task.title,
+        "passed": passed,
+        "detail": detail or "ok",
+        "names": [call["name"] for call in calls],
+        "calls": len(calls),
+        "invalid": len(invalid),
+        "turns": round(time.monotonic() - started, 2),
+        "drift": guard.snapshot(),
+        "answer": text[:400],
+    }
+
+
+def run(model=None, only=None, output=None, answers=True, jobs=4):
     url, key, configured = endpoint()
     tools = tool_catalog.TOOLS
     selected = [task for task in TASKS if not only or task.id in only]
+    directory = Path(
+        output or Path("runs/checks") / f"benchmark-{time.strftime('%Y-%m-%d_%H-%M-%S')}"
+    )
     results = []
-    for task in selected:
-        started = time.monotonic()
-        calls, invalid, text, guard = ask(
-            url,
-            key,
-            model or configured,
-            [{"role": "user", "content": task.prompt}],
-            tools,
-            task.turns,
-            answers=answers,
-        )
-        passed, detail = score(task, calls, invalid, text)
-        if invalid:
-            detail = f"{detail + '; ' if detail else ''}{len(invalid)} bad argument(s)"
-        results.append(
-            {
-                "id": task.id,
-                "title": task.title,
-                "passed": passed,
-                "detail": detail or "ok",
-                "names": [call["name"] for call in calls],
-                "calls": len(calls),
-                "invalid": len(invalid),
-                "turns": round(time.monotonic() - started, 2),
-                "drift": guard.snapshot(),
-                "answer": text[:400],
-            }
-        )
-        print(f"{'PASS' if passed else 'FAIL'} {task.id}: {detail or 'ok'}", flush=True)
-    directory = output or Path("runs/checks") / f"benchmark-{time.strftime('%Y-%m-%d_%H-%M-%S')}"
+    # A finished task stays finished even if the network drops on a later one.
+    partial = directory / "results.json"
+    if partial.exists():
+        for row in json.loads(partial.read_text()).get("tasks", []):
+            if any(task.id == row["id"] for task in selected):
+                results.append(row)
+                print(f"already done: {row['id']}", flush=True)
+    done = {row["id"] for row in results}
+    selected = [task for task in selected if task.id not in done]
+    # Independent tasks run side by side: the provider is the only shared resource.
+    with ThreadPoolExecutor(max_workers=max(1, jobs)) as pool:
+        futures = {
+            pool.submit(run_task, task, url, key, model or configured, tools, answers): task
+            for task in selected
+        }
+        for future in as_completed(futures):
+            row = future.result()
+            results.append(row)
+            print(f"{'PASS' if row['passed'] else 'FAIL'} {row['id']}: {row['detail']}", flush=True)
+            report(results, model or configured, directory)
+    results.sort(key=lambda row: [task.id for task in TASKS].index(row["id"]))
     summary = report(results, model or configured, directory)
     summary["answers"] = answers
     print(json.dumps({**summary, "directory": str(directory)}, ensure_ascii=False))
