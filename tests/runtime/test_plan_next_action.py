@@ -97,3 +97,24 @@ def test_an_empty_plan_still_tells_the_model_what_to_do(tmp_path, monkeypatch):
     monkeypatch.setenv("A3_STATE_ROOT", str(tmp_path / "state"))
     text = planning.view(planning.load(), jobs={}, compact=True)["next_action"]
     assert "plan update" in text
+
+
+def test_an_operator_permission_block_asks_for_research_status(seeded):
+    plan = planning.load()
+    planning.dispatch(
+        {
+            "action": "update",
+            "revision": plan["revision"],
+            "steps": [
+                {
+                    "id": "s1",
+                    "status": "blocked",
+                    "progress": "需要操作者开通 8 卡权限",
+                },
+                {"id": "s2", "status": "blocked", "progress": "等待权限"},
+            ],
+            "reason": "权限阻塞",
+        }
+    )
+    text = planning.view(planning.load(), jobs={}, compact=True)["next_action"]
+    assert "research_status" in text and "不要自行绕过" in text

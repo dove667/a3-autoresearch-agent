@@ -53,7 +53,25 @@ def next_action(steps, ready, review_due, routes):
         return f"没有可开工的步骤，作业 {job} 在 {status}：等通知，不要重复提交。"
     blocked = [key for key, step in steps.items() if step["status"] == "blocked"]
     if blocked:
-        return f"所有步骤都停着（{blocked[0]} 等）：改变条件或新增可执行步骤，别只重复检查。"
+        key = blocked[0]
+        reason = (steps[key].get("progress") or "").strip()
+        operator_terms = (
+            "权限",
+            "授权",
+            "操作者",
+            "凭据",
+            "permission",
+            "credential",
+            "quota",
+            "8卡",
+            "8 卡",
+        )
+        if any(term in reason.casefold() for term in operator_terms):
+            return (
+                f"{key} 需要操作者处理：先 research_status(status=\"blocked\", reason=..., "
+                "required_action=..., evidence=[...]) 上报，不要自行绕过或重复检查。"
+            )
+        return f"所有步骤都停着（{key} 等）：改变条件或新增可执行步骤，别只重复检查。"
     return "计划里没有可执行步骤：先 plan update 新增步骤或调整路线，再动手。"
 
 
