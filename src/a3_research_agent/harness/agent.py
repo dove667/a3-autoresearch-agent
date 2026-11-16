@@ -410,7 +410,7 @@ def main() -> None:
                 "input": messages + [operational],
                 "tools": tools,
             }
-            if guard.force_tool_choice():
+            if FORCE_SUPPORTED and guard.force_tool_choice():
                 # Bounded: only after a text-only or rejected call, never by default.
                 request["tool_choice"] = "required"
             try:
@@ -486,6 +486,10 @@ def main() -> None:
                 messages.append({"role": "user", "content": notice})
                 log({"model_drift": guard.snapshot()})
                 checkpoint(messages)
+            if guard.stalled():
+                log({"model_drift_exhausted": guard.snapshot(), "state": "corrections spent"})
+                checkpoint(messages)
+                break
         except context_manager.ContextError as error:
             try:
                 context_recovery.wait(error, req, log=log)

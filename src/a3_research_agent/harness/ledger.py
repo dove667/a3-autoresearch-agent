@@ -64,18 +64,25 @@ def from_tool(call, result):
     name = call.get("name")
     if name not in RECORDED_TOOLS or not isinstance(result, dict):
         return None
-    event = {"event": name, "call_id": call.get("call_id")}
-    event.update(
-        {field: result[field] for field in FIELDS if field in result and result[field] is not None}
-    )
+    batch = result.get("jobs")
+    if isinstance(batch, list) and batch and all(isinstance(item, dict) for item in batch):
+        lines = []
+        for item in batch:
+            event = {"event": name + "_item", "call_id": call.get("call_id")}
+            event.update({field: item.get(field) for field in FIELDS if item.get(field)})
+            if len(event) > 2:
+                lines.append(append(event))
+        return lines or None
+    observed = {field: result[field] for field in FIELDS if result.get(field) is not None}
     if name == "job_wait":
-        event["reason"] = result.get("reason")
-        event["jobs"] = sorted(result.get("observed") or result.get("changes") or {})
+        observed["reason"] = result.get("reason")
+        observed["jobs"] = sorted(result.get("observed") or result.get("changes") or {})
+    if not any(value for key, value in observed.items() if key != "jobs"):
+        return None
+    event = {"event": name, "call_id": call.get("call_id"), **observed}
     diagnosis = result.get("diagnosis")
     if isinstance(diagnosis, dict):
         event["failure_class"] = diagnosis.get("failure_class")
-    if len(event) <= 1:
-        return None
     return append(event)
 
 

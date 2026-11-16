@@ -31,14 +31,18 @@ INVALID_NOTICE = (
 )
 FORCE_ATTEMPTS = 2
 MAX_INCIDENTS = 3
+MAX_NO_TOOL = 6
 
 
 class DriftGuard:
     """Count drift inside one process and bound how often forcing is repeated."""
 
-    def __init__(self, force_attempts=FORCE_ATTEMPTS, max_incidents=MAX_INCIDENTS):
+    def __init__(
+        self, force_attempts=FORCE_ATTEMPTS, max_incidents=MAX_INCIDENTS, max_no_tool=MAX_NO_TOOL
+    ):
         self.force_attempts = force_attempts
         self.max_incidents = max_incidents
+        self.max_no_tool = max_no_tool
         self.force = 0
         self.no_tool = 0
         self.invalid = 0
@@ -76,6 +80,14 @@ class DriftGuard:
         self.no_tool += 1
         self.force = self.force_attempts
         return NO_TOOL_NOTICE
+
+    def stalled(self):
+        """Every correction was already spent and the model still does not act.
+
+        Continuing would spend the whole night on rejected requests, so the process
+        ends and leaves the drift record for the operator instead.
+        """
+        return self.no_tool >= self.max_no_tool or self.incidents > self.max_incidents
 
     def snapshot(self):
         return {
