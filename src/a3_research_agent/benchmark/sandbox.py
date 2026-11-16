@@ -65,7 +65,64 @@ ARTIFACTS = {
     JOB_GPU: "experiments/2026-11-10-act-p142/results/report.json",
 }
 
-PLAN = {
+def _workspace_plan():
+    """The real plan, so a review is written against the research the Agent runs."""
+    path = Path(__file__).resolve().parents[3] / "plan" / "current.json"
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return None
+    steps = {
+        step["id"]: {
+            "status": step.get("status"),
+            "route": step.get("route"),
+            "task": step.get("task") or step.get("title") or "",
+        }
+        for step in data.get("steps", [])
+        if isinstance(step, dict) and step.get("id")
+    }
+    routes = {
+        route["id"]: {
+            "status": route.get("status"),
+            "question": route.get("question") or route.get("title") or "",
+        }
+        for route in data.get("routes", [])
+        if isinstance(route, dict) and route.get("id")
+    }
+    if not steps and not routes:
+        return None
+    direction = data.get("direction") or {}
+    return {
+        "revision": data.get("revision", 0),
+        "direction": direction if isinstance(direction, dict) else {"objective": str(direction)},
+        "routes": routes,
+        "steps": steps,
+    }
+
+
+def _workspace_memory(limit=8):
+    """Real remembered conclusions, so recall is not a stub either."""
+    path = Path(__file__).resolve().parents[3] / "memory" / "entries.jsonl"
+    entries = {}
+    try:
+        lines = path.read_text().splitlines()
+    except OSError:
+        return None
+    for line in lines[::-1]:
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        identifier = row.get("id") or row.get("memory_id")
+        content = row.get("content") or row.get("text")
+        if isinstance(identifier, str) and isinstance(content, str):
+            entries[identifier] = content
+        if len(entries) >= limit:
+            break
+    return entries or None
+
+
+PLAN = _workspace_plan() or {
     "revision": 202,
     "direction": {"objective": "提高 A3 2×5 与 2×10 的入盒准确率与通过率"},
     "routes": {"act-p142": {"status": "active", "question": "扩采 DAgger 后继续训练 ACT"}},
@@ -79,7 +136,7 @@ PLAN = {
     },
 }
 
-MEMORY = {
+MEMORY = _workspace_memory() or {
     "38fa2b462603": "2×5 配对：5k 入盒 14/60，20k 29/60；20k seed10000 原生 success=True。",
     "d9ebbacf33e6": "2×10 配对：5k 入盒 11/120，20k 7/120；两版原生 success 均 0/6。",
 }
