@@ -73,6 +73,7 @@ trajectories/<开始时间>/
 │   ├── operational-state.json
 │   ├── research-receipts.json 近期关键工具观察与原文索引
 │   ├── compaction-*.json  压缩状态与事务
+│   ├── context-failure.json 压缩等待或阻塞状态（恢复后清除）
 │   ├── prepared-jobs/     保存的正式请求、CPU预检与提交回执
 │   └── context-history/   摘要、校验回执与完整工具输出原文
 ├── plan-snapshots/        该次运行开始、修订和停止时的计划历史快照

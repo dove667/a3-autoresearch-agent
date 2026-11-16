@@ -133,7 +133,10 @@ compare estimates with returned usage.
 `A3_CONTEXT_TARGET_TOKENS` is the target for the complete post-compaction decision
 input. For a 32k target, the Harness deducts fixed instructions, tools, the current
 operational frame, the summary wrapper and the newest complete tool batch. The
-remaining tokens fund the summary. Its output allocation follows this remaining
+remaining tokens fund the summary. A large fresh observation can raise this soft
+target within the hard decision budget, preserving useful summary space. Only
+the model window and framing/output reserves are hard admission limits.
+Its output allocation follows the remaining
 budget and the summary model's actual window; there is no separate fixed 1000- or
 4096-token cap, byte ceiling or fixed short-summary length.
 
@@ -145,17 +148,36 @@ lifetime history. Large outputs contribute semantic facts and partial previews;
 their complete originals are available through recall and read.
 The Host checks its input and requested output together against the configured
 summary window. A complete successful response is required before compacted state
-is published. Temporary failures and incomplete responses use the bounded summary
-retry protocol, preserving the source snapshot and each attempt. Exhausted failures
-keep the checkpoint recoverable and block the decision that requires compaction.
+is published. Temporary transport failures use persisted exponential backoff,
+capped at 60 seconds between attempts, with no total time or attempt cutoff.
+Each summary request has a 960-second transport timeout; a timeout schedules
+another attempt rather than ending the run. Invalid summary content has three
+repair attempts, counted separately from transport failures.
 The runtime does not generate a no-summary archive fallback.
+
+There is no 300-second compaction exit deadline. While history fits the hard
+budget, a pending background summary can coexist with normal decisions. At the
+hard budget, the decision loop waits in the same process until a valid summary
+can be admitted. Authentication, source-integrity or repeated validation errors
+enter a visible blocked state without generating research decisions. Source and
+budget contracts are rechecked; repaired configuration can enable another attempt.
+The runtime preserves its existing context and journal throughout this wait.
+
+`conversation/context-failure.json` reports `waiting` or `blocked`, the reason,
+start/update time and next recheck interval. A successful decision gate clears
+this indicator. Waits check Host identity and input revisions, use interruptible
+short sleeps, and remain responsive to the Host's native stop/suspend signals.
+They perform no research tool calls. Explicit operator stops, invalid initial
+recovery state and failures that prevent safe tool-result persistence retain
+their separate shutdown behavior.
 
 Model-visible messages remain in `conversation/history.jsonl`; complete large
 tool results remain in verified content-addressed files with bounded facts and previews;
 remote text artifacts use character pages with source hashes. This result transport
 keeps the request bounded while preserving access to the actual observations.
-The newest complete tool batch stays paired and visible; its size can make the soft
-target infeasible, in which case the hard model-window admission still applies.
+The newest complete tool batch stays paired and visible. If it cannot fit within
+the hard budget with a useful summary, tool text can be represented by semantic
+facts and verified original references before another summary is requested.
 
 The template currently provides explicit model windows, a trigger and a 32k target.
 Set them in the Host's `.env` or `A3_RSI_ENV_FILE` for the selected model. The Host
@@ -277,7 +299,8 @@ same total target without adding another reserve to it.
 ## Durable failure behavior and deployment
 
 Each complete-transcript request is recorded **before** dispatch. A restart reuses
-a checksummed completed summary. Retriable summary attempts remain source-bound and
+a checksummed completed summary or its pending retry time. Transient retry counts
+and content-repair counts are independent. Retriable summary attempts remain source-bound and
 are recorded separately; this operation only transforms supplied text. Tool side
 effects retain their separate no-replay journal. Corrupt request records fail
 explicitly and original snapshots remain intact.

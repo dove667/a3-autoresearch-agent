@@ -1,6 +1,6 @@
 # 研究工具与执行约定
 
-Version: 0.31.0
+Version: 0.32.0
 
 工具定义给出参数、默认值和限制；本文件说明常用流程。所有工具返回 `ok`：成功时直接读取同层结果；失败时读取 `error`、`hint` 和相关编号，修正后再调用。作业的 `status="failed"` 是执行结果，先读日志与证据再判断原因。
 
@@ -92,6 +92,8 @@ skills 使用 `list(query="任务或症状",limit=3)` 找方法，只返回摘�
 `recall(keywords=[...])` 查当前 run 的原始对话及已落盘的大工具输出，默认查本 run 全部；recent_rounds 限定最近决策轮数，mode="raw" 可查工具参数。返回 items 中的 snippet、轮次和 source；source.path 相对 runtime_paths.state，拼接后用 read 按 source.offset／limit 核对。warnings 表示原文缺失或校验失败，不能当成“没有发生”。跨 run 先用 memory 和已声明的历史来源。
 
 ## 长时间研究与上下文压缩
+
+压缩与服务等待由程序自动处理；32k 是压缩目标，必要时会在模型窗口内放宽。恢复决策后先核对最新计划和已有作业，不把服务恢复当成新实验重复提交。
 
 每轮的 CURRENT_STATE_REFRESH 提供最新计划、近期复盘、活动作业和关键工具回执；先用它核对旧摘要里的待办。job 状态是最后一次观察，提交不确定时先查现有编号，不重发。计划显示已结束的路线、memory 中的失败条件和已验证结果，用于避免重复实验。
 
