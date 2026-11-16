@@ -63,7 +63,8 @@ def test_upstream_preserves_tool_history_and_routes_with_host_key(monkeypatch, r
     result = {"type": "function_call_output", "call_id": "call_1", "output": "done"}
     reasoning = {"type": "reasoning", "encrypted_content": "old-provider"}
 
-    def post(url, *, headers, json, timeout):
+    def post(url, *, headers, json, timeout, trust_env=True):
+        assert trust_env is False
         assert url == "https://provider.example/v1/responses"
         assert headers["Authorization"] == "Bearer test-key"
         assert json == {"model": "configured-model", "input": [call, result]}
@@ -85,3 +86,38 @@ def test_upstream_fails_closed_without_key(monkeypatch):
     monkeypatch.delenv("A3_UPSTREAM_RESPONSES_API_KEY", raising=False)
     with pytest.raises(ValueError, match="requires its API key"):
         upstream.configured_upstream(None)
+
+
+def test_direct_transport_is_used_when_configured(monkeypatch):
+
+    monkeypatch.setenv("A3_UPSTREAM_RESPONSES_BASE_URL", "https://provider.example/v1")
+    monkeypatch.setenv("A3_UPSTREAM_RESPONSES_MODEL", "configured-model")
+    monkeypatch.setenv("A3_UPSTREAM_RESPONSES_API_KEY", "test-key")
+    monkeypatch.setenv("A3_UPSTREAM_DIRECT_INTERFACE", "en0")
+    calls = []
+
+    def fake_post(url, headers, body, timeout):
+        calls.append((url, headers, body, timeout))
+        return {"model": "configured-model"}
+
+    monkeypatch.setattr(upstream, "post_json", fake_post)
+    forward = upstream.configured_upstream(None)
+    assert forward(model="saved", input=[{"type": "message"}], max_output_tokens=32) == {
+        "model": "configured-model"
+    }
+    assert calls[0][0] == "https://provider.example/v1/responses"
+    assert calls[0][1]["Authorization"] == "Bearer test-key"
+    assert calls[0][2]["model"] == "configured-model"
+    assert calls[0][2]["max_output_tokens"] == 32
+
+
+def test_direct_resolver_skips_fake_ip(monkeypatch):
+    from a3_research_agent.host.models import direct
+
+    direct._IP_CACHE.clear()
+    monkeypatch.setattr(
+        direct.subprocess,
+        "check_output",
+        lambda *args, **kwargs: "nlb.example.\n39.106.104.16\n",
+    )
+    assert direct.resolve_direct("provider.example") == "39.106.104.16"

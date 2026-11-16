@@ -4,6 +4,8 @@ import os
 
 import httpx
 
+from .direct import DirectHTTPError, DirectTransportError, post_json
+
 
 def chatgpt_history(items: list) -> list:
     """Replay portable messages and tool calls from a Responses-compatible upstream."""
@@ -54,6 +56,8 @@ def configured_upstream(default):
         raise ValueError(f"{timeout_key} must be a positive integer")
     timeout = httpx.Timeout(120, connect=10, read=read_timeout_seconds)
 
+    direct_interface = os.environ.get("A3_UPSTREAM_DIRECT_INTERFACE", "").strip()
+
     def forward(*, model, **arguments):
         # The saved history can contain reasoning encrypted by a different provider.
         if isinstance(arguments.get("input"), list):
@@ -62,10 +66,28 @@ def configured_upstream(default):
             ]
         arguments.pop("include", None)
         arguments.pop("service_tier", None)
+        payload = {**arguments, "model": upstream_model}
+        if direct_interface:
+            # A system TUN proxy can hijack both DNS and the default route. Bind
+            # the model call to the physical interface and an explicit public IP.
+            try:
+                return post_json(
+                    base_url + "/responses",
+                    {
+                        "Authorization": f"Bearer {api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    payload,
+                    read_timeout_seconds,
+                )
+            except DirectHTTPError:
+                raise
+            except DirectTransportError as error:
+                raise RuntimeError(str(error)) from error
         response = httpx.post(
             base_url + "/responses",
             headers={"Authorization": f"Bearer {api_key}"},
-            json={**arguments, "model": upstream_model},
+            json=payload,
             timeout=timeout,
             trust_env=False,
         )
