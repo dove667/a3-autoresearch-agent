@@ -69,3 +69,26 @@ def test_context_budget_rejects_threshold_without_model_window_headroom(tmp_path
                 "target_tokens": 32000,
             },
         )
+
+
+def test_output_reserve_can_be_lowered_for_a_slow_provider(monkeypatch):
+    from a3_research_agent.host.models.context import read_context_budget
+
+    for key in (
+        "A3_MODEL_CONTEXT_TOKENS",
+        "A3_WORKER_CONTEXT_TOKENS",
+        "A3_SUMMARY_CONTEXT_TOKENS",
+    ):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("A3_OUTPUT_RESERVE_TOKENS", "2048")
+    budget = read_context_budget(
+        {
+            "A3_MODEL_CONTEXT_TOKENS": "262144",
+            "A3_WORKER_CONTEXT_TOKENS": "262144",
+            "A3_SUMMARY_CONTEXT_TOKENS": "524288",
+            "A3_CONTEXT_TRIGGER_TOKENS": "196608",
+            "A3_CONTEXT_TARGET_TOKENS": "32768",
+            "A3_OUTPUT_RESERVE_TOKENS": "2048",
+        }
+    )
+    assert budget["output_reserve_tokens"] == 2048

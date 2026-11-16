@@ -48,6 +48,7 @@ def read_context_budget(environment: Mapping[str, str]) -> dict:
         for name, key in {
             "trigger_tokens": "A3_CONTEXT_TRIGGER_TOKENS",
             "target_tokens": "A3_CONTEXT_TARGET_TOKENS",
+            "output_reserve_tokens": "A3_OUTPUT_RESERVE_TOKENS",
         }.items()
         if environment.get(key)
     }
