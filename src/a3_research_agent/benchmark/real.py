@@ -468,6 +468,7 @@ def run(
     timeout: int | None = None,
     model: str | None = None,
     commit: str | None = None,
+    attempts: int = 1,
 ) -> dict:
     selected = [task for task in TASKS if not only or task.id in only]
     if timeout:
@@ -486,22 +487,36 @@ def run(
         os.environ.setdefault(name, str(path))
     shared_run = directory / "trajectories" / "shared-knowledge"
     shared_run.mkdir(parents=True, exist_ok=True)
-    results = []
+    results_by_id = {}
     with KnowledgeService(REPO, shared_run, "benchmark") as knowledge:
         os.environ["A3_KNOWLEDGE_SERVICE_URL"] = knowledge.endpoint
         os.environ["A3_KNOWLEDGE_SERVICE_TOKEN"] = knowledge.token
-        with ThreadPoolExecutor(max_workers=max(1, jobs)) as pool:
-            futures = {
-                pool.submit(run_task, task, directory, commit, model): task for task in selected
-            }
-            for future in as_completed(futures):
-                row = future.result()
-                results.append(row)
-                print(
-                    f"{'PASS' if row['passed'] else 'FAIL'} {row['id']}: {row['detail']}",
-                    flush=True,
-                )
-                report(results, directory, commit)
+        pending = list(selected)
+        for attempt in range(max(1, attempts)):
+            if not pending:
+                break
+            with ThreadPoolExecutor(max_workers=max(1, jobs)) as pool:
+                futures = {
+                    pool.submit(run_task, task, directory, commit, model): task
+                    for task in pending
+                }
+                for future in as_completed(futures):
+                    row = future.result()
+                    row["attempt"] = attempt + 1
+                    results_by_id[row["id"]] = row
+                    print(
+                        f"{'PASS' if row['passed'] else 'FAIL'} {row['id']}: {row['detail']}",
+                        flush=True,
+                    )
+                    report(list(results_by_id.values()), directory, commit)
+            pending = [
+                task
+                for task in selected
+                if not results_by_id.get(task.id, {}).get("passed", False)
+            ]
+            if pending and attempt + 1 < attempts:
+                time.sleep(30)
+    results = list(results_by_id.values())
     results.sort(key=lambda row: [task.id for task in TASKS].index(row["id"]))
     summary = report(results, directory, commit)
     summary["directory"] = str(directory)
@@ -1054,6 +1069,7 @@ def main():
     parser.add_argument("--timeout", type=int, help="Per-task wall seconds")
     parser.add_argument("--model", help="Override the deployment model")
     parser.add_argument("--commit", help="Published Harness commit (default HEAD)")
+    parser.add_argument("--attempts", type=int, default=1, help="Retry failed tasks this many times")
     args = parser.parse_args()
     run(
         only=[item for item in (args.only or "").split(",") if item],
@@ -1062,6 +1078,7 @@ def main():
         timeout=args.timeout,
         model=args.model,
         commit=args.commit,
+        attempts=args.attempts,
     )
 
 
