@@ -137,16 +137,25 @@ def matches(calls, expect):
 
 
 def score(task, calls, invalid, text):
+    """Explain the failure in words an operator can act on."""
     names = [call["name"] for call in calls]
-    if not matches(calls, task.expect):
-        return False, "missing expected call"
     if any(forbidden in names for forbidden in task.forbid):
-        return False, "called a forbidden tool"
+        return False, "调用了不该调用的工具"
+    if not matches(calls, task.expect):
+        unknown = [name for name in names if name not in ADVERTISED]
+        if unknown:
+            return False, f"编造了工具名 {unknown[0]}"
+        return False, "没有做出必需的工具调用"
+    if task.answer and not text.strip():
+        return False, "用完轮次也没有给出结论"
     if task.answer and not all(token in text for token in task.answer):
-        return False, "answer lacks the required fact"
+        return False, "结论缺少必需的事实"
     if invalid:
-        return False, "invalid arguments"
+        return False, "参数被拒绝"
     return True, ""
+
+
+ADVERTISED = frozenset(tool["name"] for tool in tool_catalog.TOOLS)
 
 
 def summarize(results):
@@ -200,7 +209,7 @@ def run(model=None, only=None, output=None):
     results = []
     for task in selected:
         started = time.monotonic()
-        calls, invalid, text = ask(
+        calls, invalid, text, guard = ask(
             url,
             key,
             model or configured,
