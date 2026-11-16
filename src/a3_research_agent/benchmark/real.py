@@ -541,7 +541,7 @@ TASKS = (
         "真实 ACT baseline 的 expert_development 用了哪些 seed，native_successes 是多少？",
         "完成 benchmark：读取真实基线结果并写出结构化结论",
         "bench-read",
-        "按 TASK.md 核对真实基线结果，写出 results/bench-baseline.json，plan review 后 session_stop。",
+        "读 experiments/2026-11-03-act-baseline/results/results.json 的 expert_development，写 results/bench-baseline.json，plan update done，然后 session_stop。",
         "结果文件 native_successes=3 且 seeds=[31000,31001,31002]。",
         "# Benchmark task\n\n"
         "读取 `experiments/2026-11-03-act-baseline/results/results.json`，确认 "
@@ -617,7 +617,7 @@ TASKS += (
         "真实 ACT baseline 的数据 seed_start 和 development seeds 是多少？",
         "完成 benchmark：读取真实实验配置并写出结构化结论",
         "bench-config",
-        "按 TASK.md 读取真实 config.json，写出 results/bench-config.json。",
+        "读 experiments/2026-11-03-act-baseline/config.json 的 seed_start 与 development seeds，写 results/bench-config.json，plan update done，然后 session_stop。",
         "结果文件 seed_start=21000 且 development_seeds=[31000,31001,31002]。",
         "# Benchmark task\n\n"
         "读取 `experiments/2026-11-03-act-baseline/config.json`，确认 `data.seed_start` "
@@ -971,7 +971,7 @@ TASKS += (
         "读真实 baseline 结果，把实测数字写成 plan review 并决定路线。",
         "完成 benchmark：从真实结果形成带 metrics 的复盘",
         "bench-review",
-        "按 TASK.md 读取真实 baseline 结果，用 plan(action=\"review\") 写带 metrics 的复盘，然后 session_stop。",
+        "读 experiments/2026-11-03-act-baseline/results/results.json，用 plan review 写 native_successes=3，然后 session_stop。",
         "bench-review 的 review 含实测 metrics（native_successes=3）。",
         """# Benchmark task
 
