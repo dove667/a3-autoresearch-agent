@@ -1,6 +1,6 @@
 {
   "id": "a3-job-recovery",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "status": "active",
   "description": "提交和恢复A3远程作业：源码附件、CPU预检实现、批量提交、提交未知、排队、部分回合与失败重试。Job submission, preflight and batch recovery.",
   "keywords": [

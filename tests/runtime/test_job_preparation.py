@@ -125,19 +125,29 @@ def test_unknown_gpu_send_is_fenced_and_never_repeated(tmp_path):
     assert len(sends) == 1
 
 
-def test_submission_rejects_old_fields_and_direct_gpu(tmp_path):
+def test_submission_rejects_old_fields_and_prepares_a_direct_gpu_submit(tmp_path):
     calls = []
+
+    def request(method, path, payload=None):
+        calls.append((method, path))
+        if path == "/jobs":
+            return {"job_id": CPU_ID}
+        return {"status": "queued", "exit_code": None}
+
     for args in (
         {"command": ["python", "run.py"], "files": {"run.py": "print(1)"}},
         {"command": ["python", "run.py"], "workspace_files": []},
-        {"command": ["python", "run.py"], "gpu": True},
         {"prepared_id": "prepared-" + "a" * 32, "command": ["python"]},
     ):
-        result = job_tools.dispatch(
-            "job_submit", args, lambda *a: calls.append(a), workspace=tmp_path
-        )
+        result = job_tools.dispatch("job_submit", args, request, workspace=tmp_path)
         assert result.get("error"), result
-    assert not calls
+    # A GPU request is prepared in code rather than bounced back to the model.
+    gpu = job_tools.dispatch(
+        "job_submit", {"command": ["python", "run.py"], "gpu": True}, request, workspace=tmp_path
+    )
+    assert gpu["status"] == "prepared_pending_preflight"
+    assert gpu["prepared_id"].startswith("prepared-")
+    assert all(method == "POST" or "/preflight" in path for method, path in calls)
 
 
 def test_cpu_attachment_hashes_are_computed_for_root_or_experiment_files(tmp_path):
