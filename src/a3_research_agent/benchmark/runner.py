@@ -210,8 +210,30 @@ def report(results, model, directory):
 
 
 def run_task(task, url, key, model, tools, answers):
-    """One task, scored from what the model actually did."""
+    """One task, scored from what the model actually did.
+
+    A transport failure belongs to the harness, not to the model: it is recorded as
+    an error row so one broken task cannot throw away the rest of the batch.
+    """
     started = time.monotonic()
+    try:
+        return _run_task(task, url, key, model, tools, answers, started)
+    except Exception as error:  # noqa: BLE001 — recorded, never fatal for the batch
+        return {
+            "id": task.id,
+            "title": task.title,
+            "passed": False,
+            "detail": f"运行错误：{type(error).__name__}",
+            "names": [],
+            "calls": 0,
+            "invalid": 0,
+            "turns": round(time.monotonic() - started, 2),
+            "drift": {},
+            "answer": "",
+        }
+
+
+def _run_task(task, url, key, model, tools, answers, started):
     calls, invalid, text, guard = ask(
         url,
         key,
@@ -238,10 +260,14 @@ def run_task(task, url, key, model, tools, answers):
     }
 
 
-def run(model=None, only=None, output=None, answers=True, jobs=4):
+def run(model=None, only=None, output=None, answers=True, jobs=4, turns=None):
     url, key, configured = endpoint()
     tools = tool_catalog.TOOLS
-    selected = [task for task in TASKS if not only or task.id in only]
+    selected = [
+        task._replace(turns=turns) if turns else task
+        for task in TASKS
+        if not only or task.id in only
+    ]
     directory = Path(
         output or Path("runs/checks") / f"benchmark-{time.strftime('%Y-%m-%d_%H-%M-%S')}"
     )

@@ -100,6 +100,19 @@ def test_review_requires_a_number_in_every_metric():
     assert not score("plan_review_metrics", vague)[0]
 
 
+def test_sandbox_refuses_a_gpu_submit_that_skips_the_preflight():
+    invalid = []
+    direct = sandbox.execute(
+        {"name": "job_submit", "arguments": json.dumps({"command": ["train"], "gpu": True})}, invalid
+    )
+    assert direct["error"] == "gpu_job_needs_preparation"
+    assert "job_prepare" in direct["hint"]
+    prepared = sandbox.execute(
+        {"name": "job_submit", "arguments": json.dumps({"prepared_id": sandbox.PREPARED})}, invalid
+    )
+    assert prepared["ok"]
+
+
 def test_sandbox_reports_contract_violations_like_the_harness():
     invalid = []
     assert (

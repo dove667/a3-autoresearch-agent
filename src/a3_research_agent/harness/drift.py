@@ -16,6 +16,9 @@ INVALID_ARGUMENT_ERRORS = frozenset(
         "invalid_batch",
         "invalid_prepared_ids",
         "invalid_jobs",
+        "gpu_job_needs_preparation",
+        "gpu_preparation_required",
+        "prepared_id_unknown",
     }
 )
 POLLING_TOOLS = frozenset({"job_wait", "idle_wait", "job_status", "job_list", "gpu_status"})

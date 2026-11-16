@@ -129,8 +129,18 @@ def list_dir(args):
 
 
 def job_submit(args):
+    """Mirror the real contract: a GPU request is refused unless it was prepared."""
     if "prepared_id" in args and args["prepared_id"] != PREPARED:
         return {"ok": False, "error": "prepared_id_unknown", "hint": "Prepare the request first."}
+    if "prepared_id" not in args:
+        entries = args.get("jobs") or [args]
+        gpu = any(isinstance(item, dict) and item.get("gpu") for item in entries)
+        if gpu:
+            return {
+                "ok": False,
+                "error": "gpu_job_needs_preparation",
+                "hint": "Call job_prepare with this GPU request, then job_submit(prepared_id).",
+            }
     if isinstance(args.get("jobs"), list):
         return {"ok": True, "jobs": [{"ok": True, "job_id": JOB_A, "status": "queued"}]}
     return {"ok": True, "job_id": JOB_A, "status": "queued"}
