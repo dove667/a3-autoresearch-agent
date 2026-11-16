@@ -27,6 +27,8 @@ from a3_research_agent.host.knowledge_service.lifecycle import KnowledgeService
 from a3_research_agent.host.published_harness import published_source
 from a3_research_agent.project import checkout_root
 
+from .health import check as health_check
+
 REPO = checkout_root() or Path(__file__).resolve().parents[3]
 SHARED = {
     "A3_BENCHMARK_MEMORY_ROOT": REPO / "memory",
@@ -470,6 +472,12 @@ def run(
     commit: str | None = None,
     attempts: int = 1,
 ) -> dict:
+    from dotenv import load_dotenv
+
+    load_dotenv(REPO / ".env", override=False)
+    preflight = health_check()
+    if not preflight["healthy"]:
+        raise SystemExit("Benchmark preflight failed: " + json.dumps(preflight, ensure_ascii=False))
     selected = [task for task in TASKS if not only or task.id in only]
     if timeout:
         selected = [
