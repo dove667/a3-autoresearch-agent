@@ -56,7 +56,7 @@ TASKS = (
         [("read", lambda args: args.get("path") == "bench/measure.txt")],
         [],
         ["7", "2026-11-10-act-p142"],
-        8,
+        12,
     ),
     Task(
         "list_then_read",
@@ -68,7 +68,7 @@ TASKS = (
         ],
         [],
         ["10010", "10015"],
-        8,
+        12,
     ),
     Task(
         "job_exit_code",
@@ -77,7 +77,7 @@ TASKS = (
         [("job_status", lambda args: has_job(args, sandbox.JOB_A))],
         [],
         ["0"],
-        8,
+        12,
     ),
     Task(
         "cpu_submit_wait",
@@ -86,7 +86,7 @@ TASKS = (
         [("job_submit", any_args), ("job_wait", any_args)],
         ["job_prepare"],
         ["0"],
-        8,
+        12,
     ),
     Task(
         "batch_submit",
@@ -104,7 +104,7 @@ TASKS = (
         [("job_prepare", any_args), ("job_submit", prepared)],
         [],
         [],
-        8,
+        12,
     ),
     Task(
         "plan_blocked",
@@ -113,7 +113,7 @@ TASKS = (
         [("plan", any_args)],
         [],
         ["s5-closedloop-compare"],
-        8,
+        12,
     ),
     Task(
         "plan_add_step",
@@ -123,7 +123,7 @@ TASKS = (
         [("plan", step_on_route)],
         [],
         [],
-        8,
+        12,
     ),
     Task(
         "plan_review_metrics",
@@ -132,7 +132,7 @@ TASKS = (
         [("plan", review_with_numbers)],
         [],
         [],
-        8,
+        12,
     ),
     Task(
         "memory_recall",
@@ -141,7 +141,7 @@ TASKS = (
         [("memory", any_args)],
         [],
         ["11/120"],
-        8,
+        12,
     ),
     Task(
         "skill_method",
@@ -150,7 +150,7 @@ TASKS = (
         [("skills", any_args)],
         [],
         ["配对"],
-        8,
+        12,
     ),
     Task(
         "no_duplicate",
@@ -159,6 +159,6 @@ TASKS = (
         [("job_status", lambda args: has_job(args, sandbox.JOB_CANCELLED))],
         ["job_submit"],
         [],
-        5,
+        12,
     ),
 )
