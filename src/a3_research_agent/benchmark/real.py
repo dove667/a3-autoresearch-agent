@@ -611,6 +611,59 @@ TASKS += (
     ),
 )
 
+
+def _cpu_job_done(root: Path, plan: dict) -> bool:
+    value = _json_file(root, "results/bench-job.json")
+    ident = value.get("job_id")
+    return (
+        isinstance(ident, str)
+        and len(ident) == 32
+        and value.get("status") == "completed"
+        and value.get("exit_code") == 0
+    )
+
+
+def _cpu_job_score(root: Path, plan: dict, run: Path) -> tuple[bool, str]:
+    value = _json_file(root, "results/bench-job.json")
+    ident = value.get("job_id")
+    if (
+        isinstance(ident, str)
+        and len(ident) == 32
+        and value.get("status") == "completed"
+        and value.get("exit_code") == 0
+    ):
+        return True, "真实 CPU 作业提交并完成"
+    return False, f"结果文件不符合：{value}"
+
+
+TASKS += (
+    RealTask(
+        "cpu_job",
+        "提交并等待真实 CPU 作业",
+        "通过真实 job_submit/job_wait 跑一个 CPU 作业，返回作业号和退出码。",
+        "完成 benchmark：通过真实远端执行一次 CPU 作业",
+        "bench-job",
+        "按 workspace/TASK.md 提交并等待一个真实 CPU 作业，写出 results/bench-job.json。",
+        "结果文件 job_id 为 32 位，status=completed，exit_code=0。",
+        """# Benchmark task
+
+使用 `job_submit(command=["python","-c","print('bench-ok')"])` 提交一个真实 CPU 作业（不要 gpu，不要 prepared_id）。用 `job_wait` 等到终态。
+
+把回执写入 `results/bench-job.json`，格式：
+
+`{"job_id":"<32位作业号>","status":"completed","exit_code":0}`
+
+不要重复提交同一个作业。完成后调用 `session_stop(reason="benchmark task complete")`。
+""",
+        (),
+        _cpu_job_done,
+        _cpu_job_score,
+        timeout=900,
+        tags=("job", "remote"),
+    ),
+)
+
+
 def main():
     import argparse
 
