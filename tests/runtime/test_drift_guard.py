@@ -1,5 +1,7 @@
 """A drifting model gets bounded corrections, not an open-ended prose loop."""
 
+import json
+
 from a3_research_agent.harness import drift
 
 
@@ -54,3 +56,26 @@ def test_a_clean_call_resets_the_incident_chain():
         guard.observe([call("read", "{}")], invalid=True)
         guard.observe([call("list", '{"path":"x"}')], False)
     assert guard.observe([call("read", "{}")], invalid=True) == drift.INVALID_NOTICE
+
+
+def test_read_only_turns_earn_a_decision_reminder():
+    guard = drift.DriftGuard()
+    notices = [
+        guard.observe([{"name": "read", "arguments": json.dumps({"path": f"f{index}"})}], False)
+        for index in range(drift.READING_TURNS)
+    ]
+    assert notices[:-1] == [None] * (drift.READING_TURNS - 1)
+    assert notices[-1] == drift.EXPLORATION_NOTICE
+    assert guard.snapshot()["reading"] == drift.READING_TURNS
+    guard.observe([{"name": "job_submit", "arguments": "{}"}], False)
+    assert guard.snapshot()["reading"] == 0
+
+
+def test_plan_and_memory_reads_count_as_reading_but_a_review_does_not():
+    assert drift.read_only({"name": "plan", "arguments": '{"action":"show"}'})
+    assert drift.read_only({"name": "memory", "arguments": '{"action":"search"}'})
+    assert drift.read_only({"name": "list", "arguments": "{}"})
+    assert not drift.read_only({"name": "plan", "arguments": '{"action":"review"}'})
+    assert not drift.read_only({"name": "memory", "arguments": '{"action":"write"}'})
+    assert not drift.read_only({"name": "plan", "arguments": "not json"})
+    assert not drift.read_only({"name": "job_submit", "arguments": "{}"})

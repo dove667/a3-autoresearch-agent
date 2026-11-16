@@ -1,9 +1,11 @@
 """Keep a drifting model inside real tool use with bounded corrections.
 
-A weak model can answer with prose, repeat one rejected call, or loop on the same
-arguments. The guard turns that observation into one short correction and a bounded
+A weak model can answer with prose, repeat one rejected call, loop on the same
+arguments, or read for hour without deciding. The guard turns that observation into one short correction and a bounded
 forced tool choice; it never decides research content and never blocks the run.
 """
+
+import json
 
 INVALID_ARGUMENT_ERRORS = frozenset(
     {
@@ -17,6 +19,27 @@ INVALID_ARGUMENT_ERRORS = frozenset(
     }
 )
 POLLING_TOOLS = frozenset({"job_wait", "idle_wait", "job_status", "job_list", "gpu_status"})
+READ_ONLY_TOOLS = frozenset(
+    {
+        "read",
+        "list",
+        "search_files",
+        "recall",
+        "job_status",
+        "job_list",
+        "job_wait",
+        "job_artifact",
+        "gpu_status",
+        "export_list",
+        "idle_wait",
+    }
+)
+READ_ONLY_ACTIONS = {
+    "plan": {"show"},
+    "memory": {"read", "list", "search", "sources"},
+    "skills": {"list", "read", "read_resource"},
+}
+READING_TURNS = 8
 NO_TOOL_NOTICE = (
     "No tool call was received. Continue the research with high-level tool calls: read the "
     "existing evidence, submit or check a job, or record the plan decision."
@@ -29,9 +52,29 @@ INVALID_NOTICE = (
     "A tool call was rejected by its own contract. Read the error and hint, then resend the "
     "call with the required fields, or choose the tool that matches the actual need."
 )
+EXPLORATION_NOTICE = (
+    "Only reading for several turns: decide now instead of gathering more. Update the plan with the "
+    "next step, submit a prepared job, or record the route decision — including the operator input "
+    "you are missing — as a review. Further reading does not replace a decision."
+)
 FORCE_ATTEMPTS = 2
 MAX_INCIDENTS = 3
 MAX_NO_TOOL = 6
+
+
+def read_only(call):
+    """A call that inspects existing state without changing research state."""
+    name = call.get("name")
+    if name in READ_ONLY_TOOLS:
+        return True
+    actions = READ_ONLY_ACTIONS.get(name)
+    if actions is None:
+        return False
+    try:
+        arguments = json.loads(call.get("arguments") or "{}")
+    except (TypeError, ValueError):
+        return False
+    return isinstance(arguments, dict) and arguments.get("action", "show") in actions
 
 
 class DriftGuard:
@@ -48,6 +91,7 @@ class DriftGuard:
         self.invalid = 0
         self.repeat = 0
         self.incidents = 0
+        self.reading = 0
         self.last = None
 
     def force_tool_choice(self):
@@ -59,7 +103,8 @@ class DriftGuard:
             self.force -= 1
 
     def observe(self, calls, invalid):
-        """Return a correction notice when this tool response drifted, else None."""
+        """Return a correction notice for this tool response, else None."""
+        reminder = self.exploration(calls)
         self.invalid = self.invalid + 1 if invalid else 0
         signature = sorted({(call.get("name"), call.get("arguments")) for call in calls})
         repeated = bool(signature) and signature == self.last
@@ -68,12 +113,20 @@ class DriftGuard:
         polled = any(name in POLLING_TOOLS for name, _ in signature)
         drifted = invalid or (self.repeat >= 1 and not polled)
         self.incidents = self.incidents + 1 if drifted else 0
-        if not drifted or self.incidents > self.max_incidents:
+        if drifted and self.incidents <= self.max_incidents:
+            self.force = self.force_attempts
+            if invalid:
+                return INVALID_NOTICE
+            return REPEAT_NOTICE if repeated else NO_TOOL_NOTICE
+        return reminder
+
+    def exploration(self, calls):
+        """Count consecutive read-only turns; a decision is needed before more reading."""
+        if not calls or not all(read_only(call) for call in calls):
+            self.reading = 0
             return None
-        self.force = self.force_attempts
-        if invalid:
-            return INVALID_NOTICE
-        return REPEAT_NOTICE if repeated else NO_TOOL_NOTICE
+        self.reading += 1
+        return EXPLORATION_NOTICE if self.reading % READING_TURNS == 0 else None
 
     def observe_empty(self):
         """A response without any tool call is always corrected."""
@@ -96,4 +149,5 @@ class DriftGuard:
             "invalid": self.invalid,
             "repeat": self.repeat,
             "incidents": self.incidents,
+            "reading": self.reading,
         }
