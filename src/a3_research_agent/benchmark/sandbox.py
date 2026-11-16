@@ -7,6 +7,7 @@ kind of structured error a real run returns.
 
 import json
 import re
+from pathlib import Path
 
 from a3_research_agent.harness import job_failure, tool_catalog
 
@@ -83,9 +84,23 @@ MEMORY = {
     "d9ebbacf33e6": "2×10 配对：5k 入盒 11/120，20k 7/120；两版原生 success 均 0/6。",
 }
 
-SKILLS = {
+SKILL_FILES = {
     "a3-mujoco-autoresearch": "A3 机器人策略实验：选择 ACT、扩散/流、VLA 方法，诊断数据与训练，做配对闭环评测。",
     "a3-job-recovery": "提交和恢复 A3 远程作业：源码附件、CPU 预检、批量提交、提交未知、排队与失败重试。",
+}
+
+
+def _skill_text(identifier):
+    """Serve the real skill body so the probe measures the skill, not a stub."""
+    path = Path(__file__).resolve().parents[3] / "skills" / identifier / "SKILL.md"
+    try:
+        return path.read_text()[:6000]
+    except OSError:
+        return SKILL_FILES[identifier]
+
+
+SKILLS = {
+    identifier: description for identifier, description in SKILL_FILES.items()
 }
 
 
@@ -280,7 +295,7 @@ def skills_tool(args):
             ],
         }
     if args.get("id") in SKILLS:
-        return {"ok": True, "id": args["id"], "content": SKILLS[args["id"]]}
+        return {"ok": True, "id": args["id"], "content": _skill_text(args["id"])}
     return {"ok": False, "error": "skill_not_found", "hint": "List skills first."}
 
 

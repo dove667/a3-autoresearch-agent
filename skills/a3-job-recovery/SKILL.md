@@ -3,12 +3,25 @@ name: a3-job-recovery
 description: 提交和恢复A3远程作业：源码附件、CPU预检、提交未知、排队、部分回合与失败重试。Job submission, preflight and
   recovery.
 metadata:
-  version: 0.2.0
+  version: 0.3.0
 ---
 
 # 提交与接续研究作业
 
 适用：提交研究脚本、提交结果不明、长期排队、执行失败或评测只完成一部分。先确认作业身份，再决定等待、修复或重试。
+
+## 按情况选调用（照抄参数）
+
+| 情况 | 调用 | 关键点 |
+|---|---|---|
+| 单个 CPU 作业 | `job_submit(command=[...], gpu=false)` | `command` 必须是数组 |
+| 多个独立作业 | `job_submit(jobs=[{...},{...}])` 或连续两次 `job_submit` | 批量一次拿逐项结果；分开提交同样有效 |
+| GPU 作业 | `job_submit(gpu=true, command=[...])` | 未准备时工具会自动准备并返回 `prepared_id` 与 `preflight_job_id`；预检跑完后 `job_submit(prepared_id="prepared-...")` |
+| 提交结果不明 | 记下回执里的 `job_id`，先 `job_status(job_id=...)` 或 `job_list` | 确认在跑就不要重提；确认没建起来才重提 |
+| 作业失败 | `job_status(job_id=...)` 读 `diagnosis.failure_class` 与 `suggested_action` | 失败原因以 diagnosis 为准，不要自己猜 |
+| 要读产物 | `job_artifact(job_id=..., path=..., area="outputs")` | 路径相对作业输出目录；不存在会返回 `artifact_not_found` |
+
+提交成功后把 job ID、源码回执和预期结果位置绑定到 plan，再决定等待或继续。
 
 ## 提交源码
 
