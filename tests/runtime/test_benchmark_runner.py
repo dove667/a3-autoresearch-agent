@@ -3,8 +3,8 @@
 import json
 
 from a3_research_agent.benchmark import runner, sandbox
-from a3_research_agent.harness import drift
 from a3_research_agent.benchmark.tasks import TASKS
+from a3_research_agent.harness import drift
 
 
 def fake_ask(url, key, model, messages, tools, turns, answers=True):
