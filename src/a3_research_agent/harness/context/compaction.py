@@ -17,38 +17,11 @@ import uuid
 from a3_research_agent.harness import history as history_tools
 from a3_research_agent.harness import state_paths
 from a3_research_agent.harness.context import manager as cm
-from a3_research_agent.harness.context import spill as spill_tools
 
 RESULT_PATH = state_paths.COMPACTION_RESULT
 EPOCH_PATH = state_paths.COMPACTION_EPOCH
 CHECKPOINT_OPEN = cm.MEMORY_OPEN
 CHECKPOINT_CLOSE = cm.MEMORY_CLOSE
-KEEP_ROUNDS = 5
-SECTION_TITLES = (
-    "Primary request and intent",
-    "Key technical concepts",
-    "Files and code",
-    "Errors and fixes",
-    "Pending tasks",
-    "Current work",
-    "Next step",
-    "Key context",
-)
-# Retained as a presentation helper; Host instructions remain authoritative.
-STRUCTURED_INSTRUCTION = "Output a compact summary. Do not call any tool.\n" + "\n".join(
-    "## " + title for title in SECTION_TITLES
-)
-CHECKPOINT_PREAMBLE = cm.MEMORY_PREAMBLE
-
-
-def frame_checkpoint(body):
-    return f"{CHECKPOINT_PREAMBLE}\n\n{CHECKPOINT_OPEN}\n{body.strip()}\n{CHECKPOINT_CLOSE}"
-
-
-def missing_sections(summary):
-    return [
-        title for title in SECTION_TITLES if "## " + title.lower() not in (summary or "").lower()
-    ]
 
 
 def digest(messages):
@@ -66,13 +39,11 @@ class ForkCompactor:
         *,
         tools=None,
         trigger_tokens=None,
-        keep_rounds=KEEP_ROUNDS,
         result_path=RESULT_PATH,
         hard_wait_seconds=300,
     ):
         self.req, self.tools = req, list(tools or [])
         self.trigger_tokens = trigger_tokens
-        self.keep_rounds = max(1, int(keep_rounds))
         self.result_path = (
             state_paths.path(result_path)
             if not pathlib.Path(result_path).is_absolute()
@@ -193,6 +164,7 @@ class ForkCompactor:
             "prefix_sha256": digest(snapshot),
             "source": source,
             "snapshot_bytes": cm.size(snapshot),
+            "state_refresh": json.loads(json.dumps(extra_messages or [], ensure_ascii=False)),
         }
         cm.atomic(self.result_path, json.dumps(record))
         hard_budget = budget if budget is not None else self._budget(extra_messages)
@@ -248,18 +220,16 @@ class ForkCompactor:
             },
         }
 
-    def _tail(self, snapshot):
-        return [
-            message
-            for group in history_tools.recent_rounds(snapshot, self.keep_rounds)
-            for message in group
-        ]
-
     def _run(self, record, snapshot, target):
         result = dict(record)
         try:
             prepared, progress = cm.prepare(
-                snapshot, self.tools, self.req, budget_limit=target, force_summary=True
+                snapshot,
+                self.tools,
+                self.req,
+                budget_limit=target,
+                force_summary=True,
+                extra_messages=record.get("state_refresh", []),
             )
             if progress is None:
                 raise cm.ContextError("Soft fork produced no compression")
@@ -414,7 +384,3 @@ class ForkCompactor:
             "before_bytes": cm.size(messages),
             "after_bytes": cm.size(candidate),
         }
-
-
-def spill_for_tool(result, label="result"):
-    return spill_tools.maybe_spill(result, label=label)

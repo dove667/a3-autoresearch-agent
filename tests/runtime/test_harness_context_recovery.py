@@ -8,6 +8,7 @@ import pathlib
 import uuid
 
 import pytest
+from summary_fixtures import handoff_from_request
 
 from a3_research_agent.harness import state_paths
 
@@ -38,7 +39,9 @@ def messages(length=60000):
     return [{"role": "user", "content": "FIRST-CHUNK-SENTINEL " + "a" * length}]
 
 
-def completed():
+def completed(
+    body=None, text="Mock state with completed checks, unknown results and evidence references."
+):
     return {
         "status": "completed",
         "output": [
@@ -47,7 +50,7 @@ def completed():
                 "content": [
                     {
                         "type": "output_text",
-                        "text": "Mock state with completed checks, unknown results and evidence references; no semantic-model claim.",
+                        "text": handoff_from_request(body, text) if body else text,
                     }
                 ],
             }
@@ -63,7 +66,7 @@ def test_transient_middle_summary_failure_recovers_in_same_prepare(tmp_path, mon
     def provider(*args):
         nonlocal count
         count += 1
-        return {"http_error": 502} if count == 2 else completed()
+        return {"http_error": 502} if count == 2 else completed(args[-1])
 
     result, record = context.prepare(messages(), [], provider)
     assert result and record and context.paired(result)
@@ -73,7 +76,7 @@ def test_transient_middle_summary_failure_recovers_in_same_prepare(tmp_path, mon
 def test_completed_summary_is_reused_after_restart(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     context = load_context()
-    result, record = context.prepare(messages(), [], lambda *a: completed())
+    result, record = context.prepare(messages(), [], lambda *a: completed(a[-1]))
     restarted = load_context()
     replay, _ = restarted.prepare(messages(), [], lambda *a: pytest.fail("duplicate dispatch"))
     assert replay == result and record["cumulative_summary_calls"] == 1
@@ -85,7 +88,7 @@ def test_same_deterministic_budget_error_does_not_spend_again_on_restart(tmp_pat
 
     def provider(*args):
         calls.append(args)
-        return completed()
+        return completed(args[-1])
 
     first = load_context()
     with pytest.raises(first.ContextError):
@@ -139,7 +142,7 @@ def test_malformed_provider_response_does_not_repeat_after_restart(tmp_path, mon
 def test_corrupted_summary_record_does_not_allow_repeat_dispatch(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     context = load_context()
-    context.prepare(messages(), [], lambda *a: completed())
+    context.prepare(messages(), [], lambda *a: completed(a[-1]))
     path = next(context.archive_root().glob("summary-request-*.json"))
     state = json.loads(path.read_text())
     state["fingerprint"] = "damaged"
@@ -249,8 +252,10 @@ def test_summary_headroom_does_not_recursively_split_a_feasible_plan(tmp_path, m
 
     def provider(*args):
         calls.append(args)
-        response = completed()
-        response["output"][0]["content"][0]["text"] = "Preserved mock state. " + "x" * 5000
+        response = completed(args[-1])
+        response["output"][0]["content"][0]["text"] = handoff_from_request(
+            args[-1], text="Preserved mock state. " + "x" * 5000
+        )
         return response
 
     result, record = context.prepare(messages(90000), [], provider)
@@ -265,7 +270,7 @@ def test_oversized_summary_is_diagnosed_and_restart_is_bounded(tmp_path, monkeyp
 
     def provider(*args):
         calls.append(args)
-        response = completed()
+        response = completed(args[-1])
         response["output"][0]["content"][0]["text"] = "Unbounded summary. " + "x" * 12000
         return response
 
@@ -356,7 +361,7 @@ def test_token_compaction_uses_summary_operation_and_preserves_pairing(tmp_path,
 
     def provider(method, path, body):
         requests.append((method, path, body))
-        return completed()
+        return completed(body)
 
     result, record = context.prepare(messages(80000), [], provider)
     assert context.paired(result)
@@ -422,7 +427,9 @@ def test_escaping_heavy_summary_is_sized_like_host_envelope(tmp_path, monkeypatc
             main_owner="main",
             usage_log=tmp_path / "usage.jsonl",
             remote_call=lambda *args: {},
-            forward_model=lambda **kw: provider_calls.append(kw) or completed(),
+            forward_model=lambda **kw: (
+                provider_calls.append(kw) or completed(json.loads(kw["input"][0]["content"]))
+            ),
             context_budget={
                 "main_context_tokens": 500000,
                 "worker_context_tokens": 500000,
@@ -468,8 +475,8 @@ def test_complete_utf8_summary_can_exceed_old_byte_limit(tmp_path, monkeypatch):
 
     def provider(*args):
         calls.append(args[-1])
-        result = completed()
-        result["output"][0]["content"][0]["text"] = "汉" * 2100
+        result = completed(args[-1])
+        result["output"][0]["content"][0]["text"] = handoff_from_request(args[-1], text="汉" * 2100)
         return result
 
     result, _ = context.prepare(messages(), [], provider)
@@ -495,7 +502,7 @@ def test_persistently_overlong_summary_still_blocks_with_original_evidence(tmp_p
 
     def invalid(method, path, body):
         calls.append(body)
-        result = completed()
+        result = completed(body)
         result["output"][0]["content"][0]["text"] = "汉" * 20000
         return result
 
@@ -518,7 +525,7 @@ def test_unconsumed_tool_result_fits_alone_and_reaches_next_decision(tmp_path, m
         {"type": "function_call", "name": "read", "call_id": "fresh", "arguments": "{}"},
         {"type": "function_call_output", "call_id": "fresh", "output": result_text},
     ]
-    result, _ = context.prepare(original, [], lambda *args: completed())
+    result, _ = context.prepare(original, [], lambda *args: completed(args[-1]))
     assert result[-1]["output"] == result_text
     assert context.paired(result)
 
@@ -536,7 +543,7 @@ def test_complete_fresh_tool_batch_is_not_summarized_to_meet_soft_target(tmp_pat
         for i in range(8)
     ]
     original = [{"role": "user", "content": "old " * 2200}] + calls + outputs
-    result, _ = context.prepare(original, [], lambda *args: completed())
+    result, _ = context.prepare(original, [], lambda *args: completed(args[-1]))
     assert result[-len(calls + outputs) :] == calls + outputs
     assert context.paired(result)
 
@@ -575,7 +582,7 @@ def test_repeated_read_compact_cycles_deliver_new_observation_without_closing_ta
             {"type": "function_call", "name": "read", "call_id": str(i), "arguments": "{}"},
             {"type": "function_call_output", "call_id": str(i), "output": fact},
         ]
-        state, _ = context.prepare(state, [], lambda *args: completed())
+        state, _ = context.prepare(state, [], lambda *args: completed(args[-1]))
         assert state[-1]["output"] == fact
         assert context.paired(state)
     assert not (tmp_path / "conversation/run-outcome.json").exists()
@@ -626,7 +633,7 @@ def test_protected_batch_does_not_carry_avoidable_old_tail(tmp_path, monkeypatch
         {"type": "function_call", "name": "read", "call_id": "fresh", "arguments": "{}"},
         {"type": "function_call_output", "call_id": "fresh", "output": "CURRENT " + "z" * 7500},
     ]
-    result, _ = context.prepare(original + fresh, [], lambda *args: completed())
+    result, _ = context.prepare(original + fresh, [], lambda *args: completed(args[-1]))
     assert result[-2:] == fresh
     assert context.message_cost(result) <= context.decision_budget([])
 
@@ -648,7 +655,7 @@ def test_summary_does_not_spend_calls_on_opaque_provider_ciphertext(tmp_path, mo
     original += [{"role": "user", "content": "Later bounded observation."} for _ in range(6)]
     requests = []
     result, record = context.prepare(
-        original, [], lambda *args: requests.append(args[-1]) or completed()
+        original, [], lambda *args: requests.append(args[-1]) or completed(args[-1])
     )
     assert len(requests) == 1
     assert "OPAQUE-CIPHER-SENTINEL" not in json.dumps(requests)
@@ -676,7 +683,7 @@ def test_token_soft_target_does_not_swallow_fresh_batch_with_tools(tmp_path, mon
         {"type": "function_call_output", "call_id": "fresh", "output": "NEW DATA " * 4500},
     ]
     original = [{"role": "user", "content": "old history " * 20000}] + fresh
-    result, record = context.prepare(original, tools, lambda *args: completed())
+    result, record = context.prepare(original, tools, lambda *args: completed(args[-1]))
     assert result[-3:] == fresh
     assert context.paired(result)
     assert context.message_cost(result) <= context.decision_budget(tools)
@@ -716,7 +723,7 @@ def test_invalid_second_manifest_keeps_both_manifests_and_checkpoint(tmp_path, m
 def test_changed_reserve_reuses_same_full_transcript_answer(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     context = load_context()
-    context.prepare(messages(), [], lambda *a: completed())
+    context.prepare(messages(), [], lambda *a: completed(a[-1]))
     context.TOKEN_CONFIG["decision_input_tokens"] = 47000
     result, _ = context.prepare(
         messages(), [], lambda *a: pytest.fail("reserve change redispatched")
@@ -743,7 +750,7 @@ def test_token_target_keeps_useful_tail_instead_of_fixed_six_messages(tmp_path, 
 
     def summarize(*args):
         calls.append(args)
-        return completed()
+        return completed(args[-1])
 
     result, record = context.prepare(original, [], summarize, budget_limit=17000)
     retained = result[1:]

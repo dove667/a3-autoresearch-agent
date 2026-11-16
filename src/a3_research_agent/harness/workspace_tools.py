@@ -10,7 +10,7 @@ from .tool_contracts import ToolInputError, arguments, boolean, definition, fail
 
 MAX_FILE_BYTES = 1024 * 1024
 MAX_SEARCH_BYTES = 8 * 1024 * 1024
-SKIP_DIRECTORIES = {".git", "__pycache__", ".autorun-spill"}
+SKIP_DIRECTORIES = {".git", "__pycache__"}
 STRING = {"type": "string"}
 SEARCH_FIELDS = {
     "path": STRING,

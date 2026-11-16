@@ -14,6 +14,7 @@ import types
 import pytest
 
 from a3_research_agent.harness import state_paths
+from a3_research_agent.harness.context import facts as research_facts
 
 SOURCE = pathlib.Path(__file__).resolve().parents[2] / "src/a3_research_agent/harness"
 
@@ -26,7 +27,6 @@ def load(name):
             {
                 "context_manager": "context/manager.py",
                 "operational_state": "operational_state.py",
-                "spill": "context/spill.py",
                 "recall": "history.py",
             }[name]
         ),
@@ -167,13 +167,14 @@ def test_atomic_concurrent_writers_publish_only_complete_values(tmp_path, monkey
     assert target.read_text() in {"a" * 5000, "b" * 5000}
 
 
-def test_corrupt_legacy_spill_is_not_reused(tmp_path, monkeypatch):
+def test_corrupt_tool_output_archive_is_not_reused(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    spill = load("spill")
-    first = json.loads(spill.maybe_spill("x" * 60000))
+    cm = load("context_manager")
+    original = output({"content": "x" * 60000})
+    first = json.loads(cm.archived_output(original, 12000)["output"])
     state_paths.path(first["path"]).write_text("TRUNCATED")
-    with pytest.raises(Exception, match="corrupt|verification"):
-        spill.maybe_spill("x" * 60000)
+    with pytest.raises(Exception, match="verification"):
+        cm.archived_output(original, 12000)
 
 
 def agent_functions(*names):
@@ -224,6 +225,7 @@ def test_archive_failure_leaves_executed_raw_result_in_journal(tmp_path, monkeyp
     monkeypatch.chdir(tmp_path)
     cm = load("context_manager")
     ns = {
+        "research_facts": research_facts,
         "json": json,
         "context_manager": cm,
         "state_paths": state_paths,
@@ -265,6 +267,7 @@ def test_recovery_publishes_persisted_result_without_reexecuting_tool(tmp_path, 
     }
     cm.atomic(state_paths.path("pending-calls.json"), json.dumps(journal))
     ns = {
+        "research_facts": research_facts,
         "json": json,
         "pathlib": pathlib,
         "hashlib": hashlib,
@@ -383,6 +386,7 @@ def test_raw_read_journal_rebuilds_receipt_before_model_delivery(tmp_path, monke
         ),
     )
     ns = {
+        "research_facts": research_facts,
         "json": json,
         "pathlib": pathlib,
         "hashlib": hashlib,

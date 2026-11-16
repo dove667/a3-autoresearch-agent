@@ -12,6 +12,8 @@ import time
 from bisect import bisect_left
 
 from a3_research_agent.harness import state_paths
+from a3_research_agent.harness.context import summary as research_summary
+from a3_research_agent.harness.context import tool_output
 
 ROOT = pathlib.Path(state_paths.ARCHIVES)
 
@@ -224,10 +226,7 @@ def summary_message(message):
     """Ciphertext is provider state, not readable evidence for a summary model."""
     if message.get("type") != "reasoning" or "encrypted_content" not in message:
         return message
-    return {
-        **{key: value for key, value in message.items() if key != "encrypted_content"},
-        "archive_notice": "Opaque provider state remains in the original snapshot.",
-    }
+    return {key: value for key, value in message.items() if key != "encrypted_content"}
 
 
 def full_summary(messages, source, req, *, output_tokens=None):
@@ -236,16 +235,22 @@ def full_summary(messages, source, req, *, output_tokens=None):
         output_tokens = TOKEN_CONFIG.get("target_tokens")
     if type(output_tokens) is not int or output_tokens <= 0:
         raise ContextError("Summary requires a positive remaining context-token budget")
+    readable = [summary_message(m) for m in messages]
     original = {
         "source": source,
-        "transcript": json.dumps([summary_message(m) for m in messages], ensure_ascii=False),
+        "transcript": json.dumps(readable, ensure_ascii=False),
     }
     request = {**original, "max_output_tokens": output_tokens}
     limit = TOKEN_CONFIG["summary_input_tokens"]
     cost = request_cost(request)
-    fingerprint = hashlib.sha256(json.dumps(original, sort_keys=True).encode()).hexdigest()
+    fingerprint = hashlib.sha256(
+        json.dumps(
+            {**original, "handoff_version": research_summary.VERSION}, sort_keys=True
+        ).encode()
+    ).hexdigest()
     path = state_paths.path(ROOT / ("summary-request-" + fingerprint + ".json"))
     attempts = 0
+    validation_feedback = None
     if path.exists():
         try:
             state = json.loads(path.read_text())
@@ -261,10 +266,17 @@ def full_summary(messages, source, req, *, output_tokens=None):
         if not valid or state.get("fingerprint") != fingerprint:
             raise ContextError("Summary request record checksum mismatch")
         if state.get("status") == "completed":
+            try:
+                research_summary.validate(state.get("document"), readable)
+                if research_summary.render(state["document"]) != state["summary"]:
+                    raise research_summary.SummaryValidationError("saved_summary_render_mismatch")
+            except research_summary.SummaryValidationError as error:
+                raise ContextError("Saved summary failed source validation") from error
             if metric(state["summary"]) > output_tokens:
                 raise ContextError("Saved summary exceeds the current context-token budget")
             return state["summary"], state.get("usage"), cost
         attempts = state.get("attempts", 1)
+        validation_feedback = state.get("validation_feedback")
         if attempts >= SUMMARY_ATTEMPTS or state.get("retryable") is False:
             raise ContextError(
                 "Summary request failed after bounded attempts; original snapshot retained"
@@ -285,9 +297,35 @@ def full_summary(messages, source, req, *, output_tokens=None):
         atomic(path, json.dumps(state, ensure_ascii=False))
 
     while attempts < SUMMARY_ATTEMPTS:
+        if validation_feedback:
+            request["transcript"] = json.dumps(
+                readable
+                + [
+                    {
+                        "type": "summary_validation_feedback",
+                        "error": validation_feedback,
+                        "content": "Repair the handoff schema, source quotes and numeric claims. This metadata is not a citable source.",
+                    }
+                ],
+                ensure_ascii=False,
+            )
+            cost = request_cost(request)
+            if cost > limit:
+                raise ContextError(
+                    "Summary repair metadata exceeds input budget; original snapshot retained"
+                )
+            if window is not None:
+                while cost + request["max_output_tokens"] > window:
+                    request["max_output_tokens"] = window - cost
+                    if request["max_output_tokens"] <= 0:
+                        raise ContextError("Summary repair leaves no output space")
+                    cost = request_cost(request)
         attempts += 1
         persist(
-            status="dispatched", attempts=attempts, max_output_tokens=request["max_output_tokens"]
+            status="dispatched",
+            attempts=attempts,
+            max_output_tokens=request["max_output_tokens"],
+            validation_feedback=validation_feedback,
         )
         try:
             response = req("POST", "/v1/summary", request)
@@ -309,13 +347,37 @@ def full_summary(messages, source, req, *, output_tokens=None):
         elif metric(summary) > request["max_output_tokens"]:
             failure, retryable = "summary_text_exceeds_token_budget", False
         if failure is None:
-            usage = {**(response.get("usage") or {}), "a3_summary_attempts": attempts}
-            persist(status="completed", summary=summary, usage=usage, attempts=attempts)
-            return summary, usage, cost
+            try:
+                document, rendered, validation = research_summary.parse(summary, readable)
+                if metric(rendered) > request["max_output_tokens"]:
+                    raise research_summary.SummaryValidationError("summary_rendered_exceeds_budget")
+            except research_summary.SummaryValidationError as error:
+                failure = str(error)
+                validation_feedback = failure
+        if failure is None:
+            usage = {
+                **(response.get("usage") or {}),
+                "a3_summary_attempts": attempts,
+                "a3_summary_validation": validation,
+            }
+            persist(
+                status="completed",
+                summary=rendered,
+                document=document,
+                usage=usage,
+                attempts=attempts,
+            )
+            return rendered, usage, cost
         record = archive(
             {"reason": failure, "source": source, "response": response}, "summary-failure"
         )
-        persist(status="failed", failure=record, attempts=attempts, retryable=retryable)
+        persist(
+            status="failed",
+            failure=record,
+            attempts=attempts,
+            retryable=retryable,
+            validation_feedback=validation_feedback,
+        )
         if not retryable or attempts >= SUMMARY_ATTEMPTS:
             raise ContextError(failure + "; original snapshot retained; record=" + record)
         time.sleep(2 ** (attempts - 1))
@@ -461,6 +523,28 @@ def archived_output(message, maximum_bytes):
     }
     if artifact is not None:
         view["artifact"] = artifact
+    fact_value = value
+    if artifact is not None and decoded:
+        try:
+            fact_value = json.loads(decoded)
+        except (ValueError, TypeError):
+            pass
+    facts, omitted, complete = tool_output.select_facts(fact_value)
+    if artifact is not None:
+        receipt_facts, receipt_omitted, receipt_complete = tool_output.select_facts(value)
+        merged = dict(receipt_facts)
+        for field, fact in facts.items():
+            if field in merged and merged[field] == fact:
+                continue
+            key = "artifact." + field if field in merged else field
+            if len(merged) < tool_output.MAX_FACTS:
+                merged[key] = fact
+            else:
+                omitted += 1
+        facts = merged
+        omitted += receipt_omitted
+        complete = complete and receipt_complete
+    view.update(facts=facts, omitted_facts=omitted, facts_complete=complete and not omitted)
     head, tail = 1600, 400
     while True:
         view["preview"] = (
@@ -469,9 +553,13 @@ def archived_output(message, maximum_bytes):
         candidate = dict(message, output=json.dumps(view, ensure_ascii=False))
         if size(candidate) <= maximum_bytes:
             return candidate
-        if not head:
+        if head:
+            head, tail = head // 2, tail // 2
+        elif tool_output.trim_optional_fact(view["facts"]):
+            view["omitted_facts"] += 1
+            view["facts_complete"] = False
+        else:
             raise ContextError("tool result reference metadata exceeds inline budget")
-        head, tail = head // 2, tail // 2
 
 
 def bound_tool_result(result, call, maximum_bytes=12000):
@@ -556,7 +644,8 @@ def prepare(messages, tools, req, *, extra_messages=None, budget_limit=None, for
         return messages, None
     if not paired(messages):
         raise ContextError("unsafe tool boundary")
-    source = archive(messages, "snapshot")
+    summary_messages = messages + list(extra_messages or [])
+    source = archive(summary_messages, "snapshot")
     fresh = fresh_tool_boundary(messages)
     target = min(
         budget,
@@ -570,7 +659,9 @@ def prepare(messages, tools, req, *, extra_messages=None, budget_limit=None, for
     output_tokens = target - message_cost([memory_message("", source)] + required_tail)
     if output_tokens <= 0:
         raise ContextError("Fresh observations leave no summary space in the context target")
-    summary, usage, summary_cost = full_summary(messages, source, req, output_tokens=output_tokens)
+    summary, usage, summary_cost = full_summary(
+        summary_messages, source, req, output_tokens=output_tokens
+    )
     memory = memory_message(summary, source)
     tail_target = target - message_cost([memory])
     cut = _token_tail_boundary(messages, tail_target, fresh if required_tail else len(messages))

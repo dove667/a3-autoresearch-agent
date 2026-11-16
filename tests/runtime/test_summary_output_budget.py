@@ -1,4 +1,5 @@
 from a3_research_agent.harness import state_paths
+from tests.runtime.summary_fixtures import handoff_from_request
 
 """A single full-history summary gets enough output space to complete."""
 
@@ -19,6 +20,13 @@ def summary_client(tmp_path, output_reserve, calls):
     def provider(**arguments):
         calls.append(arguments)
         enough = arguments["max_output_tokens"] >= 1536
+        payload = json.loads(arguments["input"][0]["content"])
+        text = "unused transport-only response"
+        if payload["transcript"].startswith("["):
+            text = handoff_from_request(
+                payload,
+                "Current goal, verified experiment and code references; continue the pending run.",
+            )
         return {
             "status": "completed" if enough else "incomplete",
             "output": [
@@ -27,7 +35,7 @@ def summary_client(tmp_path, output_reserve, calls):
                     "content": [
                         {
                             "type": "output_text",
-                            "text": "Current goal, verified experiment and code references; continue the pending run.",
+                            "text": text,
                         }
                     ],
                 }

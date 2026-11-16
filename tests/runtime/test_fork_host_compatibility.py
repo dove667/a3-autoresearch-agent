@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 from a3_research_agent.harness import state_paths
 from a3_research_agent.host.gateway.app import create_app
 from a3_research_agent.host.inputs.feedback import HumanFeedback
+from tests.runtime.summary_fixtures import handoff_from_request
 
 SOURCE = pathlib.Path(__file__).resolve().parents[2] / "src/a3_research_agent/harness"
 
@@ -25,7 +26,6 @@ def modules(tmp_path, monkeypatch):
     canonical = {
         "context_manager": "a3_research_agent.harness.context.manager",
         "recall": "a3_research_agent.harness.history",
-        "spill": "a3_research_agent.harness.context.spill",
         "compaction": "a3_research_agent.harness.context.compaction",
     }
     for name, target in canonical.items():
@@ -84,7 +84,7 @@ def test_real_host_summary_protocol_role_and_feedback(modules, tmp_path):
                     "content": [
                         {
                             "type": "output_text",
-                            "text": "Goal retained. Evidence remains uncertain; preserve source and continue verification.",
+                            "text": handoff_from_request(json.loads(kwargs["input"][0]["content"])),
                         }
                     ],
                 }
@@ -140,14 +140,6 @@ def test_real_host_summary_protocol_role_and_feedback(modules, tmp_path):
     assert cm.size(result) < cm.size(original) and cm.paired(result)
 
 
-def test_initial_user_plus_continuous_tools_has_bounded_tail(modules):
-    original = tool_history()
-    fork = modules["compaction"].ForkCompactor(lambda *a: {})
-    tail = fork._tail(original)
-    assert len(tail) < len(original)
-    assert modules["context_manager"].paired(tail)
-
-
 def test_stale_result_cannot_replace_new_task(modules):
     (state_paths.path("compaction-result.json")).parent.mkdir(parents=True, exist_ok=True)
     state_paths.path("compaction-result.json").write_text(
@@ -192,7 +184,10 @@ def test_hard_budget_wait_is_bounded_and_never_returns_oversize(modules):
                     "content": [
                         {
                             "type": "output_text",
-                            "text": "Goals retained; findings remain unknown until verified from original source.",
+                            "text": handoff_from_request(
+                                args[2],
+                                "Goals retained; findings remain unknown until verified from original source.",
+                            ),
                         }
                     ],
                 }
@@ -225,7 +220,10 @@ def test_replacement_replays_after_crash_before_checkpoint_and_acknowledges_afte
                     "content": [
                         {
                             "type": "output_text",
-                            "text": "Original goals retained; unknown results still require direct evidence verification.",
+                            "text": handoff_from_request(
+                                args[2],
+                                "Original goals retained; unknown results still require direct evidence verification.",
+                            ),
                         }
                     ],
                 }
@@ -282,7 +280,10 @@ def test_interrupted_fork_resumes_pure_summary_and_preserves_source(modules):
                         "content": [
                             {
                                 "type": "output_text",
-                                "text": "Complete recovered research state and original evidence references.",
+                                "text": handoff_from_request(
+                                    args[2],
+                                    "Complete recovered research state and original evidence references.",
+                                ),
                             }
                         ],
                     }
@@ -355,7 +356,11 @@ def test_real_token_host_budget_includes_tools_and_operational_frame(
                     "content": [
                         {
                             "type": "output_text",
-                            "text": "Goals and constraints preserved. Observations remain unverified until checked against sources.",
+                            "text": (
+                                handoff_from_request(json.loads(kwargs["input"][0]["content"]))
+                                if kwargs["model"] == "summary-model"
+                                else "Continue research."
+                            ),
                         }
                     ],
                 }
@@ -469,12 +474,12 @@ def test_json_null_result_and_fresh_epoch_are_supported(modules):
     assert len(fork._epoch()) == 32
 
 
-def test_missing_spill_reference_is_not_a_successful_history_backfill(modules):
-    payload = modules["spill"].maybe_spill("original evidence " * 5000)
-    source = json.loads(payload)["path"]
+def test_missing_output_reference_is_not_a_successful_history_backfill(modules):
+    cm = modules["context_manager"]
+    original = {"type": "function_call_output", "call_id": "large", "output": "x" * 60000}
+    message = cm.archived_output(original, 12000)
+    source = json.loads(message["output"])["path"]
     state_paths.path(source).unlink()
-    # Agent serializes a string tool result once more into function_call_output.
-    message = {"type": "function_call_output", "call_id": "spill", "output": json.dumps(payload)}
     with pytest.raises(ValueError, match="original"):
         modules["recall"].ensure_history([message])
 
@@ -520,7 +525,10 @@ def test_hard_limit_waits_for_slow_summary_without_oversize_decision(modules, mo
                     "content": [
                         {
                             "type": "output_text",
-                            "text": "Keep original goal; source evidence remains authoritative. Pending work is not complete.",
+                            "text": handoff_from_request(
+                                args[2],
+                                "Keep original goal; source evidence remains authoritative. Pending work is not complete.",
+                            ),
                         }
                     ],
                 }

@@ -155,7 +155,9 @@ KNOWLEDGE_TOOLS = [
         "description": "Search original messages and tool results from the CURRENT run only. keywords is "
         "a list of terms. Omit recent_rounds for all current-run history; set it to "
         "inspect only the latest N decision rounds. Default evidence mode avoids "
-        "retrieval echoes; raw includes exact tool traffic. Use memory for cross-run "
+        "retrieval echoes; raw includes tool arguments. Both modes exclude prior recall results. "
+        "Search follows hash-verified archived tool outputs and UTF-8 artifacts, returning "
+        "bounded snippets with source path, hash and character offset for read. Use memory for cross-run "
         "findings and memory sources for referenced older evidence.",
         "parameters": {
             "type": "object",

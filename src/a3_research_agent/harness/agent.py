@@ -34,6 +34,7 @@ from a3_research_agent.harness import (
     plan as planning,
 )
 from a3_research_agent.harness.context import compaction
+from a3_research_agent.harness.context import facts as research_facts
 from a3_research_agent.harness.context import manager as context_manager
 from a3_research_agent.harness.memory import client as memory_client
 
@@ -187,6 +188,8 @@ def save_tool_result(call, result, journal, messages, visible_count):
         context_manager.atomic(
             state_paths.path(state_paths.JOURNAL), json.dumps(journal, ensure_ascii=False)
         )
+        phase = "research_receipt"
+        research_facts.record(call, result)
         phase = "result_receipt"
         if call["name"] == "read":
             operational_state.record_page(call["call_id"], result)
@@ -260,7 +263,14 @@ def save_manifest():
 def operational_message():
     state = operational_state.load()
     value = operational_state.view(state)
-    value["research_plan"] = planning.view(jobs=state.get("jobs", {}), compact=True)
+    value["frame"] = "CURRENT_STATE_REFRESH"
+    value["state_authority"] = (
+        "Current source refresh. Reconcile historical summaries against this plan revision, "
+        "receipts and observed job states; do not repeat completed work or uncertain submissions."
+    )
+    plan = planning.load()
+    value["research_plan"] = planning.view(plan, jobs=state.get("jobs", {}), compact=True)
+    value["research_facts"] = research_facts.view(plan, state.get("jobs", {}))
     value["research_experience"] = memory_client.suggestions(value["research_plan"])
     value["runtime_paths"] = {
         "workspace": str(runtime_paths.workspace_root()),
@@ -309,6 +319,7 @@ def recover_journal(messages):
                 "instruction": "Do not replay blindly; inspect existing operation status.",
             },
         )
+        research_facts.record(c, value)
         if c.get("name") == "read":
             operational_state.record_page(c["call_id"], value)
         if c.get("name") in {"job_wait", "idle_wait"}:

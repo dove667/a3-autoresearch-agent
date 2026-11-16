@@ -21,8 +21,10 @@ def test_recall_without_a_guessed_window_finds_older_observations(tmp_path, monk
         ]
     )
     hits = recall.recall_tool({"keywords": ["checkpoint decoder"]})
-    assert len(hits) == 1 and "missing decoder" in hits[0] and "2轮前" in hits[0]
-    assert "未找到" in recall.recall_tool({"keywords": ["decoder"], "recent_rounds": 1})[0]
+    assert len(hits["items"]) == 1
+    assert "missing decoder" in hits["items"][0]["snippet"]
+    assert hits["items"][0]["rounds_ago"] == 2
+    assert not recall.recall_tool({"keywords": ["decoder"], "recent_rounds": 1})["items"]
 
 
 def test_recall_defaults_do_not_retrieve_prior_retrieval_echoes(tmp_path, monkeypatch):
@@ -33,7 +35,7 @@ def test_recall_defaults_do_not_retrieve_prior_retrieval_echoes(tmp_path, monkey
             {"type": "function_call_output", "call_id": "echo", "output": "decoder success"},
         ]
     )
-    assert "未找到" in recall.recall_tool({"keywords": ["decoder"]})[0]
+    assert not recall.recall_tool({"keywords": ["decoder"]})["items"]
 
 
 def test_note_list_returns_current_source_linked_notes(tmp_path, monkeypatch):

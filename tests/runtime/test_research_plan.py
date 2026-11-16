@@ -143,6 +143,8 @@ def test_recall_defaults_to_evidence_and_can_search_raw_calls(tmp_path, monkeypa
     agent.history_tools.append_history_many(rows)
     query = {"keywords": ["checkpoint"], "recent_rounds": 2}
     evidence = call("recall", **query)["items"]
-    assert len(evidence) == 1 and "missing decoder" in evidence[0]
-    assert "2轮前" in evidence[0]
-    assert any("query echo" in row for row in call("recall", **query, mode="raw")["items"])
+    assert len(evidence) == 1 and "missing decoder" in evidence[0]["snippet"]
+    assert evidence[0]["rounds_ago"] == 2
+    assert not any(
+        "query echo" in row["snippet"] for row in call("recall", **query, mode="raw")["items"]
+    )

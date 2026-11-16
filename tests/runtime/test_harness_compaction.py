@@ -1,4 +1,4 @@
-"""Behaviour gates for fork compaction, spill and Recall.
+"""Behaviour gates for fork compaction and Recall.
 
 Runs under pytest, and also standalone: ``python tests/runtime/test_harness_compaction.py``.
 Every gate uses a fake provider; no network, credentials or model calls.
@@ -13,14 +13,12 @@ import threading
 import time
 
 import pytest
+from summary_fixtures import handoff_from_request
 
 from a3_research_agent.harness import history as recall
 from a3_research_agent.harness import memory, paths, state_paths
-from a3_research_agent.harness.context import compaction, spill
+from a3_research_agent.harness.context import compaction
 from a3_research_agent.harness.context import manager as cm
-
-SECTIONS = compaction.SECTION_TITLES
-GOOD_SUMMARY = "\n".join(f"## {title}\n- point" for title in SECTIONS)
 
 
 @pytest.mark.parametrize("shutdown", [False, True])
@@ -78,7 +76,7 @@ def test_hard_wait_timeout_keeps_running_prefix_identity(monkeypatch):
             calls.append(args)
             started.set()
             assert release.wait(5)
-            return completed(GOOD_SUMMARY)
+            return completed("unused background test response")
 
         original = history(rounds=4, filler=5000)
         fork = compaction.ForkCompactor(Gateway(), hard_wait_seconds=0)
@@ -158,7 +156,7 @@ def completed(text):
 class Gateway:
     """Records requests; optionally slow, optionally failing."""
 
-    def __init__(self, summary=GOOD_SUMMARY, delay=0.0, fail=False):
+    def __init__(self, summary=None, delay=0.0, fail=False):
         self.summary = summary
         self.delay = delay
         self.fail = fail
@@ -170,7 +168,7 @@ class Gateway:
             time.sleep(self.delay)
         if self.fail:
             return {"http_error": 500}
-        return completed(self.summary)
+        return completed(self.summary or handoff_from_request(body))
 
 
 def tool_pair(call_id, text):
@@ -200,53 +198,6 @@ def history(rounds=6, filler=900, completed_last=True):
     return messages
 
 
-def test_spill_replaces_oversized_result():
-    with workspace():
-        payload = "x" * 60000
-        value = spill.maybe_spill(payload, max_bytes=50000)
-        assert isinstance(value, str) and value != payload
-        body = json.loads(value)
-        assert body["spilled"] is True
-        assert body["bytes"] == 60000
-        assert body["head_complete"] is False
-        assert body["head"] == payload[: spill.HEAD_CHARS]
-        assert state_paths.path(body["path"]).read_text(encoding="utf-8") == payload
-        assert (
-            state_paths.path(body["path"]).resolve().parent
-            == state_paths.path(spill.SPILL_DIR).resolve()
-        )
-
-
-def test_spill_keeps_small_result():
-    value = spill.maybe_spill("small result", max_bytes=50000)
-    assert value == "small result"
-
-
-def test_spill_env_override_and_disable():
-    with workspace():
-        os.environ["AUTORUN_SPILL_BYTES"] = "10"
-        try:
-            assert json.loads(spill.maybe_spill("y" * 40))["bytes"] == 40
-            os.environ["AUTORUN_SPILL_BYTES"] = "0"
-            assert spill.maybe_spill("y" * 40) == "y" * 40
-        finally:
-            os.environ.pop("AUTORUN_SPILL_BYTES", None)
-
-
-def test_structured_instruction_lists_all_sections():
-    for title in SECTIONS:
-        assert "## " + title in compaction.STRUCTURED_INSTRUCTION
-    assert "Do not call any tool" in compaction.STRUCTURED_INSTRUCTION
-    assert len(SECTIONS) == 8
-
-
-def test_missing_sections_detects_partial_summary():
-    partial = "## Primary request and intent\n- only one"
-    missing = compaction.missing_sections(partial)
-    assert "Primary request and intent" not in missing
-    assert len(missing) == 7
-
-
 def test_fork_does_not_block_and_applies_later():
     with workspace():
         gateway = Gateway(delay=0.4)
@@ -264,7 +215,7 @@ def test_fork_does_not_block_and_applies_later():
         assert record["kind"] == "applied"
         assert applied != messages
         assert cm.message_cost(applied) <= compactor._target_budget(compactor._budget())
-        assert applied[0]["content"].startswith(compaction.CHECKPOINT_PREAMBLE)
+        assert applied[0]["content"].startswith(cm.MEMORY_PREAMBLE)
         assert compaction.CHECKPOINT_OPEN in applied[0]["content"]
         assert cm.paired(applied)
 
@@ -298,9 +249,7 @@ def test_apply_is_idempotent():
 
 def test_unpaired_result_is_skipped_not_forced():
     with workspace():
-        compactor = compaction.ForkCompactor(
-            Gateway(), tools=[], trigger_tokens=1000, keep_rounds=5
-        )
+        compactor = compaction.ForkCompactor(Gateway(), tools=[], trigger_tokens=1000)
         messages = history(completed_last=False)
         with pytest.raises(cm.ContextError, match="tool call/result"):
             compactor.before_request(messages)

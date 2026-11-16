@@ -1,4 +1,5 @@
 from a3_research_agent.harness import state_paths
+from tests.runtime.summary_fixtures import handoff_from_request
 
 """One full-transcript request; test callbacks do not assess summary quality."""
 
@@ -55,7 +56,9 @@ def test_400k_transcript_is_sent_whole_once_and_replayed_without_provider(tmp_pa
         assert json.loads(body["transcript"]) == original
         assert 400000 < cm.request_cost(body) < 491808
         requests.append(body)
-        return completed()
+        result = completed()
+        result["output"][0]["content"][0]["text"] = handoff_from_request(body)
+        return result
 
     result, record = cm.prepare(original, [], provider, budget_limit=32000)
     assert len(requests) == 1

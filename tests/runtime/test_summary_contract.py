@@ -11,6 +11,7 @@ from a3_research_agent.harness.context import manager as cm
 from a3_research_agent.host.gateway.app import create_app
 from a3_research_agent.host.models.context import read_context_budget
 from a3_research_agent.token_count import count_tokens, estimate_request_tokens
+from tests.runtime.summary_fixtures import handoff_from_request
 
 
 def completed(text):
@@ -134,7 +135,7 @@ def test_long_complete_summary_fits_total_target_and_preserves_fresh_result(tmp_
     def summarize(method, path, body):
         calls.append(body)
         assert body["max_output_tokens"] > 4096
-        return completed(summary)
+        return completed(handoff_from_request(body, summary))
 
     candidate, record = cm.prepare(
         original, tools, summarize, extra_messages=extra, budget_limit=32000
@@ -151,7 +152,7 @@ def test_long_complete_summary_fits_total_target_and_preserves_fresh_result(tmp_
     assert summary.strip() in candidate[0]["content"]
     assert candidate[-2:] == original[-2:]
     assert record and len(calls) == 1
-    assert json.loads((state_paths.path(record["source"])).read_text()) == original
+    assert json.loads((state_paths.path(record["source"])).read_text()) == original + extra
 
 
 def test_pure_summary_recovers_transient_error_without_changing_source(tmp_path, monkeypatch):
@@ -166,7 +167,11 @@ def test_pure_summary_recovers_transient_error_without_changing_source(tmp_path,
         return (
             {"http_error": 500}
             if len(calls) == 1
-            else completed("Complete original observations and pending research actions.")
+            else completed(
+                handoff_from_request(
+                    args[-1], "Complete original observations and pending research actions."
+                )
+            )
         )
 
     text, _, _ = cm.full_summary(original, source, summarize, output_tokens=20000)
@@ -183,7 +188,11 @@ def test_saved_complete_summary_survives_a_smaller_summary_model_window(tmp_path
     text, _, _ = cm.full_summary(
         original,
         source,
-        lambda *args: completed("Completed state with preserved source and next research action."),
+        lambda *args: completed(
+            handoff_from_request(
+                args[-1], "Completed state with preserved source and next research action."
+            )
+        ),
         output_tokens=20000,
     )
     cm.TOKEN_CONFIG["summary_input_tokens"] = 100
@@ -225,7 +234,11 @@ def test_interrupted_fork_restarts_only_the_pure_summary(tmp_path, monkeypatch):
     fork = compaction.ForkCompactor(
         lambda *args: (
             calls.append(args)
-            or completed("Recovered full research state with original sources and actions.")
+            or completed(
+                handoff_from_request(
+                    args[-1], "Recovered full research state with original sources and actions."
+                )
+            )
         )
     )
     cm.atomic(
@@ -257,7 +270,11 @@ def test_unpublished_legacy_fallback_requires_a_complete_new_summary(tmp_path, m
     original = history()
     legacy = [{"role": "user", "content": "Earlier details not summarized; read original archive."}]
     fork = compaction.ForkCompactor(
-        lambda *args: completed("Complete summary replaces the obsolete archive-only proposal.")
+        lambda *args: completed(
+            handoff_from_request(
+                args[-1], "Complete summary replaces the obsolete archive-only proposal."
+            )
+        )
     )
     cm.atomic(
         state_paths.path("compaction-result.json"),

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import pathlib
 import re
@@ -126,13 +127,6 @@ def _verify_control_sources(messages):
                     ):
                         raise ValueError("Invalid decoded artifact reference")
                     references[path] = False
-            if isinstance(preview, dict) and preview.get("spilled") is True:
-                reference = preview.get("path")
-                if not isinstance(reference, str) or not re.fullmatch(
-                    r"\.autorun-spill/[^/]+-(?:[0-9a-f]{16}|[0-9a-f]{64})\.txt", reference
-                ):
-                    raise ValueError("Invalid original spill reference; explicit recovery required")
-                references[reference] = False
     for reference in references:
         if not _verify_archive_reference(reference):
             raise ValueError(
@@ -440,4 +434,140 @@ def recall_tool(arguments):
             "error": "invalid_recall",
             "hint": "Use positive recent_rounds, limit within1–12, mode evidence or raw.",
         }
-    return recall(keywords, rounds, 1 if rounds else None, limit=limit, mode=mode)
+    return search_current_history(keywords, recent_rounds=rounds, limit=limit, mode=mode)
+
+
+def search_current_history(keywords, *, recent_rounds=None, limit=6, mode="evidence"):
+    """Return source-linked observations, including verified large-output originals."""
+    from a3_research_agent.harness.context import source_search
+
+    terms = list(dict.fromkeys(term[:160] for keyword in keywords for term in keyword.split()))[:12]
+    if not terms:
+        return {"error": "invalid_keywords", "hint": "Supply at least one searchable term."}
+    pattern = re.compile("|".join(map(re.escape, terms)), re.IGNORECASE)
+    result = {"scope": "current_run", "items": [], "warnings": []}
+    history_path = state_paths.path(HISTORY_PATH)
+    if not history_path.exists():
+        return {**result, "notice": "No current-run history has been recorded."}
+    cache, warnings, candidates = {}, set(), []
+
+    def history_rows(stream):
+        offset = 0
+        for line in stream:
+            try:
+                message = json.loads(line)
+            except ValueError:
+                warnings.add((HISTORY_PATH, "invalid_history_record"))
+                offset += len(line)
+                continue
+            if isinstance(message, dict):
+                yield {**message, "_recall_offset": offset, "_recall_line": line}
+            offset += len(line)
+
+    def add_hit(hit, source, ago, tool_output):
+        if hit is None:
+            return
+        item = {
+            "rounds_ago": ago,
+            "snippet": hit["snippet"],
+            "matched_terms": hit["matched_terms"],
+            "source": {
+                **source,
+                "offset": source.get("offset", 0) + hit["offset"],
+                "limit": min(8000, max(200, len(hit["snippet"]))),
+            },
+        }
+        score = (len(hit["matched_terms"]), tool_output, -ago)
+        previous = next(
+            (entry for entry in candidates if entry[1]["snippet"] == item["snippet"]), None
+        )
+        if previous is not None:
+            if previous[0] >= score:
+                return
+            candidates.remove(previous)
+        candidates.append((score, item))
+        candidates.sort(key=lambda entry: entry[0], reverse=True)
+        del candidates[limit:]
+
+    try:
+        with source_search.verified_text(HISTORY_PATH) as (stream, digest):
+            total_rounds = sum(1 for _ in iter_rounds(history_rows(stream)))
+            stream.seek(0)
+            for index, group in enumerate(iter_rounds(history_rows(stream))):
+                ago = total_rounds - index
+                if recent_rounds is not None and ago > recent_rounds:
+                    continue
+                names = {
+                    message.get("call_id"): message.get("name")
+                    for message in group
+                    if message.get("type") == "function_call"
+                }
+                for message in group:
+                    name, kind = names.get(message.get("call_id")), message.get("type")
+                    if name == "recall" or (mode == "evidence" and name in RETRIEVAL_TOOLS):
+                        continue
+                    if kind == "reasoning" or (mode == "evidence" and kind == "function_call"):
+                        continue
+                    # Serialized-source offsets can be passed directly to read.
+                    add_hit(
+                        source_search.find_text(io.StringIO(message["_recall_line"]), pattern),
+                        {
+                            "path": HISTORY_PATH,
+                            "sha256": digest,
+                            "offset": message["_recall_offset"],
+                            "call_id": message.get("call_id"),
+                        },
+                        ago,
+                        kind == "function_call_output",
+                    )
+                    if kind != "function_call_output":
+                        continue
+                    try:
+                        value = json.loads(message.get("output", ""))
+                    except (ValueError, TypeError):
+                        continue
+                    try:
+                        sources = source_search.output_sources(value)
+                    except ValueError as error:
+                        warnings.add((str(value.get("path", ""))[:200], str(error)))
+                        continue
+                    for reference, expected in sources:
+                        key = (reference, expected)
+                        if key not in cache:
+                            try:
+                                with source_search.verified_text(reference, expected) as (
+                                    original,
+                                    _,
+                                ):
+                                    hit = source_search.find_text(original, pattern)
+                                cache[key] = (hit, True)
+                            except (OSError, ValueError, UnicodeError):
+                                warnings.add((reference, "source_unavailable_or_unverified"))
+                                cache[key] = (None, False)
+                        hit, verified = cache[key]
+                        if len(cache) > 256:
+                            cache.pop(next(iter(cache)))
+                        if not verified:
+                            break
+                        add_hit(
+                            hit,
+                            {
+                                "path": reference,
+                                "sha256": expected,
+                                "call_id": message.get("call_id"),
+                            },
+                            ago,
+                            True,
+                        )
+    except (OSError, ValueError, UnicodeError):
+        return {
+            "error": "history_unavailable_or_changed",
+            "hint": "Retry current-run recall; preserve the history if the failure continues.",
+        }
+    result["items"] = [item for _, item in candidates]
+    ordered_warnings = sorted(warnings)
+    result["warnings"] = [{"path": path, "error": error} for path, error in ordered_warnings[:12]]
+    result["omitted_warnings"] = max(0, len(ordered_warnings) - 12)
+    if not result["items"]:
+        result["notice"] = "No matching observation in the selected current-run rounds."
+    return result
