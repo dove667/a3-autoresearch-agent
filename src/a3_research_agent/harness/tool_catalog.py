@@ -10,8 +10,9 @@ KNOWLEDGE_TOOLS = [
         "current revision; update patches changed fields using that revision. Every new "
         "route needs question, hypothesis, experiment and decision_rule. Steps link to a "
         "route and need task and criterion. After results, review the route with "
-        "conclusion, evidence and decision continue/pause/complete. All tasks and job "
-        "progress belong here.",
+        "conclusion, evidence and decision continue/pause/complete; continuing also needs "
+        "measured metrics, and step optionally names the step the decision closes. All "
+        "tasks and job progress belong here.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -57,6 +58,12 @@ KNOWLEDGE_TOOLS = [
                 "decision": {"type": "string", "enum": ["continue", "pause", "complete"]},
                 "conclusion": {"type": "string"},
                 "evidence": {"type": "array", "items": {"type": "string"}, "maxItems": 20},
+                "step": {"type": "string"},
+                "metrics": {
+                    "type": "array",
+                    "items": {"type": "string", "maxLength": 160},
+                    "maxItems": 8,
+                },
                 "archive": {"type": "array", "items": {"type": "string"}, "maxItems": 20},
                 "steps": {
                     "type": "array",
@@ -190,3 +197,21 @@ TOOLS = (
     + skill_registry.TOOLS
 )
 BY_NAME = {entry["name"]: entry for entry in TOOLS}
+OPTIONAL = {
+    "web": frozenset({"web_search", "web_fetch", "web_status"}),
+}
+
+
+def enabled(capabilities):
+    """Hide optional tool families the current deployment cannot serve.
+
+    A weak model should never spend a decision on a tool that can only return
+    "not configured"; dispatch still accepts every registered name.
+    """
+    if not isinstance(capabilities, dict):
+        return list(TOOLS)
+    hidden = set()
+    for family, names in OPTIONAL.items():
+        if capabilities.get(family) is False:
+            hidden |= names
+    return [entry for entry in TOOLS if entry["name"] not in hidden]

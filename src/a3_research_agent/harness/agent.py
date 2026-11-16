@@ -14,9 +14,12 @@ os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
 
 from a3_research_agent.harness import (
     control_tools,
+    drift,
     file_tools,
     host_tools,
+    job_failure,
     job_tools,
+    ledger,
     lifecycle,
     operational_state,
     research_web,
@@ -197,8 +200,13 @@ def save_tool_result(call, result, journal, messages, visible_count):
             result = (
                 operational_state.visible_page_reference(result, messages[:visible_count]) or result
             )
+        if call["name"] in {"job_status", "job_wait"}:
+            diagnosis = job_failure.diagnose(result)
+            if diagnosis:
+                result = {**result, "diagnosis": diagnosis}
         if call["name"] in {"job_wait", "idle_wait"}:
             operational_state.record_wait(result)
+        ledger.from_tool(call, result)
         phase = "result_archival"
         bounded = context_manager.bound_tool_result(result, call)
         journal["results"][call["call_id"]] = bounded
@@ -226,6 +234,7 @@ tools = tool_catalog.TOOLS
 INSTRUCTIONS = ""
 compactor = None
 WAIT_CURSOR = None
+FORCE_SUPPORTED = True
 
 
 def save_manifest():
@@ -273,6 +282,7 @@ def operational_message():
     value["research_plan"] = planning.view(plan, jobs=state.get("jobs", {}), compact=True)
     value["research_facts"] = research_facts.view(plan, state.get("jobs", {}))
     value["research_experience"] = memory_client.suggestions(value["research_plan"])
+    value["relevant_skills"] = skill_registry.suggestions(value["research_plan"])
     value["runtime_paths"] = {
         "workspace": str(runtime_paths.workspace_root()),
         "state": str(state_paths.state_root()),
@@ -341,7 +351,7 @@ def recover_journal(messages):
 
 def main() -> None:
     """Initialize one explicit execution; importing this module never starts it."""
-    global BASE, TOKEN, INSTRUCTIONS, compactor, WAIT_CURSOR
+    global BASE, TOKEN, INSTRUCTIONS, compactor, WAIT_CURSOR, FORCE_SUPPORTED, tools
     BASE = os.environ["A3_GATEWAY_URL"]
     TOKEN = os.environ["A3_GATEWAY_TOKEN"]
     if "--worker-task" in sys.argv:
@@ -361,6 +371,8 @@ def main() -> None:
         sys.exit(1)
     WAIT_CURSOR = waiting.wait_cursor(messages)
     empty = 0
+    # Keep a drifting model inside real tool use instead of prose or repeat loops.
+    guard = drift.DriftGuard()
     log({"model_request_tools": tools})
     loop_phase = "decision_prepare"
     while True:
@@ -373,6 +385,10 @@ def main() -> None:
                 raise context_manager.ContextPending(
                     "Context configuration unavailable: " + type(e).__name__, retry_after=5
                 ) from e
+            configured = context_manager.TOKEN_CONFIG
+            capabilities = configured.get("capabilities") if isinstance(configured, dict) else None
+            tools = tool_catalog.enabled(capabilities)
+            compactor.tools = tools
             operational = operational_message()
             state_reference = context_manager.archive(operational, "operational-view")
             # Asynchronous fork: this decision keeps the full history; a finished
@@ -383,6 +399,7 @@ def main() -> None:
             )
             if compaction_record:
                 log({"context_compaction": compaction_record})
+                ledger.from_compaction(compaction_record)
             if prepared_messages is not messages:
                 messages = prepared_messages
                 checkpoint(messages)
@@ -393,13 +410,27 @@ def main() -> None:
                 "input": messages + [operational],
                 "tools": tools,
             }
+            if guard.force_tool_choice():
+                # Bounded: only after a text-only or rejected call, never by default.
+                request["tool_choice"] = "required"
             try:
                 req("POST", "/telemetry/observations", operational_state.counters(), timeout=2)
             except Exception:  # noqa: BLE001 — optional telemetry never blocks research
                 log({"optional_telemetry": "unavailable"})
             log({"operational_view": state_reference})
             loop_phase = "model_request"
-            resp = request_model(request)
+            try:
+                resp = request_model(request)
+            except RuntimeError as error:
+                if FORCE_SUPPORTED and "tool_choice" in request and "HTTP 400" in str(error):
+                    # A provider without forced tool choice must not stop research.
+                    log({"tool_choice_unsupported": True})
+                    FORCE_SUPPORTED = False
+                    request.pop("tool_choice", None)
+                    resp = request_model(request)
+                else:
+                    raise
+            guard.spent()
             if resp.get("status") == "completed":
                 operational_state.mark_delivered(messages)
             log({"response": resp})
@@ -424,9 +455,15 @@ def main() -> None:
             visible_messages = len(messages)
             messages.extend(out)
             history_tools.append_history_many(out)
+            invalid_call = False
             for c in calls:
                 loop_phase = "tool_execution"
                 result = dispatch_tool_call(c)
+                invalid_call = invalid_call or (
+                    isinstance(result, dict)
+                    and result.get("ok") is False
+                    and result.get("error") in drift.INVALID_ARGUMENT_ERRORS
+                )
                 loop_phase = "result_persistence"
                 save_tool_result(c, result, journal, messages, visible_messages)
             loop_phase = "checkpoint_publication"
@@ -435,22 +472,19 @@ def main() -> None:
             if "--test" in sys.argv and calls:
                 break
             if not calls:
+                notice = guard.observe_empty()
                 if (
                     state_paths.path(state_paths.OUTCOME).exists()
                     and json.loads(state_paths.path(state_paths.OUTCOME).read_text()).get("status")
                     == "blocked"
                 ):
                     break
-                messages.append(
-                    {
-                        "role": "user",
-                        "content": (
-                            "Continue the research yourself: implement, submit independent jobs in "
-                            "parallel, inspect results and repair ordinary script errors in this task. "
-                            "Preserve experiment evidence and act on the most informative next research step."
-                        ),
-                    }
-                )
+                messages.append({"role": "user", "content": notice})
+                log({"model_drift": guard.snapshot()})
+                checkpoint(messages)
+            elif notice := guard.observe(calls, invalid_call):
+                messages.append({"role": "user", "content": notice})
+                log({"model_drift": guard.snapshot()})
                 checkpoint(messages)
         except context_manager.ContextError as error:
             try:

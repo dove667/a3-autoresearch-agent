@@ -21,6 +21,18 @@ from .schemas import (
 )
 
 
+def _web_enabled(service) -> bool:
+    """Report optional web availability without inventing it for a test double."""
+    status = getattr(service, "status", None)
+    if not callable(status):
+        return False
+    try:
+        value = status()
+    except (AttributeError, TypeError, ValueError):
+        return False
+    return isinstance(value, dict) and value.get("enabled") is True
+
+
 class ModelRoutes:
     def forward_response(
         self,
@@ -262,6 +274,11 @@ class ModelRoutes:
         return {
             "enabled": True,
             "summary_operation": "/v1/summary",
+            "capabilities": {
+                # Only advertise optional tool families the deployment can actually serve.
+                "web": _web_enabled(self.web_service),
+                "vision": True,
+            },
             "unit": "estimated_tokens",
             "tokenizer": "o200k_base",
             "trigger_tokens": self.token_budget.trigger_tokens,

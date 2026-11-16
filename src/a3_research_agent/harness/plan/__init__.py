@@ -83,6 +83,26 @@ def view(plan=None, *, jobs=None, compact=False):
             for key, step in steps.items()
             if key not in ordered and step["status"] in ("pending", "blocked")
         ]
+        # One line per step keeps the whole plan visible; detail goes to the focus work.
+        result["overview"] = [
+            {
+                "id": key,
+                "status": steps[key]["status"],
+                "route": steps[key].get("route", ""),
+                "task": steps[key].get("task", "")[:80],
+                "jobs": steps[key].get("observed_jobs", {}),
+            }
+            for key in ordered[:8]
+        ]
+        result["parallelism"] = {
+            "ready_steps": len(ready),
+            "active_jobs": sum(
+                1
+                for step in steps.values()
+                for status in step["observed_jobs"].values()
+                if status not in operational.TERMINAL_JOB_STATES
+            ),
+        }
         visible = {key: steps[key] for key in ordered[:5]}
         selected_routes = {step.get("route") for step in visible.values()}
         result["direction"] = {
@@ -133,7 +153,17 @@ def dispatch_locked(arguments):
     allowed = {
         "show": {"action", "id"},
         "update": {"action", "revision", "direction", "routes", "steps", "archive", "reason"},
-        "review": {"action", "revision", "id", "decision", "conclusion", "evidence", "reason"},
+        "review": {
+            "action",
+            "revision",
+            "id",
+            "decision",
+            "conclusion",
+            "evidence",
+            "reason",
+            "step",
+            "metrics",
+        },
     }
     if action not in allowed or arguments.keys() - allowed[action]:
         return {
@@ -178,6 +208,28 @@ def dispatch_locked(arguments):
             )
             if not evidence:
                 raise ValueError("Review requires evidence references")
+            step = arguments.get("step")
+            if step is not None:
+                if not isinstance(step, str) or step not in plan["steps"]:
+                    raise ValueError("Review step must identify a step in this plan")
+                if plan["steps"][step].get("route") != key:
+                    raise ValueError("Review step belongs to a different route")
+            metrics = arguments.get("metrics", [])
+            if (
+                not isinstance(metrics, list)
+                or len(metrics) > 8
+                or any(
+                    not isinstance(item, str) or not item.strip() or len(item) > 160
+                    for item in metrics
+                )
+            ):
+                raise ValueError("metrics must be up to 8 short measurement strings")
+            if decision == "continue" and not metrics:
+                raise ValueError(
+                    "Continuing a route requires at least one measured value in metrics"
+                )
+            if any(not any(char.isdigit() for char in item) for item in metrics):
+                raise ValueError("Each metric must contain the observed value")
             observed = operational.load().get("jobs", {})
             jobs = {
                 job: observed.get(job, {}).get("status", "unobserved")
@@ -198,10 +250,12 @@ def dispatch_locked(arguments):
                 {
                     "revision": plan["revision"] + 1,
                     "route": key,
+                    "step": step,
                     "decision": decision,
                     "reason": bounded_text(arguments.get("reason", ""), 1200, "reason"),
                     "conclusion": conclusion,
                     "evidence": evidence,
+                    "metrics": metrics,
                     "observed_jobs": jobs,
                 },
             ]

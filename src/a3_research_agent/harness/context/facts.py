@@ -147,16 +147,16 @@ def view(plan, jobs):
                 "facts_complete": receipt["facts_complete"] and omitted == 0,
             }
         )
-    receipts = _bounded_items(candidates, 6, 8500)
+    receipts = _bounded_items(candidates, 6, 6000)
     reviews = _bounded_items(
-        (_decision_view(item) for item in reversed(plan.get("reviews", []))), 4, 3000
+        (_decision_view(item) for item in reversed(plan.get("reviews", []))), 4, 2000
     )
     closed = [
         {"id": key, **route}
         for key, route in plan.get("routes", {}).items()
         if route.get("status") in {"paused", "completed"} and route.get("conclusion")
     ]
-    conclusions = _bounded_items((_decision_view(item) for item in reversed(closed)), 4, 3000)
+    conclusions = _bounded_items((_decision_view(item) for item in reversed(closed)), 4, 2000)
     active_all = {
         job: row["status"]
         for job, row in jobs.items()

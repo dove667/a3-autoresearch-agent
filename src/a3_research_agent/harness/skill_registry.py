@@ -1,6 +1,7 @@
 """Expose progressive discovery and controlled edits of the project skill library."""
 
 import os
+import time
 from pathlib import Path
 
 from . import knowledge_client, skill_search
@@ -87,6 +88,36 @@ def configured_roots(root, history_root):
 
 def summary(entry):
     return {name: entry.get(name) for name in ("id", "version", "status", "description")}
+
+
+_SUGGESTION_CACHE = {}
+
+
+def suggestions(plan, *, limit=3):
+    """A small per-turn skill digest; a retrieval failure never blocks a decision."""
+    direction = plan.get("direction") or {}
+    steps = [step.get("task", "") for step in (plan.get("steps") or {}).values()][:3]
+    routes = [route.get("hypothesis", "") for route in (plan.get("routes") or {}).values()]
+    query = " ".join([direction.get("objective", ""), *steps, *routes])[:600]
+    key = (os.environ.get("A3_KNOWLEDGE_SERVICE_URL"), query, plan.get("revision"))
+    cached = _SUGGESTION_CACHE.get(key)
+    if cached and time.monotonic() - cached[0] < 30:
+        return cached[1]
+    result = dispatch({"action": "list", "query": query, "limit": limit})
+    items = [
+        {
+            "id": item.get("id"),
+            "description": (item.get("description") or "")[:180],
+            "match_reason": item.get("match_reason"),
+        }
+        for item in (result.get("skills") or [])
+        if isinstance(item, dict) and item.get("id")
+    ]
+    notice = 'Read a matching skill with skills(action="read", id=...) before reusing it.'
+    value = {"skills": items, "notice": notice} if items else {"skills": [], "notice": None}
+    _SUGGESTION_CACHE.clear()
+    _SUGGESTION_CACHE[key] = (time.monotonic(), value)
+    return value
 
 
 def page(raw, entry, offset, limit, **extra):

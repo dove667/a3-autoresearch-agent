@@ -6,6 +6,7 @@ import re
 from pathlib import Path, PurePosixPath
 from urllib.parse import urlencode
 
+from . import tool_results
 from .tool_contracts import (
     ToolInputError,
     arguments,
@@ -19,6 +20,7 @@ from .tool_contracts import (
 
 STRING = {"type": "string"}
 JOB_ID = {"type": "string", "pattern": "^[a-f0-9]{32}$"}
+PREPARED = re.compile(r"prepared-[a-f0-9]{32}")
 ATTACHMENTS = {
     "type": "array",
     "maxItems": 16,
@@ -54,24 +56,46 @@ ARTIFACT_FIELDS = {
     "offset": {"type": "integer", "minimum": 0},
     "limit": {"type": "integer", "minimum": 1, "maximum": 8000},
 }
+MAX_BATCH = 16
+PREPARED_ID = {"type": "string", "pattern": "^prepared-[a-f0-9]{32}$"}
+BATCH_FIELDS = {
+    "jobs": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": MAX_BATCH,
+        "items": {"type": "object", "properties": REQUEST_FIELDS, "required": ["command"]},
+    },
+    "prepared_ids": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": MAX_BATCH,
+        "items": PREPARED_ID,
+    },
+}
 TOOLS = [
     definition(
         "job_submit",
-        "Submit a prepared GPU job with prepared_id only, or a CPU command with attachments. "
-        "CPU submissions default gpu=false. For a GPU job first call job_prepare, wait for its "
-        "preflight_job_id, then submit its prepared_id; never repeat the full GPU request. "
-        "attachments references workspace text files (scripts and experiment configs); hashes are automatic. "
-        "Use input_exports for data and weights. Reconcile submission_unknown by job_id before retrying.",
-        {**REQUEST_FIELDS, "prepared_id": {"type": "string", "pattern": "^prepared-[a-f0-9]{32}$"}},
+        "Submit work: one prepared GPU job (prepared_id), one CPU command, or a batch. "
+        "prepared_ids submits up to 16 saved GPU requests at once; jobs submits up to 16 CPU "
+        "requests at once with per-item results. For a GPU job first call job_prepare, wait for "
+        "its preflight_job_id, then submit its prepared_id; never repeat the full GPU request. "
+        "attachments references workspace text files (scripts and experiment configs); hashes are "
+        "automatic. Use input_exports for data and weights. Reconcile submission_unknown by job_id "
+        "before retrying.",
+        {
+            **REQUEST_FIELDS,
+            "prepared_id": PREPARED_ID,
+            **BATCH_FIELDS,
+        },
     ),
     definition(
         "job_prepare",
-        "Save a GPU request and run its real CPU preflight. Supply the production command, "
-        "attachments and assets once. Its entry must handle A3_RESEARCH_PREFLIGHT=1, load real "
-        "inputs, perform a minimal forward/data read, write a3-preflight.json with schema=1,status=passed, "
-        "and exit. Returns prepared_id and preflight_job_id. Wait for that job, then job_submit(prepared_id).",
-        REQUEST_FIELDS,
-        ["command"],
+        "Save GPU requests and run their real CPU preflights. Supply the production command, "
+        "attachments and assets once, for one request or up to 16 in jobs. Each entry must handle "
+        "A3_RESEARCH_PREFLIGHT=1, load real inputs, perform a minimal forward/data read, write "
+        "a3-preflight.json with schema=1,status=passed, and exit. Returns prepared_id and "
+        "preflight_job_id per item. Wait for those jobs, then job_submit(prepared_ids=[...]).",
+        {**REQUEST_FIELDS, **BATCH_FIELDS},
     ),
     definition(
         "job_status",
@@ -306,12 +330,89 @@ def artifact(args, request):
     return {**result, **source}
 
 
+def collection(results):
+    """Report every item of a batch, never hiding partial success."""
+    items = [tool_results.normalize(value) for value in results]
+    failed = [item for item in items if not item["ok"]]
+    result = {"items": items, "count": len(items), "failed": len(failed)}
+    if failed:
+        result["notice"] = "Read every item; some submissions in this batch did not succeed."
+        if len(failed) == len(items):
+            result["error"] = "batch_failed"
+            result["hint"] = (
+                "No submission in this batch succeeded; correct each item error before retrying."
+            )
+    return result
+
+
+def batch(name, args, request, root):
+    """Submit or prepare several independent jobs in one decision turn."""
+    if "prepared_ids" in args:
+        if name != "job_submit":
+            fail("invalid_batch", "job_prepare works from jobs=[...], not prepared_ids.")
+        arguments(args, {"prepared_ids"})
+        identifiers = args["prepared_ids"]
+        valid = (
+            isinstance(identifiers, list)
+            and 1 <= len(identifiers) <= MAX_BATCH
+            and all(isinstance(value, str) and PREPARED.fullmatch(value) for value in identifiers)
+        )
+        if not valid:
+            fail(
+                "invalid_prepared_ids",
+                f"Submit 1–{MAX_BATCH} exact prepared_id values saved by job_prepare.",
+            )
+        from . import job_preparation
+
+        return collection([job_preparation.submit(value, request, root) for value in identifiers])
+    arguments(args, {"jobs"})
+    entries = args["jobs"]
+    if (
+        not isinstance(entries, list)
+        or not 1 <= len(entries) <= MAX_BATCH
+        or any(not isinstance(entry, dict) for entry in entries)
+    ):
+        fail("invalid_jobs", f"Provide 1–{MAX_BATCH} job objects in jobs, each with a command.")
+    from . import job_preparation
+
+    results = []
+    for entry in entries:
+        try:
+            if name == "job_prepare":
+                job = submit_request(entry, root, default_gpu=True)
+                if not job["gpu"]:
+                    results.append(
+                        {
+                            "error": "gpu_preparation_required",
+                            "hint": "Submit CPU work directly with job_submit(jobs=[...]).",
+                        }
+                    )
+                    continue
+                results.append(job_preparation.prepare(job, request))
+            else:
+                job = submit_request(entry, root)
+                if job["gpu"]:
+                    results.append(
+                        {
+                            "error": "gpu_job_needs_preparation",
+                            "hint": "Prepare GPU work with job_prepare(jobs=[...]) first.",
+                        }
+                    )
+                    continue
+                results.append(submission_result(request("POST", "/jobs", job)))
+        except ToolInputError as error:
+            results.append({"error": error.code, "hint": error.hint})
+    return collection(results)
+
+
 def dispatch(name, args, request, *, workspace=None):
     try:
         if name in {"job_prepare", "job_submit"}:
             from . import job_preparation
 
             root = Path(workspace or Path.cwd())
+            if "jobs" in args or "prepared_ids" in args:
+                return batch(name, args, request, root)
             if name == "job_prepare":
                 job = submit_request(args, root, default_gpu=True)
                 if not job["gpu"]:
