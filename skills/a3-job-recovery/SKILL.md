@@ -3,7 +3,7 @@ name: a3-job-recovery
 description: 提交和恢复A3远程作业：源码附件、CPU预检、提交未知、排队、部分回合与失败重试。Job submission, preflight and
   recovery.
 metadata:
-  version: 0.1.4
+  version: 0.2.0
 ---
 
 # 提交与接续研究作业
@@ -18,7 +18,31 @@ metadata:
 {"command":["python","scripts/act/shared/diagnostics/inspect_data.py"],"gpu":false,"attachments":[{"path":"scripts/act/shared/diagnostics/inspect_data.py"}]}
 ```
 
-使用当前 `job_submit` 工具的其他资源参数。GPU作业先用 `job_prepare` 保存请求并提交CPU预检，等返回的preflight_job_id完成后只用 `job_submit(prepared_id=...)` 提交。保存返回的job ID、源码回执和预期结果位置，绑定到plan后再等待。
+使用当前 `job_submit` 工具的其他资源参数。CPU 作业直接提交；GPU 作业先用 `job_prepare` 保存请求并提交 CPU 预检，等返回的 `preflight_job_id` 完成后只用 `job_submit(prepared_id=...)` 提交。保存返回的 job ID、源码回执和预期结果位置，绑定到 plan 后再等待。
+
+独立作业可以在一次调用里批量提交：`job_prepare(jobs=[...])` 一次预检多个 GPU 请求，`job_submit(prepared_ids=[...])` 或 `job_submit(jobs=[...])` 一次提交多个，返回逐项结果。部分失败不影响已成功的项，逐项读取 error 后只补做失败项。
+
+## CPU 预检必须实现（GPU 提交硬门）
+
+`job_submit` 在拿到 `a3-preflight.json` 之前不会提交 GPU 作业。生产脚本必须自己处理预检分支：真实导入依赖、加载数据与父 checkpoint，做一次最小前向或数据读取，然后写出报告并退出，不写正式训练产物。
+
+```python
+import json, os, sys
+
+def preflight():
+    # 必须真实执行：导入依赖、加载数据与基座/父 checkpoint、最小前向或读取。
+    model = load_policy(config)          # 真实加载
+    batch = next(iter(loader))           # 真实读取
+    model(batch["observation"])          # 最小前向
+    with open("a3-preflight.json", "w") as stream:
+        json.dump({"schema": 1, "status": "passed"}, stream)
+    sys.exit(0)
+
+if os.environ.get("A3_RESEARCH_PREFLIGHT") == "1":
+    preflight()
+```
+
+预检命令由 Harness 自动加前缀：`env A3_RESEARCH_PREFLIGHT=1 <你的命令>`。预检作业 `completed` 且 exit 0、报告 `schema=1,status=passed` 后，`job_submit(prepared_id=...)` 才会真正提交。预检失败时修正脚本后重新 `job_prepare`；附件内容变化会使旧 `prepared_id` 失效。
 
 ## 按状态处理
 

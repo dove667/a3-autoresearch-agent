@@ -1,6 +1,6 @@
 # 研究工具与执行约定
 
-Version: 0.32.0
+Version: 0.33.0
 
 工具定义给出参数、默认值和限制；本文件说明常用流程。所有工具返回 `ok`：成功时直接读取同层结果；失败时读取 `error`、`hint` 和相关编号，修正后再调用。作业的 `status="failed"` 是执行结果，先读日志与证据再判断原因。
 
@@ -51,13 +51,15 @@ GPU 作业先调用 `job_prepare`，同样填写 command、attachments、input_e
 
 检查分支随后退出，不写正式训练产物。用 `job_wait(job_ids=[<preflight_job_id>])` 等检查完成，再调用 `job_submit(prepared_id=<返回编号>)`。不重填 command 或附件。输入或源码变化后重新 prepare；CPU 预检覆盖加载与最小执行，CUDA/EGL 行为由后续真实运行核对。
 
+独立作业批量提交可以省掉多次决策：`job_prepare(jobs=[...])` 一次准备并预检最多 16 个 GPU 请求，`job_submit(prepared_ids=[...])` 或 `job_submit(jobs=[...])` 一次提交多个，返回逐项结果；部分失败只补做失败项。
+
 提交回执记录实际源码与作业编号，使用 plan 关联当前步骤。`submission_unknown`、`production_submission_unknown` 或预检提交未知时，按返回编号查询状态及近期作业，确认之前不要重复提交。普通资源排队保留同一 job ID。
 
 ## 等待和检查结果
 
 `job_wait(job_ids=[...])` 默认持续等指定作业终态或通知，内部续接不唤醒模型；需要限时才填写 timeout_seconds，0表示单次观察。省略 job_ids 时使用当前观察到的活动作业。没有目标会立即返回。`idle_wait(seconds=30)` 只暂停并响应通知，不轮询作业。独立且输入就绪的作业可以先提交，再等待；有依赖时先处理上游结果。
 
-`job_status` 读状态和日志尾，`job_list` 分页查找有权访问的历史作业。`job_artifact(job_id,path,area="outputs")` 读持久结果；area="workspace" 读作业源码与工作文件。日志、输入和输出路径以当前作业实际环境为准，使用部署提供的 `A3_OUTPUTS` 等路径，不复制其他后端的绝对路径。
+`job_status` 读状态和日志尾。作业失败时返回 `diagnosis`：`failure_class`（依赖缺失、显存不足、输入缺失、被系统终止等）、`error_line` 和建议动作；先读它再改脚本。`job_list` 分页查找有权访问的历史作业。`job_artifact(job_id,path,area="outputs")` 读持久结果；area="workspace" 读作业源码与工作文件。日志、输入和输出路径以当前作业实际环境为准，使用部署提供的 `A3_OUTPUTS` 等路径，不复制其他后端的绝对路径。
 
 长批次可使用部署的 episode executor。每个 episode 的 id 唯一，command 是参数数组，report 指向命令实际写出的 JSON。保存 manifest、ledger 和逐回合结果；恢复前核对原编号与已完成记录。执行成功且报告有效时，科学结果 success=false 仍是有效观察。
 
@@ -80,8 +82,10 @@ GPU 作业先调用 `job_prepare`，同样填写 command、attachments、input_e
 新路线至少提供 id、question、hypothesis、experiment、decision_rule；步骤至少提供 id、route、task、criterion。关键结果读完后用 review 保存结论与继续、暂停或结束决定：
 
 ```json
-{"action":"review","revision":1,"id":"placement","decision":"continue","conclusion":"发现任务条件缺失，先修复并配对验证收益","evidence":["experiments/current/results/report.json"],"reason":"输入差异支持当前假设，闭环收益待验证"}
+{"action":"review","revision":1,"id":"placement","step":"s5-closedloop","decision":"continue","conclusion":"补齐任务条件后 2×10 入盒 0.40→0.50","evidence":["experiments/current/results/report.json"],"metrics":["2x10 accuracy=0.50","2x5 accuracy=0.50"],"reason":"配对结果改善，继续验证稳定性"}
 ```
+
+`decision="continue"` 必须给出至少一条含数值的 `metrics`，`step` 可选地标明本次结论对应的步骤；暂停或结束路线可以不带 metrics。
 
 所有待办和进展都在 plan 中维护。已学到的发现写 memory，稳定可复用的操作方法写 skills。
 
@@ -97,7 +101,7 @@ skills 使用 `list(query="任务或症状",limit=3)` 找方法，只返回摘�
 
 每轮的 CURRENT_STATE_REFRESH 提供最新计划、近期复盘、活动作业和关键工具回执；先用它核对旧摘要里的待办。job 状态是最后一次观察，提交不确定时先查现有编号，不重发。计划显示已结束的路线、memory 中的失败条件和已验证结果，用于避免重复实验。
 
-大工具结果会保留编号、状态、错误和关键指标，正文可能只有部分预览；facts_complete=false 或 preview_complete=false 时，按问题读取来源或用 recall 搜索原文，再作结论。压缩摘要保留来源摘录，但细节仍需按源核对。
+大工具结果会保留编号、状态、错误和关键指标，正文可能只有部分预览；facts_complete=false 或 preview_complete=false 时，按问题读取来源或用 recall 搜索原文，再作结论。压缩摘要保留来源摘录，但细节仍需按源核对。模型摘要若连续无法通过校验，程序会生成一份逐字摘录的降级交接并继续研究，记录在压缩日志与 `research-ledger.jsonl` 中。
 
 完成重要结果分析后，先用 plan review 记录结论、证据和路线决定；值得跨 run 复用的发现写 memory；成熟操作方法写 skills。程序会持续刷新这些来源，尚未记录的研究判断仍可能在反复压缩后遗漏。
 

@@ -71,6 +71,8 @@ trajectories/<开始时间>/
 │   ├── history.jsonl      原始模型消息与工具结果
 │   ├── trajectory.jsonl   模型循环与请求轨迹
 │   ├── operational-state.json
+│   ├── research-ledger.jsonl  作业与压缩事件的有界台账，供白天分析
+│   ├── summary-breaker.json   摘要熔断状态，可删除且不影响研究
 │   ├── research-receipts.json 近期关键工具观察与原文索引
 │   ├── compaction-*.json  压缩状态与事务
 │   ├── context-failure.json 压缩等待或阻塞状态（恢复后清除）

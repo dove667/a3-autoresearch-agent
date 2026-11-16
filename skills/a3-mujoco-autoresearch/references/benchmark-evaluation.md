@@ -28,3 +28,49 @@ For each cell, report the episode count, final `cookies_in_target`, its mean div
 An overall normalized final-count summary may average the six cell ratios equally. Report paired scenario differences and uncertainty alongside per-cell results; use them to choose the next experiment.
 
 Link the snapshot, dataset, resolved evaluation settings, job IDs and raw episode records. Keep scientific task failures separate from execution failures, and describe behavioral improvements with synchronized visual/action evidence when useful.
+
+## Manifest and episode report contract
+
+`evaluation_compare` reads the manifests you write, so their shape is a hard interface, not a suggestion. A manifest lists episodes; each entry points to one sibling report file.
+
+```json
+{
+  "task": "2x5",
+  "profile": "basic",
+  "episodes": [
+    {"report": "seed-10000.json"},
+    {"report": "seed-10001.json"}
+  ]
+}
+```
+
+Each report must be a completed native episode:
+
+```json
+{
+  "status": "completed",
+  "seed": 10000,
+  "task": "2x5",
+  "profile": "basic",
+  "max_steps": 500,
+  "source_column": 1,
+  "prompt_style": "training",
+  "first_grasp": true,
+  "success_hold_steps": 20,
+  "native_score": {
+    "score": 5,
+    "max_score": 10,
+    "success": false,
+    "randomization": {"cookies_in_source": 10, "target_column_counts": {"1": 5}}
+  }
+}
+```
+
+Rules the Host enforces:
+
+- Manifest path is relative to the job's `outputs` and must end in `.json`; episode `report` values must be distinct siblings that also end in `.json`.
+- 1–120 episodes per manifest; a repeated `(seed, task, profile)` is rejected as ambiguous.
+- `status` must be `completed`, `seed` an integer, `native_score.score`/`max_score` integers with `0 <= score <= max_score`, and `success` a boolean.
+- Paired comparison requires equal `max_steps`, `source_column`, `prompt_style`, `first_grasp`, `success_hold_steps`, `native_score.max_score`, and identical initial `randomization` (final counts may differ).
+
+Optional process evidence: write `<report>-trace/trace.jsonl` next to the report with one row per control step (`step`, `sim_time`, `frames.observation.images.front.path`); `evaluation_compare` can then hand a ready-made `vision_inspect` request back to you.

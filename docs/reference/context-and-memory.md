@@ -153,7 +153,18 @@ capped at 60 seconds between attempts, with no total time or attempt cutoff.
 Each summary request has a 960-second transport timeout; a timeout schedules
 another attempt rather than ending the run. Invalid summary content has three
 repair attempts, counted separately from transport failures.
-The runtime does not generate a no-summary archive fallback.
+
+When those repair attempts are exhausted, the Harness does not stop the run and does
+not publish an archive pointer. It rebuilds a **degraded handoff** without a model:
+each entry is a verbatim excerpt of a cited message, taken from the latest state
+refresh (objective, ready-step tasks, active jobs, review-due steps) and the newest
+tool results, so schema, quotation and numeric validation still hold. The compaction
+record marks `summary_mode="degraded"` with the reason, and the research ledger keeps
+one line per compaction. Two consecutive failures on the same model route open a
+30-minute breaker (`conversation/summary-breaker.json`) that skips further summary
+requests, so a weak summarizer cannot spend three full-transcript requests per
+compaction; one successful summary clears it. Damaged saved-summary state is a
+different case: it still raises and stays visible rather than being overwritten.
 
 There is no 300-second compaction exit deadline. While history fits the hard
 budget, a pending background summary can coexist with normal decisions. At the
@@ -178,6 +189,25 @@ keeps the request bounded while preserving access to the actual observations.
 The newest complete tool batch stays paired and visible. If it cannot fit within
 the hard budget with a useful summary, tool text can be represented by semantic
 facts and verified original references before another summary is requested.
+
+### Weak-model deployment profile
+
+A weaker main model is limited by the fixpoint of model quality and system design, not
+by the context window. These settings matter more than the window size:
+
+- Pin the summary role to a stronger model (`A3_SUMMARY_MODEL_NAME`), so compaction
+  quality does not depend on the research model. The degraded handoff covers the rest.
+- Keep `trigger_tokens` well below the hard budget: a weaker model plans better from a
+  smaller, refreshed working set than from a 400k history. 100k–150k with a 32k target
+  is a reasonable starting point; `A3_CONTEXT_TARGET_TOKENS` may stay at 32k.
+- Optional tool families are advertised only when the deployment serves them, so the
+  tool list does not carry dead entries. `capabilities.web` comes from the Host web
+  service when the Harness reads `/context/config`; hidden tools stay dispatchable.
+- `prompt/SOUL.md` stays short (about 700 tokens) and method detail lives in skills,
+  which keeps per-request overhead near 10k tokens instead of 15k.
+- Watch `research-ledger.jsonl` and the `model_drift` trajectory events: they show
+  repeated rejected calls, prose-only responses and degraded compactions, which are the
+  first signals that the model is being asked for more than it can do.
 
 The template currently provides explicit model windows, a trigger and a 32k target.
 Set them in the Host's `.env` or `A3_RSI_ENV_FILE` for the selected model. The Host
