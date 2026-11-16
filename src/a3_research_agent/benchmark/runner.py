@@ -50,29 +50,38 @@ def post(url, key, body, attempts=3):
     raise last
 
 
-def ask(url, key, model, messages, tools, turns):
-    """One task conversation shaped like the real loop: state view plus drift guard."""
+def ask(url, key, model, messages, tools, turns, answers=True):
+    """One task conversation shaped like the real loop: state view plus drift guard.
+
+    A live run has no "task finished" signal: prose is corrected and questions stay
+    open until the Agent records a decision. The task ends when its turn budget is
+    spent, so a model is never credited for stopping early.
+    """
     calls = []
     invalid = []
-    text = ""
-    guard = drift.DriftGuard()
+    texts = []
+    guard = drift.DriftGuard(max_answers=drift.MAX_ANSWERS if answers else 0)
     for _ in range(turns):
-        response = post(
-            url,
-            key,
-            {
-                "model": model,
-                "instructions": INSTRUCTIONS,
-                "input": messages + [{"role": "user", "content": OPERATIONAL}],
-                "tools": tools,
-            },
-        )
+        body = {
+            "model": model,
+            "instructions": INSTRUCTIONS,
+            "input": messages + [{"role": "user", "content": OPERATIONAL}],
+            "tools": tools,
+        }
+        if guard.wants_answer():
+            # Same rule as the live loop: reading for too long ends in words, not tools.
+            body.pop("tools")
+        response = post(url, key, body)
         output = response.json().get("output") or []
         messages.extend(output)
-        text = answer_text(output)
+        texts.append(answer_text(output))
         batch = [item for item in output if item.get("type") == "function_call"]
         if not batch:
-            return calls, invalid, text, guard
+            if guard.wants_answer():
+                guard.answered()
+            else:
+                messages.append({"role": "user", "content": drift.NO_TOOL_NOTICE})
+            continue
         rejected = False
         for call in batch:
             calls.append({"name": call.get("name"), "arguments": call.get("arguments")})
@@ -92,8 +101,8 @@ def ask(url, key, model, messages, tools, turns):
         if notice:
             messages.append({"role": "user", "content": notice})
         if guard.stalled():
-            return calls, invalid, text, guard
-    return calls, invalid, text, guard
+            break
+    return calls, invalid, " ".join(texts), guard
 
 
 def answer_text(output):
@@ -150,8 +159,6 @@ def score(task, calls, invalid, text):
         return False, "用完轮次也没有给出结论"
     if task.answer and not all(token in text for token in task.answer):
         return False, "结论缺少必需的事实"
-    if invalid:
-        return False, "参数被拒绝"
     return True, ""
 
 
@@ -202,7 +209,7 @@ def report(results, model, directory):
     return summary
 
 
-def run(model=None, only=None, output=None):
+def run(model=None, only=None, output=None, answers=True):
     url, key, configured = endpoint()
     tools = tool_catalog.TOOLS
     selected = [task for task in TASKS if not only or task.id in only]
@@ -216,6 +223,7 @@ def run(model=None, only=None, output=None):
             [{"role": "user", "content": task.prompt}],
             tools,
             task.turns,
+            answers=answers,
         )
         passed, detail = score(task, calls, invalid, text)
         if invalid:
@@ -237,6 +245,7 @@ def run(model=None, only=None, output=None):
         print(f"{'PASS' if passed else 'FAIL'} {task.id}: {detail or 'ok'}", flush=True)
     directory = output or Path("runs/checks") / f"benchmark-{time.strftime('%Y-%m-%d_%H-%M-%S')}"
     summary = report(results, model or configured, directory)
+    summary["answers"] = answers
     print(json.dumps({**summary, "directory": str(directory)}, ensure_ascii=False))
     return summary
 
