@@ -1,6 +1,6 @@
 # 研究工具与执行约定
 
-Version: 0.34.1
+Version: 0.35.0
 
 工具定义给出参数、默认值和限制；本文件说明常用流程。所有工具返回 `ok`：成功时直接读取同层结果；失败时读取 `error`、`hint` 和相关编号，修正后再调用。作业的 `status="failed"` 是执行结果，先读日志与证据再判断原因。
 
@@ -89,7 +89,7 @@ GPU 作业先调用 `job_prepare`，同样填写 command、attachments、input_e
 
 `research_plan.next_action` 每轮给出一句“下一步该做什么”：有作业结束时先复盘该路线，有可开工步骤时点名步骤与完成判据，都停着时提示改条件或新增步骤。按它推进，比重新浏览整份计划省轮次。
 
-所有待办和进展都在 plan 中维护。已学到的发现写 memory，稳定可复用的操作方法写 skills。
+所有待办和进展都在 plan 中维护。完成一个 step 后立即 `plan update` 写 `status="done"`、`evidence` 和实际 `progress`；不要只在结果文件或文字里宣布完成。已学到的发现写 memory，稳定可复用的操作方法写 skills。
 
 memory 使用 `search(query="当前研究问题")` 检索摘要，`read(id)` 读正文与 revision；`sources(id)` 列证据，再用 sources(id,ref) 读取来源。当前上下文会提供少量相关经验摘要，先确认 scope。用 write(content,scope,refs,kind) 保存值得跨实验复用的结论；临时观察用 lifetime="run"。update(id,revision,reason,content) 修正，archive／restore(id,revision,reason) 管理有效性。相似写入提示出现时先读原条目；同一发现更新原 ID，独立发现写明区别后 force=true、reason=... 保存。历史条目不授予当前权限。
 
