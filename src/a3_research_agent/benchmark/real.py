@@ -223,6 +223,17 @@ def _kill_pid(pid: int, sig: int, *, group: bool = False) -> None:
         pass
 
 
+def _signal_host(process: subprocess.Popen, sig: int) -> None:
+    # The Host is a session leader. A group signal also stops the direct curl
+    # child used for the model upstream, so a timed-out request cannot survive.
+    try:
+        os.killpg(process.pid, sig)
+    except ProcessLookupError:
+        pass
+    except PermissionError:
+        process.send_signal(sig)
+
+
 def _cleanup_processes(root: Path, run: Path | None) -> None:
     """Stop Host children even when the Host did not get a chance to shut down."""
     if run is not None:
@@ -291,7 +302,7 @@ def _watchdog(process: subprocess.Popen) -> None:
     """Interrupt a Host even while its Agent is blocked in a model request."""
     if process.poll() is not None:
         return
-    process.send_signal(signal.SIGINT)
+    _signal_host(process, signal.SIGINT)
     try:
         process.wait(timeout=30)
     except subprocess.TimeoutExpired:
@@ -353,7 +364,7 @@ def run_task(task: RealTask, output: Path, commit: str, model: str | None) -> di
             process.wait(timeout=45)
         except subprocess.TimeoutExpired:
             # SIGINT lets launch_run run its finally block and suspend the Agent.
-            process.send_signal(signal.SIGINT)
+            _signal_host(process, signal.SIGINT)
             try:
                 process.wait(timeout=45)
             except subprocess.TimeoutExpired:
@@ -406,7 +417,7 @@ def run_task(task: RealTask, output: Path, commit: str, model: str | None) -> di
     finally:
         watchdog.cancel()
         if process.poll() is None:
-            process.send_signal(signal.SIGINT)
+            _signal_host(process, signal.SIGINT)
             try:
                 process.wait(timeout=45)
             except subprocess.TimeoutExpired:
