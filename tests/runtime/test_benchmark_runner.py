@@ -40,7 +40,7 @@ def test_a_finished_task_is_not_run_again(monkeypatch, tmp_path):
         return fake_ask(*args, **kwargs)
 
     monkeypatch.setattr(runner, "ask", counting)
-    runner.run(output=tmp_path, only=["job_exit_code"], jobs=1)
+    runner.run(output=tmp_path, only=["read_eval_number"], jobs=1)
     assert len(calls) == 1
-    runner.run(output=tmp_path, only=["job_exit_code"], jobs=1)
+    runner.run(output=tmp_path, only=["read_eval_number"], jobs=1)
     assert len(calls) == 1

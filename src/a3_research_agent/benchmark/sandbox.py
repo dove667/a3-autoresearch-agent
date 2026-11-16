@@ -14,11 +14,26 @@ JOB_A = "a" * 32
 JOB_B = "b" * 32
 JOB_CANCELLED = "c" * 32
 JOB_GPU = "d" * 32
+JOB_FAILED = "f" * 32
+JOB_TRAIN = "9" * 32
 PREPARED = "prepared-" + "e" * 32
 
 FILES = {
     "bench/task.md": ("# 任务\n\n把 bench/measure.txt 里的入盒数报给我，并说明它来自哪次评测。\n"),
     "bench/measure.txt": "run=2026-11-10-act-p142\nseed=10010\ncookies_in_target=7\nmax_score=20\n",
+    "logs/train-f.log": (
+        "step 4200/5000 loss 0.031\n"
+        "RuntimeError: CUDA out of memory. Tried to allocate 2.00 GiB "
+        "(GPU 0; 23.65 GiB total capacity)\n"
+    ),
+    "experiments/2026-11-13-dagger-collect/report.json": (
+        '{"target_saved": 400, "saved": 240, "attempts": 268, "batches": 3, '
+        '"failures": {"wrong_mode": 12, "timeout": 16}}\n'
+    ),
+    "experiments/2026-11-10-act-p142/results/report.json": (
+        '{"2x5": {"cookies_in_target": 29, "episodes": 60, "native_success": 4},'
+        ' "2x10": {"cookies_in_target": 7, "episodes": 120, "native_success": 0}}\n'
+    ),
     "experiments/2026-11-10-act-p142/config.json": (
         '{"seeds": {"2x5": [10000, 10001, 10002, 10003, 10004, 10005],'
         ' "2x10": [10010, 10011, 10012, 10013, 10014, 10015]},'
@@ -30,6 +45,14 @@ JOBS = {
     JOB_A: {"status": "completed", "exit_code": 0, "backend": "process"},
     JOB_GPU: {"status": "completed", "exit_code": 0, "backend": "process"},
     JOB_CANCELLED: {"status": "cancelled", "exit_code": None, "backend": "process"},
+    JOB_FAILED: {
+        "status": "failed",
+        "exit_code": 1,
+        "backend": "process",
+        "failure_class": "resource",
+        "log_path": "logs/train-f.log",
+    },
+    JOB_TRAIN: {"status": "running", "exit_code": None, "backend": "process"},
 }
 
 PLAN = {
@@ -225,6 +248,73 @@ def recall(args):
     }
 
 
+def job_list(args):
+    return {
+        "ok": True,
+        "jobs": {
+            job: {"status": row["status"], "exit_code": row.get("exit_code")}
+            for job, row in JOBS.items()
+        },
+    }
+
+
+def job_artifact(args):
+    return {"ok": True, "job_id": args.get("job_id"), "path": "logs/train-f.log", "bytes": 210}
+
+
+def job_cancel(args):
+    return {"ok": True, "job_id": args.get("job_id"), "status": "cancelled"}
+
+
+def write_file(args):
+    return {"ok": True, "path": args.get("path"), "bytes": len(str(args.get("content", "")))}
+
+
+def export_list(args):
+    return {"ok": True, "exports": [{"id": "export-p142", "path": "experiments/2026-11-10-act-p142"}]}
+
+
+def export_status(args):
+    return {"ok": True, "id": args.get("id"), "status": "ready"}
+
+
+def runtime_status(args):
+    return {
+        "ok": True,
+        "controller": "connected",
+        "gpus": [{"index": 0, "free_mb": 22000}],
+        "queue": {"running": 1, "queued": 0},
+    }
+
+
+def session_status(args):
+    return {"ok": True, "status": "continue", "run": "2026-11-16_12-43-08"}
+
+
+def session_list(args):
+    return {"ok": True, "sessions": [{"id": "main", "role": "research", "is_main": True}]}
+
+
+def research_status(args):
+    return {"ok": True, "status": args.get("status", "continue"), "saved": True}
+
+
+def idle_wait(args):
+    return {"ok": True, "reason": "timeout", "observed": {}}
+
+
+def evaluation_compare(args):
+    return {
+        "ok": True,
+        "2x5": {"baseline": 14, "candidate": 29, "episodes": 60},
+        "2x10": {"baseline": 11, "candidate": 7, "episodes": 120},
+    }
+
+
+def generic_ok(args):
+    return {"ok": True, "note": "fixture has no effect for this tool"}
+
+
 HANDLERS = {
     "read": read,
     "list": list_dir,
@@ -233,6 +323,33 @@ HANDLERS = {
     "job_prepare": job_prepare,
     "job_status": job_status,
     "job_wait": job_wait,
+    "job_list": job_list,
+    "job_artifact": job_artifact,
+    "job_cancel": job_cancel,
+    "write": write_file,
+    "edit": generic_ok,
+    "export_list": export_list,
+    "export_status": export_status,
+    "export_create": generic_ok,
+    "export_manifest": generic_ok,
+    "export_delete": generic_ok,
+    "export_share": generic_ok,
+    "export_revoke": generic_ok,
+    "runtime_status": runtime_status,
+    "session_status": session_status,
+    "session_list": session_list,
+    "session_artifact": generic_ok,
+    "session_stop": generic_ok,
+    "session_cancel": generic_ok,
+    "research_status": research_status,
+    "idle_wait": idle_wait,
+    "evaluation_compare": evaluation_compare,
+    "conditions_compare": generic_ok,
+    "vision_status": generic_ok,
+    "vision_inspect": generic_ok,
+    "web_status": lambda args: {"ok": True, "enabled": False},
+    "web_search": lambda args: {"ok": False, "error": "web_disabled", "hint": "Disabled here."},
+    "web_fetch": lambda args: {"ok": False, "error": "web_disabled", "hint": "Disabled here."},
     "gpu_status": lambda args: {"ok": True, "gpus": [{"index": 0, "free_mb": 22000}]},
     "plan": plan_tool,
     "memory": memory_tool,

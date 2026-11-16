@@ -163,12 +163,23 @@ def score(task, calls, invalid, text):
         return False, "没有做出必需的工具调用"
     if task.answer and not text.strip():
         return False, "用完轮次也没有给出结论"
-    if task.answer and not all(token in text for token in task.answer):
-        return False, "结论缺少必需的事实"
+    if task.answer:
+        missing = [
+            group
+            for group in task.answer
+            if not any(option in text for option in _options(group))
+        ]
+        if missing:
+            return False, "结论缺少必需的事实"
     return True, ""
 
 
 ADVERTISED = frozenset(tool["name"] for tool in tool_catalog.TOOLS)
+
+
+def _options(group):
+    """An answer fact may accept any of several wordings."""
+    return (group,) if isinstance(group, str) else tuple(group)
 
 
 def summarize(results):

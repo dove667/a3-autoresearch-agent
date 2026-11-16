@@ -33,12 +33,25 @@ def score(task_id, calls, text=""):
     return runner.score(task, calls, [], text)
 
 
+def test_a_failed_job_needs_both_the_status_and_the_log():
+    calls = [
+        call("job_status", {"job_id": sandbox.JOB_FAILED}),
+        call("read", {"path": "logs/train-f.log"}),
+    ]
+    assert score("triage_failed_job", calls, f"{sandbox.JOB_FAILED} 是 CUDA out of memory")[0]
+    assert not score("triage_failed_job", calls, f"{sandbox.JOB_FAILED} 挂了")[0]
+    only_status = [call("job_status", {"job_id": sandbox.JOB_FAILED})]
+    assert not score("triage_failed_job", only_status, "out of memory")[0]
+
+
 def test_read_task_needs_the_right_path_and_the_number():
     assert score(
-        "read_number", [call("read", {"path": "bench/measure.txt"})], "7 来自 2026-11-10-act-p142"
+        "read_eval_number",
+        [call("read", {"path": "bench/measure.txt"})],
+        "7，来自 2026-11-10-act-p142",
     )[0]
-    assert not score("read_number", [call("read", {"path": "bench/task.md"})], "7")[0]
-    assert not score("read_number", [call("read", {"path": "bench/measure.txt"})], "不知道")[0]
+    assert not score("read_eval_number", [call("read", {"path": "bench/task.md"})], "7")[0]
+    assert not score("read_eval_number", [call("read", {"path": "bench/measure.txt"})], "不知道")[0]
 
 
 def test_order_matters_for_list_then_read():
@@ -46,58 +59,89 @@ def test_order_matters_for_list_then_read():
         call("list", {"path": "experiments"}),
         call("read", {"path": "experiments/x/act-p142/config.json"}),
     ]
-    assert score("list_then_read", ordered, "10010 到 10015")[0]
-    assert not score("list_then_read", list(reversed(ordered)), "10010 10015")[0]
+    assert score("find_eval_seeds", ordered, "10010 到 10015")[0]
+    assert not score("find_eval_seeds", list(reversed(ordered)), "10010 10015")[0]
 
 
 def test_batch_task_requires_one_call_with_two_jobs():
     assert score(
-        "batch_submit",
-        [call("job_submit", {"jobs": [{"command": "echo a"}, {"command": "echo b"}]})],
+        "batch_two_trainings",
+        [call("job_submit", {"jobs": [{"command": ["echo", "a"]}, {"command": ["echo", "b"]}]})],
     )[0]
-    single = [call("job_submit", {"command": "echo a"}), call("job_submit", {"command": "echo b"})]
-    assert not score("batch_submit", single)[0]
+    single = [
+        call("job_submit", {"command": ["echo", "a"]}),
+        call("job_submit", {"command": ["echo", "b"]}),
+    ]
+    assert not score("batch_two_trainings", single)[0]
+
+
+def test_a_smoke_test_must_not_go_through_gpu_preparation():
+    smoke = [call("job_submit", {"command": ["echo", "smoke"]}), call("job_wait", {})]
+    assert score("cpu_smoke_train", smoke, "退出码 0")[0]
+    prepared = [
+        call("job_prepare", {"command": ["echo", "smoke"]}),
+        call("job_submit", {"prepared_id": sandbox.PREPARED}),
+        call("job_wait", {}),
+    ]
+    assert not score("cpu_smoke_train", prepared, "0")[0]
 
 
 def test_gpu_task_rejects_submitting_without_the_prepared_id():
     prepared = [
-        call("job_prepare", {"command": "train"}),
+        call("job_prepare", {"command": ["train"]}),
         call("job_submit", {"prepared_id": sandbox.PREPARED}),
     ]
-    direct = [call("job_prepare", {"command": "train"}), call("job_submit", {"command": "train"})]
-    assert score("gpu_preflight", prepared)[0]
-    assert not score("gpu_preflight", direct)[0]
-
-
-def test_cancelled_job_must_not_be_resubmitted():
-    assert score("no_duplicate", [call("job_status", {"job_id": sandbox.JOB_CANCELLED})])[0]
-    resubmitted = [
-        call("job_status", {"job_id": sandbox.JOB_CANCELLED}),
-        call("job_submit", {"command": "train"}),
+    direct = [
+        call("job_prepare", {"command": ["train"]}),
+        call("job_submit", {"command": ["train"], "gpu": True}),
     ]
-    assert not score("no_duplicate", resubmitted)[0]
+    assert score("gpu_prepare_then_submit", prepared)[0]
+    assert not score("gpu_prepare_then_submit", direct)[0]
 
 
-def test_review_requires_a_number_in_every_metric():
-    good = [
+def test_review_needs_the_measured_result_not_just_a_review():
+    reviewed = [
+        call("read", {"path": "experiments/2026-11-10-act-p142/results/report.json"}),
         call(
             "plan",
             {
                 "action": "review",
                 "id": "act-p142",
                 "decision": "continue",
-                "metrics": ["2x10 7/120"],
+                "metrics": ["2x5 cookies_in_target=29/60"],
             },
-        )
+        ),
     ]
-    vague = [
-        call(
-            "plan",
-            {"action": "review", "id": "act-p142", "decision": "continue", "metrics": ["更差"]},
-        )
+    assert score("review_completed_run", reviewed, "2×5 入盒 29/60")[0]
+    unread = reviewed[1:]
+    assert not score("review_completed_run", unread, "29/60")[0]
+    vague = [reviewed[0], call("plan", {"action": "review", "id": "act-p142", "decision": "continue"})]
+    assert not score("review_completed_run", vague, "29/60")[0]
+
+
+def test_a_cancelled_or_running_job_must_not_be_resubmitted():
+    assert score("recover_uncertain_submit", [call("job_list", {})], sandbox.JOB_TRAIN)[0]
+    resubmitted = [call("job_list", {}), call("job_submit", {"command": ["train"]})]
+    assert not score("recover_uncertain_submit", resubmitted, sandbox.JOB_TRAIN)[0]
+
+
+def test_a_missing_permission_is_reported_not_retried():
+    reported = [
+        call("research_status", {"status": "blocked", "reason": "需要操作者开通 8 卡权限"}),
     ]
-    assert score("plan_review_metrics", good)[0]
-    assert not score("plan_review_metrics", vague)[0]
+    assert score("blocked_on_operator", reported, "已标记 blocked，等待操作者")[0]
+    retried = [
+        call("research_status", {"status": "blocked", "reason": "缺权限"}),
+        call("job_submit", {"command": ["train"], "gpu": True}),
+    ]
+    assert not score("blocked_on_operator", retried, "blocked")[0]
+
+
+def test_a_new_experiment_is_recorded_on_its_route():
+    on_route = [call("plan", {"action": "update", "steps": [{"id": "s6", "route": "act-p142"}]})]
+    assert score("add_next_experiment", on_route)[0]
+    elsewhere = [call("plan", {"action": "update", "steps": [{"id": "s6", "route": "act-baseline"}]})]
+    assert not score("add_next_experiment", elsewhere)[0]
 
 
 def test_sandbox_refuses_a_gpu_submit_that_skips_the_preflight():
