@@ -410,10 +410,7 @@ def main() -> None:
                 "input": messages + [operational],
                 "tools": tools,
             }
-            if guard.wants_answer():
-                # Reading produced no decision: withhold tools so the turn ends in words.
-                request.pop("tools", None)
-            elif FORCE_SUPPORTED and guard.force_tool_choice():
+            if FORCE_SUPPORTED and guard.force_tool_choice():
                 # Bounded: only after a text-only or rejected call, never by default.
                 request["tool_choice"] = "required"
             try:
@@ -481,14 +478,9 @@ def main() -> None:
                     == "blocked"
                 ):
                     break
-                if guard.wants_answer():
-                    # The demanded message arrived; ordinary tool use resumes.
-                    guard.answered()
-                    log({"answer_demanded": guard.snapshot()})
-                else:
-                    messages.append({"role": "user", "content": guard.observe_empty()})
-                    log({"model_drift": guard.snapshot()})
-                    checkpoint(messages)
+                messages.append({"role": "user", "content": guard.observe_empty()})
+                log({"model_drift": guard.snapshot()})
+                checkpoint(messages)
             elif notice := guard.observe(calls, invalid_call):
                 messages.append({"role": "user", "content": notice})
                 log({"model_drift": guard.snapshot()})

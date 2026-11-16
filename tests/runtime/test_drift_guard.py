@@ -82,47 +82,33 @@ def read_turn(index):
     return [{"name": "read", "arguments": json.dumps({"path": f"f{index}"})}]
 
 
-def test_endless_reading_ends_with_a_demanded_answer():
+def test_endless_reading_earns_a_reminder_but_keeps_every_tool():
     guard = drift.DriftGuard()
     notices = [guard.observe(read_turn(index), False) for index in range(drift.ANSWER_TURNS)]
     assert notices[:-1] == [None] * (drift.ANSWER_TURNS - 1)
     assert notices[-1] == drift.ANSWER_NOTICE
-    assert guard.wants_answer()
-    assert guard.snapshot()["answers"] == 1
+    assert not guard.stalled()
     assert guard.snapshot()["reading"] == 0
 
 
-def test_an_answer_resumes_tool_use_and_resets_the_reading_count():
+def test_the_reminder_repeats_without_ever_stopping_the_run():
     guard = drift.DriftGuard()
-    for index in range(drift.ANSWER_TURNS):
-        guard.observe(read_turn(index), False)
-    guard.answered()
-    assert not guard.wants_answer()
-    assert guard.snapshot()["reading"] == 0
+    notices = [guard.observe(read_turn(index), False) for index in range(drift.ANSWER_TURNS * 8)]
+    assert notices.count(drift.ANSWER_NOTICE) == 8
+    assert guard.snapshot()["answers"] == 8
+    assert not guard.stalled()
 
 
-def test_a_state_change_never_asks_for_an_answer():
+def test_a_state_change_never_earns_the_reminder():
     guard = drift.DriftGuard()
     for index in range(drift.ANSWER_TURNS - 1):
         guard.observe(read_turn(index), False)
     assert guard.observe([{"name": "job_submit", "arguments": "{}"}], False) is None
-    assert not guard.wants_answer()
 
 
-def test_only_a_few_answers_are_demanded_before_the_process_ends():
-    guard = drift.DriftGuard()
-    for index in range(drift.ANSWER_TURNS * 5):
-        guard.observe(read_turn(index), False)
-        if guard.wants_answer():
-            guard.answered()
-    assert guard.snapshot()["answers"] == drift.MAX_ANSWERS
-    assert not guard.wants_answer()
-    assert guard.stalled()
-
-
-def test_a_repeated_read_loop_still_ends_in_a_demanded_answer():
+def test_a_repeated_read_loop_still_gets_the_reminder():
+    # An identical repeat is a different, older condition; the reminder must still appear.
     guard = drift.DriftGuard()
     same = {"name": "read", "arguments": json.dumps({"path": "f"})}
     notices = [guard.observe([same], False) for _ in range(drift.ANSWER_TURNS)]
     assert drift.ANSWER_NOTICE in notices
-    assert guard.wants_answer()

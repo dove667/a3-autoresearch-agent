@@ -60,7 +60,7 @@ def ask(url, key, model, messages, tools, turns, answers=True):
     calls = []
     invalid = []
     texts = []
-    guard = drift.DriftGuard(max_answers=drift.MAX_ANSWERS if answers else 0)
+    guard = drift.DriftGuard(remind=answers)
     for _ in range(turns):
         body = {
             "model": model,
@@ -68,19 +68,13 @@ def ask(url, key, model, messages, tools, turns, answers=True):
             "input": messages + [{"role": "user", "content": OPERATIONAL}],
             "tools": tools,
         }
-        if guard.wants_answer():
-            # Same rule as the live loop: reading for too long ends in words, not tools.
-            body.pop("tools")
         response = post(url, key, body)
         output = response.json().get("output") or []
         messages.extend(output)
         texts.append(answer_text(output))
         batch = [item for item in output if item.get("type") == "function_call"]
         if not batch:
-            if guard.wants_answer():
-                guard.answered()
-            else:
-                messages.append({"role": "user", "content": drift.NO_TOOL_NOTICE})
+            messages.append({"role": "user", "content": drift.NO_TOOL_NOTICE})
             continue
         rejected = False
         for call in batch:

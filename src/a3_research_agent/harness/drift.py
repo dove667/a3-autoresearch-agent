@@ -51,11 +51,11 @@ INVALID_NOTICE = (
     "A tool call was rejected by its own contract. Read the error and hint, then resend the "
     "call with the required fields, or choose the tool that matches the actual need."
 )
+# A nudge, never a gate: the model keeps its tools and the run never ends because of it.
 ANSWER_TURNS = 5
-MAX_ANSWERS = 3
 ANSWER_NOTICE = (
-    "Reading is not producing a decision. Answer now in one plain-text message: the facts you "
-    "have, what they imply, and the single next action. Tools are withheld for this turn."
+    "Several turns of reading without a recorded decision. In your next message state the facts "
+    "you have, what they imply, and the single next action, then continue the work."
 )
 FORCE_ATTEMPTS = 2
 MAX_INCIDENTS = 3
@@ -85,12 +85,12 @@ class DriftGuard:
         force_attempts=FORCE_ATTEMPTS,
         max_incidents=MAX_INCIDENTS,
         max_no_tool=MAX_NO_TOOL,
-        max_answers=MAX_ANSWERS,
+        remind=True,
     ):
         self.force_attempts = force_attempts
-        self.max_answers = max_answers
         self.max_incidents = max_incidents
         self.max_no_tool = max_no_tool
+        self.remind = remind
         self.force = 0
         self.no_tool = 0
         self.invalid = 0
@@ -98,7 +98,6 @@ class DriftGuard:
         self.incidents = 0
         self.reading = 0
         self.answers = 0
-        self.demanding = False
         self.last = None
 
     def force_tool_choice(self):
@@ -108,15 +107,6 @@ class DriftGuard:
         """One model request consumed part of a forced turn."""
         if self.force > 0:
             self.force -= 1
-
-    def wants_answer(self):
-        """Tools are withheld this turn so the model has to state a conclusion."""
-        return self.demanding
-
-    def answered(self):
-        """The demanded message arrived; resume ordinary tool use."""
-        self.demanding = False
-        self.reading = 0
 
     def observe(self, calls, invalid):
         """Return a correction notice for this tool response, else None."""
@@ -140,10 +130,9 @@ class DriftGuard:
 
     def demand_answer(self):
         """Long stretches of reading end with a message instead of more reading."""
-        if self.answers >= self.max_answers or self.reading < ANSWER_TURNS:
+        if not self.remind or self.reading < ANSWER_TURNS:
             return None
         self.answers += 1
-        self.demanding = True
         self.reading = 0
         return ANSWER_NOTICE
 
@@ -166,12 +155,7 @@ class DriftGuard:
         Continuing would spend the whole night on rejected requests, so the process
         ends and leaves the drift record for the operator instead.
         """
-        return (
-            self.no_tool >= self.max_no_tool
-            or self.incidents > self.max_incidents
-            # Answers were demanded and refused; more reading will not decide either.
-            or (self.answers >= self.max_answers and self.reading >= ANSWER_TURNS * 2)
-        )
+        return self.no_tool >= self.max_no_tool or self.incidents > self.max_incidents
 
     def snapshot(self):
         return {
