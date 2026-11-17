@@ -11,6 +11,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from a3_research_agent.host import launch as bootstrap
 from a3_research_agent.host.inputs.versions import InputVersions
 from a3_research_agent.host.published_harness import pin_run, research_workspace, run_commit
 from a3_research_agent.host.release_packages import (
@@ -297,7 +298,6 @@ def test_interrupted_apply_fences_resume_and_retries_without_a_second_input_revi
 ):
     from argparse import Namespace
 
-    from a3_research_agent.host import launch as bootstrap
     from a3_research_agent.host import releases
 
     root, run, _workspace, _, commit, proposal, release, protected, env, _ = published_run
@@ -349,7 +349,6 @@ def test_real_native_host_resume_executes_new_source_in_the_same_workspace(
     import time
     from argparse import Namespace
 
-    from a3_research_agent.host import launch as bootstrap
     from a3_research_agent.host.releases import apply_release
 
     root, run, workspace, _, commit, proposal, release, protected, env, _ = published_run
@@ -414,7 +413,6 @@ def test_native_resume_fences_unknown_process_before_inputs_gateway_or_model_set
 ):
     from argparse import Namespace
 
-    from a3_research_agent.host import launch as bootstrap
     from a3_research_agent.host.releases import apply_release
     from a3_research_agent.host.sessions import processes
 
@@ -455,7 +453,6 @@ def test_real_fresh_published_host_saves_provenance_before_native_start(
     import time
     from argparse import Namespace
 
-    from a3_research_agent.host import launch as bootstrap
     from a3_research_agent.host.published_harness import COMMAND
     from a3_research_agent.host.runs.continuation import HarnessStart
 
