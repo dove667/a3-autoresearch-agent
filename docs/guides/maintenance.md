@@ -121,7 +121,7 @@ uv run python -m a3_research_agent.cli.reload_feedback "trajectories/<开始时�
 ## 夜间运行窗口
 
 使用 `bash start-autoresearch.sh --night-window --harness-commit <已发布提交SHA>`。
-窗口为北京时间 21:00（含）到次日 09:00（不含）。到点正常停止本地 Agent，远端
+窗口为北京时间 21:00（含）到次日 `A3_NIGHT_WINDOW_END_HOUR`（默认 9，即 09:00，不含）。到点正常停止本地 Agent，远端
 Controller 继续管理已提交作业。下一个窗口创建新的 run 和空模型上下文，读取共享研究材料，
 不自动恢复上一晚的对话。启动器退出或机器重启后重新执行该入口。Host 在写入 run 状态前
 失败时（例如启动瞬间断网），启动器按 15/30/60/120/300 秒退避重试，并清理空的预留目录。

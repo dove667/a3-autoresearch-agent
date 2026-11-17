@@ -188,3 +188,39 @@ def test_each_night_selects_a_fresh_trajectory_without_old_context(tmp_path):
     assert not list(second.iterdir())
     assert first_env["A3_NIGHT_WINDOW_RUN_DIR"] == str(first)
     assert second_env["A3_NIGHT_WINDOW_RUN_DIR"] == str(second)
+
+
+
+def test_window_end_hour_is_configurable():
+    from a3_research_agent.cli import night_window
+
+    assert night_window.window_boundary(datetime(2026, 11, 7, 8, 0, tzinfo=BEIJING), 7) == (
+        False,
+        datetime(2026, 11, 7, 21, 0, tzinfo=BEIJING),
+    )
+    assert night_window.window_boundary(datetime(2026, 11, 8, 6, 59, tzinfo=BEIJING), 7) == (
+        True,
+        datetime(2026, 11, 8, 7, 0, tzinfo=BEIJING),
+    )
+    assert night_window.window_boundary(datetime(2026, 11, 7, 22, 0, tzinfo=BEIJING), 7) == (
+        True,
+        datetime(2026, 11, 8, 7, 0, tzinfo=BEIJING),
+    )
+
+
+def test_window_end_hour_comes_from_the_environment(monkeypatch):
+    from a3_research_agent.cli import night_window
+
+    monkeypatch.delenv("A3_NIGHT_WINDOW_END_HOUR", raising=False)
+    assert night_window.end_hour() == 9
+    monkeypatch.setenv("A3_NIGHT_WINDOW_END_HOUR", "7")
+    assert night_window.end_hour() == 7
+
+
+def test_window_end_hour_must_leave_a_window(monkeypatch):
+    from a3_research_agent.cli import night_window
+
+    for value in ("21", "-1", "later"):
+        monkeypatch.setenv("A3_NIGHT_WINDOW_END_HOUR", value)
+        with pytest.raises(ValueError):
+            night_window.end_hour()

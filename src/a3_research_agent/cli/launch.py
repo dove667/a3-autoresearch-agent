@@ -113,14 +113,21 @@ def launch_main() -> None:
     if night_child:
         from datetime import datetime
 
-        from a3_research_agent.cli.night_window import BEIJING, window_boundary
+        from a3_research_agent.cli.night_window import BEIJING, end_hour, window_boundary
 
-        if not window_boundary(datetime.now(BEIJING))[0]:
-            parser.error("This run can only start from 21:00 to 09:00 Beijing time")
+        end = end_hour()
+        if not window_boundary(datetime.now(BEIJING), end)[0]:
+            parser.error(
+                f"This run can only start from 21:00 to {end:02d}:00 Beijing time"
+            )
     if args.night_window:
         if args.resume_from or args.check or not args.harness_commit:
             parser.error("--night-window requires --harness-commit for a fresh daily run")
-        from a3_research_agent.cli.night_window import FreshNightSchedule, run_nightly
+        from a3_research_agent.cli.night_window import (
+            FreshNightSchedule,
+            end_hour,
+            run_nightly,
+        )
 
         command = [
             sys.executable,
@@ -134,9 +141,15 @@ def launch_main() -> None:
         if args.feedback_file:
             command.extend(["--feedback-file", str(args.feedback_file.resolve())])
         schedule = FreshNightSchedule(root, command)
-        print("Night window command: " + " ".join(command), flush=True)
+        window_end = end_hour()
+        print(
+            "Night window command: " + " ".join(command) + f" (ends {window_end:02d}:00)",
+            flush=True,
+        )
         with RunLease(root / ".runtime/night-window/launcher"):
-            raise SystemExit(run_nightly(command, None, schedule=schedule))
+            raise SystemExit(
+                run_nightly(command, None, schedule=schedule, window_end=window_end)
+            )
     required = (
         "MODEL_NAME",
         "A3_PROJECT_ROOT",

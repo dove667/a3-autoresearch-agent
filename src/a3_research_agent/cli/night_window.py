@@ -15,9 +15,21 @@ BEIJING = ZoneInfo("Asia/Shanghai")
 STARTUP_RETRY_DELAYS = (15, 30, 60, 120, 300)
 
 
-def window_boundary(now: datetime) -> tuple[bool, datetime]:
+def end_hour() -> int:
+    """Morning end of the night window, operator-configurable for early mornings."""
+    raw = os.environ.get("A3_NIGHT_WINDOW_END_HOUR", "9")
+    try:
+        hour = int(raw)
+    except ValueError:
+        raise ValueError("A3_NIGHT_WINDOW_END_HOUR must be an integer hour") from None
+    if not 0 <= hour <= 20:
+        raise ValueError("A3_NIGHT_WINDOW_END_HOUR must be between 0 and 20")
+    return hour
+
+
+def window_boundary(now: datetime, end: int = 9) -> tuple[bool, datetime]:
     now = now.astimezone(BEIJING)
-    morning = now.replace(hour=9, minute=0, second=0, microsecond=0)
+    morning = now.replace(hour=end, minute=0, second=0, microsecond=0)
     evening = morning.replace(hour=21)
     if now < morning:
         return True, morning
@@ -59,7 +71,9 @@ class FreshNightSchedule:
         return self.command.copy(), run, {"A3_NIGHT_WINDOW_RUN_DIR": str(run)}
 
 
-def run_nightly(command: list[str], state: RunStateStore, *, schedule=None) -> int:
+def run_nightly(
+    command: list[str], state: RunStateStore, *, schedule=None, window_end: int = 9
+) -> int:
     stop = threading.Event()
     child_env = {**os.environ, "A3_NIGHT_WINDOW_CHILD": "1"}
 
@@ -72,10 +86,12 @@ def run_nightly(command: list[str], state: RunStateStore, *, schedule=None) -> i
     failed_starts = 0
     try:
         while not stop.is_set():
-            allowed, boundary = window_boundary(datetime.now(BEIJING))
+            allowed, boundary = window_boundary(datetime.now(BEIJING), window_end)
             if not allowed:
                 print(f"Host paused until {boundary.isoformat()}", flush=True)
-                while not stop.is_set() and not window_boundary(datetime.now(BEIJING))[0]:
+                while not stop.is_set() and not window_boundary(
+                    datetime.now(BEIJING), window_end
+                )[0]:
                     stop.wait(1)
                 failed_starts = 0
                 continue
@@ -90,7 +106,7 @@ def run_nightly(command: list[str], state: RunStateStore, *, schedule=None) -> i
             interrupted = False
             with subprocess.Popen(launch_command, start_new_session=True, env=launch_env) as host:
                 while host.poll() is None:
-                    if stop.is_set() or not window_boundary(datetime.now(BEIJING))[0]:
+                    if stop.is_set() or not window_boundary(datetime.now(BEIJING), window_end)[0]:
                         host.send_signal(signal.SIGINT)
                         interrupted = True
                         break
