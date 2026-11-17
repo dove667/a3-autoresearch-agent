@@ -533,7 +533,6 @@ def run(
                 time.sleep(30)
     results = list(results_by_id.values())
     results.sort(key=lambda row: [task.id for task in TASKS].index(row["id"]))
-    benchmark_status.record(TASKS, results, directory=directory, model=model)
     summary = report(results, directory, commit)
     summary["status"] = benchmark_status.summary(TASKS)
     summary["directory"] = str(directory)
