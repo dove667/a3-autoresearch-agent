@@ -43,20 +43,54 @@ def test_invalid_arguments_force_a_corrected_attempt():
     assert guard.observe([call("job_submit", "{}")], invalid=True) == drift.INVALID_NOTICE
 
 
-def test_forced_corrections_are_capped_per_process():
-    guard = drift.DriftGuard()
-    notices = [guard.observe([call("read", "{}")], invalid=True) for _ in range(6)]
-    assert notices[:3] == [drift.INVALID_NOTICE] * 3
-    assert drift.INVALID_NOTICE not in notices[3:]
-    assert guard.snapshot()["incidents"] > drift.MAX_INCIDENTS
-
-
 def test_a_clean_call_resets_the_incident_chain():
     guard = drift.DriftGuard()
     for _ in range(3):
         guard.observe([call("read", "{}")], invalid=True)
         guard.observe([call("list", '{"path":"x"}')], False)
     assert guard.observe([call("read", "{}")], invalid=True) == drift.INVALID_NOTICE
+
+
+def test_invalid_calls_keep_getting_corrections_up_to_the_budget():
+    guard = drift.DriftGuard()
+    notices = [
+        guard.observe([call("write", json.dumps({"path": "a.py", "n": index}))], invalid=True)
+        for index in range(drift.MAX_INVALID)
+    ]
+    assert notices == [drift.INVALID_NOTICE] * drift.MAX_INVALID
+    assert not guard.stalled()
+    guard.observe([call("write", '{"path":"late.py"}')], invalid=True)
+    assert guard.stalled()
+
+
+def test_a_clean_call_clears_the_invalid_budget():
+    guard = drift.DriftGuard()
+    for index in range(drift.MAX_INVALID):
+        guard.observe([call("write", json.dumps({"path": "b.py", "n": index}))], invalid=True)
+    guard.observe([call("job_submit", '{"jobs":[]}')], False)
+    assert guard.snapshot()["invalid"] == 0
+    assert not guard.stalled()
+
+
+def test_repeated_identical_calls_stop_after_the_repeat_budget():
+    guard = drift.DriftGuard()
+    same = [call("write", '{"path":"a.py"}')]
+    guard.observe(same, False)
+    for _ in range(drift.MAX_REPEAT):
+        guard.observe(same, False)
+    assert not guard.stalled()
+    guard.observe(same, False)
+    assert guard.stalled()
+
+
+def test_a_tool_call_clears_the_empty_response_budget():
+    guard = drift.DriftGuard()
+    for _ in range(drift.MAX_NO_TOOL - 1):
+        guard.observe_empty()
+    assert not guard.stalled()
+    guard.observe([call("read", "{}")], False)
+    assert guard.snapshot()["no_tool"] == 0
+    assert not guard.stalled()
 
 
 def test_read_only_turns_are_counted_and_a_state_change_clears_them():

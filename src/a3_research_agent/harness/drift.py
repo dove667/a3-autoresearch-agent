@@ -52,7 +52,9 @@ REPEAT_NOTICE = (
 )
 INVALID_NOTICE = (
     "A tool call was rejected by its own contract. Read the error and hint, then resend the "
-    "call with the required fields, or choose the tool that matches the actual need."
+    "call with the required fields, or choose the tool that matches the actual need. If the "
+    "arguments were cut off by the response limit, send a shorter first version and extend it "
+    "with follow-up edits instead of resending the whole content."
 )
 # A nudge, never a gate: the model keeps its tools and the run never ends because of it.
 ANSWER_TURNS = 5
@@ -61,8 +63,12 @@ ANSWER_NOTICE = (
     "you have, what they imply, and the single next action, then continue the work."
 )
 FORCE_ATTEMPTS = 2
-MAX_INCIDENTS = 3
-MAX_NO_TOOL = 6
+# A weak model can produce a run of rejected calls before it recovers, so each failure mode
+# gets its own consecutive budget. Ending the process is the last resort for unattended
+# research; one shared three-strike counter made a single bad streak end the whole night.
+MAX_INVALID = 8
+MAX_REPEAT = 4
+MAX_NO_TOOL = 12
 
 
 def read_only(call):
@@ -86,12 +92,14 @@ class DriftGuard:
     def __init__(
         self,
         force_attempts=FORCE_ATTEMPTS,
-        max_incidents=MAX_INCIDENTS,
+        max_invalid=MAX_INVALID,
+        max_repeat=MAX_REPEAT,
         max_no_tool=MAX_NO_TOOL,
         remind=True,
     ):
         self.force_attempts = force_attempts
-        self.max_incidents = max_incidents
+        self.max_invalid = max_invalid
+        self.max_repeat = max_repeat
         self.max_no_tool = max_no_tool
         self.remind = remind
         self.force = 0
@@ -114,6 +122,7 @@ class DriftGuard:
     def observe(self, calls, invalid):
         """Return a correction notice for this tool response, else None."""
         self.exploration(calls)
+        self.no_tool = 0
         self.invalid = self.invalid + 1 if invalid else 0
         signature = sorted({(call.get("name"), call.get("arguments")) for call in calls})
         repeated = bool(signature) and signature == self.last
@@ -123,12 +132,12 @@ class DriftGuard:
         drifted = invalid or (self.repeat >= 1 and not polled)
         self.incidents = self.incidents + 1 if drifted else 0
         notice = None
-        if drifted and self.incidents <= self.max_incidents:
+        if invalid and self.invalid <= self.max_invalid:
             self.force = self.force_attempts
-            if invalid:
-                notice = INVALID_NOTICE
-            else:
-                notice = REPEAT_NOTICE if repeated else NO_TOOL_NOTICE
+            notice = INVALID_NOTICE
+        elif self.repeat >= 1 and not polled and self.repeat <= self.max_repeat:
+            self.force = self.force_attempts
+            notice = REPEAT_NOTICE if repeated else NO_TOOL_NOTICE
         return self.demand_answer() or notice
 
     def demand_answer(self):
@@ -153,12 +162,16 @@ class DriftGuard:
         return NO_TOOL_NOTICE
 
     def stalled(self):
-        """Every correction was already spent and the model still does not act.
+        """The model has spent one consecutive correction budget without acting.
 
-        Continuing would spend the whole night on rejected requests, so the process
-        ends and leaves the drift record for the operator instead.
+        Stopping is the last resort, reserved for a model that keeps failing the same
+        way; isolated bad turns and long recovery attempts leave the run alive.
         """
-        return self.no_tool >= self.max_no_tool or self.incidents > self.max_incidents
+        return (
+            self.no_tool >= self.max_no_tool
+            or self.repeat > self.max_repeat
+            or self.invalid > self.max_invalid
+        )
 
     def snapshot(self):
         return {
