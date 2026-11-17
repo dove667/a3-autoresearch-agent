@@ -44,6 +44,9 @@ from a3_research_agent.harness.memory import client as memory_client
 
 BASE = None
 TOKEN = None
+# Never let a macOS system proxy (for example Shadowrocket) intercept the
+# loopback Host gateway. Only the model upstream needs its own direct route.
+_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
 def req(method, path, data=None, *, timeout=300):
@@ -57,7 +60,7 @@ def req(method, path, data=None, *, timeout=300):
         method=method,
     )
     try:
-        with urllib.request.urlopen(r, timeout=timeout) as x:
+        with _OPENER.open(r, timeout=timeout) as x:
             return json.loads(x.read())
     except urllib.error.HTTPError as e:
         return {"http_error": e.code, "body": e.read().decode()[:10000]}
