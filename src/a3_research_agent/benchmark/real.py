@@ -27,6 +27,7 @@ from a3_research_agent.host.knowledge_service.lifecycle import KnowledgeService
 from a3_research_agent.host.published_harness import published_source
 from a3_research_agent.project import checkout_root
 
+from . import status as benchmark_status
 from .health import check as health_check
 
 REPO = checkout_root() or Path(__file__).resolve().parents[3]
@@ -471,6 +472,7 @@ def run(
     model: str | None = None,
     commit: str | None = None,
     attempts: int = 1,
+    state: str = "open",
 ) -> dict:
     from dotenv import load_dotenv
 
@@ -478,7 +480,9 @@ def run(
     preflight = health_check()
     if not preflight["healthy"]:
         raise SystemExit("Benchmark preflight failed: " + json.dumps(preflight, ensure_ascii=False))
-    selected = [task for task in TASKS if not only or task.id in only]
+    selected = benchmark_status.selected(TASKS, state, only)
+    if not selected:
+        raise SystemExit(f"No benchmark tasks in state {state!r}")
     if timeout:
         selected = [
             RealTask(**{**task.__dict__, "timeout": timeout}) for task in selected
@@ -512,6 +516,9 @@ def run(
                     row = future.result()
                     row["attempt"] = attempt + 1
                     results_by_id[row["id"]] = row
+                    benchmark_status.record(
+                        TASKS, [row], directory=directory, model=model
+                    )
                     print(
                         f"{'PASS' if row['passed'] else 'FAIL'} {row['id']}: {row['detail']}",
                         flush=True,
@@ -526,7 +533,9 @@ def run(
                 time.sleep(30)
     results = list(results_by_id.values())
     results.sort(key=lambda row: [task.id for task in TASKS].index(row["id"]))
+    benchmark_status.record(TASKS, results, directory=directory, model=model)
     summary = report(results, directory, commit)
+    summary["status"] = benchmark_status.summary(TASKS)
     summary["directory"] = str(directory)
     print(json.dumps(summary, ensure_ascii=False))
     return summary
@@ -1079,6 +1088,285 @@ TASKS += (
 )
 
 
+
+def _parallel_done(root: Path, plan: dict) -> bool:
+    value = _json_file(root, "results/bench-parallel.json")
+    jobs = value.get("jobs")
+    step = (plan.get("steps") or {}).get("parallel_batch4") or {}
+    return (
+        isinstance(jobs, list)
+        and len(jobs) == 4
+        and len({item.get("job_id") for item in jobs if isinstance(item, dict)}) == 4
+        and all(item.get("exit_code") == 0 for item in jobs if isinstance(item, dict))
+        and step.get("status") == "done"
+        and bool(step.get("evidence"))
+    )
+
+
+def _parallel_score(root: Path, plan: dict, run: Path) -> tuple[bool, str]:
+    value = _json_file(root, "results/bench-parallel.json")
+    jobs = value.get("jobs")
+    step = (plan.get("steps") or {}).get("parallel_batch4") or {}
+    if (
+        isinstance(jobs, list)
+        and len(jobs) == 4
+        and len({item.get("job_id") for item in jobs if isinstance(item, dict)}) == 4
+        and all(item.get("exit_code") == 0 for item in jobs if isinstance(item, dict))
+        and step.get("status") == "done"
+        and bool(step.get("evidence"))
+    ):
+        return True, "4 个真实 CPU 作业并排完成"
+    return False, f"并行 job 不完整：target={value}, step={step.get('status')}"
+
+
+def _export_done(root: Path, plan: dict) -> bool:
+    value = _json_file(root, "results/bench-export.json")
+    step = (plan.get("steps") or {}).get("export_reuse") or {}
+    return (
+        isinstance(value.get("job_id"), str)
+        and len(value["job_id"]) == 32
+        and str(value.get("export_id", "")).startswith("export-")
+        and "probe.txt" in (value.get("files") or [])
+        and step.get("status") == "done"
+        and bool(step.get("evidence"))
+    )
+
+
+def _export_score(root: Path, plan: dict, run: Path) -> tuple[bool, str]:
+    value = _json_file(root, "results/bench-export.json")
+    step = (plan.get("steps") or {}).get("export_reuse") or {}
+    names = {call.get("tool") for call in _calls(run)}
+    needed = {"job_submit", "job_wait", "job_artifact", "export_create", "export_status", "export_manifest"}
+    if (
+        isinstance(value.get("job_id"), str)
+        and len(value["job_id"]) == 32
+        and str(value.get("export_id", "")).startswith("export-")
+        and "probe.txt" in (value.get("files") or [])
+        and step.get("status") == "done"
+        and bool(step.get("evidence"))
+        and needed <= names
+    ):
+        return True, "真实作业产物已读取、封存并核对 manifest"
+    return False, f"export 不完整：target={value}, missing={sorted(needed - names)}"
+
+
+def _gpu_done(root: Path, plan: dict) -> bool:
+    value = _json_file(root, "results/bench-gpu.json")
+    step = (plan.get("steps") or {}).get("gpu_submit") or {}
+    return (
+        isinstance(value.get("job_id"), str)
+        and len(value["job_id"]) == 32
+        and str(value.get("prepared_id", "")).startswith("prepared-")
+        and value.get("exit_code") == 0
+        and step.get("status") == "done"
+        and bool(step.get("evidence"))
+    )
+
+
+def _gpu_score(root: Path, plan: dict, run: Path) -> tuple[bool, str]:
+    value = _json_file(root, "results/bench-gpu.json")
+    step = (plan.get("steps") or {}).get("gpu_submit") or {}
+    names = {call.get("tool") for call in _calls(run)}
+    if (
+        isinstance(value.get("job_id"), str)
+        and len(value["job_id"]) == 32
+        and str(value.get("prepared_id", "")).startswith("prepared-")
+        and value.get("exit_code") == 0
+        and step.get("status") == "done"
+        and bool(step.get("evidence"))
+        and {"job_prepare", "job_submit", "job_wait"} <= names
+    ):
+        return True, "真实 GPU 请求完成预检、提交并成功退出"
+    return False, f"GPU 提交不完整：target={value}"
+
+
+def _loop_done(root: Path, plan: dict) -> bool:
+    value = _json_file(root, "results/bench-followup.json")
+    step = (plan.get("steps") or {}).get("follow-up") or {}
+    review = any(item.get("route") == "bench-loop" for item in (plan.get("reviews") or []))
+    return (
+        isinstance(value.get("job_id"), str)
+        and value.get("exit_code") == 0
+        and step.get("status") == "done"
+        and bool(step.get("evidence"))
+        and review
+    )
+
+
+def _loop_score(root: Path, plan: dict, run: Path) -> tuple[bool, str]:
+    value = _json_file(root, "results/bench-followup.json")
+    step = (plan.get("steps") or {}).get("follow-up") or {}
+    reviews = [item for item in (plan.get("reviews") or []) if item.get("route") == "bench-loop"]
+    names = {call.get("tool") for call in _calls(run)}
+    if (
+        isinstance(value.get("job_id"), str)
+        and value.get("exit_code") == 0
+        and step.get("status") == "done"
+        and bool(step.get("evidence"))
+        and reviews
+        and any("3" in str(metric) for metric in reviews[-1].get("metrics") or [])
+        and {"job_submit", "job_wait", "plan"} <= names
+    ):
+        return True, "读取结果、提交作业、复盘并关闭步骤的完整闭环"
+    return False, f"计划闭环不完整：step={step.get('status')}, reviews={len(reviews)}"
+
+
+def _memory_guard_done(root: Path, plan: dict) -> bool:
+    value = _json_file(root, "results/bench-memory-decision.json")
+    step = (plan.get("steps") or {}).get("memory_guard") or {}
+    return (
+        value.get("decision") == "do_not_rerun"
+        and value.get("memory_id") == "d9ebbacf33e6"
+        and "11/120" in str(value)
+        and "7/120" in str(value)
+        and step.get("status") == "done"
+        and bool(step.get("evidence"))
+    )
+
+
+def _memory_guard_score(root: Path, plan: dict, run: Path) -> tuple[bool, str]:
+    value = _json_file(root, "results/bench-memory-decision.json")
+    step = (plan.get("steps") or {}).get("memory_guard") or {}
+    names = {call.get("tool") for call in _calls(run)}
+    if (
+        value.get("decision") == "do_not_rerun"
+        and value.get("memory_id") == "d9ebbacf33e6"
+        and "11/120" in str(value)
+        and "7/120" in str(value)
+        and step.get("status") == "done"
+        and bool(step.get("evidence"))
+        and "job_submit" not in names
+    ):
+        return True, "memory 证据支持不重复实验，且没有提交作业"
+    return False, f"memory 防重复不完整：target={value}, job_submit={'job_submit' in names}"
+
+
+TASKS += (
+    RealTask(
+        "parallel_batch4",
+        "并行推进四个真实作业",
+        "把四个互不依赖的 CPU 检查作业一次或多次提交，并全部等到完成。",
+        "完成 benchmark：job controller 并行推进四个独立作业",
+        "bench-parallel",
+        "按 TASK.md 并行提交 4 个独立 CPU 作业，等全部完成，写 results/bench-parallel.json，plan done，然后 session_stop。",
+        "结果文件 jobs 恰好四条，四个不同 job_id 均 exit_code=0；plan step done 且有 evidence。",
+        """# Benchmark task
+
+四个互不依赖的 CPU 作业都要提交：命令分别是 `["python","-c","print('bench-0')"]`、`["python","-c","print('bench-1')"]`、`["python","-c","print('bench-2')"]`、`["python","-c","print('bench-3')"]`。
+
+可以用一次 `job_submit(jobs=[...])`，也可以多次提交；用 `job_wait` 等到四个都终态。把四条回执写入 `results/bench-parallel.json`：
+
+`{"jobs":[{"job_id":"<32位>","exit_code":0}, ... 共四条]}`
+
+完成后用 plan update 把 `parallel_batch4` 标为 done、evidence 指向结果文件，再 session_stop。
+""",
+        (),
+        _parallel_done,
+        _parallel_score,
+        timeout=900,
+        tags=("job", "parallel", "remote"),
+    ),
+    RealTask(
+        "export_reuse",
+        "封存并复用真实作业产物",
+        "提交一个写文件的 CPU 作业，读取产物，封存为 export 并核对 manifest。",
+        "完成 benchmark：真实 job artifact 与 export 复用链路",
+        "bench-export",
+        "按 TASK.md 提交写文件作业，读 artifact、export_create/status/manifest，写 results/bench-export.json，plan done，然后 session_stop。",
+        "结果文件 job_id 32 位、export_id 以 export- 开头、files 含 probe.txt；相关工具都调用；plan step done。",
+        """# Benchmark task
+
+1. `job_submit(command=["python","bench/probe_output.py"], attachments=[{"path":"bench/probe_output.py"}])`，等终态。
+2. `job_artifact(job_id=..., path="probe.txt", area="outputs")` 读取产物。
+3. `export_create(job_id=..., path="probe.txt", area="outputs")`，用 `export_status` 等到 ready，再 `export_manifest`。
+4. 把 `job_id`、`export_id`、manifest 中的文件列表写入 `results/bench-export.json`，例如：
+
+`{"job_id":"<32位>","export_id":"export-...","files":["probe.txt"]}`
+
+完成后 plan update 把 `export_reuse` 标为 done、evidence 指向结果文件，再 session_stop。
+""",
+        (("src/a3_research_agent/benchmark/fixtures/probe_output.py", "bench/probe_output.py"),),
+        _export_done,
+        _export_score,
+        timeout=900,
+        tags=("job", "export", "tools"),
+    ),
+    RealTask(
+        "gpu_submit",
+        "真实 GPU 请求预检后提交",
+        "准备一个真实 GPU 请求，等 CPU 预检通过，正式提交并等待 GPU 作业完成。",
+        "完成 benchmark：GPU 预检、提交与真实执行",
+        "bench-gpu",
+        "按 TASK.md 用 job_prepare 准备 GPU 请求，等 preflight，job_submit(prepared_id)，等作业完成并写 results/bench-gpu.json。",
+        "结果文件 job_id 32 位、prepared_id 以 prepared- 开头、exit_code=0；plan step done。",
+        """# Benchmark task
+
+用 `job_prepare(command=["python","bench/gpu_probe.py"], attachments=[{"path":"bench/gpu_probe.py"}])` 准备真实 GPU 请求。等返回的 `preflight_job_id` 完成后，用 `job_submit(prepared_id=...)` 正式提交，等 GPU 作业终态。
+
+把 `prepared_id`、`job_id`、`exit_code` 写入 `results/bench-gpu.json`：
+
+`{"prepared_id":"prepared-...","job_id":"<32位>","exit_code":0}`
+
+完成后 plan update 把 `gpu_submit` 标为 done、evidence 指向结果文件，再 session_stop。
+""",
+        (("src/a3_research_agent/benchmark/fixtures/gpu_probe.py", "bench/gpu_probe.py"),),
+        _gpu_done,
+        _gpu_score,
+        timeout=1200,
+        tags=("job", "gpu", "remote"),
+    ),
+    RealTask(
+        "plan_loop",
+        "连续完成一次实验闭环",
+        "读取真实结果，拆出新步骤，提交并等待作业，写结果，复盘并关闭步骤。",
+        "完成 benchmark：plan→执行→review 的连续闭环",
+        "bench-loop",
+        "按 TASK.md 读取真实结果、新增 follow-up 步骤、提交 CPU 作业、写结果、plan review 并关闭步骤。",
+        "follow-up step done 且有 evidence；bench-loop review metrics 含 3；真实作业 exit_code=0。",
+        """# Benchmark task
+
+1. 读取 `experiments/2026-11-03-act-baseline/results/results.json`，确认 `cases.expert_development.native_successes=3`。
+2. 用 plan update 在 `bench-loop` 下新增 step `follow-up`，task 写“CPU follow-up”，criterion 写“job exit 0 且结果写入 results/bench-followup.json”。
+3. 提交真实 CPU 作业 `["python","-c","print('follow-up')"]`，用 `job_wait` 完成。
+4. 把 job_id 和 exit_code 写入 `results/bench-followup.json`。
+5. plan update 把 `follow-up` 标为 done，evidence 指向该结果文件。
+6. plan review `bench-loop`，decision continue，metrics 含 `native_successes=3`，evidence 指向 results.json。
+7. session_stop。
+""",
+        (("workspace/experiments/2026-11-03-act-baseline/results/results.json", "experiments/2026-11-03-act-baseline/results/results.json"),),
+        _loop_done,
+        _loop_score,
+        timeout=1200,
+        require_review=True,
+        tags=("plan", "job", "review"),
+    ),
+    RealTask(
+        "memory_guard",
+        "用长期记忆避免重复实验",
+        "先查真实 memory 的 2×10 配对结论，再决定是否有必要重跑。",
+        "完成 benchmark：memory 证据阻止低效重复",
+        "bench-memory-guard",
+        "按 TASK.md 用 memory 检索 2×10 配对结论，写 results/bench-memory-decision.json，禁止 job_submit，plan done，然后 session_stop。",
+        "decision=do_not_rerun、memory_id=d9ebbacf33e6，包含 11/120 与 7/120；没有 job_submit；plan step done。",
+        """# Benchmark task
+
+使用 `memory` 工具检索并读取 2×10 配对结果（5k 11/120、20k 7/120，memory id `d9ebbacf33e6`）。根据该结论判断没有必要现在重跑，不要调用 `job_submit`。
+
+把决定写入 `results/bench-memory-decision.json`：
+
+`{"decision":"do_not_rerun","memory_id":"d9ebbacf33e6","reason":"2x10 5k=11/120, 20k=7/120，重复运行不产生新信息"}`
+
+完成后 plan update 把 `memory_guard` 标为 done、evidence 指向结果文件，再 session_stop。
+""",
+        (),
+        _memory_guard_done,
+        _memory_guard_score,
+        timeout=600,
+        tags=("memory", "plan"),
+    ),
+)
+
+
 def main():
     import argparse
 
@@ -1090,6 +1378,12 @@ def main():
     parser.add_argument("--model", help="Override the deployment model")
     parser.add_argument("--commit", help="Published Harness commit (default HEAD)")
     parser.add_argument("--attempts", type=int, default=1, help="Retry failed tasks this many times")
+    parser.add_argument(
+        "--state",
+        choices=("open", "completed", "stable", "all"),
+        default="open",
+        help="Select tasks by persisted state (ignored with --only)",
+    )
     args = parser.parse_args()
     run(
         only=[item for item in (args.only or "").split(",") if item],
@@ -1099,6 +1393,7 @@ def main():
         model=args.model,
         commit=args.commit,
         attempts=args.attempts,
+        state=args.state,
     )
 
 
