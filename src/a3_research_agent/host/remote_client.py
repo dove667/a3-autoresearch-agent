@@ -6,6 +6,15 @@ import shlex
 import subprocess
 
 
+class RemoteCommandError(subprocess.CalledProcessError):
+    """Keep the ssh diagnostic that CalledProcessError formatting omits."""
+
+    def __str__(self) -> str:
+        detail = " ".join((self.stderr or "").split())
+        failure = f"ssh exit status {self.returncode}"
+        return f"{failure}: {detail}" if detail else failure
+
+
 def remote_call(operation: str, payload: dict) -> dict:
     arguments = [
         os.environ.get("A3_REMOTE_PYTHON", "python3"),
@@ -50,22 +59,27 @@ def remote_call(operation: str, payload: dict) -> dict:
     if os.environ.get("A3_REMOTE_PRESERVE_MODELS_PATH") == "1":
         arguments += ["--preserve-models-path"]
     command = shlex.join([*arguments, operation])
-    result = subprocess.run(
-        [
-            "ssh",
-            "-o",
-            "BatchMode=yes",
-            "-o",
-            "ConnectTimeout=10",
-            os.environ["A3_REMOTE_HOST"],
-            command,
-        ],
-        input=json.dumps(payload),
-        text=True,
-        capture_output=True,
-        timeout=60,
-        check=True,
-    )
+    try:
+        result = subprocess.run(
+            [
+                "ssh",
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "ConnectTimeout=10",
+                os.environ["A3_REMOTE_HOST"],
+                command,
+            ],
+            input=json.dumps(payload),
+            text=True,
+            capture_output=True,
+            timeout=60,
+            check=True,
+        )
+    except subprocess.CalledProcessError as error:
+        raise RemoteCommandError(
+            error.returncode, error.cmd, error.output, error.stderr
+        ) from error
     return json.loads(result.stdout)
 
 

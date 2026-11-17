@@ -134,6 +134,7 @@ def launch_main() -> None:
         if args.feedback_file:
             command.extend(["--feedback-file", str(args.feedback_file.resolve())])
         schedule = FreshNightSchedule(root, command)
+        print("Night window command: " + " ".join(command), flush=True)
         with RunLease(root / ".runtime/night-window/launcher"):
             raise SystemExit(run_nightly(command, None, schedule=schedule))
     required = (
@@ -152,7 +153,10 @@ def launch_main() -> None:
             raise SystemExit(f"Missing deployment setting: {key}")
     a3 = Path(os.environ["A3_PROJECT_ROOT"]).resolve()
     model_settings(os.environ)
-    remote_ready = remote_call("health", {})
+    try:
+        remote_ready = remote_call("health", {})
+    except subprocess.SubprocessError as error:
+        raise SystemExit(f"Remote Controller is unreachable: {error}") from None
     validate_remote_health(remote_ready)
     if args.check:
         print(

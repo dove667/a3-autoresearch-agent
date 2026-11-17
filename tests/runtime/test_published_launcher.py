@@ -10,6 +10,7 @@ import test_in_place_release
 
 from a3_research_agent.cli import launch
 from a3_research_agent.host.published_harness import COMMAND
+from a3_research_agent.host.remote_client import RemoteCommandError
 
 published_run = test_in_place_release.published_run
 
@@ -80,6 +81,25 @@ def test_check_reads_native_configuration_without_an_execution_start(
     launch.launch_main()
     assert json.loads(capsys.readouterr().out)["local_execution"] == "process"
     assert calls == ["config"]
+
+
+def test_unreachable_controller_keeps_the_ssh_diagnostic(published_run, monkeypatch):
+    root, *_ = published_run
+    calls = []
+    configure(monkeypatch, root)
+    monkeypatch.setattr(sys, "argv", ["launch", "--check"])
+    runtime_for(root, calls, monkeypatch)
+
+    def unreachable(*args):
+        raise RemoteCommandError(
+            255, ["ssh"], "", "ssh: connect to host fixture-host port 22: Network is unreachable"
+        )
+
+    monkeypatch.setattr(launch, "remote_call", unreachable)
+    with pytest.raises(SystemExit) as error:
+        launch.launch_main()
+    assert "Remote Controller is unreachable" in error.value.code
+    assert "Network is unreachable" in error.value.code
 
 
 @pytest.mark.parametrize("flags", [[], ["--verify-deployment"]])

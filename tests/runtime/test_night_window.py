@@ -95,6 +95,84 @@ def test_scheduler_does_not_restart_an_exited_host(tmp_path, monkeypatch):
     assert launches == [["resume-selected-run"]]
 
 
+def test_start_failure_retries_with_backoff_and_discards_the_empty_run(tmp_path, monkeypatch):
+    from a3_research_agent.cli import night_window
+
+    now = datetime(2026, 11, 7, 22, tzinfo=BEIJING)
+    monkeypatch.setattr(night_window, "datetime", SimpleNamespace(now=lambda _: now))
+    monkeypatch.setattr(night_window, "STARTUP_RETRY_DELAYS", (0,))
+    runs = []
+    launches = []
+
+    def select():
+        run = tmp_path / f"run-{len(runs)}"
+        run.mkdir()
+        runs.append(run)
+        return ["host"], run, {"A3_NIGHT_WINDOW_RUN_DIR": str(run)}
+
+    class Host:
+        def __init__(self, returncode):
+            self.returncode = returncode
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            pass
+
+        def poll(self):
+            return self.returncode
+
+    def spawn(command, **kwargs):
+        launches.append(command)
+        return Host(3 if len(launches) == 1 else 0)
+
+    monkeypatch.setattr(night_window.subprocess, "Popen", spawn)
+    assert night_window.run_nightly(["host"], None, schedule=SimpleNamespace(select=select)) == 0
+    assert launches == [["host"], ["host"]]
+    assert [run.exists() for run in runs] == [False, True]
+
+
+def test_exited_host_after_run_state_is_not_restarted(tmp_path, monkeypatch):
+    from a3_research_agent.cli import night_window
+    from a3_research_agent.host.runs.state import RunStateStore
+
+    now = datetime(2026, 11, 7, 22, tzinfo=BEIJING)
+    monkeypatch.setattr(night_window, "datetime", SimpleNamespace(now=lambda _: now))
+    launches = []
+
+    class Host:
+        returncode = 2
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            pass
+
+        def poll(self):
+            return self.returncode
+
+    def spawn(command, **kwargs):
+        launches.append(command)
+        return Host()
+
+    monkeypatch.setattr(night_window.subprocess, "Popen", spawn)
+    run = tmp_path / "run"
+    run.mkdir()
+    RunStateStore(run).save({"status": "starting"})
+    schedule = SimpleNamespace(select=lambda: (["host"], run, {"A3_NIGHT_WINDOW_RUN_DIR": str(run)}))
+    assert night_window.run_nightly(["host"], None, schedule=schedule) == 2
+    assert launches == [["host"]]
+
+
+def test_startup_retry_delay_grows_and_stops_at_the_cap():
+    from a3_research_agent.cli.night_window import STARTUP_RETRY_DELAYS, startup_retry_delay
+
+    delays = [startup_retry_delay(attempt) for attempt in range(1, 8)]
+    assert delays == [*STARTUP_RETRY_DELAYS, STARTUP_RETRY_DELAYS[-1], STARTUP_RETRY_DELAYS[-1]]
+
+
 def test_each_night_selects_a_fresh_trajectory_without_old_context(tmp_path):
     from a3_research_agent.cli.night_window import FreshNightSchedule
 
