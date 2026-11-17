@@ -470,7 +470,7 @@ function renderRouteDetail(plan, route) {
   const done = steps.filter((step) => step.status === "done");
   const open = steps.filter((step) => !["done", "skipped"].includes(step.status));
   const stage = routeStage(route, steps);
-  const reviews = plan.reviews.filter((review) => review.route === route.id).slice(0, 3);
+  const reviews = plan.reviews.filter((review) => review.route === route.id);
 
   const stepRows = steps.length
     ? steps
@@ -542,7 +542,7 @@ function renderRouteDetail(plan, route) {
       <p class="route-conclusion-text">${esc(route.conclusion || "还没有结论。")}</p>
     </section>
     <section class="route-section">
-      <div class="route-section-head"><h4>这条路线最近的复盘</h4><span>${reviews.length} 条</span></div>
+      <div class="route-section-head"><h4>每次结果后的判断</h4><span>${reviews.length} 条</span></div>
       <div class="route-reviews">${reviewRows}</div>
     </section>`;
 }
@@ -588,6 +588,33 @@ function renderPlan(data) {
     : empty("还没有研究路线", "写下第一条路线后，这里会显示问题、假设、实验方法和结论。");
 }
 
+function jobLabel(job) {
+  const command = job.command || [];
+  const scriptIndex = command.findIndex((part) => /\.(py|sh|bash)$/i.test(part));
+  if (scriptIndex >= 0) {
+    const script = command[scriptIndex].split("/").pop();
+    const runner = scriptIndex > 0 ? command[scriptIndex - 1] : "";
+    return short([runner, script].filter(Boolean).join(" "), 78);
+  }
+  if (command.length) return short(command.join(" "), 78);
+  const sourceFiles = job.source_files || [];
+  if (sourceFiles.length) {
+    const name = sourceFiles[0].split("/").pop();
+    return sourceFiles.length > 1 ? `${name} 等 ${sourceFiles.length} 个文件` : name;
+  }
+  return `作业 ${job.short}`;
+}
+
+function jobContext(job, label) {
+  const parts = [];
+  if (job.short && label !== `作业 ${job.short}`) parts.push(`作业 ${job.short}`);
+  if (job.task) parts.push(`关联计划：${short(job.task, 48)}`);
+  if (job.observed_at) parts.push(`观察于 ${relative(job.observed_at)}`);
+  else if (job.submitted_at) parts.push(`提交于 ${relative(job.submitted_at)}`);
+  if (job.gpu) parts.push("GPU");
+  return parts.join("，");
+}
+
 function renderJobs(data) {
   const jobs = data.jobs;
   const terminal = new Set(["completed", "failed", "cancelled"]);
@@ -600,16 +627,15 @@ function renderJobs(data) {
   if (jobs.counts.failed) parts.push(`${jobs.counts.failed} 个失败`);
   $("job-summary").textContent = jobs.counts.total ? parts.join("，") : "还没有远程作业";
 
-  const routeName = (identifier) => {
-    const route = data.plan.routes.find((item) => item.id === identifier);
-    return route ? short(route.question, 52) : "";
-  };
-  const row = (job) => `<div class="job-row" data-tone="${esc(job.tone)}">
+  const row = (job) => {
+    const label = jobLabel(job);
+    const context = jobContext(job, label);
+    const details = [...(job.command || []), ...(job.source_files || [])].join("\n");
+    return `<div class="job-row" data-tone="${esc(job.tone)}"${details ? ` title="${esc(details)}"` : ""}>
       ${pill(job.status_label, job.tone)}
-      <div><strong>${esc(job.task || "未绑定到计划步骤")}</strong><p>${esc(
-        [routeName(job.route), job.observed_at ? relative(job.observed_at) : ""].filter(Boolean).join("，"),
-      )}</p></div>
+      <div><strong>${esc(label)}</strong>${context ? `<p>${esc(context)}</p>` : ""}</div>
     </div>`;
+  };
   const group = (label, items) => `<section class="job-group">
       <div class="job-group-head"><span>${esc(label)}</span><span>${items.length}</span></div>
       ${items.length ? items.map(row).join("") : `<p class="job-empty">没有${esc(label)}的作业。</p>`}

@@ -166,17 +166,21 @@ class JobRoutes:
                 self.jobs[experiment].discard(job_id)
                 self.jobs.setdefault(experiment, set()).add(result["job_id"])
                 self.save_checkpoint()
+                receipt = {
+                    "job_id": result["job_id"],
+                    "experiment_id": experiment,
+                    "command": request.get("command", []),
+                    "gpu": bool(request.get("gpu", False)),
+                    "source_files": source_files,
+                    "input_exports": request.get("input_exports", []),
+                    "submitted_at": time.time(),
+                }
+                with (
+                    self.log_lock,
+                    self.usage_log.with_name("job-inputs.jsonl").open("a") as stream,
+                ):
+                    stream.write(json.dumps(receipt) + "\n")
                 if source_files:
-                    receipt = {
-                        "job_id": result["job_id"],
-                        "experiment_id": experiment,
-                        "source_files": source_files,
-                    }
-                    with (
-                        self.log_lock,
-                        self.usage_log.with_name("job-inputs.jsonl").open("a") as stream,
-                    ):
-                        stream.write(json.dumps(receipt) + "\n")
                     result = result | {"source_files": source_files}
             return result
 

@@ -499,6 +499,10 @@ def _jobs(run, plan):
                 "status_label": meta["label"],
                 "tone": meta["tone"],
                 "observed_at": row.get("observed_at"),
+                "submitted_at": row.get("submitted_at"),
+                "command": row.get("command") or [],
+                "source_files": row.get("source_files") or [],
+                "gpu": bool(row.get("gpu")),
                 "step": step.get("id") if step else None,
                 "task": step.get("task") if step else "",
                 "route": step.get("route") if step else "",
@@ -507,7 +511,7 @@ def _jobs(run, plan):
     items.sort(
         key=lambda item: (
             0 if item["status"] not in TERMINAL_JOB_STATES else 1,
-            -(item.get("observed_at") or 0),
+            -(item.get("observed_at") or item.get("submitted_at") or 0),
         )
     )
     return {

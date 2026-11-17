@@ -215,17 +215,54 @@ def _usage(run, startup):
     }
 
 
+def _job_inputs(run):
+    """Read the Host's own submission receipt for each job."""
+    result = {}
+    for row in read_json_lines(run / "job-inputs.jsonl", max_bytes=4_000_000):
+        job = row.get("job_id")
+        if not isinstance(job, str):
+            continue
+        command = row.get("command")
+        source_files = []
+        for item in row.get("source_files") or []:
+            if isinstance(item, dict):
+                path = item.get("path") or item.get("destination")
+                if isinstance(path, str):
+                    source_files.append(path)
+            elif isinstance(item, str):
+                source_files.append(item)
+        result[job] = {
+            "command": [part for part in command if isinstance(part, str)]
+            if isinstance(command, list)
+            else [],
+            "source_files": list(dict.fromkeys(source_files)),
+            "submitted_at": row.get("submitted_at")
+            if isinstance(row.get("submitted_at"), (int, float))
+            else None,
+            "gpu": bool(row.get("gpu", False)),
+        }
+    return result
+
+
 def _jobs(run):
     state = read_json(run / "conversation/operational-state.json", {}) or {}
-    jobs = state.get("jobs") if isinstance(state.get("jobs"), dict) else {}
-    return {
-        job: {
-            "status": row.get("status", "unobserved") if isinstance(row, dict) else "unobserved",
-            "observed_at": row.get("observed_at") if isinstance(row, dict) else None,
+    observed = state.get("jobs") if isinstance(state.get("jobs"), dict) else {}
+    submitted = _job_inputs(run)
+    result = {}
+    for job in sorted(set(observed) | set(submitted)):
+        if not isinstance(job, str):
+            continue
+        row = observed.get(job) if isinstance(observed.get(job), dict) else {}
+        receipt = submitted.get(job, {})
+        result[job] = {
+            "status": row.get("status", "unobserved"),
+            "observed_at": row.get("observed_at"),
+            "submitted_at": receipt.get("submitted_at"),
+            "command": receipt.get("command", []),
+            "source_files": receipt.get("source_files", []),
+            "gpu": receipt.get("gpu", False),
         }
-        for job, row in jobs.items()
-        if isinstance(job, str)
-    }
+    return result
 
 
 def _state(run, host, supervision, outcome, context_failure, sessions, pending):

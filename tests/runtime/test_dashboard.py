@@ -66,6 +66,22 @@ def build_project(root, *, alive=True):
             "results": {},
         },
     )
+    (run / "job-inputs.jsonl").write_text(
+        json.dumps(
+            {
+                "job_id": JOB_RUNNING,
+                "experiment_id": "session-1",
+                "command": ["python", "scripts/eval.py", "--seed", "10010"],
+                "gpu": True,
+                "source_files": [
+                    {"path": "scripts/eval.py", "sha256": "hash", "bytes": 10}
+                ],
+                "submitted_at": 1_800_000_090,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     (run / "model-usage.jsonl").write_text(
         json.dumps({"estimated_input_tokens": 400, "usage": {"input_tokens": 400}}) + "\n",
         encoding="utf-8",
@@ -209,6 +225,12 @@ def test_snapshot_reads_live_run_plan_memory_and_skills(tmp_path):
     assert snapshot["skills"]["counts"]["active"] == 1
     assert snapshot["skills"]["items"][0]["body"].startswith("# 方法")
     assert snapshot["jobs"]["counts"]["active"] == 1
+    running = next(item for item in snapshot["jobs"]["items"] if item["id"] == JOB_RUNNING)
+    assert running["command"] == ["python", "scripts/eval.py", "--seed", "10010"]
+    assert running["source_files"] == ["scripts/eval.py"]
+    assert running["gpu"] is True
+    assert running["submitted_at"] == 1_800_000_090
+    assert running["task"] == "等待配对评测"
     assert "secret" not in json.dumps(snapshot)
 
     # A later request sees changed source files; no dashboard-side cache is involved.
