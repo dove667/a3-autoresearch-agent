@@ -11,3 +11,7 @@ def isolated_long_term_memory(tmp_path, monkeypatch):
     monkeypatch.setenv("A3_PLAN_SNAPSHOTS_ROOT", str(tmp_path / "plan-snapshots"))
     monkeypatch.setenv("A3_SKILLS_ROOT", str(tmp_path / "skills"))
     monkeypatch.setenv("A3_SKILLS_HISTORY_ROOT", str(tmp_path / ".runtime/skill-revisions"))
+    # A developer's local .env may bind provider calls to a physical interface.
+    # Tests that exercise fake upstream URLs must not inherit that route.
+    monkeypatch.delenv("A3_UPSTREAM_DIRECT_INTERFACE", raising=False)
+    monkeypatch.delenv("A3_UPSTREAM_DIRECT_DNS", raising=False)

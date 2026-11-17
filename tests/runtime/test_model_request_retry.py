@@ -70,7 +70,7 @@ def test_job_submission_timeout_is_not_retried(monkeypatch):
     transport = Mock(side_effect=TimeoutError())
     monkeypatch.setattr(agent, "BASE", "http://gateway")
     monkeypatch.setattr(agent, "TOKEN", "test-token")
-    monkeypatch.setattr(agent.urllib.request, "urlopen", transport)
+    monkeypatch.setattr(agent._OPENER, "open", transport)
     with pytest.raises(TimeoutError):
         agent.req("POST", "/jobs", {"command": ["python", "train.py"]})
     transport.assert_called_once()
