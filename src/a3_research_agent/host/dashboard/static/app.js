@@ -422,7 +422,37 @@ function routeTone(status) {
 }
 
 function routeSteps(plan, route) {
-  return plan.steps.filter((step) => step.route === route.id);
+  const steps = plan.steps.filter((step) => step.route === route.id);
+  const identifiers = new Set(steps.map((step) => step.id));
+  const position = new Map(plan.steps.map((step, index) => [step.id, index]));
+  const dependencies = new Map(
+    steps.map((step) => [
+      step.id,
+      new Set((step.depends_on || []).filter((dependency) => identifiers.has(dependency))),
+    ]),
+  );
+  const children = new Map(steps.map((step) => [step.id, []]));
+  for (const [identifier, required] of dependencies) {
+    for (const dependency of required) children.get(dependency)?.push(identifier);
+  }
+  const compare = (left, right) =>
+    (right.priority || 0) - (left.priority || 0) ||
+    (position.get(left.id) || 0) - (position.get(right.id) || 0);
+  const byId = new Map(steps.map((step) => [step.id, step]));
+  const ready = steps.filter((step) => dependencies.get(step.id).size === 0).sort(compare);
+  const ordered = [];
+  while (ready.length) {
+    const step = ready.shift();
+    ordered.push(step);
+    for (const child of children.get(step.id) || []) {
+      const required = dependencies.get(child);
+      required.delete(step.id);
+      if (!required.size) ready.push(byId.get(child));
+    }
+    ready.sort(compare);
+  }
+  const seen = new Set(ordered.map((step) => step.id));
+  return ordered.concat(steps.filter((step) => !seen.has(step.id)).sort(compare));
 }
 
 function routeStage(route, steps) {
@@ -475,9 +505,20 @@ function renderRouteDetail(plan, route) {
   const stepRows = steps.length
     ? steps
         .map((step) => {
-          const detail = step.status === "done"
-            ? step.progress || step.criterion
-            : step.criterion || step.progress;
+          const routeIds = new Set(steps.map((item) => item.id));
+          const prerequisites = (step.depends_on || [])
+            .filter((dependency) => routeIds.has(dependency))
+            .map((dependency) => steps.find((item) => item.id === dependency))
+            .filter(Boolean)
+            .map((item) => short(item.task, 36));
+          const detail = [
+            step.status === "done" ? step.progress || step.criterion : step.criterion || step.progress,
+            step.status !== "done" && prerequisites.length
+              ? `前置：${prerequisites.join("、")}`
+              : "",
+          ]
+            .filter(Boolean)
+            .join("；");
           return `<div class="route-step" data-status="${esc(step.status)}">
             ${pill(step.status_label, statusTone(step.status))}
             <div><strong>${esc(step.task)}</strong>${
@@ -525,7 +566,9 @@ function renderRouteDetail(plan, route) {
       <div class="route-steps">${stepRows}</div>
     </section>
     <section class="route-section">
-      <div class="route-section-head"><h4>最后结论</h4></div>
+      <div class="route-section-head"><h4>${route.status === "completed" ? "最终结论" : "当前结论"}</h4><span>${
+        route.status === "completed" ? "路线已完成" : "路线尚未结束，这是目前结论"
+      }</span></div>
       <p class="route-conclusion-text">${esc(route.conclusion || "还没有结论。")}</p>
     </section>
     <section class="route-section">
