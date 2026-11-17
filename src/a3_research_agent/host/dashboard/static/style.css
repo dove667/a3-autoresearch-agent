@@ -1219,59 +1219,6 @@ main {
   font-size: 10px;
 }
 
-/* Reviews */
-
-.review-list {
-  border-top: 1px solid var(--line);
-}
-
-.review-row {
-  display: grid;
-  grid-template-columns: 74px minmax(0, 1fr) auto;
-  gap: 16px;
-  align-items: start;
-  width: 100%;
-  padding: 13px 0;
-  border: 0;
-  border-bottom: 1px solid var(--line);
-  background: transparent;
-  color: var(--ink);
-  text-align: left;
-  cursor: pointer;
-  transition: background 0.18s ease;
-}
-
-.review-row:hover {
-  background: var(--surface);
-}
-
-.review-title {
-  display: block;
-  overflow: hidden;
-  font-size: 12px;
-  font-weight: 500;
-  line-height: 1.55;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.review-sub {
-  display: block;
-  overflow: hidden;
-  margin-top: 3px;
-  color: var(--muted);
-  font-size: 10px;
-  line-height: 1.6;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.review-arrow {
-  color: var(--line-strong);
-  font-size: 15px;
-  line-height: 1.4;
-}
-
 /* Memory */
 
 .page-memory {
@@ -2191,11 +2138,6 @@ main {
 
   .stat:not(:first-child) {
     padding-left: 12px;
-  }
-
-  .review-row {
-    grid-template-columns: 64px minmax(0, 1fr) auto;
-    gap: 10px;
   }
 
   .memory-row {

@@ -298,6 +298,7 @@ def test_api_serves_snapshot_and_static_assets(tmp_path):
     page = client.get("/")
     assert page.status_code == 200
     assert "Tools &amp; Skills" in page.text
+    assert "page-reviews" not in page.text
     assert client.get("/static/style.css").status_code == 200
     assert client.get("/static/app.js").status_code == 200
     assert client.get("/api/snapshot?run=missing").status_code == 404

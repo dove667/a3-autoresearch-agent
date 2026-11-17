@@ -4,7 +4,6 @@ const PAGES = {
   overview: "总览",
   plan: "研究计划",
   jobs: "远程作业",
-  reviews: "结果复盘",
   memory: "长期记忆",
   skills: "Tools & Skills",
 };
@@ -619,28 +618,6 @@ function renderJobs(data) {
     : empty("还没有远程作业", "Agent 提交采集、训练或评估后，这里会显示作业状态。");
 }
 
-function renderReviews(data) {
-  const reviews = data.plan.reviews;
-  $("review-count").textContent = reviews.length ? `${reviews.length} 条` : "还没有复盘";
-  $("reviews").innerHTML = reviews.length
-    ? reviews
-        .map(
-          (review) => `<button class="review-row" type="button" data-detail="review" data-id="${esc(
-            review.revision,
-          )}">
-            ${pill(review.decision_label, decisionTone(review.decision))}
-            <span><span class="review-title">${esc(
-              review.step_task || review.route_question || "路线复盘",
-            )}</span><span class="review-sub">${esc(
-              short(review.conclusion, 100),
-            )}</span></span>
-            <span class="review-arrow" aria-hidden="true">›</span>
-          </button>`,
-        )
-        .join("")
-    : empty("还没有结果复盘", "作业结束后显示结论。");
-}
-
 function renderMemory(data) {
   const counts = data.memory.counts;
   const labels = {
@@ -770,7 +747,6 @@ function render(data) {
   const signatures = {
     plan: planSignature,
     jobs: JSON.stringify([data.jobs, data.plan.routes]),
-    reviews: JSON.stringify(data.plan.reviews),
     memory: JSON.stringify(data.memory),
     skills: JSON.stringify(data.skills),
     tools: JSON.stringify(data.tools),
@@ -778,7 +754,6 @@ function render(data) {
   const draw = {
     plan: () => renderPlan(data),
     jobs: () => renderJobs(data),
-    reviews: () => renderReviews(data),
     memory: () => renderMemory(data),
     skills: () => renderSkills(data),
     tools: () => renderTools(data),
