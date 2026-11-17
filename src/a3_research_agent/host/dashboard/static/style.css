@@ -733,7 +733,7 @@ main {
 
 .stats {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   margin-top: 24px;
   border-top: 1px solid var(--line);
   border-bottom: 1px solid var(--line);
@@ -1886,19 +1886,6 @@ main {
 
   .pulse-panel {
     max-width: 560px;
-  }
-
-  .stats {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .stat:nth-child(2) {
-    border-right: 0;
-  }
-
-  .stat:nth-child(3),
-  .stat:nth-child(4) {
-    border-top: 1px solid var(--line);
   }
 
   .page-plan {

@@ -399,25 +399,8 @@ function renderPulse(data) {
 function renderStats(data) {
   const routes = data.plan.routes;
   const activeRoutes = routes.filter((route) => route.status === "active").length;
-  const finishedRoutes = routes.filter((route) => route.status === "completed").length;
-  const pausedRoutes = routes.filter((route) => route.status === "paused").length;
   $("stat-routes").textContent = routes.length ? activeRoutes : "—";
-  $("stat-routes-note").textContent = routes.length
-    ? [
-        finishedRoutes ? `${finishedRoutes} 完成` : "",
-        pausedRoutes ? `${pausedRoutes} 暂停` : "",
-      ]
-        .filter(Boolean)
-        .join("，") || "全部进行中"
-    : "还没有路线";
-
-  const focusRoute = data.plan.focus
-    ? routes.find((route) => route.id === data.plan.focus.route)
-    : routes.find((route) => route.status === "active") || routes[0];
-  $("stat-focus-route").textContent = focusRoute
-    ? `${focusRoute.progress.done} / ${focusRoute.progress.total}`
-    : "—";
-  $("stat-focus-route-note").textContent = focusRoute ? focusRoute.status_label : "当前没有路线";
+  $("stat-routes-note").textContent = routes.length ? `共 ${routes.length} 条路线` : "还没有路线";
 
   $("stat-memory").textContent = data.memory.counts.effective;
   $("stat-memory-note").textContent = `${data.memory.counts.total} 条`;
