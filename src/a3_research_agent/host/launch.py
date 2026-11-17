@@ -16,6 +16,7 @@ import httpx
 import litellm
 import uvicorn
 
+from a3_research_agent.host.dashboard.lifecycle import DashboardService
 from a3_research_agent.host.gateway.app import create_app
 from a3_research_agent.host.inputs.feedback import MAX_FEEDBACK_BYTES, HumanFeedback
 from a3_research_agent.host.inputs.research_preparation import input_hashes, prepare_research_start
@@ -87,6 +88,7 @@ def _launch_run(args, run: Path, a3: Path, start, services) -> None:
         None,
         None,
     )
+    dashboard = None
     proposed_inputs = getattr(args, "input_proposal", None)
     if proposed_inputs:
         input_versions = InputVersions.from_proposal(root, run, proposed_inputs)
@@ -351,6 +353,17 @@ def _launch_run(args, run: Path, a3: Path, start, services) -> None:
                     + "\n"
                 )
         store.update(status="running")
+        try:
+            dashboard = DashboardService(root)
+            if dashboard.start():
+                print(f"Research dashboard: {dashboard.url}", flush=True)
+            else:
+                print(f"Research dashboard unavailable: {dashboard.url}", flush=True)
+        except Exception as error:  # noqa: BLE001 - dashboard is optional
+            print(f"Research dashboard unavailable: {type(error).__name__}", flush=True)
+            if dashboard is not None:
+                dashboard.stop()
+            dashboard = None
         with httpx.Client(trust_env=False, 
             base_url=endpoint, headers={"Authorization": "Bearer " + token}, timeout=90
         ) as client:
@@ -367,6 +380,8 @@ def _launch_run(args, run: Path, a3: Path, start, services) -> None:
     except KeyboardInterrupt:
         print("Run interrupted; preserving identities and resources for --resume-from", flush=True)
     finally:
+        if dashboard is not None:
+            dashboard.stop()
         app.state.begin_shutdown()
         cleanup_errors = []
         try:

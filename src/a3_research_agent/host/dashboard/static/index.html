@@ -21,6 +21,7 @@
         <nav class="rail-nav" aria-label="页面">
           <a href="#overview" data-page="overview" class="is-active" aria-current="page">总览</a>
           <a href="#plan" data-page="plan">研究计划</a>
+          <a href="#jobs" data-page="jobs">远程作业</a>
           <a href="#reviews" data-page="reviews">结果复盘</a>
           <a href="#memory" data-page="memory">长期记忆</a>
           <a href="#skills" data-page="skills">方法技能</a>
@@ -118,7 +119,7 @@
             </div>
           </section>
 
-          <section class="page" data-page="plan" id="page-plan" aria-labelledby="plan-title" hidden>
+          <section class="page page-plan" data-page="plan" id="page-plan" aria-labelledby="plan-title" hidden>
             <header class="page-head">
               <h2 id="plan-title">研究计划</h2>
               <span class="page-count" id="plan-summary">—</span>
@@ -129,17 +130,21 @@
               <ul class="metric-list" id="metrics"></ul>
             </div>
 
-            <div class="plan-grid">
-              <section class="panel">
+            <div class="plan-workspace">
+              <aside class="route-rail" aria-label="研究路线列表">
                 <div class="panel-label">研究路线</div>
                 <div class="route-list" id="routes"></div>
-              </section>
-              <section class="panel">
-                <div class="panel-label">待推进步骤</div>
-                <div class="step-list" id="steps"></div>
-                <p class="completed-note" id="completed-note"></p>
-              </section>
+              </aside>
+              <section class="route-detail" id="route-detail" aria-live="polite"></section>
             </div>
+          </section>
+
+          <section class="page page-jobs" data-page="jobs" id="page-jobs" aria-labelledby="jobs-title" hidden>
+            <header class="page-head">
+              <h2 id="jobs-title">远程作业</h2>
+              <span class="page-count" id="job-summary">—</span>
+            </header>
+            <div class="job-scroll" id="job-list"></div>
           </section>
 
           <section class="page" data-page="reviews" id="page-reviews" aria-labelledby="reviews-title" hidden>

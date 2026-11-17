@@ -3,6 +3,7 @@
 const PAGES = {
   overview: "总览",
   plan: "研究计划",
+  jobs: "远程作业",
   reviews: "结果复盘",
   memory: "长期记忆",
   skills: "方法技能",
@@ -16,6 +17,7 @@ const state = {
   memoryFilter: "effective",
   memoryQuery: "",
   resetMemoryScroll: false,
+  selectedRoute: null,
   signatures: {},
   dialog: null,
   detailSignature: null,
@@ -413,60 +415,199 @@ function renderStats(data) {
     : "还没有技能";
 }
 
+function routeTone(status) {
+  return {
+    active: "active",
+    completed: "done",
+    paused: "paused",
+    proposed: "idle",
+  }[status] || "idle";
+}
+
+function routeSteps(plan, route) {
+  return plan.steps.filter((step) => step.route === route.id);
+}
+
+function routeStage(route, steps) {
+  if (route.status === "completed") {
+    return { label: "路线已完成", detail: route.conclusion || "结论已记录。" };
+  }
+  if (route.status === "paused") {
+    return { label: "路线已暂停", detail: route.conclusion || "等待重新评估后再开始。" };
+  }
+  if (!steps.length) {
+    return { label: "还没有执行步骤", detail: "这条路线还没有写下具体动作。" };
+  }
+  const blocked = steps.find((step) => step.status === "blocked");
+  if (blocked) {
+    const index = steps.indexOf(blocked) + 1;
+    return {
+      label: `第 ${index}/${steps.length} 步受阻`,
+      detail: `${blocked.task}${blocked.progress ? `：${blocked.progress}` : ""}`,
+    };
+  }
+  const active = steps.find((step) => step.status === "active");
+  if (active) {
+    const index = steps.indexOf(active) + 1;
+    return {
+      label: `第 ${index}/${steps.length} 步进行中`,
+      detail: `${active.task}${active.progress ? `：${active.progress}` : ""}`,
+    };
+  }
+  const pending = steps.find((step) => step.status === "pending");
+  if (pending) {
+    const index = steps.indexOf(pending) + 1;
+    return {
+      label: `下一步是第 ${index}/${steps.length} 步`,
+      detail: pending.task,
+    };
+  }
+  return {
+    label: "步骤都已完成，路线尚未关闭",
+    detail: "需要一次路线复盘，决定继续、暂停还是完成。",
+  };
+}
+
+function renderRouteDetail(plan, route) {
+  const steps = routeSteps(plan, route);
+  const done = steps.filter((step) => step.status === "done");
+  const open = steps.filter((step) => !["done", "skipped"].includes(step.status));
+  const stage = routeStage(route, steps);
+  const reviews = plan.reviews.filter((review) => review.route === route.id).slice(0, 3);
+
+  const stepRows = steps.length
+    ? steps
+        .map((step) => {
+          const detail = step.status === "done"
+            ? step.progress || step.criterion
+            : step.criterion || step.progress;
+          return `<div class="route-step" data-status="${esc(step.status)}">
+            ${pill(step.status_label, statusTone(step.status))}
+            <div><strong>${esc(step.task)}</strong>${
+              detail ? `<p>${esc(short(detail, 140))}</p>` : ""
+            }</div>
+          </div>`;
+        })
+        .join("")
+    : `<p class="route-empty">还没有执行步骤。</p>`;
+
+  const reviewRows = reviews.length
+    ? reviews
+        .map(
+          (review) => `<button class="route-review" type="button" data-detail="review" data-id="${esc(
+            review.revision,
+          )}">
+            ${pill(review.decision_label, decisionTone(review.decision))}
+            <span>${esc(short(review.conclusion, 110))}</span>
+          </button>`,
+        )
+        .join("")
+    : `<p class="route-empty">还没有复盘记录。</p>`;
+
+  return `<header class="route-detail-head">
+      <div><span class="detail-kicker">这条路线在问什么</span><h3>${esc(
+        route.question || route.id,
+      )}</h3></div>
+      <div class="route-detail-meta">${pill(
+        route.status_label,
+        routeTone(route.status),
+      )}<span>${done.length}/${steps.length} 步完成</span></div>
+    </header>
+    <div class="route-stage">
+      <span class="route-stage-label">现在到哪一步</span>
+      <strong>${esc(stage.label)}</strong>
+      <p>${esc(short(stage.detail, 220))}</p>
+    </div>
+    <dl class="route-fields">
+      <div><dt>假设</dt><dd>${esc(route.hypothesis || "未记录")}</dd></div>
+      <div><dt>实验方法</dt><dd>${esc(route.experiment || "未记录")}</dd></div>
+      <div><dt>什么结果算成功</dt><dd>${esc(route.decision_rule || "未记录")}</dd></div>
+    </dl>
+    <section class="route-section">
+      <div class="route-section-head"><h4>做了哪些、到哪一步</h4><span>${done.length} 完成，${open.length} 待推进</span></div>
+      <div class="route-steps">${stepRows}</div>
+    </section>
+    <section class="route-section">
+      <div class="route-section-head"><h4>最后结论</h4></div>
+      <p class="route-conclusion-text">${esc(route.conclusion || "还没有结论。")}</p>
+    </section>
+    <section class="route-section">
+      <div class="route-section-head"><h4>这条路线最近的复盘</h4><span>${reviews.length} 条</span></div>
+      <div class="route-reviews">${reviewRows}</div>
+    </section>`;
+}
+
 function renderPlan(data) {
   const plan = data.plan;
   $("objective").textContent = plan.objective || "计划里还没有写长期方向。";
   $("metrics").innerHTML = plan.metrics.map((metric) => `<li>${esc(metric)}</li>`).join("");
+  const open = plan.steps.filter((step) => !["done", "skipped"].includes(step.status)).length;
   $("plan-summary").textContent = plan.progress.total
-    ? `${plan.progress.done}/${plan.progress.total} 步完成`
+    ? `${plan.progress.done}/${plan.progress.total} 步完成，${open} 步待推进`
     : "还没有步骤";
+
+  if (!plan.routes.some((route) => route.id === state.selectedRoute)) {
+    const preferred = plan.routes.find((route) => route.status === "active") || plan.routes[0];
+    state.selectedRoute = preferred ? preferred.id : null;
+  }
 
   $("routes").innerHTML = plan.routes.length
     ? plan.routes
         .map((route) => {
-          const progress = route.progress;
-          const subtitle = route.active_task || short(route.conclusion || route.hypothesis, 70);
-          return `<button class="route-card" type="button" data-status="${esc(
-            route.status,
-          )}" data-detail="route" data-id="${esc(route.id)}">
+          const steps = routeSteps(plan, route);
+          const stage = routeStage(route, steps);
+          const selected = route.id === state.selectedRoute;
+          return `<button class="route-card${selected ? " is-selected" : ""}" type="button" data-route-select="${esc(
+            route.id,
+          )}" data-status="${esc(route.status)}" aria-pressed="${selected}">
             <span class="route-top"><span class="route-question">${esc(
               route.question || route.id,
-            )}</span>${pill(
-              route.status_label,
-              route.status === "active"
-                ? "active"
-                : route.status === "completed"
-                  ? "done"
-                  : route.status === "paused"
-                    ? "paused"
-                    : "idle",
-            )}</span>
-            <span class="route-sub">${esc(subtitle)}</span>
-            <span class="route-bar"><span class="bar"><i style="width:${progress.percent}%"></i></span><em>${
-              progress.total ? `${progress.done}/${progress.total}` : "暂无步骤"
+            )}</span>${pill(route.status_label, routeTone(route.status))}</span>
+            <span class="route-sub">${esc(short(stage.label, 60))}</span>
+            <span class="route-bar"><span class="bar"><i style="width:${route.progress.percent}%"></i></span><em>${
+              route.progress.total ? `${route.progress.done}/${route.progress.total}` : "暂无步骤"
             }</em></span>
           </button>`;
         })
         .join("")
     : empty("还没有研究路线", "写下第一条路线后显示在这里。");
 
-  const active = plan.steps.filter((step) => !["done", "skipped"].includes(step.status));
-  const completed = plan.steps.filter((step) => ["done", "skipped"].includes(step.status));
-  $("steps").innerHTML = active.length
-    ? active
-        .map(
-          (step) => `<div class="step-row" data-status="${esc(step.status)}">
-            <div><span class="step-task">${esc(step.task)}</span><span class="step-criterion">${esc(
-              short(step.criterion, 100),
-            )}</span></div>
-            ${pill(step.status_label, statusTone(step.status))}
-          </div>`,
-        )
-        .join("")
-    : empty("没有待推进的步骤", "计划里的步骤都已完成或已跳过。");
-  $("completed-note").textContent = completed.length
-    ? `已完成 ${completed.length} 步`
-    : "还没有已完成步骤";
+  const selected = plan.routes.find((route) => route.id === state.selectedRoute);
+  $("route-detail").innerHTML = selected
+    ? renderRouteDetail(plan, selected)
+    : empty("还没有研究路线", "写下第一条路线后，这里会显示问题、假设、实验方法和结论。");
+}
+
+function renderJobs(data) {
+  const jobs = data.jobs;
+  const terminal = new Set(["completed", "failed", "cancelled"]);
+  const active = jobs.items.filter((job) => !terminal.has(job.status));
+  const finished = jobs.items.filter((job) => terminal.has(job.status));
+  const parts = [
+    `${active.length} 个进行中`,
+    `${jobs.counts.completed} 个已完成`,
+  ];
+  if (jobs.counts.failed) parts.push(`${jobs.counts.failed} 个失败`);
+  $("job-summary").textContent = jobs.counts.total ? parts.join("，") : "还没有远程作业";
+
+  const routeName = (identifier) => {
+    const route = data.plan.routes.find((item) => item.id === identifier);
+    return route ? short(route.question, 52) : "";
+  };
+  const row = (job) => `<div class="job-row" data-tone="${esc(job.tone)}">
+      ${pill(job.status_label, job.tone)}
+      <div><strong>${esc(job.task || "未绑定到计划步骤")}</strong><p>${esc(
+        [routeName(job.route), job.observed_at ? relative(job.observed_at) : ""].filter(Boolean).join("，"),
+      )}</p></div>
+    </div>`;
+  const group = (label, items) => `<section class="job-group">
+      <div class="job-group-head"><span>${esc(label)}</span><span>${items.length}</span></div>
+      ${items.length ? items.map(row).join("") : `<p class="job-empty">没有${esc(label)}的作业。</p>`}
+    </section>`;
+
+  $("job-list").innerHTML = jobs.items.length
+    ? group("进行中", active) + (finished.length ? group("已结束", finished) : "")
+    : empty("还没有远程作业", "Agent 提交采集、训练或评估后，这里会显示作业状态。");
 }
 
 function renderReviews(data) {
@@ -555,17 +696,13 @@ function renderSkills(data) {
   $("skills").innerHTML = skills.length
     ? skills
         .map((skill) => {
-          const tags = skill.keywords.slice(0, 4);
           return `<button class="skill-card" type="button" data-detail="skill" data-id="${esc(
             skill.id,
           )}">
             <span class="skill-title">${esc(skill.description || skill.id)}</span>
             <span class="skill-id">${esc(skill.id)}，v${esc(
               skill.version || "—",
-            )}${skill.resources.length ? `，附件 ${skill.resources.length}` : ""}</span>
-            <span class="skill-tags">${tags
-              .map((tag) => `<span>${esc(tag)}</span>`)
-              .join("")}</span>
+            )}${skill.status !== "active" ? `，${esc(skill.status_label)}` : ""}</span>
           </button>`;
         })
         .join("")
@@ -611,6 +748,7 @@ function render(data) {
   if (runChanged) {
     state.signatures = {};
     state.resetMemoryScroll = true;
+    state.selectedRoute = null;
     closeDetail();
   }
   state.snapshot = data;
@@ -626,6 +764,7 @@ function render(data) {
   ]);
   const signatures = {
     plan: planSignature,
+    jobs: JSON.stringify([data.jobs, data.plan.routes]),
     reviews: JSON.stringify(data.plan.reviews),
     memory: JSON.stringify(data.memory),
     skills: JSON.stringify(data.skills),
@@ -633,6 +772,7 @@ function render(data) {
   };
   const draw = {
     plan: () => renderPlan(data),
+    jobs: () => renderJobs(data),
     reviews: () => renderReviews(data),
     memory: () => renderMemory(data),
     skills: () => renderSkills(data),
@@ -845,6 +985,12 @@ function bindEvents() {
   });
 
   document.addEventListener("click", (event) => {
+    const route = event.target.closest("[data-route-select]");
+    if (route) {
+      state.selectedRoute = route.dataset.routeSelect;
+      if (state.snapshot) renderPlan(state.snapshot);
+      return;
+    }
     const trigger = event.target.closest("[data-detail]");
     if (!trigger) return;
     openDetail(trigger.dataset.detail, trigger.dataset.id);

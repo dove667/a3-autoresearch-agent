@@ -1,10 +1,13 @@
 """The local dashboard observes live run, plan, memory and skill state."""
 
 import json
+import socket
 import time
+import urllib.request
 
 from fastapi.testclient import TestClient
 
+from a3_research_agent.host.dashboard.lifecycle import DashboardService
 from a3_research_agent.host.dashboard.server import create_app
 from a3_research_agent.host.dashboard.snapshot import build_snapshot
 
@@ -261,3 +264,30 @@ def test_api_serves_snapshot_and_static_assets(tmp_path):
     assert client.get("/static/style.css").status_code == 200
     assert client.get("/static/app.js").status_code == 200
     assert client.get("/api/snapshot?run=missing").status_code == 404
+
+
+def free_port():
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.bind(("127.0.0.1", 0))
+        return probe.getsockname()[1]
+
+
+def test_dashboard_lifecycle_starts_and_stops_with_its_owner(tmp_path):
+    build_project(tmp_path)
+    port = free_port()
+    service = DashboardService(tmp_path, port=port)
+    assert service.start() is True
+    with urllib.request.urlopen(service.url + "/api/health", timeout=3) as response:
+        assert json.loads(response.read()) == {"ok": True, "dashboard": "a3-research"}
+    service.stop()
+    assert service.thread is not None and not service.thread.is_alive()
+
+
+def test_dashboard_lifecycle_refuses_an_occupied_port(tmp_path):
+    build_project(tmp_path)
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as occupied:
+        occupied.bind(("127.0.0.1", 0))
+        occupied.listen()
+        service = DashboardService(tmp_path, port=occupied.getsockname()[1])
+        assert service.start() is False
+        service.stop()

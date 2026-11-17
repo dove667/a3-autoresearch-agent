@@ -22,13 +22,7 @@ bash start-autoresearch.sh --harness-commit <已发布提交SHA>
 
 新 run 共用根目录 `workspace/`、`plan/current.json`、`memory/` 和 `skills/`。
 
-查看研究运行、计划、记忆和技能：
-
-```bash
-uv run a3-research-dashboard --open
-```
-
-看板每 5 秒读取本机最新状态，默认只监听回环地址，详见[研究看板](docs/guides/dashboard.md)。
+研究 Host 启动时会自动在 <http://127.0.0.1:8787> 启动看板，研究停止时一起关闭。看板每 5 秒读取本机最新状态，只监听回环地址，详见[研究看板](docs/guides/dashboard.md)。
 
 独立开发或体验原始 mini-SWE-agent：
 
