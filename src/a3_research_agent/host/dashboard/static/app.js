@@ -365,9 +365,8 @@ function renderStatus(data) {
     $("run-meta").textContent = `${runLabel(selected.id)} 启动${model}`;
   }
 
-  $("rail-plan").textContent = data.plan.progress.total
-    ? `${data.plan.progress.done}/${data.plan.progress.total}`
-    : "—";
+  const railActiveRoutes = data.plan.routes.filter((route) => route.status === "active").length;
+  $("rail-plan").textContent = data.plan.routes.length ? `${railActiveRoutes} 进行中` : "—";
   $("rail-memory").textContent = data.memory.counts.effective;
   $("rail-skills").textContent = data.skills.counts.active;
   $("rail-jobs").textContent = data.jobs.counts.total
@@ -398,15 +397,27 @@ function renderPulse(data) {
 }
 
 function renderStats(data) {
-  const plan = data.plan.progress;
-  $("stat-plan").textContent = plan.total ? `${plan.done} / ${plan.total}` : "—";
-  $("stat-plan-note").textContent = plan.total ? `${plan.percent}% 已完成` : "还没有步骤";
+  const routes = data.plan.routes;
+  const activeRoutes = routes.filter((route) => route.status === "active").length;
+  const finishedRoutes = routes.filter((route) => route.status === "completed").length;
+  const pausedRoutes = routes.filter((route) => route.status === "paused").length;
+  $("stat-routes").textContent = routes.length ? activeRoutes : "—";
+  $("stat-routes-note").textContent = routes.length
+    ? [
+        finishedRoutes ? `${finishedRoutes} 完成` : "",
+        pausedRoutes ? `${pausedRoutes} 暂停` : "",
+      ]
+        .filter(Boolean)
+        .join("，") || "全部进行中"
+    : "还没有路线";
 
-  const activeRoutes = data.plan.routes.filter((route) => route.status === "active").length;
-  $("stat-routes").textContent = data.plan.routes.length
-    ? `${activeRoutes} / ${data.plan.routes.length}`
+  const focusRoute = data.plan.focus
+    ? routes.find((route) => route.id === data.plan.focus.route)
+    : routes.find((route) => route.status === "active") || routes[0];
+  $("stat-focus-route").textContent = focusRoute
+    ? `${focusRoute.progress.done} / ${focusRoute.progress.total}`
     : "—";
-  $("stat-routes-note").textContent = data.plan.routes.length ? "进行中 / 全部" : "还没有路线";
+  $("stat-focus-route-note").textContent = focusRoute ? focusRoute.status_label : "当前没有路线";
 
   $("stat-memory").textContent = data.memory.counts.effective;
   $("stat-memory-note").textContent = `${data.memory.counts.total} 条`;
@@ -416,6 +427,7 @@ function renderStats(data) {
     ? `${data.skills.counts.total} 个`
     : "还没有技能";
 }
+
 
 function routeTone(status) {
   return {
@@ -543,10 +555,10 @@ function renderPlan(data) {
   const plan = data.plan;
   $("objective").textContent = plan.objective || "计划里还没有写长期方向。";
   $("metrics").innerHTML = plan.metrics.map((metric) => `<li>${esc(metric)}</li>`).join("");
-  const open = plan.steps.filter((step) => !["done", "skipped"].includes(step.status)).length;
-  $("plan-summary").textContent = plan.progress.total
-    ? `${plan.progress.done}/${plan.progress.total} 步完成，${open} 步待推进`
-    : "还没有步骤";
+  const activeRoutes = plan.routes.filter((route) => route.status === "active").length;
+  $("plan-summary").textContent = plan.routes.length
+    ? `${plan.routes.length} 条路线，${activeRoutes} 条进行中`
+    : "还没有路线";
 
   if (!plan.routes.some((route) => route.id === state.selectedRoute)) {
     const preferred = plan.routes.find((route) => route.status === "active") || plan.routes[0];
