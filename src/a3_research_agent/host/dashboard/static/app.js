@@ -400,11 +400,13 @@ function renderPulse(data) {
 function renderStats(data) {
   const plan = data.plan.progress;
   $("stat-plan").textContent = plan.total ? `${plan.done} / ${plan.total}` : "—";
-  $("stat-plan-note").textContent = plan.total ? `${plan.percent}%` : "还没有步骤";
+  $("stat-plan-note").textContent = plan.total ? `${plan.percent}% 已完成` : "还没有步骤";
 
   const activeRoutes = data.plan.routes.filter((route) => route.status === "active").length;
-  $("stat-routes").textContent = activeRoutes || "—";
-  $("stat-routes-note").textContent = `${data.plan.routes.length} 条`;
+  $("stat-routes").textContent = data.plan.routes.length
+    ? `${activeRoutes} / ${data.plan.routes.length}`
+    : "—";
+  $("stat-routes-note").textContent = data.plan.routes.length ? "进行中 / 全部" : "还没有路线";
 
   $("stat-memory").textContent = data.memory.counts.effective;
   $("stat-memory-note").textContent = `${data.memory.counts.total} 条`;
