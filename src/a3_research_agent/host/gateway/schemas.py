@@ -34,6 +34,7 @@ class JobWorkspaceFileReference(WorkspaceFileReference):
 
 class JobRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    name: str | None = Field(default=None, min_length=1, max_length=120)
     command: list[str] = Field(min_length=1, max_length=256)
     gpu: StrictBool = False
     retry_on_gpu_contention: StrictBool = True

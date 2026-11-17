@@ -40,8 +40,16 @@ def test_cpu_batch_submits_each_job_and_reports_every_item(tmp_path):
         "job_submit",
         {
             "jobs": [
-                {"command": ["python", "audit.py"], "attachments": [{"path": "scripts/audit.py"}]},
-                {"command": ["python", "eval.py"], "attachments": [{"path": "scripts/eval.py"}]},
+                {
+                    "name": "审计数据",
+                    "command": ["python", "audit.py"],
+                    "attachments": [{"path": "scripts/audit.py"}],
+                },
+                {
+                    "name": "配对评测",
+                    "command": ["python", "eval.py"],
+                    "attachments": [{"path": "scripts/eval.py"}],
+                },
             ]
         },
         request,
@@ -49,6 +57,7 @@ def test_cpu_batch_submits_each_job_and_reports_every_item(tmp_path):
     )
     assert result["count"] == 2 and result["failed"] == 0
     assert [call[2]["command"] for call in calls] == [["python", "audit.py"], ["python", "eval.py"]]
+    assert [call[2]["name"] for call in calls] == ["审计数据", "配对评测"]
     assert all(item["ok"] for item in result["items"])
 
 

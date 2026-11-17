@@ -71,6 +71,7 @@ def build_project(root, *, alive=True):
             {
                 "job_id": JOB_RUNNING,
                 "experiment_id": "session-1",
+                "name": "预算探针",
                 "command": ["python", "scripts/eval.py", "--seed", "10010"],
                 "gpu": True,
                 "source_files": [
@@ -226,6 +227,7 @@ def test_snapshot_reads_live_run_plan_memory_and_skills(tmp_path):
     assert snapshot["skills"]["items"][0]["body"].startswith("# 方法")
     assert snapshot["jobs"]["counts"]["active"] == 1
     running = next(item for item in snapshot["jobs"]["items"] if item["id"] == JOB_RUNNING)
+    assert running["name"] == "预算探针"
     assert running["command"] == ["python", "scripts/eval.py", "--seed", "10010"]
     assert running["source_files"] == ["scripts/eval.py"]
     assert running["gpu"] is True

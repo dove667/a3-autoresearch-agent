@@ -589,6 +589,7 @@ function renderPlan(data) {
 }
 
 function jobLabel(job) {
+  if (job.name) return job.name;
   const command = job.command || [];
   const scriptIndex = command.findIndex((part) => /\.(py|sh|bash)$/i.test(part));
   if (scriptIndex >= 0) {
@@ -602,17 +603,7 @@ function jobLabel(job) {
     const name = sourceFiles[0].split("/").pop();
     return sourceFiles.length > 1 ? `${name} 等 ${sourceFiles.length} 个文件` : name;
   }
-  return `作业 ${job.short}`;
-}
-
-function jobContext(job, label) {
-  const parts = [];
-  if (job.short && label !== `作业 ${job.short}`) parts.push(`作业 ${job.short}`);
-  if (job.task) parts.push(`关联计划：${short(job.task, 48)}`);
-  if (job.observed_at) parts.push(`观察于 ${relative(job.observed_at)}`);
-  else if (job.submitted_at) parts.push(`提交于 ${relative(job.submitted_at)}`);
-  if (job.gpu) parts.push("GPU");
-  return parts.join("，");
+  return "未命名作业";
 }
 
 function renderJobs(data) {
@@ -629,11 +620,9 @@ function renderJobs(data) {
 
   const row = (job) => {
     const label = jobLabel(job);
-    const context = jobContext(job, label);
-    const details = [...(job.command || []), ...(job.source_files || [])].join("\n");
-    return `<div class="job-row" data-tone="${esc(job.tone)}"${details ? ` title="${esc(details)}"` : ""}>
+    return `<div class="job-row" data-tone="${esc(job.tone)}">
       ${pill(job.status_label, job.tone)}
-      <div><strong>${esc(label)}</strong>${context ? `<p>${esc(context)}</p>` : ""}</div>
+      <div><strong>${esc(label)}</strong></div>
     </div>`;
   };
   const group = (label, items) => `<section class="job-group">
@@ -797,6 +786,7 @@ function render(data) {
     data.plan.routes,
     data.plan.steps,
     data.plan.progress,
+    data.plan.reviews,
   ]);
   const signatures = {
     plan: planSignature,

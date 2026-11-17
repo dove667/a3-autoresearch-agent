@@ -232,6 +232,7 @@ def _job_inputs(run):
             elif isinstance(item, str):
                 source_files.append(item)
         result[job] = {
+            "name": row.get("name") if isinstance(row.get("name"), str) else "",
             "command": [part for part in command if isinstance(part, str)]
             if isinstance(command, list)
             else [],
@@ -258,6 +259,7 @@ def _jobs(run):
             "status": row.get("status", "unobserved"),
             "observed_at": row.get("observed_at"),
             "submitted_at": receipt.get("submitted_at"),
+            "name": receipt.get("name", ""),
             "command": receipt.get("command", []),
             "source_files": receipt.get("source_files", []),
             "gpu": receipt.get("gpu", False),

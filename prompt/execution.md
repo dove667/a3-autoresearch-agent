@@ -1,6 +1,6 @@
 # 研究工具与执行约定
 
-Version: 0.35.0
+Version: 0.36.0
 
 工具定义给出参数、默认值和限制；本文件说明常用流程。所有工具返回 `ok`：成功时直接读取同层结果；失败时读取 `error`、`hint` 和相关编号，修正后再调用。作业的 `status="failed"` 是执行结果，先读日志与证据再判断原因。
 
@@ -35,13 +35,13 @@ Version: 0.35.0
 
 研究源码保存在 `scripts/`，实验配置和结果保存在 `experiments/`。所有工作区文本文件统一使用 `attachments`，只填 `path` 和可选远程 `destination`，工具计算哈希。导入依赖一并附加；数据、权重和视频通过 `input_exports` 引用已有只读资产。
 
-CPU 作业直接调用 `job_submit`，参数例如：
+CPU 作业直接调用 `job_submit`，每个作业填写简短、人类可读的 `name`，看板只显示这个名称；参数例如：
 
 ```json
-{"command":["python","scripts/check_data.py","--config","experiments/current/config.json"],"attachments":[{"path":"scripts/check_data.py"},{"path":"experiments/current/config.json"}]}
+{"name":"检查数据配置","command":["python","scripts/check_data.py","--config","experiments/current/config.json"],"attachments":[{"path":"scripts/check_data.py"},{"path":"experiments/current/config.json"}]}
 ```
 
-GPU 作业先调用 `job_prepare`，同样填写 command、attachments、input_exports 等正式参数；gpu 默认 true。它保存正式请求、提交一次 CPU 预检，并返回 `prepared_id` 与 `preflight_job_id`。
+GPU 作业先调用 `job_prepare`，同样填写 name、command、attachments、input_exports 等正式参数；gpu 默认 true。它保存正式请求、提交一次 CPU 预检，并返回 `prepared_id` 与 `preflight_job_id`。
 
 同一脚本在环境变量 `A3_RESEARCH_PREFLIGHT=1` 时实际导入依赖、加载数据与基座或父 checkpoint，完成必要的前向或数据读取；成功后在作业工作区写入 `a3-preflight.json`：
 

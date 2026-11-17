@@ -32,6 +32,12 @@ ATTACHMENTS = {
     },
 }
 REQUEST_FIELDS = {
+    "name": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 120,
+        "description": "Short human-readable job name shown in the research dashboard.",
+    },
     "command": {"type": "array", "items": STRING, "minItems": 1, "maxItems": 256},
     "gpu": {"type": "boolean"},
     "attachments": ATTACHMENTS,
@@ -80,8 +86,9 @@ TOOLS = [
         "requests at once with per-item results. For a GPU job first call job_prepare, wait for "
         "its preflight_job_id, then submit its prepared_id; never repeat the full GPU request. "
         "attachments references workspace text files (scripts and experiment configs); hashes are "
-        "automatic. Use input_exports for data and weights. Reconcile submission_unknown by job_id "
-        "before retrying.",
+        "automatic. Give each job a short human-readable name; the dashboard uses it as the "
+        "primary job label. Use input_exports for data and weights. Reconcile submission_unknown "
+        "by job_id before retrying.",
         {
             **REQUEST_FIELDS,
             "prepared_id": PREPARED_ID,
@@ -93,8 +100,9 @@ TOOLS = [
         "Save GPU requests and run their real CPU preflights. Supply the production command, "
         "attachments and assets once, for one request or up to 16 in jobs. Each entry must handle "
         "A3_RESEARCH_PREFLIGHT=1, load real inputs, perform a minimal forward/data read, write "
-        "a3-preflight.json with schema=1,status=passed, and exit. Returns prepared_id and "
-        "preflight_job_id per item. Wait for those jobs, then job_submit(prepared_ids=[...]).",
+        "a3-preflight.json with schema=1,status=passed, and exit. Give each request a short "
+        "human-readable name. Returns prepared_id and preflight_job_id per item. Wait for those "
+        "jobs, then job_submit(prepared_ids=[...]).",
         {**REQUEST_FIELDS, **BATCH_FIELDS},
     ),
     definition(
@@ -221,6 +229,11 @@ def submit_request(args, workspace, *, default_gpu=False):
             "invalid_command", 'Use an argument array, for example ["python", "scripts/train.py"].'
         )
     body = {key: value for key, value in args.items() if key != "attachments"}
+    if "name" in body:
+        name = body["name"]
+        if not isinstance(name, str) or not name.strip() or len(name) > 120:
+            fail("invalid_job_name", "Use a nonempty job name of at most 120 characters.")
+        body["name"] = name.strip()
     body["gpu"] = boolean(args.get("gpu", default_gpu), "gpu")
     references = attachment_references(args.get("attachments", []), workspace)
     if references:

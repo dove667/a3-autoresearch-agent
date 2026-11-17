@@ -500,6 +500,7 @@ def _jobs(run, plan):
                 "tone": meta["tone"],
                 "observed_at": row.get("observed_at"),
                 "submitted_at": row.get("submitted_at"),
+                "name": row.get("name", ""),
                 "command": row.get("command") or [],
                 "source_files": row.get("source_files") or [],
                 "gpu": bool(row.get("gpu")),

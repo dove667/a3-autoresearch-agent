@@ -89,7 +89,9 @@ class JobRoutes:
         with self.session_lock:
             self.accepting_resources()
             experiment = self.owner(authorization)
-            request = body.model_dump(exclude_none=True, exclude={"workspace_files", "evaluation"})
+            request = body.model_dump(
+                exclude_none=True, exclude={"workspace_files", "evaluation", "name"}
+            )
             if body.retry_on_gpu_contention:
                 request.pop("retry_on_gpu_contention")
             source_files = []
@@ -169,6 +171,7 @@ class JobRoutes:
                 receipt = {
                     "job_id": result["job_id"],
                     "experiment_id": experiment,
+                    "name": body.name or "",
                     "command": request.get("command", []),
                     "gpu": bool(request.get("gpu", False)),
                     "source_files": source_files,
