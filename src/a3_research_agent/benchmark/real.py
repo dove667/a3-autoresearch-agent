@@ -968,7 +968,13 @@ def _blocked_score(root: Path, plan: dict, run: Path) -> tuple[bool, str]:
 
 def _recover_done(root: Path, plan: dict) -> bool:
     value = _json_file(root, "results/bench-recover.json")
-    return isinstance(value.get("job_id"), str) and bool(value.get("checked"))
+    step = (plan.get("steps") or {}).get("recover_submit") or {}
+    return (
+        isinstance(value.get("job_id"), str)
+        and bool(value.get("checked"))
+        and step.get("status") == "done"
+        and bool(step.get("evidence"))
+    )
 
 
 def _recover_score(root: Path, plan: dict, run: Path) -> tuple[bool, str]:
@@ -976,15 +982,21 @@ def _recover_score(root: Path, plan: dict, run: Path) -> tuple[bool, str]:
     calls = _calls(run)
     submits = [call for call in calls if call.get("tool") == "job_submit"]
     checked = any(call.get("tool") in {"job_list", "job_status"} for call in calls)
+    step = (plan.get("steps") or {}).get("recover_submit") or {}
     if (
         isinstance(value.get("job_id"), str)
         and len(value["job_id"]) == 32
         and bool(value.get("checked"))
         and len(submits) == 1
         and checked
+        and step.get("status") == "done"
+        and bool(step.get("evidence"))
     ):
-        return True, "只提交一次，并在确认前查询了作业状态"
-    return False, f"提交/核对不安全：submits={len(submits)}, checked={checked}, target={value}"
+        return True, "只提交一次，查询后写结果并用 plan evidence 关闭步骤"
+    return False, (
+        f"提交/核对/闭合不完整：submits={len(submits)}, checked={checked}, "
+        f"step={step.get('status')}, target={value}"
+    )
 
 
 TASKS += (
@@ -1046,8 +1058,8 @@ TASKS += (
         "提交一个后台 CPU 作业后模拟回执不确定；先查作业，确认前不要重复提交。",
         "完成 benchmark：恢复不确定提交而不重复",
         "bench-recover",
-        "按 TASK.md 只提交一个 sleep 作业，随后用 job_list/job_status 核对，写出 results/bench-recover.json。",
-        "结果文件 job_id 32 位、checked=true；trajectory 恰好一次 job_submit 且至少一次 job_list/job_status。",
+        "按 TASK.md 只提交一个 sleep 作业，用 job_list/job_status 核对，写出 results/bench-recover.json 并用 plan evidence 关闭步骤。",
+        "结果文件 job_id 32 位、checked=true；trajectory 恰好一次 job_submit 且至少一次 job_list/job_status；plan step 为 done 且有 evidence。",
         """# Benchmark task
 
 先提交一个真实 CPU 作业：`job_submit(command=["python","-c","import time; time.sleep(30)"])`。
@@ -1056,7 +1068,7 @@ TASKS += (
 
 `{"job_id":"<32位>","status":"running 或 completed","checked":true}`
 
-完成后调用 `session_stop(reason="benchmark task complete")`。
+完成后用 `plan(action="update", revision=<当前revision>, steps=[{"id":"recover_submit","status":"done","evidence":["results/bench-recover.json"]}])` 关闭步骤，再调用 `session_stop(reason="benchmark task complete")`。
 """,
         (),
         _recover_done,

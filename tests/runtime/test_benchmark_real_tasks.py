@@ -86,7 +86,11 @@ def test_blocked_and_recover_need_the_safety_actions(tmp_path):
 
     write(root, "bench-recover.json", {"job_id": "9" * 32, "status": "running", "checked": True})
     run = calls(root, [("job_submit", {"command": ["sleep", "30"]}), ("job_list", {})])
-    passed, detail = task("recover_submit").score(root, {}, run)
+    plan = real._plan_for(task("recover_submit"))
+    plan["steps"]["recover_submit"].update(
+        status="done", evidence=["results/bench-recover.json"]
+    )
+    passed, detail = task("recover_submit").score(root, plan, run)
     assert passed, detail
 
     unsafe = calls(root, [("job_submit", {"command": ["a"]}), ("job_submit", {"command": ["b"]}), ("job_list", {})])
