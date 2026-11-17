@@ -44,6 +44,14 @@ from a3_research_agent.harness.memory import client as memory_client
 
 BASE = None
 TOKEN = None
+PLAN_STALE_TURNS = 6
+PLAN_PROGRESS_NOTICE = (
+    "Plan revision has not advanced for several decisions. Stop adding inspection jobs. "
+    "Write the observed facts and the single next action into plan (update or review), "
+    "or call research_status(status=\"blocked\", reason=..., required_action=...) if a "
+    "missing permission or resource prevents progress. A job that is not bound to a plan "
+    "step is not research progress."
+)
 # Never let a macOS system proxy (for example Shadowrocket) intercept the
 # loopback Host gateway. Only the model upstream needs its own direct route.
 _OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
@@ -376,6 +384,11 @@ def main() -> None:
     empty = 0
     # Keep a drifting model inside real tool use instead of prose or repeat loops.
     guard = drift.DriftGuard()
+    try:
+        last_plan_revision = planning.load()["revision"]
+    except Exception:  # noqa: BLE001 - a missing plan is handled by the normal tool path
+        last_plan_revision = None
+    plan_stale = 0
     log({"model_request_tools": tools})
     loop_phase = "decision_prepare"
     while True:
@@ -474,6 +487,21 @@ def main() -> None:
             context_manager.atomic(state_paths.path(state_paths.JOURNAL), "null")
             if "--test" in sys.argv and calls:
                 break
+            if last_plan_revision is not None:
+                try:
+                    current_plan = planning.load()
+                except Exception:  # noqa: BLE001 - keep the research loop alive
+                    current_plan = None
+                if current_plan is not None:
+                    if current_plan["revision"] != last_plan_revision:
+                        last_plan_revision = current_plan["revision"]
+                        plan_stale = 0
+                    else:
+                        plan_stale += 1
+                        if plan_stale >= PLAN_STALE_TURNS:
+                            messages.append({"role": "user", "content": PLAN_PROGRESS_NOTICE})
+                            log({"plan_progress_required": plan_stale})
+                            plan_stale = 0
             if not calls:
                 if (
                     state_paths.path(state_paths.OUTCOME).exists()
