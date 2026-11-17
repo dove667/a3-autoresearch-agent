@@ -6,8 +6,7 @@ const PAGES = {
   jobs: "远程作业",
   reviews: "结果复盘",
   memory: "长期记忆",
-  skills: "方法技能",
-  activity: "运行记录",
+  skills: "Tools & Skills",
 };
 
 const state = {
@@ -67,21 +66,6 @@ function absolute(epoch) {
     hour: "2-digit",
     minute: "2-digit",
   }).format(new Date(epoch * 1000));
-}
-
-function clock(epoch) {
-  if (!epoch) return "—";
-  const date = new Date(epoch * 1000);
-  const now = new Date();
-  if (date.toDateString() === now.toDateString()) {
-    return new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit" }).format(date);
-  }
-  return new Intl.DateTimeFormat("zh-CN", {
-    month: "numeric",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(date);
 }
 
 function preciseClock(epoch) {
@@ -713,13 +697,41 @@ function renderMemory(data) {
   state.resetMemoryScroll = false;
 }
 
+function renderTools(data) {
+  const tools = data.tools;
+  $("tool-count").textContent = `${tools.counts.total} 个`;
+  $("tools").innerHTML = tools.items.length
+    ? tools.families
+        .map((family) => {
+          const items = tools.items.filter((tool) => tool.family === family.id);
+          if (!items.length) return "";
+          return `<section class="tool-family">
+            <div class="tool-family-head"><h4>${esc(family.label)}</h4><span>${items.length}</span></div>
+            <div class="tool-list">${items
+              .map(
+                (tool) => `<button class="tool-row" type="button" data-detail="tool" data-id="${esc(
+                  tool.name,
+                )}">
+                  <span class="tool-row-head"><code class="tool-name">${esc(
+                    tool.name,
+                  )}</code>${tool.optional ? '<span class="tool-badge">可选</span>' : ""}</span>
+                  <span class="tool-desc">${esc(short(tool.description, 108))}</span>
+                </button>`,
+              )
+              .join("")}</div>
+          </section>`;
+        })
+        .join("")
+    : empty("还没有工具", "工具目录为空。");
+}
+
 function renderSkills(data) {
   const skills = data.skills.items;
   $("skill-count").textContent = data.skills.counts.active
     ? `${data.skills.counts.active} 个可用`
     : "还没有技能";
   $("skills").innerHTML = skills.length
-    ? skills
+    ? `<div class="skill-grid">${skills
         .map((skill) => {
           return `<button class="skill-card" type="button" data-detail="skill" data-id="${esc(
             skill.id,
@@ -730,42 +742,8 @@ function renderSkills(data) {
             )}${skill.status !== "active" ? `，${esc(skill.status_label)}` : ""}</span>
           </button>`;
         })
-        .join("")
-    : empty("还没有方法技能", "还没有方法技能。");
-}
-
-function renderActivity(data) {
-  const activity = data.activity.slice(0, 6);
-  $("activity-count").textContent = activity.length ? `最近 ${activity.length} 条` : "还没有记录";
-  $("activity-list").innerHTML = activity.length
-    ? activity
-        .map(
-          (item) => `<li class="activity-item" data-tone="${esc(item.tone)}">
-            <time class="activity-time" datetime="${new Date(item.ts * 1000).toISOString()}" title="${esc(
-              absolute(item.ts),
-            )}">${esc(clock(item.ts))}</time>
-            <div><strong class="activity-title">${esc(item.title)}</strong>${
-              item.detail ? `<p class="activity-detail">${esc(item.detail)}</p>` : ""
-            }</div>
-          </li>`,
-        )
-        .join("")
-    : `<li class="activity-item"><time class="activity-time">—</time><div><strong class="activity-title">还没有运行记录</strong><p class="activity-detail">研究启动后显示作业与决策。</p></div></li>`;
-
-  const usage = data.agent.usage || {};
-  const facts = [
-    ["模型", data.runtime.model || "—"],
-    ["上下文", usage.percent == null ? "—" : `${usage.percent}%`],
-    ["决策", String(data.agent.decisions ?? 0)],
-    ["作业", data.jobs.counts.total ? `${data.jobs.counts.active}/${data.jobs.counts.total}` : "—"],
-    ["最近活动", relative(data.agent.last_activity)],
-  ];
-  $("facts").innerHTML = `<dl>${facts
-    .map(
-      ([label, value]) =>
-        `<div class="fact"><dt>${esc(label)}</dt><dd>${esc(value)}</dd></div>`,
-    )
-    .join("")}</dl>`;
+        .join("")}</div>`
+    : empty("还没有技能", "技能库为空。");
 }
 
 function render(data) {
@@ -779,6 +757,7 @@ function render(data) {
   state.snapshot = data;
   renderRuns(data);
   renderStatus(data);
+  $("skills-summary").textContent = `${data.tools.counts.total} 个工具 · ${data.skills.counts.active} 个技能`;
 
   const planSignature = JSON.stringify([
     data.plan.objective,
@@ -794,7 +773,7 @@ function render(data) {
     reviews: JSON.stringify(data.plan.reviews),
     memory: JSON.stringify(data.memory),
     skills: JSON.stringify(data.skills),
-    activity: JSON.stringify(data.activity),
+    tools: JSON.stringify(data.tools),
   };
   const draw = {
     plan: () => renderPlan(data),
@@ -802,7 +781,7 @@ function render(data) {
     reviews: () => renderReviews(data),
     memory: () => renderMemory(data),
     skills: () => renderSkills(data),
-    activity: () => renderActivity(data),
+    tools: () => renderTools(data),
   };
   for (const [key, signature] of Object.entries(signatures)) {
     if (state.signatures[key] !== signature) {
@@ -886,11 +865,44 @@ function detailMarkup(type, id) {
       body: `<p>${esc(item.text)}</p>${tags}${refs}`,
     };
   }
+  if (type === "tool") {
+    const tool = data.tools.items.find((entry) => entry.name === id);
+    if (!tool) return null;
+    const parameters = tool.parameters.length
+      ? `<dl class="detail-fields tool-params">${tool.parameters
+          .map((parameter) => {
+            const notes = [];
+            if (parameter.description) notes.push(esc(parameter.description));
+            if (parameter.choices.length) {
+              notes.push(
+                `<span class="tool-choices">可选值：${parameter.choices
+                  .map((choice) => esc(choice))
+                  .join("、")}</span>`,
+              );
+            }
+            return `<div>
+              <dt><code>${esc(parameter.name)}</code><span class="tool-param-flag">${
+                parameter.required ? "必填" : "可选"
+              }</span> · ${esc(parameter.type)}</dt>
+              ${notes.length ? `<dd>${notes.join("")}</dd>` : ""}
+            </div>`;
+          })
+          .join("")}</dl>`
+      : '<p class="detail-refs">这个工具没有参数。</p>';
+    return {
+      kicker: `Tool · ${tool.family_label}`,
+      title: tool.name,
+      meta: `<span>${tool.parameters.length} 个参数</span>${
+        tool.optional ? "<span>可选能力</span>" : ""
+      }`,
+      body: `<p>${esc(tool.description)}</p>${parameters}`,
+    };
+  }
   if (type === "skill") {
     const skill = data.skills.items.find((entry) => entry.id === id);
     if (!skill) return null;
     return {
-      kicker: "方法技能",
+      kicker: "Skill",
       title: skill.description || skill.id,
       meta: `<span>${esc(skill.id)}</span><span>v${esc(skill.version || "—")}</span>${
         skill.resources.length ? `<span>附件 ${skill.resources.length}</span>` : ""

@@ -1399,12 +1399,148 @@ main {
   line-height: 1.4;
 }
 
-/* Skills */
+/* Tools & Skills */
+
+.page-skills {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.page-skills .page-head {
+  flex: 0 0 auto;
+}
+
+.tools-skills {
+  display: grid;
+  flex: 1 1 auto;
+  grid-template-columns: minmax(0, 1.12fr) minmax(0, 0.88fr);
+  gap: clamp(24px, 3.4vw, 44px);
+  min-height: 0;
+}
+
+.tool-panel,
+.skill-panel {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.page-skills .panel-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+  padding-bottom: 7px;
+  border-bottom: 1px solid var(--line);
+}
+
+.page-skills .panel-head h3 {
+  margin: 0;
+  color: var(--gold);
+  font-family: var(--display);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+}
+
+.page-skills .panel-head span {
+  color: var(--muted);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.tool-scroll,
+.skill-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding-right: 6px;
+}
+
+.tool-family {
+  margin-bottom: 14px;
+}
+
+.tool-family-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+}
+
+.tool-family-head h4 {
+  margin: 0;
+  color: var(--gold-bright);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+}
+
+.tool-row {
+  display: block;
+  width: 100%;
+  padding: 8px 9px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+.tool-row:hover {
+  background: var(--surface);
+}
+
+.tool-row-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.tool-name {
+  color: var(--gold-bright);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.tool-badge {
+  padding: 0 5px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 8px;
+  line-height: 1.5;
+}
+
+.tool-desc {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
 
 .skill-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
+}
+
+.skill-scroll .skill-grid {
+  grid-template-columns: 1fr;
+  gap: 8px;
+  padding-bottom: 8px;
 }
 
 .skill-card {
@@ -1445,108 +1581,6 @@ main {
   color: var(--muted);
   font-family: var(--mono);
   font-size: 9px;
-  overflow-wrap: anywhere;
-}
-
-/* Activity */
-
-.activity-layout {
-  display: grid;
-  grid-template-columns: minmax(0, 1.4fr) minmax(250px, 0.6fr);
-  gap: clamp(28px, 4vw, 52px);
-  align-items: start;
-}
-
-.activity-list {
-  margin: 0;
-  padding: 0;
-  border-top: 1px solid var(--line);
-  list-style: none;
-}
-
-.activity-item {
-  display: grid;
-  grid-template-columns: 62px minmax(0, 1fr);
-  gap: 16px;
-  padding: 11px 0;
-  border-bottom: 1px solid var(--line);
-}
-
-.activity-time {
-  padding-top: 2px;
-  color: var(--muted);
-  font-size: 10px;
-  font-variant-numeric: tabular-nums;
-}
-
-.activity-title {
-  display: flex;
-  align-items: baseline;
-  gap: 7px;
-  font-size: 12px;
-  font-weight: 500;
-  line-height: 1.55;
-}
-
-.activity-title::before {
-  content: "";
-  flex: none;
-  width: 4px;
-  height: 4px;
-  border-radius: 50%;
-  background: var(--line-strong);
-}
-
-.activity-item[data-tone="active"] .activity-title::before,
-.activity-item[data-tone="done"] .activity-title::before {
-  background: var(--gold);
-}
-
-.activity-item[data-tone="wait"] .activity-title::before {
-  background: var(--amber);
-}
-
-.activity-item[data-tone="alert"] .activity-title::before {
-  background: var(--alert);
-}
-
-.activity-detail {
-  margin: 2px 0 0;
-  color: var(--muted);
-  font-size: 10px;
-  line-height: 1.6;
-  overflow-wrap: anywhere;
-}
-
-.facts-panel {
-  padding-left: 28px;
-  border-left: 1px solid var(--line);
-}
-
-.facts-panel dl {
-  margin: 0;
-}
-
-.fact {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 9px 0;
-  border-bottom: 1px solid var(--line);
-}
-
-.fact dt {
-  color: var(--muted);
-  font-size: 10px;
-}
-
-.fact dd {
-  margin: 0;
-  color: var(--gold-bright);
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-  text-align: right;
   overflow-wrap: anywhere;
 }
 
@@ -1663,6 +1697,46 @@ main {
   line-height: 1.85;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+.detail-fields dt code {
+  color: var(--gold-bright);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.tool-param-flag {
+  margin-left: 6px;
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.tool-choices {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.tool-params {
+  gap: 0;
+}
+
+.tool-params > div {
+  padding: 7px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.tool-params > div:last-child {
+  border-bottom: 0;
+}
+
+.tool-params dt {
+  margin-bottom: 0;
+}
+
+.tool-params dd {
+  margin-top: 2px;
 }
 
 .detail-tags {
@@ -1915,24 +1989,38 @@ main {
     overflow: visible;
   }
 
-  .activity-layout {
-    grid-template-columns: 1fr;
-    gap: 28px;
+  .page-skills {
+    overflow: auto;
   }
 
-  .facts-panel {
-    padding-left: 0;
-    border-left: 0;
-    border-top: 1px solid var(--line);
-    padding-top: 16px;
+  .tools-skills {
+    display: block;
   }
 
-  .skill-grid {
+  .tool-scroll,
+  .skill-scroll {
+    overflow: visible;
+    padding-right: 0;
+  }
+
+  .skill-panel {
+    margin-top: 24px;
+  }
+
+  .skill-scroll .skill-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
 @media (max-width: 640px) {
+  .rail-nav {
+    gap: 12px;
+  }
+
+  .rail-nav a {
+    font-size: 11px;
+  }
+
   .page {
     padding: 16px 16px 24px;
   }
@@ -2040,6 +2128,10 @@ main {
     gap: 8px;
   }
 
+  .skill-scroll .skill-grid {
+    grid-template-columns: 1fr;
+  }
+
   .skill-card {
     min-height: 112px;
     padding: 11px;
@@ -2052,18 +2144,6 @@ main {
 
   .skill-id {
     font-size: 8px;
-  }
-
-  .facts-panel {
-    display: none;
-  }
-
-  .activity-layout {
-    grid-template-columns: 1fr;
-  }
-
-  .activity-item {
-    padding: 8px 0;
   }
 
   .topbar {
@@ -2125,11 +2205,6 @@ main {
 
   .memory-kind {
     grid-column: 1 / -1;
-  }
-
-  .activity-item {
-    grid-template-columns: 1fr;
-    gap: 2px;
   }
 
   .detail {

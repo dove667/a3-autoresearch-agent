@@ -187,15 +187,16 @@ KNOWLEDGE_TOOLS = [
 ]
 
 
-TOOLS = (
-    file_tools.TOOLS
-    + job_tools.TOOLS
-    + host_tools.TOOLS
-    + control_tools.TOOLS
-    + KNOWLEDGE_TOOLS
-    + research_web.TOOLS
-    + skill_registry.TOOLS
+TOOL_FAMILIES = (
+    ("files", "文件与工作区", file_tools.TOOLS),
+    ("jobs", "远程作业", job_tools.TOOLS),
+    ("runtime", "运行与评估", host_tools.TOOLS),
+    ("control", "等待与状态", control_tools.TOOLS),
+    ("knowledge", "计划与记忆", KNOWLEDGE_TOOLS),
+    ("web", "网络", research_web.TOOLS),
+    ("skills", "技能", skill_registry.TOOLS),
 )
+TOOLS = tuple(entry for _, _, entries in TOOL_FAMILIES for entry in entries)
 BY_NAME = {entry["name"]: entry for entry in TOOLS}
 OPTIONAL = {
     "web": frozenset({"web_search", "web_fetch", "web_status"}),

@@ -24,8 +24,7 @@
           <a href="#jobs" data-page="jobs">远程作业</a>
           <a href="#reviews" data-page="reviews">结果复盘</a>
           <a href="#memory" data-page="memory">长期记忆</a>
-          <a href="#skills" data-page="skills">方法技能</a>
-          <a href="#activity" data-page="activity">运行记录</a>
+          <a href="#skills" data-page="skills">Tools &amp; Skills</a>
         </nav>
 
         <div class="rail-status">
@@ -177,22 +176,26 @@
             <div class="memory-list" id="memory-list"></div>
           </section>
 
-          <section class="page" data-page="skills" id="page-skills" aria-labelledby="skills-title" hidden>
+          <section class="page page-skills" data-page="skills" id="page-skills" aria-labelledby="skills-title" hidden>
             <header class="page-head">
-              <h2 id="skills-title">方法技能</h2>
-              <span class="page-count" id="skill-count">—</span>
+              <h2 id="skills-title">Tools &amp; Skills</h2>
+              <span class="page-count" id="skills-summary">—</span>
             </header>
-            <div class="skill-grid" id="skills"></div>
-          </section>
-
-          <section class="page" data-page="activity" id="page-activity" aria-labelledby="activity-title" hidden>
-            <header class="page-head">
-              <h2 id="activity-title">运行记录</h2>
-              <span class="page-count" id="activity-count">—</span>
-            </header>
-            <div class="activity-layout">
-              <ol class="activity-list" id="activity-list"></ol>
-              <aside class="facts-panel" id="facts"></aside>
+            <div class="tools-skills">
+              <section class="tool-panel" aria-labelledby="tools-heading">
+                <div class="panel-head">
+                  <h3 id="tools-heading">Tools</h3>
+                  <span id="tool-count">—</span>
+                </div>
+                <div class="tool-scroll" id="tools"></div>
+              </section>
+              <section class="skill-panel" aria-labelledby="skills-heading">
+                <div class="panel-head">
+                  <h3 id="skills-heading">Skills</h3>
+                  <span id="skill-count">—</span>
+                </div>
+                <div class="skill-scroll" id="skills"></div>
+              </section>
             </div>
           </section>
         </div>

@@ -7,6 +7,7 @@ import urllib.request
 
 from fastapi.testclient import TestClient
 
+from a3_research_agent.harness import tool_catalog
 from a3_research_agent.host.dashboard.lifecycle import DashboardService
 from a3_research_agent.host.dashboard.server import create_app
 from a3_research_agent.host.dashboard.snapshot import build_snapshot
@@ -225,6 +226,16 @@ def test_snapshot_reads_live_run_plan_memory_and_skills(tmp_path):
     }
     assert snapshot["skills"]["counts"]["active"] == 1
     assert snapshot["skills"]["items"][0]["body"].startswith("# 方法")
+    assert snapshot["tools"]["counts"]["total"] == len(tool_catalog.TOOLS)
+    assert snapshot["tools"]["families"][0]["label"] == "文件与工作区"
+    plan_tool = next(item for item in snapshot["tools"]["items"] if item["name"] == "plan")
+    assert plan_tool["family"] == "knowledge"
+    assert any(
+        parameter["name"] == "action" and parameter["required"]
+        for parameter in plan_tool["parameters"]
+    )
+    web_tool = next(item for item in snapshot["tools"]["items"] if item["name"] == "web_search")
+    assert web_tool["optional"] is True
     assert snapshot["jobs"]["counts"]["active"] == 1
     running = next(item for item in snapshot["jobs"]["items"] if item["id"] == JOB_RUNNING)
     assert running["name"] == "预算探针"
@@ -284,7 +295,9 @@ def test_api_serves_snapshot_and_static_assets(tmp_path):
     assert response.status_code == 200
     assert response.headers["cache-control"] == "no-store"
     assert response.json()["agent"]["state"] == "waiting_jobs"
-    assert client.get("/").status_code == 200
+    page = client.get("/")
+    assert page.status_code == 200
+    assert "Tools &amp; Skills" in page.text
     assert client.get("/static/style.css").status_code == 200
     assert client.get("/static/app.js").status_code == 200
     assert client.get("/api/snapshot?run=missing").status_code == 404

@@ -6,8 +6,8 @@ from pathlib import Path
 
 from a3_research_agent.harness import plan as planning
 
-from . import knowledge
-from .readers import read_json, read_json_lines, tail_lines
+from . import catalog, knowledge
+from .readers import read_json, tail_lines
 from .runs import (
     STATE_LABELS,
     TERMINAL_JOB_STATES,
@@ -302,81 +302,6 @@ def plan_payload(plan_file, jobs):
     }
 
 
-def _activity_events(run_path, run, plan):
-    job_step = {}
-    for step in plan.get("steps") or []:
-        for job in step.get("jobs") or []:
-            job_step[job["id"]] = step
-    items = []
-    ledger = run_path / "conversation/research-ledger.jsonl"
-    for event in read_json_lines(ledger, max_bytes=1_000_000):
-        kind = event.get("event")
-        ts = event.get("ts")
-        if not isinstance(ts, (int, float)):
-            continue
-        title, detail, tone = "研究记录", "", "idle"
-        job = event.get("job_id")
-        step = job_step.get(job)
-        subject = step.get("task") if step else ""
-        if kind == "job_prepare":
-            title, tone = "准备远程作业", "wait"
-            detail = subject or "提交前的 CPU 预检"
-        elif kind == "job_submit":
-            title, tone = "提交远程作业", "active"
-            detail = subject
-        elif kind == "job_status":
-            status = event.get("status")
-            if status == "completed":
-                title, tone = "远程作业完成", "done"
-            elif status == "failed":
-                title, tone = "远程作业失败", "alert"
-            elif status == "cancelled":
-                title, tone = "远程作业取消", "idle"
-            else:
-                title, tone = "确认远程作业状态", "wait"
-            detail = subject or "未绑定到计划步骤"
-        elif kind == "job_wait":
-            reason = event.get("reason")
-            if reason == "state_changed":
-                title, tone = "收到作业完成通知", "done"
-            elif reason == "timeout":
-                title, tone = "等待作业超时，继续观察", "wait"
-            elif reason == "notification":
-                title, tone = "收到人工通知", "active"
-            elif reason == "inputs_changed":
-                title, tone = "研究输入发生变化", "active"
-            else:
-                title, tone = "等待远程作业", "wait"
-            detail = subject
-        elif kind == "compaction":
-            title, tone = "整理研究上下文", "wait"
-            detail = "对话压缩完成，继续下一步"
-        else:
-            title = "研究记录"
-        items.append(
-            {
-                "ts": float(ts),
-                "title": title,
-                "detail": _short(detail, 90),
-                "tone": tone,
-            }
-        )
-    if run and run.get("decisions"):
-        last = run["decisions"][-1]
-        items.append(
-            {
-                "ts": last,
-                "title": "完成一次研究决策",
-                "detail": "模型读取当前状态并选择下一步",
-                "tone": "active",
-            }
-        )
-    unique = {}
-    for item in items:
-        unique[(item["ts"], item["title"], item["detail"])] = item
-    return sorted(unique.values(), key=lambda item: item["ts"], reverse=True)[:14]
-
-
 def _pulse(decisions, now, started_at):
     hours = 12
     start = now - hours * 3600
@@ -466,7 +391,6 @@ def _agent(run, plan, now):
         ),
         "model": (run or {}).get("model"),
         "usage": (run or {}).get("usage", {}),
-        "decisions": len((run or {}).get("decisions", [])),
         "outcome": {
             "status": outcome.get("status"),
             "reason": outcome.get("reason"),
@@ -567,6 +491,7 @@ def build_snapshot(project_root, selector="latest", *, now=None, process_observe
     plan = plan_payload(root / "plan/current.json", jobs)
     memory = knowledge.load_memory(root / "memory")
     skills = knowledge.load_skills(root / "skills")
+    tools = catalog.load_tools()
 
     runs = []
     for identifier in run_ids(root)[:20]:
@@ -586,12 +511,11 @@ def build_snapshot(project_root, selector="latest", *, now=None, process_observe
         "plan": plan,
         "memory": memory,
         "skills": skills,
+        "tools": tools,
         "jobs": _jobs(run, plan),
-        "activity": _activity_events(run_path, run, plan) if run_path else [],
         "pulse": _pulse((run or {}).get("decisions", []), now, (run or {}).get("started_at")),
         "schedule": _schedule(root, now),
         "runtime": {
             "model": (run or {}).get("model"),
-            "usage": (run or {}).get("usage", {}),
         },
     }
