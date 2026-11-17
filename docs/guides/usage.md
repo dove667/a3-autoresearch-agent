@@ -114,6 +114,16 @@ Controller负责排队、GPU分配与生命周期。提交结果未知时先按�
 
 Agent 用 `research_status(status="continue", reason=...)` 保存整轮状态；需人工处理的外部阻塞使用 `status="blocked"`，并提供kind、required_action和实际存在的workspace证据路径evidence。Host 保存相应元数据，研究文件继续留在工作区。
 
+## 查看研究状态
+
+本地看板把最新 run、共享计划、长期记忆、技能与运行记录分成多个页面，并每 5 秒自动更新：
+
+```bash
+uv run a3-research-dashboard --open
+```
+
+它只读本机文件，不修改研究状态。启动参数、状态含义和数据来源见[研究看板](dashboard.md)。
+
 ## 查找状态与产物
 
 - `trajectories/<开始时间>/`：输入版本、Host 事件、模型用量与会话登记。

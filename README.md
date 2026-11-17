@@ -22,6 +22,14 @@ bash start-autoresearch.sh --harness-commit <已发布提交SHA>
 
 新 run 共用根目录 `workspace/`、`plan/current.json`、`memory/` 和 `skills/`。
 
+查看研究运行、计划、记忆和技能：
+
+```bash
+uv run a3-research-dashboard --open
+```
+
+看板每 5 秒读取本机最新状态，默认只监听回环地址，详见[研究看板](docs/guides/dashboard.md)。
+
 独立开发或体验原始 mini-SWE-agent：
 
 ```bash
@@ -35,6 +43,7 @@ uv run mini
 - [完整文档入口](docs/README.md)
 - [环境与模型配置](docs/guides/setup.md)
 - [启动、恢复与版本升级](docs/guides/usage.md)
+- [研究看板](docs/guides/dashboard.md)
 - [系统架构](docs/reference/architecture.md)
 - [上下文与长期记忆](docs/reference/context-and-memory.md)
 - [Controller 与远程进程作业](docs/reference/remote-process.md)

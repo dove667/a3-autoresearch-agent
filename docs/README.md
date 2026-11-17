@@ -6,6 +6,7 @@ Agent 持续研究 Policy、采集、训练与评估，提高 A3 2×5、2×10 �
 
 - [环境配置](guides/setup.md)：Python 环境、模型服务、认证与部署参数。
 - [启动与恢复](guides/usage.md)：首次运行、原地升级、夜间窗口与常用工具。
+- [研究看板](guides/dashboard.md)：本地只读网页，查看最新运行、计划、记忆与技能。
 - [维护与发布](guides/maintenance.md)：暂停、发布、人类反馈与输入更新。
 
 ## 机制与接口 · `reference/`

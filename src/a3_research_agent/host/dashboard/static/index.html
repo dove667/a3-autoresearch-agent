@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="theme-color" content="#0e0b07" />
+    <title>A3 研究台</title>
+    <link rel="icon" href="/static/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/static/style.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">跳到主要内容</a>
+    <div class="app">
+      <aside class="rail" aria-label="研究台导航">
+        <a class="brand" href="#overview" data-page="overview">
+          <span class="brand-mark" aria-hidden="true">A3</span>
+          <span class="brand-copy"><strong>研究台</strong><small>自主策略研究</small></span>
+        </a>
+
+        <nav class="rail-nav" aria-label="页面">
+          <a href="#overview" data-page="overview" class="is-active" aria-current="page">总览</a>
+          <a href="#plan" data-page="plan">研究计划</a>
+          <a href="#reviews" data-page="reviews">结果复盘</a>
+          <a href="#memory" data-page="memory">长期记忆</a>
+          <a href="#skills" data-page="skills">方法技能</a>
+          <a href="#activity" data-page="activity">运行记录</a>
+        </nav>
+
+        <div class="rail-status">
+          <span class="status-dot" id="rail-dot"></span>
+          <span id="rail-state">正在连接…</span>
+        </div>
+
+        <dl class="rail-facts">
+          <div><dt>计划</dt><dd id="rail-plan">—</dd></div>
+          <div><dt>记忆</dt><dd id="rail-memory">—</dd></div>
+          <div><dt>技能</dt><dd id="rail-skills">—</dd></div>
+          <div><dt>作业</dt><dd id="rail-jobs">—</dd></div>
+        </dl>
+
+        <div class="rail-foot"><span id="rail-updated">尚未连接</span></div>
+      </aside>
+
+      <main id="main">
+        <header class="topbar">
+          <div class="topbar-copy">
+            <h1 class="visually-hidden">A3 研究台</h1>
+            <p id="run-meta">正在读取运行状态…</p>
+          </div>
+          <div class="topbar-tools">
+            <label class="run-picker">
+              <span class="visually-hidden">切换运行</span>
+              <select id="run-select" name="run"></select>
+            </label>
+            <button class="icon-button" id="refresh" type="button" aria-label="立即刷新" title="立即刷新">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M20 11a8 8 0 1 0-2.34 5.66M20 4v7h-7" />
+              </svg>
+            </button>
+          </div>
+        </header>
+
+        <div class="error-banner" id="error" role="status" hidden></div>
+
+        <div class="pages" id="pages">
+          <section class="page" data-page="overview" id="page-overview" aria-labelledby="overview-title">
+            <header class="page-head">
+              <h2>总览</h2>
+            </header>
+
+            <div class="overview-grid">
+              <div class="hero">
+                <p class="state-line">
+                  <span class="status-dot" id="state-dot"></span>
+                  <span id="state-label" aria-live="polite">正在连接…</span>
+                  <span class="state-sub" id="state-sub"></span>
+                </p>
+                <h3 class="headline" id="overview-title">正在读取研究状态</h3>
+                <p class="hero-detail" id="agent-detail">…</p>
+                <div class="hero-meta">
+                  <span id="last-activity">—</span>
+                  <span id="context-use">—</span>
+                  <span id="run-duration">—</span>
+                  <span id="job-meta" hidden></span>
+                </div>
+                <p class="hero-hint" id="next-hint"></p>
+              </div>
+
+              <div class="pulse-panel">
+                <div class="pulse-head"><span>研究活动</span><span id="pulse-label">过去 12 小时</span></div>
+                <div class="pulse-chart" id="pulse-chart" role="img" aria-label="研究活动柱状图"></div>
+                <div class="pulse-foot"><span id="pulse-total">—</span><span id="pulse-last">—</span></div>
+              </div>
+            </div>
+
+            <div class="stats" aria-label="研究概况">
+              <div class="stat">
+                <span class="stat-label">计划</span>
+                <strong id="stat-plan">—</strong>
+                <span class="stat-note" id="stat-plan-note">—</span>
+              </div>
+              <div class="stat">
+                <span class="stat-label">路线</span>
+                <strong id="stat-routes">—</strong>
+                <span class="stat-note" id="stat-routes-note">—</span>
+              </div>
+              <div class="stat">
+                <span class="stat-label">记忆</span>
+                <strong id="stat-memory">—</strong>
+                <span class="stat-note" id="stat-memory-note">—</span>
+              </div>
+              <div class="stat">
+                <span class="stat-label">技能</span>
+                <strong id="stat-skills">—</strong>
+                <span class="stat-note" id="stat-skills-note">—</span>
+              </div>
+            </div>
+          </section>
+
+          <section class="page" data-page="plan" id="page-plan" aria-labelledby="plan-title" hidden>
+            <header class="page-head">
+              <h2 id="plan-title">研究计划</h2>
+              <span class="page-count" id="plan-summary">—</span>
+            </header>
+
+            <div class="objective-block">
+              <p class="objective" id="objective">—</p>
+              <ul class="metric-list" id="metrics"></ul>
+            </div>
+
+            <div class="plan-grid">
+              <section class="panel">
+                <div class="panel-label">研究路线</div>
+                <div class="route-list" id="routes"></div>
+              </section>
+              <section class="panel">
+                <div class="panel-label">待推进步骤</div>
+                <div class="step-list" id="steps"></div>
+                <p class="completed-note" id="completed-note"></p>
+              </section>
+            </div>
+          </section>
+
+          <section class="page" data-page="reviews" id="page-reviews" aria-labelledby="reviews-title" hidden>
+            <header class="page-head">
+              <h2 id="reviews-title">结果复盘</h2>
+              <span class="page-count" id="review-count">—</span>
+            </header>
+            <div class="review-list" id="reviews"></div>
+          </section>
+
+          <section class="page page-memory" data-page="memory" id="page-memory" aria-labelledby="memory-title" hidden>
+            <header class="page-head">
+              <h2 id="memory-title">长期记忆</h2>
+              <div class="page-tools">
+                <div class="segmented" id="memory-tabs" role="group" aria-label="筛选记忆">
+                  <button type="button" data-filter="effective" class="is-active" aria-pressed="true">有效</button>
+                  <button type="button" data-filter="archived" aria-pressed="false">已归档</button>
+                  <button type="button" data-filter="superseded" aria-pressed="false">已被替代</button>
+                  <button type="button" data-filter="all" aria-pressed="false">全部</button>
+                </div>
+                <label class="search">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6" /><path d="m16 16 4 4" /></svg>
+                  <span class="visually-hidden">搜索记忆</span>
+                  <input
+                    id="memory-search"
+                    type="search"
+                    name="memory-search"
+                    placeholder="搜索记忆…"
+                    autocomplete="off"
+                    spellcheck="false"
+                  />
+                </label>
+              </div>
+            </header>
+            <div class="memory-list" id="memory-list"></div>
+          </section>
+
+          <section class="page" data-page="skills" id="page-skills" aria-labelledby="skills-title" hidden>
+            <header class="page-head">
+              <h2 id="skills-title">方法技能</h2>
+              <span class="page-count" id="skill-count">—</span>
+            </header>
+            <div class="skill-grid" id="skills"></div>
+          </section>
+
+          <section class="page" data-page="activity" id="page-activity" aria-labelledby="activity-title" hidden>
+            <header class="page-head">
+              <h2 id="activity-title">运行记录</h2>
+              <span class="page-count" id="activity-count">—</span>
+            </header>
+            <div class="activity-layout">
+              <ol class="activity-list" id="activity-list"></ol>
+              <aside class="facts-panel" id="facts"></aside>
+            </div>
+          </section>
+        </div>
+      </main>
+    </div>
+
+    <dialog class="detail" id="detail" aria-labelledby="detail-title">
+      <div class="detail-inner">
+        <header class="detail-head">
+          <span class="detail-kicker" id="detail-kicker"></span>
+          <button class="detail-close" id="detail-close" type="button">关闭</button>
+        </header>
+        <h2 id="detail-title"></h2>
+        <div class="detail-meta" id="detail-meta"></div>
+        <div class="detail-body" id="detail-body"></div>
+      </div>
+    </dialog>
+
+    <script src="/static/app.js" defer></script>
+  </body>
+</html>

@@ -48,6 +48,7 @@ def test_artifacts_contain_controller_resources_and_no_private_state(distributio
         names = archive.namelist()
         assert "a3_research_agent/execution/controller/nvidia_egl_vendor.json" in names
         assert "a3_research_agent/execution/images/Dockerfile" in names
+        assert "a3_research_agent/host/dashboard/static/index.html" in names
         assert "a3_research_agent/host/images/Dockerfile" not in names
         assert not any(name.startswith("runtime/") or name.endswith("_compat.py") for name in names)
         assert "a3_research_agent/execution/controller/remote_jobs.py" not in names
