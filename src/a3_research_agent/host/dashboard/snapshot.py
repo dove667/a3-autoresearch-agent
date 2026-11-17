@@ -68,6 +68,7 @@ def _empty_plan():
         "gaps": [],
         "routes": [],
         "steps": [],
+        "order": [],
         "reviews": [],
         "counts": {key: 0 for key in STEP_LABELS},
         "progress": {"done": 0, "total": 0, "percent": 0},
@@ -104,23 +105,31 @@ def plan_payload(plan_file, jobs):
             "counts": {},
             "next_action": "",
         }
-    raw_steps = plan.get("steps") if isinstance(plan.get("steps"), dict) else {}
+    raw_steps = {
+        key: step
+        for key, step in (plan.get("steps") or {}).items()
+        if isinstance(step, dict)
+    }
     raw_routes = plan.get("routes") if isinstance(plan.get("routes"), dict) else {}
     views = view.get("steps") if isinstance(view.get("steps"), dict) else raw_steps
+    ordered = view.get("order") if isinstance(view.get("order"), list) else []
+    order = [key for key in ordered if key in raw_steps]
+    order += [key for key in raw_steps if key not in order]
 
     routes = []
     for key, route in raw_routes.items():
         if not isinstance(route, dict):
             continue
-        route_steps = [
-            step
-            for step in raw_steps.values()
-            if isinstance(step, dict) and step.get("route") == key
+        route_pairs = [
+            (step_id, raw_steps[step_id])
+            for step_id in order
+            if raw_steps[step_id].get("route") == key
         ]
+        route_steps = [step for _, step in route_pairs]
         done = sum(step.get("status") == "done" for step in route_steps)
         active = next(
-            (step for step in route_steps if step.get("status") == "active"),
-            next((step for step in route_steps if step.get("status") == "pending"), None),
+            (pair for pair in route_pairs if pair[1].get("status") == "active"),
+            next((pair for pair in route_pairs if pair[1].get("status") == "pending"), None),
         )
         routes.append(
             {
@@ -133,14 +142,14 @@ def plan_payload(plan_file, jobs):
                 "experiment": route.get("experiment") or "",
                 "decision_rule": route.get("decision_rule") or "",
                 "conclusion": route.get("conclusion") or "",
-                "steps": [step.get("id") for step in route_steps if step.get("id")],
+                "steps": [step_id for step_id, _ in route_pairs],
                 "progress": {
                     "done": done,
                     "total": len(route_steps),
                     "percent": round(done / len(route_steps) * 100) if route_steps else 0,
                 },
-                "active_step": active.get("id") if active else None,
-                "active_task": active.get("task") if active else "",
+                "active_step": active[0] if active else None,
+                "active_task": active[1].get("task") if active else "",
             }
         )
     routes.sort(
@@ -153,9 +162,8 @@ def plan_payload(plan_file, jobs):
     focus = view.get("focus") or []
     focus_id = focus[0] if focus else None
     steps = []
-    for key, step in raw_steps.items():
-        if not isinstance(step, dict):
-            continue
+    for key in order:
+        step = raw_steps[key]
         observed = views.get(key) or {}
         status = step.get("status", "pending")
         job_rows = []
@@ -276,6 +284,7 @@ def plan_payload(plan_file, jobs):
         ],
         "routes": routes,
         "steps": steps,
+        "order": order,
         "reviews": reviews,
         "counts": counts,
         "progress": {

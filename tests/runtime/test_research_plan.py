@@ -83,6 +83,30 @@ def test_plan_tracks_dependencies_evidence_and_job_results(tmp_path, monkeypatch
     assert list((tmp_path / "conversation/context-history").glob("plan-revision-*"))
 
 
+def test_plan_show_orders_steps_by_dependencies_and_priority(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    call(
+        "plan",
+        action="update",
+        revision=0,
+        direction={"objective": "Test dependency order"},
+        steps=[
+            {
+                "id": "later",
+                "task": "later",
+                "criterion": "later done",
+                "depends_on": ["first"],
+            },
+            {"id": "first", "task": "first", "criterion": "first done", "priority": 100},
+            {"id": "independent", "task": "independent", "criterion": "independent done", "priority": 50},
+        ],
+    )
+    view = call("plan", action="show")
+    assert view["order"] == ["first", "independent", "later"]
+    assert list(view["steps"]) == view["order"]
+    assert view["steps"]["later"]["depends_on"] == ["first"]
+
+
 def test_memory_search_preserves_sources_and_superseded_notes(tmp_path, monkeypatch):
     from a3_research_agent.harness import memory
     from a3_research_agent.harness.memory import client

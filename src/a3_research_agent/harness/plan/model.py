@@ -62,6 +62,37 @@ def merge_step(previous, changes):
     return step
 
 
+def ordered_steps(steps):
+    """Return step IDs in dependency order, priority first among ready steps."""
+    keys = list(steps)
+    position = {key: index for index, key in enumerate(keys)}
+    dependencies = {
+        key: {dependency for dependency in step["depends_on"] if dependency in steps}
+        for key, step in steps.items()
+    }
+    children = {key: [] for key in keys}
+    for key, required in dependencies.items():
+        for dependency in required:
+            children[dependency].append(key)
+
+    def priority(key):
+        return (-steps[key].get("priority", 0), position[key])
+
+    ready = [key for key in keys if not dependencies[key]]
+    ready.sort(key=priority)
+    ordered = []
+    while ready:
+        key = ready.pop(0)
+        ordered.append(key)
+        for child in children[key]:
+            dependencies[child].discard(key)
+            if not dependencies[child]:
+                ready.append(child)
+        ready.sort(key=priority)
+    ordered.extend(key for key in keys if key not in ordered)
+    return ordered
+
+
 def validate_dependencies(steps):
     remaining = {key: set(step["depends_on"]) for key, step in steps.items()}
     if any(dependencies - steps.keys() for dependencies in remaining.values()):

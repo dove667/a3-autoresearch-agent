@@ -6,7 +6,7 @@ from a3_research_agent.harness.context import manager
 from a3_research_agent.harness.plan import store as plan_store
 from a3_research_agent.harness.plan.model import MAX_STEPS as MAX_STEPS
 from a3_research_agent.harness.plan.model import STATUSES as STATUSES
-from a3_research_agent.harness.plan.model import bounded_list, bounded_text, revise
+from a3_research_agent.harness.plan.model import bounded_list, bounded_text, ordered_steps, revise
 
 
 def plan_file():
@@ -79,9 +79,11 @@ def view(plan=None, *, jobs=None, compact=False):
     plan = load() if plan is None else plan
     if jobs is None:
         jobs = operational.load().get("jobs", {}) if plan["steps"] else {}
+    order = ordered_steps(plan["steps"])
     ready = []
     steps = {}
-    for key, step in plan["steps"].items():
+    for key in order:
+        step = plan["steps"][key]
         pending = [dep for dep in step["depends_on"] if plan["steps"][dep]["status"] != "done"]
         observed = {job: jobs.get(job, {}).get("status", "unobserved") for job in step["jobs"]}
         if (
@@ -125,6 +127,7 @@ def view(plan=None, *, jobs=None, compact=False):
         "notice": "Agent-authored plan. Job status is last observed. Verify evidence before closing.",
         "revision": plan["revision"],
         "reason": plan["reason"],
+        "order": order,
         "ready": ready,
         "next_action": next_action(steps, ready, review_due, routes),
         "counts": {
@@ -238,6 +241,7 @@ def dispatch_locked(arguments):
             if not isinstance(key, str) or key not in result["steps"]:
                 return {"error": "unknown_plan_step"}
             result["steps"] = {key: result["steps"][key]}
+            result["order"] = [key]
         return result
     if action not in ("update", "review"):
         return {"error": "plan_validation", "hint": "Use show, update or review"}

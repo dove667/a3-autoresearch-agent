@@ -379,6 +379,11 @@ hypotheses, experiments, decision rules and priorities; `steps` contain route
 links, completion criteria, dependencies, job IDs and evidence. Priorities range
 from 0 to 100, with higher values first.
 
+Steps carry `depends_on`; the plan validates that dependencies identify plan
+steps and contain no cycle. `show` returns steps in dependency order, with
+priority breaking ties among steps that are ready together; this order is
+computed by the plan view, not inferred by the caller.
+
 Use `show` before `update`, then pass the current revision and patch only changed
 fields. Updates use a file lock and atomic publication; stale revisions require a
 fresh read and merge. After inspecting a significant result, use `review` with the
