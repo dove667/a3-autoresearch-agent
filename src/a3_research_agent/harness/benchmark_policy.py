@@ -83,9 +83,28 @@ def budget_hint(task, steps):
     )
 
 
+def policy_of(values):
+    """Read the --policy family: act consumes pixels and state, not language."""
+    raw = (option(values, "--policy") or "").strip().lower()
+    return raw.split(":", 1)[0] if raw else ""
+
+
+def check_prompt_style(values):
+    """Reject a language option for a policy that has no language input."""
+    if policy_of(values) != "act" or option(values, "--prompt-style") is None:
+        return
+    fail(
+        "prompt_style_not_applicable",
+        "ACT reads three cameras and 16 state values; it has no language input, so "
+        "--prompt-style cannot change its behaviour. Drop the option for act policies "
+        "and keep it for smolvla.",
+    )
+
+
 def check_command(command):
     """Reject a benchmark command whose step budget cannot finish the task."""
     values = tokens(command)
+    check_prompt_style(values)
     task = task_of(values)
     if task is None:
         return

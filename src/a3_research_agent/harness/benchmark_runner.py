@@ -31,9 +31,14 @@ def parser():
     result.add_argument("--n-action-steps", type=int, default=25)
     result.add_argument("--workers", type=int, default=1)
     result.add_argument("--source-column", type=int, default=1)
-    result.add_argument("--prompt-style", default="training")
+    result.add_argument("--prompt-style", help="Language-conditioned policies only")
     result.add_argument("--output-dir", required=True)
     return result
+
+
+def requires_prompt(args):
+    """Report whether this policy reads the task instruction at all."""
+    return args.policy.split(":", 1)[0].strip().lower() != "act"
 
 
 def budget(args):
@@ -108,8 +113,7 @@ def command(args, steps, output, python):
             str(args.workers),
             "--source-column",
             str(args.source_column),
-            "--prompt-style",
-            args.prompt_style,
+            *(["--prompt-style", args.prompt_style] if requires_prompt(args) and args.prompt_style else []),
             "--n-action-steps",
             str(args.n_action_steps),
             "--output",

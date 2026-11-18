@@ -397,3 +397,39 @@ def test_job_prepare_also_rejects_a_short_benchmark_budget(tmp_path):
     assert result["error"] == "benchmark_budget_too_small"
     assert "3200" in result["hint"]
     assert calls == []
+
+
+def test_act_rejects_a_language_option():
+    """ACT reads pixels and state only; a prompt style would imply otherwise."""
+    from a3_research_agent.harness import benchmark_policy
+
+    with pytest.raises(Exception) as error:
+        benchmark_policy.check_command(
+            ["python", "x.py", "--policy", "act:/ckpt", "--prompt-style", "training"]
+        )
+    assert error.value.code == "prompt_style_not_applicable"
+
+
+def test_smolvla_may_carry_a_language_option():
+    from a3_research_agent.harness import benchmark_policy
+
+    benchmark_policy.check_command(
+        ["python", "x.py", "--policy", "smolvla:/ckpt", "--prompt-style", "short"]
+    )
+
+
+def test_runner_omits_prompt_style_for_act():
+    from a3_research_agent.harness import benchmark_runner
+
+    args = benchmark_runner.parser().parse_args(
+        ["--task", "2x10", "--policy", "act:/ckpt", "--output-dir", "cell"]
+    )
+    call = benchmark_runner.command(args, 3200, "/out/r.json", "python")
+    assert "--prompt-style" not in call["arguments"]
+
+    args = benchmark_runner.parser().parse_args(
+        ["--task", "2x10", "--policy", "smolvla:/ckpt", "--prompt-style", "short",
+         "--output-dir", "cell"]
+    )
+    call = benchmark_runner.command(args, 3200, "/out/r.json", "python")
+    assert "--prompt-style" in call["arguments"]

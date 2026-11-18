@@ -1,6 +1,6 @@
 # 研究工具与执行约定
 
-Version: 0.38.0
+Version: 0.39.0
 
 工具定义给出参数、默认值和限制；本文件说明常用流程。所有工具返回 `ok`：成功时直接读取同层结果；失败时读取 `error`、`hint` 和相关编号，修正后再调用。作业的 `status="failed"` 是执行结果，先读日志与证据再判断原因。
 
@@ -65,6 +65,8 @@ GPU 作业先调用 `job_prepare`，同样填写 name、command、attachments、
 `job_status` 读状态和日志尾。作业失败时返回 `diagnosis`：`failure_class`（依赖缺失、显存不足、输入缺失、被系统终止等）、`error_line` 和建议动作；先读它再改脚本。`job_list` 分页查找有权访问的历史作业。`job_artifact(job_id,path,area="outputs")` 读持久结果；area="workspace" 读作业源码与工作文件。日志、输入和输出路径以当前作业实际环境为准，使用部署提供的 `A3_OUTPUTS` 等路径，不复制其他后端的绝对路径。
 
 长批次可使用部署的 episode executor。每个 episode 的 id 唯一，command 是参数数组，report 指向命令实际写出的 JSON。保存 manifest、ledger 和逐回合结果；恢复前核对原编号与已完成记录。执行成功且报告有效时，科学结果 success=false 仍是有效观察。
+
+ACT 只读三路相机和 16 维状态，没有语言输入：用 `act:` 时传 `--prompt-style` 不会改变它的行为，提交层会直接拒绝。语言指令只对 `smolvla:` 这类条件策略有意义，任务的块数由 `--task` 和 `--profile` 决定，不由指令决定。
 
 闭环评测统一用 `benchmark(checkpoint, task, profile, episodes, seed_start)`：命令、预算和输出目录由工具决定，2×5 固定 500 步、2×10 固定 3200 步；确实要做更长预算实验时才传 `max_steps`。它返回 `prepared_id`、`preflight_job_id` 与 `report`（远端 outputs 相对路径），预检通过后 `job_submit(prepared_id=...)`，结果直接读 `report`。不要手拼 benchmark 命令：低于任务预算的 `--max-steps` 会被提交层拒绝，因为那样得到的是预算上限而不是策略表现。
 
