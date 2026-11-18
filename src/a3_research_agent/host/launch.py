@@ -293,6 +293,9 @@ def _launch_run(args, run: Path, a3: Path, start, services) -> None:
     exit_code = 0
     previous_sigint = None
     supervisor = None
+    # `kill` sends SIGTERM; treat it as Ctrl-C so the checkpoint and the
+    # supervision record are written either way.
+    previous_sigterm = signal.signal(signal.SIGTERM, signal.default_int_handler)
     try:
         if package:
             command, files = package
@@ -430,6 +433,8 @@ def _launch_run(args, run: Path, a3: Path, start, services) -> None:
             thread.join(timeout=10)
             if previous_sigint is not None:
                 signal.signal(signal.SIGINT, previous_sigint)
+            if previous_sigterm is not None:
+                signal.signal(signal.SIGTERM, previous_sigterm)
     if interrupted:
         print(
             f"Run suspended by SIGINT; checkpoint saved under {run}; exit code {exit_code}",

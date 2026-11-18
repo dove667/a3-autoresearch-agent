@@ -24,6 +24,7 @@ from a3_research_agent.harness import (
     operational_state,
     research_web,
     skill_registry,
+    stop_request,
     tool_catalog,
     tool_contracts,
     tool_json,
@@ -492,6 +493,11 @@ def main() -> None:
             loop_phase = "checkpoint_publication"
             checkpoint(messages)
             context_manager.atomic(state_paths.path(state_paths.JOURNAL), "null")
+            if stop := stop_request.take():
+                # The turn is saved; stopping here leaves nothing half-applied.
+                log({"operator_stop_requested": stop})
+                log({"operator_stop_applied": "turn boundary"})
+                break
             if "--test" in sys.argv and calls:
                 break
             if last_plan_revision is not None:

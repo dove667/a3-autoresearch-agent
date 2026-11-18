@@ -10,6 +10,16 @@ Version: 0.3.2
 
 维护者从执行轨迹、Gateway 请求记录、模型用量和 Controller 作业记录定位问题，保留当时输入和版本。先用相同输入复现，再修改、回归并记录版本。每天使用新 run 和空模型上下文，复用共享 workspace、plan、memory 与 skills；核对加载版本和既有作业引用。原始轨迹按分析价值保留，调试文件按排错需要保留。常规窗口见[夜间运行窗口](#夜间运行窗口)。
 
+## 结束一次运行
+
+三种方式，按对研究的打扰从小到大：
+
+1. **软请求**：`python -m a3_research_agent.cli.request_stop <run> --reason "..."` 在当前轨迹的 `conversation/` 下写一个停止请求，进程在当前回合的工具结果保存完之后自己退出。已经交上去的作业照常跑完，结果仍在 outputs 里。
+2. **Ctrl-C / SIGTERM**：两者都走同一条收尾路径——保存 checkpoint、把 supervision 记为 suspended 并关闭、退出码 130。代价是正在进行的模型调用被打断，恢复时该调用按未确认处理、不会重放。
+3. **Agent 自己收尾**：`session_stop(reason)` 由 Agent 在写完计划、经验和证据后调用。
+
+不要用 `kill -9`：它会跳过 checkpoint 与 supervision 写入。
+
 日间复核从 `trajectories/<开始时间>/conversation/trajectory.jsonl`、模型用量、Host 调试事件和 Controller 作业终态入手。按症状选择可重复的失败序列，用受控状态验证修复，再用正式夜间日志核对真实调用次数、耗时和研究产出。输入 token 与缓存命中分别统计。工具等待产生的 Host 请求属于基础设施流量，模型唤醒次数由 Responses 请求记录核对。
 
 ### 为下一轮选择新版 Harness
