@@ -314,11 +314,6 @@ function renderStatus(data) {
   $("state-sub").textContent = sub;
 
   $("overview-title").textContent = agent.headline;
-  let detail = agent.detail;
-  if (agent.state === "interrupted" || agent.state === "stopped") {
-    detail = `${detail} 最后一次活动在 ${relative(agent.last_activity)}。`;
-  }
-  $("agent-detail").textContent = detail;
 
   $("last-activity").textContent = `最近活动 ${relative(agent.last_activity)}`;
   const usage = agent.usage || {};
@@ -332,22 +327,6 @@ function renderStatus(data) {
   const liveStates = ["running", "waiting_jobs", "waiting_event", "context_waiting"];
   $("job-meta").hidden = !activeJobs.length || !liveStates.includes(agent.state);
   $("job-meta").textContent = activeJobs.length ? `${activeJobs.length} 个作业进行中` : "";
-
-  let hint = "";
-  if (["running", "waiting_jobs", "waiting_event", "context_waiting"].includes(agent.state)) {
-    hint = data.plan.next_hint || "";
-  }
-  const viewingLatest = !data.selected_run || data.selected_run === data.runs[0]?.id;
-  if (
-    viewingLatest &&
-    data.schedule &&
-    data.schedule.state === "waiting" &&
-    ["not_started", "stopped", "interrupted", "suspended"].includes(agent.state)
-  ) {
-    hint = `夜间研究窗口将在 ${absolute(data.schedule.starts_at)} 启动。`;
-  }
-  $("next-hint").textContent = hint;
-  $("next-hint").hidden = !hint;
 
   const selected = data.runs.find((run) => run.selected);
   if (!selected) {

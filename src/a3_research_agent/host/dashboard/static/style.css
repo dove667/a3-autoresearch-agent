@@ -639,15 +639,6 @@ main {
   overflow-wrap: anywhere;
 }
 
-.hero-detail {
-  margin: 12px 0 0;
-  color: var(--muted);
-  font-size: 13px;
-  line-height: 1.65;
-  overflow-wrap: anywhere;
-  white-space: pre-line;
-}
-
 .hero-meta {
   display: flex;
   flex-wrap: wrap;
@@ -665,22 +656,6 @@ main {
 .hero-meta span:first-child {
   padding-left: 0;
   border-left: 0;
-}
-
-.hero-hint {
-  margin: 12px 0 0;
-  padding: 8px 12px;
-  border-left: 1px solid var(--gold);
-  background: var(--gold-soft);
-  color: var(--gold-bright);
-  font-size: 12px;
-  line-height: 1.6;
-  overflow-wrap: anywhere;
-  white-space: pre-line;
-}
-
-.hero-hint:empty {
-  display: none;
 }
 
 .pulse-panel {
@@ -1995,10 +1970,6 @@ main {
 
   .hero-meta {
     margin-top: 12px;
-  }
-
-  .hero-hint {
-    padding: 6px 10px;
   }
 
   .pulse-chart {
