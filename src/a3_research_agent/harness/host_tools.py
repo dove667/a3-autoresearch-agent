@@ -87,15 +87,15 @@ FIELDS = {
 }
 DESCRIPTIONS = {
     "vision_status": "Check visual inspection availability and frame limits.",
-    "vision_inspect": "Inspect authorized PNG/JPEG frames for a specific research question. Choose "
-    "frames around the event and across cameras. Batch size is governed by image bytes, context "
-    "budget and the provider. Supply real episode, step, simulation time and camera metadata. "
-    "Group each episode contiguously in time order. area defaults outputs. Returns observations "
-    "and source hashes.",
-    "vision_view": "See selected original PNG/JPEG frames yourself in your next decision, "
-    "alongside your current research context. Uses the same frame references as vision_inspect. "
-    "Choose key frames after scanning, and compare the actual images with the synchronized trace. "
-    "If the images exceed the request budget, use smaller groups. Call again to revisit them.",
+    "vision_inspect": "Use the visual helper first when locating a failure or screening several "
+    "action windows or cameras. Returns observations and source hashes for authorized PNG/JPEG "
+    "frames. Group each episode in time order and supply real step, simulation time and camera "
+    "labels. Area defaults to outputs. Batch size depends on bytes, context and provider limits.",
+    "vision_view": "See selected original frames in your next decision to verify a specific "
+    "event, such as contact, occlusion or object pose. Use vision_inspect first when the relevant "
+    "window or view is still unclear. Use vision_view directly when the synchronized trace has "
+    "already pinpointed the steps and useful cameras. Uses the same references as vision_inspect. "
+    "Use smaller groups if needed for the request budget.",
     "evaluation_compare": "Compare existing baseline/candidate episode results by job IDs and outputs-relative JSON manifests. Returns paired results and a ready-to-use visual inspection request when available.",
     "conditions_compare": "Compare declared baseline/candidate conditions. Each object includes status, report_present, and protocol(task,seeds,workers,step_budget,randomization,success_rule). Read actual results before judging improvement.",
     "benchmark_summary": "Combine the benchmark reports of one evaluation cell. Caps each episode at its own maximum, reports in-box counts and native passes separately, and names every protocol difference between segments (task, profile, step budget, action horizon, prompt style, checkpoint, duplicate seeds). Use it instead of adding report totals by hand.",
