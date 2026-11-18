@@ -1,6 +1,6 @@
 # 研究工具与执行约定
 
-Version: 0.40.0
+Version: 0.41.0
 
 工具定义给出参数、默认值和限制；本文件说明常用流程。所有工具返回 `ok`：成功时直接读取同层结果；失败时读取 `error`、`hint` 和相关编号，修正后再调用。作业的 `status="failed"` 是执行结果，先读日志与证据再判断原因。
 
@@ -17,6 +17,7 @@ Version: 0.40.0
 | 远程执行与结果 | `job_prepare`、`job_submit`、`job_status`、`job_list`、`job_artifact`、`job_cancel` |
 | A3 闭环评测 | `benchmark`、`benchmark_summary` |
 | 数据集体检 | `dataset_audit` |
+| A3 接口查询 | `a3_api` |
 | 等待指定作业／空闲等待 | `job_wait`／`idle_wait` |
 | 资产复用 | `export_create`、`export_status`、`export_manifest`、`export_list` |
 | 配对评测与视觉诊断 | `evaluation_compare`、`conditions_compare`、`vision_status`、`vision_inspect` |
@@ -68,6 +69,8 @@ GPU 作业先调用 `job_prepare`，同样填写 name、command、attachments、
 长批次可使用部署的 episode executor。每个 episode 的 id 唯一，command 是参数数组，report 指向命令实际写出的 JSON。保存 manifest、ledger 和逐回合结果；恢复前核对原编号与已完成记录。执行成功且报告有效时，科学结果 success=false 仍是有效观察。
 
 ACT 只读三路相机和 16 维状态，没有语言输入：用 `act:` 时传 `--prompt-style` 不会改变它的行为，提交层会直接拒绝。语言指令只对 `smolvla:` 这类条件策略有意义，任务的块数由 `--task` 和 `--profile` 决定，不由指令决定。
+
+写任何 import A3 的脚本之前，先用 `a3_api()` 查签名：它返回核心函数所在文件、行号和完整参数表，以及采集/评测 CLI 的开关与默认值。这些接口会漂移——`train_act` 在 `learning.act_training` 而不是 `learning.training`，`aggregate_datasets` 要 `repo_ids`/`aggr_repo_id`/`roots=`/`aggr_root=`——凭记忆写只会换来一次 ImportError 或 TypeError。
 
 设计混训或续训之前，先 `dataset_audit(dataset_root)` 看数据本身：它返回每个任务布局（2×5 还是 2×10）的回合数、逐条指令计数、成功标记、seed 数和存储动作模式，并对“只有一种布局”“complete_demonstrations 为 false”“计数与 meta/info.json 不符”给出警告。不要用现写的探针脚本统计这些——探针会把相对 root 解析到项目根，报出 0 回合。`ds-merged` 这类数据集如果只有 2×10 回合，“混训保住 2×5”的判据就不成立。
 

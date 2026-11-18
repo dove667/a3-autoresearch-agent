@@ -81,6 +81,15 @@ DATASET_FIELDS = {
     "repo_id": {"type": "string", "maxLength": 200},
     "name": {"type": "string", "minLength": 1, "maxLength": 120},
 }
+API_FIELDS = {
+    "symbols": {
+        "type": "array",
+        "items": {"type": "string", "minLength": 1, "maxLength": 80},
+        "maxItems": 16,
+        "description": "Function names to locate; omit for the core set.",
+    },
+    "name": {"type": "string", "minLength": 1, "maxLength": 120},
+}
 BATCH_FIELDS = {
     "jobs": {
         "type": "array",
@@ -169,6 +178,16 @@ TOOLS = [
         "audit.json). Run it before designing a mixed-training step.",
         DATASET_FIELDS,
         ["dataset_root"],
+    ),
+    definition(
+        "a3_api",
+        "Report the real callable surface of the deployed A3 package: the file, line and "
+        "signature of the core functions (audit_training_dataset, train_act, "
+        "merge_cookie_datasets, aggregate_datasets, count_fill, collect_episodes) and the "
+        "flags with their defaults for the collection and benchmark CLIs. Run it before "
+        "writing a script that imports these; it reads installed source, so it cannot fail on "
+        "an import. Returns job_id and report (outputs-relative api.json).",
+        API_FIELDS,
     ),
     definition(
         "job_status",
@@ -526,6 +545,38 @@ def dataset_audit(args, request, workspace):
     }
 
 
+def a3_api(args, request, workspace):
+    """Submit the surface reader and say where its report lands."""
+    arguments(args, API_FIELDS)
+    symbols = args.get("symbols")
+    if symbols is not None and (
+        not isinstance(symbols, list)
+        or not 1 <= len(symbols) <= 16
+        or any(not isinstance(item, str) or not item.strip() or len(item) > 80 for item in symbols)
+    ):
+        fail("invalid_symbols", "Pass up to 16 function names, or omit symbols entirely.")
+    digest = hashlib.sha256(json.dumps(symbols or [], sort_keys=True).encode()).hexdigest()[:8]
+    output_dir = "a3-api-" + digest
+    path = install_runner(workspace, "a3_api_runner.py", "a3_api_reader.py")
+    command = ["python", "a3_api_reader.py", "--output-dir", output_dir]
+    if symbols:
+        command += ["--symbols", ",".join(item.strip() for item in symbols)]
+    job = submit_request(
+        {
+            "command": command,
+            "attachments": [{"path": path, "destination": "a3_api_reader.py"}],
+            "gpu": False,
+            "name": args.get("name") or "a3-api-" + digest,
+        },
+        Path(workspace).resolve(),
+    )
+    return {
+        **submission_result(request("POST", "/jobs", job)),
+        "report": f"{output_dir}/api.json",
+        "hint": "Wait for this job, then read report from the outputs area.",
+    }
+
+
 def submit_request(args, workspace, *, default_gpu=False):
     arguments(args, REQUEST_FIELDS)
     command = args.get("command")
@@ -724,6 +775,8 @@ def dispatch(name, args, request, *, workspace=None):
                     ),
                 }
             return submission_result(request("POST", "/jobs", job))
+        if name == "a3_api":
+            return a3_api(args, request, Path(workspace or Path.cwd()))
         if name == "dataset_audit":
             return dataset_audit(args, request, Path(workspace or Path.cwd()))
         if name == "job_artifact":

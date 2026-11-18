@@ -495,3 +495,44 @@ def test_dataset_audit_runner_reports_layouts_and_warnings(tmp_path, monkeypatch
     assert report["metadata"]["layouts"] == {"2x10": 2}
     assert any("only one task layout" in warning for warning in report["warnings"])
     assert any("complete_demonstrations" in warning for warning in report["warnings"])
+
+
+def test_a3_api_runs_a_cpu_reader_and_names_the_report(tmp_path):
+    from a3_research_agent.harness import job_tools
+
+    sent = {}
+
+    def request(method, path, body=None, **kwargs):
+        sent["body"] = body
+        return {"ok": True, "job_id": "d" * 32}
+
+    result = job_tools.dispatch("a3_api", {"symbols": ["train_act"]}, request, workspace=str(tmp_path))
+    assert sent["body"]["gpu"] is False
+    assert sent["body"]["command"][:2] == ["python", "a3_api_reader.py"]
+    assert result["report"].endswith("/api.json")
+    assert (tmp_path / "benchmarks" / "a3_api_reader.py").is_file()
+
+
+def test_a3_api_reader_reports_definitions_and_cli_defaults(tmp_path, monkeypatch):
+    from a3_research_agent.harness import a3_api_runner as reader
+
+    package = tmp_path / "pkg"
+    (package / "workflows").mkdir(parents=True)
+    (package / "learning.py").write_text(
+        "def train_act(dataset_root, dry_run=False,\n              steps=20000):\n    return None\n"
+    )
+    (package / "workflows" / "benchmark_cookie_batch_cli.py").write_text(
+        'parser.add_argument("--max-steps", type=int, default=1000)\n'
+        'parser.add_argument("--task", default="2x5")\n'
+    )
+    monkeypatch.setattr(reader, "package_root", lambda: package)
+    outputs = tmp_path / "outputs"
+    monkeypatch.setenv("A3_OUTPUTS", str(outputs))
+    reader.main(["--output-dir", "api"])
+    report = json.loads((outputs / "api" / "api.json").read_text())
+    definition = report["definitions"]["train_act"][0]
+    assert definition["file"] == "learning.py"
+    assert "train_act(dataset_root" in definition["signature"]
+    flags = report["cli"][0]["flags"]
+    assert {"flag": "--max-steps", "default": "1000"} in flags
+    assert {"flag": "--task", "default": '"2x5"'} in flags
