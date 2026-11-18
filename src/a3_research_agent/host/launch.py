@@ -48,6 +48,8 @@ from a3_research_agent.host.runs.suspension import suspend_interrupted
 from a3_research_agent.host.sessions.isolation import IsolationFixtures
 from a3_research_agent.host.sessions.processes import ProcessRuntime
 from a3_research_agent.host.sessions.workspace import MAX_ACTIVE_SESSIONS, write_durable
+from a3_research_agent.host.startup_checks import record as record_startup_checks
+from a3_research_agent.host.startup_checks import submit as submit_startup_checks
 from a3_research_agent.host.web.gateway import WebConfig, WebGateway
 
 
@@ -373,6 +375,16 @@ def _launch_run(args, run: Path, a3: Path, start, services) -> None:
         with httpx.Client(trust_env=False, 
             base_url=endpoint, headers={"Authorization": "Bearer " + token}, timeout=90
         ) as client:
+            # Both readiness checks are one CPU job each; submitting them here saves the
+            # Agent the first turn of a window and cannot fail the launch.
+            checks = submit_startup_checks(
+                client, result_workspace(), os.environ.get("A3_STARTUP_DATASET")
+            )
+            record_startup_checks(run, checks)
+            for job in checks.get("jobs") or []:
+                print(f"Startup check {job['kind']}: {job['job_id']}", flush=True)
+            for error in checks.get("errors") or []:
+                print(f"Startup check failed: {error}", flush=True)
             supervisor = RunSupervisor(
                 run=run,
                 log_directory=debug_directory(run),

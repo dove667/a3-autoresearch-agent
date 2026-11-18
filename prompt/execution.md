@@ -1,6 +1,6 @@
 # 研究工具与执行约定
 
-Version: 0.42.0
+Version: 0.43.0
 
 工具定义给出参数、默认值和限制；本文件说明常用流程。所有工具返回 `ok`：成功时直接读取同层结果；失败时读取 `error`、`hint` 和相关编号，修正后再调用。作业的 `status="failed"` 是执行结果，先读日志与证据再判断原因。
 
@@ -70,7 +70,7 @@ GPU 作业先调用 `job_prepare`，同样填写 name、command、attachments、
 
 ACT 只读三路相机和 16 维状态，没有语言输入：用 `act:` 时传 `--prompt-style` 不会改变它的行为，提交层会直接拒绝。语言指令只对 `smolvla:` 这类条件策略有意义，任务的块数由 `--task` 和 `--profile` 决定，不由指令决定。
 
-**开局先体检。** 一个窗口的第一件事不是立刻开跑，而是两项各一个 CPU 作业：`dataset_audit(dataset_root)` 看数据里有哪些任务布局，`a3_api()` 看要 import 的函数签名。两项加起来几十秒，能挡掉开局摸索的几十分钟。
+**开局先体检。** Host 在窗口启动时已经提交了两个 CPU 作业：`startup-a3_api` 与 `startup-dataset_audit`（后者依赖 `A3_STARTUP_DATASET`）。用一次 `job_wait()` 等它们，直接读回执里的结果——接口快照说明要 import 的函数签名，数据集体检说明有哪些任务布局。不要另写探针重做这两件事。
 
 写任何 import A3 的脚本之前，先用 `a3_api()` 查签名：它返回核心函数所在文件、行号和完整参数表，以及采集/评测 CLI 的开关与默认值。这些接口会漂移——`train_act` 在 `learning.act_training` 而不是 `learning.training`，`aggregate_datasets` 要 `repo_ids`/`aggr_repo_id`/`roots=`/`aggr_root=`——凭记忆写只会换来一次 ImportError 或 TypeError。
 

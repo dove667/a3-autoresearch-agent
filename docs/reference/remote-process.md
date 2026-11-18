@@ -58,6 +58,10 @@ A3 的闭环评测统一由 `benchmark` 工具提交，不接受手拼的评测�
 
 `job_status` 与 `job_wait` 的诊断带 `retry` 字段。只有 `killed` 与 `distributed_failure` 允许原样重做一个请求：前者是调度或主机终止，后者是端口或 NCCL 冲突，都与脚本内容无关。其余分类明确标为不可重做——同样的代码再跑一次只会再失败一次，还要再占一次 GPU。
 
+## 开局体检
+
+窗口启动时，Host 在会话可以接收作业之后立刻提交两个 CPU 作业：`startup-a3_api`（A3 接口快照）与 `startup-dataset_audit`（数据集体检，仅在配置了 `A3_STARTUP_DATASET` 时）。提交结果写入 `trajectory/startup-checks.json`，作业编号同时打印在启动日志里。这里任何失败只记录、不抛错：Controller 不配合时窗口照常开始。
+
 ## 数据集体检
 
 `dataset_audit(dataset_root)` 在 CPU 作业里调用部署的 A3 审计函数，并补上审计本身不提供的分布信息：每种任务布局（2×5／2×10）的回合数、逐条指令的计数、成功标记、seed 数、总帧数和存储动作模式。它对三种情况给出警告——`complete_demonstrations` 为 false、数据集只有一种布局、元数据计数与 `meta/info.json` 不一致。新增这些检查的原因是现写探针会失败：CLI 把相对 `--root` 解析到项目根，曾把 37 条已保存回合报成 0。
