@@ -56,7 +56,7 @@ A3 的闭环评测统一由 `benchmark` 工具提交，不接受手拼的评测�
 
 ## 扩展场景任务
 
-`benchmark` 的 `task` 接受六个扩展场景（`missing-columns`、`partial-gaps`、`cross-column`、`tilted`、`prefilled`、`two-boxes`），与 `2x5`、`2x10` 共用同一个上游入口。预算是 1000 步，`two-boxes` 传 `box_quota=10` 时按 2×10 的 3200 步；满分取 `benchmark_policy.MAX_SCORE`，`prefilled` 是 5，其余是 10。场景任务不传 `source_column`：旧专家的选列参数不改变场景生成，交给策略自己选。
+`benchmark` 的 `task` 接受六个扩展场景（`missing-columns`、`partial-gaps`、`cross-column`、`tilted`、`prefilled`、`two-boxes`），与 `2x5`、`2x10` 共用同一个上游入口。场景默认预算为 1000 步，`prefilled` 满分 5，其余场景默认满分 10。`two-boxes` 默认每盒 5 块，显式传入 `box_quota=10` 后，每盒 10 块、满分 20，工具自动给出 3200 步预算。场景任务省略 `source_column`，由策略自己选择取料列。
 
 ## 失败分类与重试
 

@@ -539,7 +539,30 @@ def test_a3_api_reader_reports_definitions_and_cli_defaults(tmp_path, monkeypatc
     assert {"flag": "--task", "default": '"2x5"'} in flags
 
 
-def test_scenario_tasks_carry_their_own_budget_and_score(tmp_path):
+def test_benchmark_exposes_two_boxes_quota_and_passes_it_to_the_runner(tmp_path):
+    from a3_research_agent.harness import benchmark_runner
+
+    tool = next(tool for tool in job_tools.TOOLS if tool["name"] == "benchmark")
+    properties = tool["parameters"]["properties"]
+    assert properties.keys() == job_tools.BENCHMARK_FIELDS
+    assert set(properties["task"]["enum"]) == set(job_tools.benchmark_policy.TASK_STEPS)
+    assert properties["box_quota"]["enum"] == [5, 10]
+
+    calls, request = prepare_request()
+    result = job_tools.dispatch(
+        "benchmark",
+        {"checkpoint": CHECKPOINT, "task": "two-boxes", "box_quota": 10, "episodes": 1},
+        request,
+        workspace=tmp_path,
+    )
+    assert result["max_steps"] == 3200
+    args = benchmark_runner.parser().parse_args(preflight(calls)["command"][4:])
+    assert args.box_quota == 10
+    command = benchmark_runner.command(args, 3200, "/out/r.json", "python")["arguments"]
+    assert command[command.index("--box-quota") + 1] == "10"
+
+
+def test_scenario_tasks_carry_their_own_budget_and_score():
     """The six extension scenarios are 2x5-scale; two full boxes follow 2x10."""
     from a3_research_agent.harness import benchmark_policy
 

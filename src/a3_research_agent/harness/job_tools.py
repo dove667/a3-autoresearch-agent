@@ -138,7 +138,8 @@ TOOLS = [
         "benchmark",
         "Run one A3 evaluation cell through the fixed benchmark launcher. The tool writes "
         "benchmarks/a3_benchmark_runner.py, attaches it as benchmark_runner.py, chooses the "
-        "task budget (2x5=500, 2x10=3200), and returns prepared_id, preflight_job_id, report "
+        "task budget (2x5=500, 2x10=3200, scenarios=1000 except two-boxes with "
+        "box_quota=10 uses 3200), and returns prepared_id, preflight_job_id, report "
         "and max_steps. Do not hand-build benchmark commands. Pass max_steps only to raise "
         "the budget above the task standard; a lower value is rejected. The report path is "
         "relative to the job outputs area, for example 2x10-medium-5ep-seed10000-<hash>/seed-10000.json.",
@@ -147,7 +148,7 @@ TOOLS = [
                 "type": "string",
                 "description": "Remote absolute checkpoint directory; the value after act:/smolvla:.",
             },
-            "task": {"type": "string", "enum": ["2x5", "2x10"]},
+            "task": {"type": "string", "enum": list(benchmark_policy.TASK_STEPS)},
             "profile": {
                 "type": "string",
                 "enum": ["basic", "medium", "advanced"],
@@ -156,6 +157,21 @@ TOOLS = [
             "seed_start": {"type": "integer", "minimum": 0, "maximum": 2147483647},
             "policy": {"type": "string", "enum": ["act", "smolvla"]},
             "max_steps": {"type": "integer", "minimum": 1, "maximum": 2147483647},
+            "source_column": {
+                "type": "integer",
+                "enum": [1, 2, 3, 4],
+                "description": "Source column override. Omit for extension scenarios.",
+            },
+            "tilt_level": {
+                "type": "string",
+                "enum": ["mild", "fallen"],
+                "description": "Tilted task only. Defaults to mild.",
+            },
+            "box_quota": {
+                "type": "integer",
+                "enum": [5, 10],
+                "description": "Two-boxes task only. Cookies per target box, default 5.",
+            },
             "n_action_steps": {
                 "type": "integer",
                 "minimum": 1,
@@ -451,9 +467,12 @@ def benchmark(args, request, workspace):
     max_steps = args.get("max_steps")
     if max_steps is not None:
         max_steps = integer(max_steps, "max_steps", 1, 2**31 - 1)
-    budget_values = []
-    if args.get("box_quota") is not None:
-        budget_values = ["--box-quota", str(args["box_quota"])]
+    box_quota = args.get("box_quota")
+    if box_quota is not None and (
+        type(box_quota) is not int or box_quota not in {5, 10} or task != "two-boxes"
+    ):
+        fail("invalid_box_quota", "Pass box_quota 5 or 10 with task two-boxes.")
+    budget_values = ["--box-quota", str(box_quota)] if box_quota is not None else []
     steps = benchmark_policy.budget(
         task, max_steps, benchmark_policy.steps_for(task, budget_values)
     )
@@ -465,9 +484,6 @@ def benchmark(args, request, workspace):
     tilt_level = args.get("tilt_level")
     if tilt_level is not None and (tilt_level not in {"mild", "fallen"} or task != "tilted"):
         fail("invalid_tilt_level", "Pass tilt_level mild or fallen with task tilted.")
-    box_quota = args.get("box_quota")
-    if box_quota is not None and (box_quota not in {5, 10} or task != "two-boxes"):
-        fail("invalid_box_quota", "Pass box_quota 5 or 10 with task two-boxes.")
     source_column = args.get("source_column")
     if source_column is not None and source_column not in {1, 2, 3, 4}:
         fail("invalid_source_column", "Pass source_column 1-4, or omit it for scenarios.")
