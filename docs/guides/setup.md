@@ -53,7 +53,7 @@ A3_CONTEXT_TARGET_TOKENS='32768'
 
 ## 本地进程与研究目录
 
-本地不需要 Docker。Host 在项目 Python 环境中创建一个原生研究进程，固定发布源码与可写研究目录分开保存。Host 在 `runtime_paths` 给出工作区、只读输入、A3 参考源码和会话状态路径；`A3_STATE_ROOT` 指向当前 run 的 `conversation/`，`A3_PLAN_FILE` 指向项目根 `plan/current.json`。Agent 使用文件工具准备研究，通过远程 jobs 执行代码，工具集不提供本地命令执行。
+Host 在项目 Python 环境中创建一个原生研究进程，固定发布源码与可写研究目录分开保存。Host 在 `runtime_paths` 给出工作区、只读输入、A3 参考源码和会话状态路径；`A3_STATE_ROOT` 指向当前 run 的 `conversation/`，`A3_PLAN_FILE` 指向项目根 `plan/current.json`。Agent 使用文件工具准备研究，通过远程 jobs 执行代码，工具集不提供本地命令执行。
 
 A3 仓库、SSH 目标和远程路径由 `.env` 指定。模型执行与机器状态保存到 `trajectories/<开始时间>/conversation/`，研究文件保存在唯一的 `workspace/`；根 `skills/`、`memory/entries.jsonl` 和 `plan/current.json` 分别通过专用工具管理。研究计划跨运行共用，trajectory 的 `plan-snapshots/` 保存各运行期间的历史快照。调试日志保存到 `runs/<开始时间>/`，维护验证原始输出集中到 `runs/checks/`。Host 状态与可重建源码缓存位于 `.runtime/`，网页内容缓存位于 `web-cache/`。运行数据目录和 `.env` 保持 Git 忽略。
 
@@ -61,9 +61,9 @@ A3 仓库、SSH 目标和远程路径由 `.env` 指定。模型执行与机器�
 
 ## 执行端
 
-执行端提供 Linux、可用的 A3 Python 环境和所需 GPU／渲染驱动。`process` 后端直接使用配置的 Python 与真实数据目录；Docker 后端需要额外准备远程镜像。分别验证 SSH、无相机仿真、相机渲染及实际训练依赖。
+执行端提供 Linux、可用的 A3 Python 环境和所需 GPU／渲染驱动。Controller 使用配置的 Python 和数据盘目录直接启动作业。分别验证 SSH、无相机仿真、相机渲染及实际训练依赖。
 
-所有 Controller 共用资源根目录与资源配置。托管队列管理等待、显存预算和作业生命周期；具体配置见[进程后端](../reference/remote-process.md)和[远程容器部署](../reference/remote-docker.md)。
+所有 Controller 共用资源根目录与资源配置。托管队列管理等待、显存预算和作业生命周期；具体配置见[远程进程作业](../reference/remote-process.md)。
 
 ```bash
 bash start-autoresearch.sh --check

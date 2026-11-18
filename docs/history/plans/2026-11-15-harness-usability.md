@@ -18,7 +18,7 @@
 - Replace greedy whole-device reservations with bounded per-job reservations that honor explicit peak estimates and admit multiple small independent jobs.
 - Reject impossible reservations explicitly, and retain temporary pressure in the same durable queued job.
 - Inspect admission cost with a historical job population; eliminate avoidable duplicated probes without weakening shared locking or ownership checks.
-- Preserve Docker/process histories, cancellation, retries and server-owned waiting. Verify shared-card admission and impossible/temporarily unavailable requests.
+- Preserve process job histories, cancellation, retries and server-owned waiting. Verify shared-card admission and impossible/temporarily unavailable requests.
 - Own execution scheduling, Controller queue/submission, transport configuration for scheduler options, related tests and process-backend documentation.
 
 ## 3. Structured everyday tools
@@ -34,7 +34,7 @@
 - Use original trajectories to reproduce weak retrieval and stale-plan wait failures. Default Recall searches useful available history without requiring a guessed round window.
 - Improve bounded durable-note retrieval and return source-linked results. Preserve superseded notes and original IDs.
 - Ensure observed terminal jobs make waiting and plans converge; avoid repeated bookkeeping solely to get into a wait.
-- Delete retired local Docker/builder execution, version trials, legacy schemas and adapters. Migrate the selected suspended run once outside the public runtime; keep research files in place.
+- Delete retired builder execution, version trials, legacy schemas and adapters. Migrate the selected suspended run once outside the public runtime; keep research files in place.
 - Published Harness updates reuse the same run, identity and research workspace. Keep checkpoint, plans, notes, skills and job state in place; archive release boundaries and input revisions separately.
 - Summary size follows the post-compaction token target and actual model window. Remove arbitrary summary token/byte limits and delete the no-summary archive fallback. Required compaction must produce a complete summary before the next decision.
 - Own memory, planning, waiting integration outside the Agent dispatch file, tests and context documentation.

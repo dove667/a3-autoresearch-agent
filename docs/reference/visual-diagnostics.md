@@ -23,7 +23,7 @@ python -m a3_dual_arm_sim.workflows.benchmark_cookie_batch_cli \
   --policy 'act:<checkpoint>' --device cuda --dataset-root '<dataset>' \
   --task 2x5 --profile basic --source-column 1 --prompt-style training \
   --episodes 1 --seed-start 10000 --max-steps 500 --workers 1 \
-  --diagnostic-dir /workspace/diagnostics-new --output /workspace/diagnostic-result.json
+  --diagnostic-dir diagnostics-new --output diagnostic-result.json
 ```
 
 `examples/benchmark_cookie_batch.py` 是同一实现的兼容入口。示例是有副作用的评测，不是只读命令；Policy、数据、场景、种子和时长应按当前问题及协议选择，不能照抄示例更改正式比较。**正式闭环评测改用 `benchmark` 工具**：预算由工具按任务决定（2×5 500 步、2×10 3200 步），低于该值的命令会在提交前被拒绝；本节的命令只用于带 `--diagnostic-dir` 的帧级诊断，不作为成绩来源。模型计算仍使用既有 GPU 作业要求。`--compare` 不接受该诊断选项，需分别运行可比配置。

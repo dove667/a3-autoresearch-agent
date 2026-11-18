@@ -127,7 +127,6 @@ def test_transient_controller_fault_stays_internal_without_losing_queue(tmp_path
 def test_managed_agent_deployment_does_not_publish_server_limits(monkeypatch):
     from a3_research_agent.host.remote_client import remote_limits
 
-    monkeypatch.setenv("A3_REMOTE_BACKEND", "process")
     monkeypatch.setenv("A3_REMOTE_MANAGED_JOBS", "1")
     limits = remote_limits()
     assert limits["managed_jobs"] is True

@@ -22,7 +22,7 @@ class JobStore:
         return self.root / "jobs" / job_id / "job.json"
 
     def job_statuses(self, request: dict) -> dict:
-        """Read only selected watcher records; never inspect containers, GPUs or logs."""
+        """Read only selected watcher records; skip live process, GPU and log inspection."""
         identifiers = request.get("job_ids")
         if not isinstance(identifiers, list) or not 1 <= len(identifiers) <= 64:
             raise ValueError("Select 1 to 64 job IDs")
@@ -45,8 +45,7 @@ class JobStore:
                 **({"error": job["error"]} if "error" in job else {}),
             }
             if (
-                job.get("backend") == "process"
-                and record["status"] in {"running", "created"}
+                record["status"] in {"running", "created"}
                 and observed_at - job.get("admitted_at", job["created_at"]) > 30
             ):
                 from .processes import is_running
@@ -63,11 +62,21 @@ class JobStore:
             "jobs": records,
         }
 
-    def load(self, job_id: str, experiment_id: str) -> dict:
+    def find_process_job(self, job_id: str) -> dict | None:
         try:
             job = json.loads(self.metadata_path(job_id).read_text())
         except FileNotFoundError:
-            raise PermissionError("job is not accessible") from None
+            return None
+        return job if job.get("backend") == "process" else None
+
+    def load_process_job(self, job_id: str) -> dict:
+        job = self.find_process_job(job_id)
+        if job is None:
+            raise PermissionError("job is not accessible")
+        return job
+
+    def load(self, job_id: str, experiment_id: str) -> dict:
+        job = self.load_process_job(job_id)
         if not experiment_id or job["experiment_id"] != experiment_id:
             raise PermissionError("job is not accessible")
         return job
@@ -76,7 +85,7 @@ class JobStore:
         atomic_json(self.metadata_path(job["job_id"]), job)
 
     def list_jobs(self, request: dict) -> dict:
-        """Page owned metadata without inspecting containers or changing jobs."""
+        """Page owned job metadata."""
         owner = request.get("experiment_id")
         if not isinstance(owner, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", owner):
             raise PermissionError("invalid experiment_id")
@@ -91,6 +100,8 @@ class JobStore:
             if path.parent.name <= after:
                 continue
             job = json.loads(path.read_text())
+            if job.get("backend") != "process":
+                continue
             if job["experiment_id"] != owner or job.get("run_id") != request.get("run_id"):
                 continue
             jobs.append(
@@ -133,11 +144,10 @@ class JobStore:
         for metadata in (self.root / "jobs").glob("*/job.json"):
             job = json.loads(metadata.read_text())
             if job.get("run_id") == run_id:
-                if job.get("backend") == "process":
-                    for name in ("stdout.log", "stderr.log"):
-                        log = metadata.parent / name
-                        if log.exists():
-                            total += log.stat().st_size
+                for name in ("stdout.log", "stderr.log"):
+                    log = metadata.parent / name
+                    if log.exists():
+                        total += log.stat().st_size
                 total += directory_storage_bytes(metadata.parent / "attempts")
                 archive = metadata.parent / "terminal-archive.json"
                 if archive.exists():
@@ -183,7 +193,7 @@ class JobStore:
             "gpu_uuid": None,
             "status": "created",
             "created_at": time.time(),
-            "container_id": None,
+            "backend": "process",
             **({"run_id": run_id} if run_id else {}),
         }
         directory = self.metadata_path(job["job_id"]).parent

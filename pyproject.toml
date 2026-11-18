@@ -28,9 +28,7 @@ where = ["src"]
 include = ["a3_research_agent*"]
 
 [tool.setuptools.package-data]
-"a3_research_agent.execution.controller" = ["nvidia_egl_vendor.json"]
 "a3_research_agent.host.dashboard" = ["static/*"]
-"a3_research_agent.execution.images" = ["Dockerfile"]
 
 [project.scripts]
 a3-research = "a3_research_agent.cli.launch:main"

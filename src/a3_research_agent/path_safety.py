@@ -1,4 +1,4 @@
-"""Validate workspace-relative paths without container dependencies."""
+"""Validate workspace-relative paths."""
 
 from pathlib import Path, PurePosixPath
 

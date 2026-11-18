@@ -10,9 +10,7 @@ from remote_test_support import patch_controller
 
 from a3_research_agent.execution.controller import artifacts as job_artifacts
 from a3_research_agent.execution.controller import cli as controller_cli
-from a3_research_agent.execution.controller import docker as job_docker
 from a3_research_agent.execution.controller import files as job_files
-from a3_research_agent.execution.controller import lifecycle as job_lifecycle
 from a3_research_agent.execution.controller import store as job_store
 from a3_research_agent.execution.controller import submission as job_submission
 from a3_research_agent.execution.scheduling import gpu as job_gpu
@@ -22,8 +20,21 @@ MODULE_PATH = (
 )
 
 
+def controller_arguments(tmp_path, operation):
+    return [
+        "controller",
+        "--root",
+        str(tmp_path / "jobs"),
+        "--data-root",
+        str(tmp_path),
+        "--job-python",
+        sys.executable,
+        operation,
+    ]
+
+
 def test_gpu_snapshot_returns_aggregate_device_metrics(tmp_path, monkeypatch, capsys):
-    monkeypatch.setattr(sys, "argv", ["controller", "gpu-snapshot", "--root", str(tmp_path)])
+    monkeypatch.setattr(sys, "argv", controller_arguments(tmp_path, "gpu-snapshot"))
     monkeypatch.setattr(sys, "stdin", SimpleNamespace(buffer=io.BytesIO(b"{}")))
     monkeypatch.setattr(
         job_gpu,
@@ -139,17 +150,17 @@ def test_artifact_reads_owner_workspace_and_rejects_symlinks(tmp_path):
 
 
 @pytest.mark.parametrize("operation", ["status", "cancel", "artifact"])
-def test_unknown_job_cli_returns_json_error_without_revealing_ownership(tmp_path, operation):
-    import json
+def test_unknown_job_cli_returns_json_error_without_revealing_ownership(
+    tmp_path, operation, monkeypatch, capsys
+):
+    from a3_research_agent.execution.controller import processes
 
-    result = subprocess.run(
-        [sys.executable, str(MODULE_PATH), "--root", str(tmp_path), "--image", "unused", operation],
-        input=json.dumps({"experiment_id": "a", "job_id": "missing", "path": "result.json"}),
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    assert json.loads(result.stdout) == {
+    monkeypatch.setattr(processes, "different_device_from_system", lambda path: True)
+    monkeypatch.setattr(sys, "argv", controller_arguments(tmp_path, operation))
+    request = json.dumps({"experiment_id": "a", "job_id": "missing", "path": "result.json"})
+    monkeypatch.setattr(sys, "stdin", SimpleNamespace(buffer=io.BytesIO(request.encode())))
+    controller_cli.main()
+    assert json.loads(capsys.readouterr().out) == {
         "status": "error",
         "error": "PermissionError",
         "message": "job is not accessible",
@@ -169,19 +180,12 @@ def test_run_storage_combines_owners_and_ignores_other_runs(tmp_path):
     assert store.run_storage_bytes("run-one") == 7
 
 
-def test_zero_timeout_means_no_wall_time_limit():
-    assert job_files.job_timeout(0) is None
-    assert job_files.job_timeout(12) == 12
-    with pytest.raises(ValueError):
-        job_files.job_timeout(-1)
-
-
-def test_storage_limit_blocks_new_job_before_gpu_or_container_allocation(tmp_path, monkeypatch):
+def test_storage_limit_blocks_new_job_before_gpu_allocation(tmp_path, monkeypatch):
     from argparse import Namespace
 
     store = job_store.JobStore(tmp_path)
     store.create("old-owner", ["true"], False, {"data": "1234567"}, run_id="run-one")
-    patch_controller(monkeypatch, "docker", lambda *a, **k: pytest.fail("Docker reached"))
+    patch_controller(monkeypatch, "active_jobs", lambda *a: pytest.fail("scheduler reached"))
     result = job_submission.submit(
         store,
         {
@@ -197,75 +201,6 @@ def test_storage_limit_blocks_new_job_before_gpu_or_container_allocation(tmp_pat
     assert result["used_bytes"] == 7
 
 
-def test_storage_watcher_stops_only_its_job_and_keeps_evidence(tmp_path, monkeypatch):
-    from argparse import Namespace
-
-    store = job_store.JobStore(tmp_path)
-    job = store.create("owner", ["true"], False, {"data": "12345"}, run_id="run-one")
-    job.update(container_id="own-container", storage_limit_bytes=4)
-    store.save(job)
-    calls = []
-    state = {"Status": "running", "ExitCode": None}
-
-    def docker(arguments, **kwargs):
-        calls.append(arguments)
-        if arguments[0] == "stop":
-            state.update(Status="exited", ExitCode=143)
-        return subprocess.CompletedProcess(arguments, 0, "", "")
-
-    patch_controller(monkeypatch, "docker", docker)
-    patch_controller(monkeypatch, "container_state", lambda container: dict(state))
-    job_lifecycle.watch(Namespace(root=tmp_path, job_id=job["job_id"], timeout=0, lock_fd=None))
-    saved = store.load(job["job_id"], "owner")
-    assert saved["status"] == "failed"
-    assert saved["error"] == "run storage limit reached"
-    assert ["stop", "--time", "10", "own-container"] in calls
-    assert (store.workspace(job) / "data").read_text() == "12345"
-    assert all("other-container" not in call for call in calls)
-
-
-def test_shared_assets_are_read_only_and_outputs_stay_with_owner(tmp_path, monkeypatch):
-    from argparse import Namespace
-
-    store = job_store.JobStore(tmp_path / "runtime")
-    job = store.create("owner", ["true"], False, {}, run_id="run-one")
-    models, datasets, cache = tmp_path / "models", tmp_path / "datasets", tmp_path / "cache"
-    models.mkdir()
-    datasets.mkdir()
-    cache.mkdir()
-    calls = []
-    patch_controller(
-        monkeypatch,
-        "docker",
-        lambda arguments: (
-            calls.append(arguments) or subprocess.CompletedProcess(arguments, 0, "container\n", "")
-        ),
-    )
-    job_docker.create_container(
-        store,
-        job,
-        Namespace(
-            cpus=2,
-            memory="8g",
-            pids_limit=256,
-            image="test",
-            models_root=models,
-            datasets_root=datasets,
-            model_cache_root=cache,
-            preserve_models_path=True,
-        ),
-    )
-    assert f"type=bind,source={models},target=/models,readonly" in calls[0]
-    assert f"type=bind,source={datasets},target=/datasets,readonly" in calls[0]
-    assert f"type=bind,source={models},target={models},readonly" in calls[0]
-    assert f"type=bind,source={cache},target=/model-cache,readonly" in calls[0]
-    assert "HF_HUB_CACHE=/model-cache/huggingface/hub" in calls[0]
-    assert "TORCH_HOME=/model-cache/torch" in calls[0]
-    assert f"type=bind,source={store.outputs(job)},target=/outputs" in calls[0]
-    other = store.create("other-owner", ["true"], False, {}, run_id="run-one")
-    assert store.outputs(other) != store.outputs(job)
-
-
 def test_run_storage_includes_latest_host_report(tmp_path):
     store = job_store.JobStore(tmp_path)
     store.create("a", ["true"], False, {"data": "123"}, run_id="run-one")
@@ -279,99 +214,21 @@ def test_run_storage_includes_latest_host_report(tmp_path):
             store.update_host_storage({"run_id": "run-one", "host_storage_bytes": value})
 
 
-def test_remote_job_has_a_user_name_and_writable_training_cache(tmp_path, monkeypatch):
-    from argparse import Namespace
-
-    store = job_store.JobStore(tmp_path / "runtime")
-    job = store.create("owner", ["true"], False, {}, run_id="run-one")
-    calls = []
-    patch_controller(
-        monkeypatch,
-        "docker",
-        lambda arguments: (
-            calls.append(arguments) or subprocess.CompletedProcess(arguments, 0, "container\n", "")
-        ),
-    )
-    job_docker.create_container(
-        store, job, Namespace(cpus=2, memory="8g", pids_limit=256, image="test")
-    )
-    arguments = calls[0]
-    assert "USER=agent" in arguments
-    assert "LOGNAME=agent" in arguments
-    assert "HOME=/job-tmp/home" in arguments
-    assert "HF_HUB_OFFLINE=1" in arguments
-    assert "TRANSFORMERS_OFFLINE=1" in arguments
-    assert arguments[arguments.index("--network") + 1] == "none"
-    assert "TORCHINDUCTOR_CACHE_DIR=/job-tmp/torchinductor" in arguments
-
-
-def test_job_temporary_files_use_isolated_data_directory_and_count_toward_budget(
-    tmp_path, monkeypatch
-):
-    from argparse import Namespace
-
-    store = job_store.JobStore(tmp_path / "runtime")
-    job = store.create("owner", ["true"], False, {}, run_id="run-one")
-    temporary_root = tmp_path / "data-temporary"
-    monkeypatch.setenv("TMPDIR", str(temporary_root))
-    calls = []
-    patch_controller(
-        monkeypatch,
-        "docker",
-        lambda arguments: (
-            calls.append(arguments) or subprocess.CompletedProcess(arguments, 0, "container\n", "")
-        ),
-    )
-    job_docker.create_container(
-        store, job, Namespace(cpus=16, memory="64g", pids_limit=1024, image="test")
-    )
-    arguments = calls[0]
-    assert arguments[arguments.index("--cpus") + 1] == "16"
-    assert arguments[arguments.index("--memory-swap") + 1] == "64g"
-    assert arguments[arguments.index("--pids-limit") + 1] == "1024"
-    assert "--tmpfs" not in arguments
-    assert "TMPDIR=/job-tmp" in arguments
-    assert "HOME=/job-tmp/home" in arguments
-    assert "XDG_CACHE_HOME=/job-tmp/cache" in arguments
-    directory = Path(job["temporary_directory"])
-    assert directory.is_relative_to(temporary_root)
-    assert f"type=bind,source={directory},target=/job-tmp" in arguments
-    assert not any("target=/tmp" in x for x in arguments)
-    store.save(job)
-    (directory / "partial").write_bytes(b"12345")
-    assert store.run_storage_bytes("run-one") == 5
-    assert store.run_storage_bytes("run-other") == 0
-    peer = store.create("peer", ["true"], False, {}, run_id="run-other")
-    job_docker.create_container(
-        store, peer, Namespace(cpus=16, memory="64g", pids_limit=1024, image="test")
-    )
-    peer_temporary = Path(peer["temporary_directory"])
-    (peer_temporary / "keep").write_text("peer")
-    job_docker.cleanup_temporary_directory(job)
-    job_docker.cleanup_temporary_directory(job)
-    assert (peer_temporary / "keep").read_text() == "peer"
-    assert not directory.exists()
-    assert store.run_storage_bytes("run-one") == 0
-
-
 def test_remote_resource_settings_are_forwarded_and_reported(monkeypatch):
     from a3_research_agent.host import remote_client as launch
 
     monkeypatch.setenv("A3_REMOTE_MANAGED_JOBS", "0")
-    monkeypatch.setenv("A3_REMOTE_BACKEND", "docker")
 
-    monkeypatch.setenv("A3_REMOTE_CPUS", "16")
-    monkeypatch.setenv("A3_REMOTE_PIDS_LIMIT", "1024")
-    monkeypatch.setenv("A3_REMOTE_MEMORY", "64g")
+    monkeypatch.setenv("A3_REMOTE_HOST_JOB_CPUS", "3")
     monkeypatch.setenv("A3_REMOTE_TMP_ROOT", "/data/job-temporary")
     limits = launch.remote_limits()
-    assert limits["cpus"] == 16
-    assert limits["pids_limit"] == 1024
+    assert limits["backend"] == "process"
     assert limits["temporary_root"] == "/data/job-temporary"
     for key, value in {
         "A3_REMOTE_CONTROLLER": "/data/project/remote_jobs.py",
         "A3_REMOTE_RUN_ROOT": "/data/project/runtime",
-        "A3_REMOTE_IMAGE": "test-image",
+        "A3_REMOTE_DATA_ROOT": "/data/project",
+        "A3_REMOTE_PROCESS_PYTHON": "/data/project/a3/.venv/bin/python",
         "A3_REMOTE_HOST": "test-host",
     }.items():
         monkeypatch.setenv(key, value)
@@ -384,71 +241,10 @@ def test_remote_resource_settings_are_forwarded_and_reported(monkeypatch):
     monkeypatch.setattr(launch.subprocess, "run", remote_process)
     assert launch.remote_call("health", {}) == {"status": "ok"}
     command = calls[0][-1]
-    assert "--cpus 16" in command
-    assert "--pids-limit 1024" in command
+    assert "--job-python /data/project/a3/.venv/bin/python" in command
+    assert "--data-root /data/project" in command
+    assert "--host-job-cpus 3" in command
     assert "--tmp-root /data/job-temporary" in command
-
-
-def test_watcher_removes_only_exited_jobs_temporary_files(tmp_path, monkeypatch):
-    from argparse import Namespace
-
-    store = job_store.JobStore(tmp_path / "runtime")
-    job = store.create("owner", ["true"], False, {}, run_id="run-one")
-    temporary = tmp_path / "data-temporary"
-    temporary.mkdir()
-    (temporary / "scratch").write_text("disposable")
-    (store.outputs(job) / "checkpoint").write_text("persistent")
-    job.update(container_id="own-container", temporary_directory=str(temporary))
-    store.save(job)
-    patch_controller(
-        monkeypatch, "docker", lambda a, **kw: subprocess.CompletedProcess(a, 0, "", "")
-    )
-    patch_controller(monkeypatch, "container_state", lambda c: {"Status": "exited", "ExitCode": 0})
-    monkeypatch.setattr(
-        subprocess, "run", lambda *a, **kw: subprocess.CompletedProcess(a, 0, "0", "")
-    )
-    job_lifecycle.watch(Namespace(root=store.root, job_id=job["job_id"], timeout=0, lock_fd=None))
-    assert not temporary.exists()
-    assert (store.outputs(job) / "checkpoint").read_text() == "persistent"
-    assert store.load(job["job_id"], "owner")["status"] == "completed"
-
-
-@pytest.mark.parametrize("gpu", [False, True])
-def test_gpu_jobs_select_readonly_nvidia_egl_vendor(tmp_path, monkeypatch, gpu):
-    import json
-    from argparse import Namespace
-
-    store = job_store.JobStore(tmp_path / "runtime")
-    job = store.create("owner", ["true"], gpu, {})
-    job["gpu_uuid"] = "GPU-selected" if gpu else None
-    calls = []
-    patch_controller(
-        monkeypatch,
-        "docker",
-        lambda arguments: (
-            calls.append(arguments) or subprocess.CompletedProcess(arguments, 0, "container\n", "")
-        ),
-    )
-    job_docker.create_container(
-        store, job, Namespace(cpus=16, memory="64g", pids_limit=1024, image="test")
-    )
-    arguments = calls[0]
-    vendor = (
-        Path(__file__).resolve().parents[2]
-        / "src/a3_research_agent/execution/controller/nvidia_egl_vendor.json"
-    )
-    mount = f"type=bind,source={vendor},target=/run/a3-egl/nvidia.json,readonly"
-    setting = "__EGL_VENDOR_LIBRARY_FILENAMES=/run/a3-egl/nvidia.json"
-    assert (mount in arguments) is gpu
-    assert (setting in arguments) is gpu
-    if gpu:
-        assert json.loads(vendor.read_text()) == {
-            "file_format_version": "1.0.0",
-            "ICD": {"library_path": "libEGL_nvidia.so.0"},
-        }
-        assert arguments[arguments.index("--gpus") + 1] == "device=GPU-selected"
-    assert arguments[arguments.index("--network") + 1] == "none"
-    assert "ALL" in arguments and "no-new-privileges" in arguments
 
 
 def test_artifact_optional_smaller_byte_ceiling_rejects_before_transfer(tmp_path):
@@ -490,26 +286,6 @@ def test_artifact_read_refuses_directory_swap_after_path_validation(tmp_path, mo
         )
 
 
-def test_scheduler_skips_only_confirmed_removed_containers(tmp_path, monkeypatch):
-    store = job_store.JobStore(tmp_path)
-    removed = store.create("owner", ["true"], False, {})
-    retained = store.create("owner", ["true"], False, {})
-    for job in (removed, retained):
-        job.update(status="completed", container_id=job["job_id"])
-        store.save(job)
-    job_files.atomic_json(
-        store.metadata_path(removed["job_id"]).with_name("cleanup.json"), {"status": "removed"}
-    )
-    calls = []
-    patch_controller(
-        monkeypatch,
-        "container_states",
-        lambda ids: calls.extend(ids) or {cid: {"Status": "running"} for cid in ids},
-    )
-    assert job_gpu.active_jobs(store) == [retained]
-    assert calls == [retained["container_id"]]
-
-
 def test_controller_job_listing_is_paged_and_owner_run_scoped(tmp_path):
     store = job_store.JobStore(tmp_path)
     owned = [
@@ -526,42 +302,3 @@ def test_controller_job_listing_is_paged_and_owner_run_scoped(tmp_path):
     assert second["next_after"] is None
     with pytest.raises(ValueError):
         store.list_jobs({"experiment_id": "owner", "limit": 201})
-
-
-def test_status_before_container_creation_preserves_pending_job(tmp_path, monkeypatch):
-    store = job_store.JobStore(tmp_path)
-    job = store.create("owner", ["true"], False, {})
-    patch_controller(monkeypatch, "docker", lambda *a, **kw: pytest.fail("no container yet"))
-    result = job_lifecycle.status(store, {"experiment_id": "owner", "job_id": job["job_id"]})
-    assert result["status"] == "created"
-    assert result["cleanup"]["status"] == "retained"
-
-
-def test_batch_container_inspection_handles_missing_and_rejects_daemon_errors(monkeypatch):
-    import json
-
-    calls = []
-
-    def inspect(args, **kwargs):
-        calls.append(args)
-        return subprocess.CompletedProcess(
-            args,
-            1,
-            json.dumps([{"Id": "live", "State": {"Status": "running"}}]),
-            "Error: No such object: old\n",
-        )
-
-    monkeypatch.setattr(job_docker, "docker", inspect)
-    states = job_docker.container_states(["live", "old"])
-    assert states["live"]["Status"] == "running"
-    assert states["old"]["Status"] == "removed"
-    assert calls == [["inspect", "live", "old"]]
-    monkeypatch.setattr(
-        job_docker,
-        "docker",
-        lambda *a, **kw: subprocess.CompletedProcess(
-            [], 1, "[]", "Cannot connect to Docker daemon"
-        ),
-    )
-    with pytest.raises(RuntimeError):
-        job_docker.container_states(["live"])

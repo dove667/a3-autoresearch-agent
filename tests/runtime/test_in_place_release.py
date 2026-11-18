@@ -169,7 +169,6 @@ def published_run(tmp_path, monkeypatch, request):
     proposal = prepare_release(root, handoff, commit=commit, run=run)
     publish_release(run, proposal, proposal["digest"])
     release = release_directory(run) / "packages" / proposal["digest"]
-    docker_calls = []
     environment = {"MODEL_NAME": "new/model"}
     return (
         root,
@@ -181,16 +180,13 @@ def published_run(tmp_path, monkeypatch, request):
         release,
         protected,
         environment,
-        docker_calls,
     )
 
 
 def test_apply_release_keeps_run_owner_workspace_and_complete_research_state(published_run):
     from a3_research_agent.host.releases import apply_release
 
-    _root, run, workspace, previous, commit, proposal, release, protected, env, calls = (
-        published_run
-    )
+    _root, run, workspace, previous, commit, proposal, release, protected, env = published_run
     original_startup = (run / "startup.json").read_bytes()
     outcome = apply_release(run, release, proposal["digest"], environment=env)
     assert outcome["status"] == "complete"
@@ -212,16 +208,13 @@ def test_apply_release_keeps_run_owner_workspace_and_complete_research_state(pub
     assert json.loads((archive / "pin-before.json").read_text())["commit"] == previous
     assert not (run / ".host/pending-release.json").exists()
     assert [p.name for p in run.parent.iterdir() if p.is_dir()] == [run.name]
-    assert not any(call[0] in {"unpause", "start", "create"} for call in calls)
-    before = len(calls)
     assert apply_release(run, release, proposal["digest"], environment=env) == outcome
-    assert len(calls) == before
 
 
 def test_apply_release_preserves_an_empty_initial_checkpoint(published_run):
     from a3_research_agent.host.releases import apply_release
 
-    _, run, workspace, _, commit, proposal, release, protected, env, _ = published_run
+    _, run, workspace, _, commit, proposal, release, protected, env = published_run
     checkpoint = b"[\n]\n"
     (run / "conversation/checkpoint.json").parent.mkdir(parents=True, exist_ok=True)
     (run / "conversation/checkpoint.json").write_bytes(checkpoint)
@@ -242,15 +235,14 @@ def test_apply_release_preserves_an_empty_initial_checkpoint(published_run):
     assert RunStateStore(run).load()["status"] == "suspended"
 
 
-def test_release_refuses_a_live_run_or_unreconciled_checkpoint_before_container_changes(
+def test_release_refuses_a_live_run_or_unreconciled_checkpoint(
     published_run,
 ):
     from a3_research_agent.host.releases import apply_release
 
-    _, run, _workspace, _, _, proposal, release, _, env, calls = published_run
+    _, run, _workspace, _, _, proposal, release, _, env = published_run
     with RunLease(run), pytest.raises(RuntimeError, match="Host"):
         apply_release(run, release, proposal["digest"], environment=env)
-    assert not calls
     RunStateStore(run).update(status="running")
     with pytest.raises(ValueError, match="suspended"):
         apply_release(run, release, proposal["digest"], environment=env)
@@ -265,13 +257,12 @@ def test_release_refuses_a_live_run_or_unreconciled_checkpoint_before_container_
     )
     with pytest.raises(ValueError, match="tool"):
         apply_release(run, release, proposal["digest"], environment=env)
-    assert not calls
 
 
 def test_release_keeps_an_unfinished_journal_without_replaying_its_tool(published_run):
     from a3_research_agent.host.releases import apply_release
 
-    _, run, _workspace, _, _, proposal, release, _, env, calls = published_run
+    _, run, _workspace, _, _, proposal, release, _, env = published_run
     journal = {
         "base_hash": hashlib.sha256(
             (run / "conversation/checkpoint.json").read_bytes()
@@ -290,7 +281,6 @@ def test_release_keeps_an_unfinished_journal_without_replaying_its_tool(publishe
     (run / "conversation/pending-calls.json").write_text(json.dumps(journal))
     apply_release(run, release, proposal["digest"], environment=env)
     assert json.loads((run / "conversation/pending-calls.json").read_text()) == journal
-    assert not any(call[0] in {"start", "create", "unpause"} for call in calls)
 
 
 def test_interrupted_apply_fences_resume_and_retries_without_a_second_input_revision(
@@ -300,7 +290,7 @@ def test_interrupted_apply_fences_resume_and_retries_without_a_second_input_revi
 
     from a3_research_agent.host import releases
 
-    root, run, _workspace, _, commit, proposal, release, protected, env, _ = published_run
+    root, run, _workspace, _, commit, proposal, release, protected, env = published_run
     replace = releases.replace_run_pin
     monkeypatch.setattr(
         releases, "replace_run_pin", lambda *args: (_ for _ in ()).throw(OSError("interrupted pin"))
@@ -323,7 +313,7 @@ def test_explicit_apply_can_change_only_the_model_and_does_not_duplicate_feedbac
     from a3_research_agent.host.models.settings import require_release_model
     from a3_research_agent.host.releases import apply_release
 
-    _, run, _, _, _, proposal, release, _, env, _ = published_run
+    _, run, _, _, _, proposal, release, _, env = published_run
     env = {
         **env,
         "A3_UPSTREAM_RESPONSES_BASE_URL": "https://provider.invalid/v1",
@@ -351,7 +341,7 @@ def test_real_native_host_resume_executes_new_source_in_the_same_workspace(
 
     from a3_research_agent.host.releases import apply_release
 
-    root, run, workspace, _, commit, proposal, release, protected, env, _ = published_run
+    root, run, workspace, _, commit, proposal, release, protected, env = published_run
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
         endpoint = f"http://127.0.0.1:{probe.getsockname()[1]}"
@@ -416,7 +406,7 @@ def test_native_resume_fences_unknown_process_before_inputs_gateway_or_model_set
     from a3_research_agent.host.releases import apply_release
     from a3_research_agent.host.sessions import processes
 
-    root, run, _, _, _, proposal, release, _, env, _ = published_run
+    root, run, _, _, _, proposal, release, _, env = published_run
     apply_release(run, release, proposal["digest"], environment=env)
     for name, value in env.items():
         monkeypatch.setenv(name, value)
@@ -456,7 +446,7 @@ def test_real_fresh_published_host_saves_provenance_before_native_start(
     from a3_research_agent.host.published_harness import COMMAND
     from a3_research_agent.host.runs.continuation import HarnessStart
 
-    root, _, _, _, commit, _, _, _, env, _ = published_run
+    root, _, _, _, commit, _, _, _, env = published_run
     shutil.rmtree(root / "workspace")
     a3 = tmp_path / "a3-reference"
     a3.mkdir()
@@ -568,7 +558,7 @@ def test_plain_resume_rejects_changed_released_inference_settings(published_run,
     from a3_research_agent.host.models.settings import require_release_model
     from a3_research_agent.host.releases import apply_release
 
-    _, run, _, _, _, proposal, release, _, env, _ = published_run
+    _, run, _, _, _, proposal, release, _, env = published_run
     apply_release(run, release, proposal["digest"], environment=env)
     state = RunStateStore(run).load()
     with pytest.raises(ValueError, match="released model settings"):

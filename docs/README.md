@@ -16,7 +16,6 @@ Agent 持续研究 Policy、采集、训练与评估，提高 A3 2×5、2×10 �
 - [Agent 输入](reference/agent-inputs.md)：三个 prompt 的分工、版本快照与 skills 发布。
 - [上下文与长期记忆](reference/context-and-memory.md)：完整摘要、总 token 目标、原始历史检索与持久经验。
 - [远程进程后端](reference/remote-process.md)：服务器队列、资源准入、路径、等待与恢复。
-- [远程 Docker 后端](reference/remote-docker.md)：容器构建、隔离、Controller 协议与资产封存。
 - [episode 执行器](reference/episode-executor.md)：并发、完成台账与结果复用。
 - [运行遥测](reference/telemetry.md)：可观测状态、延迟与资源记录。
 - [视觉诊断](reference/visual-diagnostics.md)：图像、同步轨迹与过程证据。

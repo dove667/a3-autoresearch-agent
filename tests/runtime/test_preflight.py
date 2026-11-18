@@ -8,6 +8,7 @@ from a3_research_agent.host.remote_client import validate_remote_health
     [
         {},
         {"status": "error", "error": "RuntimeError"},
+        {"status": "ok", "protocol_version": 1, "backend": "process"},
         {"status": "ok", "protocol_version": 2},
     ],
 )
@@ -17,4 +18,4 @@ def test_unhealthy_controller_cannot_pass_preflight(response):
 
 
 def test_known_controller_protocol_passes_preflight():
-    validate_remote_health({"status": "ok", "protocol_version": 1})
+    validate_remote_health({"status": "ok", "protocol_version": 2, "backend": "process"})

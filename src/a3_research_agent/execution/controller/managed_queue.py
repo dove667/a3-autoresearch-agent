@@ -41,11 +41,9 @@ def ensure_dispatcher(store):
 
 
 def enqueue(store: JobStore, request: dict, args) -> dict:
-    from .processes import command, prepare, validate_data_paths
+    from .processes import prepare, validate_data_paths
 
     validate_submit(request)
-    if args.backend != "process":
-        raise ValueError("Managed queue requires the trusted process backend")
     validate_data_paths(
         Path(args.data_root), [store.root, Path(args.tmp_root or store.root / "temporary")]
     )
@@ -78,7 +76,6 @@ def enqueue(store: JobStore, request: dict, args) -> dict:
         )
         try:
             job.update(
-                backend="process",
                 status="queued",
                 managed=True,
                 input_exports=request.get("input_exports", []),
@@ -90,7 +87,6 @@ def enqueue(store: JobStore, request: dict, args) -> dict:
                 queued_request={k: v for k, v in request.items() if k != "files"},
             )
             prepare(store, job, args)
-            command(job)
             store.save(job)
             identifiers = load_index(store)
             identifiers.append(job["job_id"])

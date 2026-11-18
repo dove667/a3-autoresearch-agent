@@ -36,7 +36,7 @@
 
 `host/launch.py` 装配服务，`host/gateway/` 负责身份、认证、模型和作业转发。`host/sessions/processes.py` 管理本地原生进程，`host/sessions/workspace.py` 提供受限文件访问；`host/runs/` 和 `host/releases.py` 管理恢复与发布事务。`host/reference_sources.py` 准备共享只读参考源码缓存，`host/remote_client.py` 封装 SSH 调用。
 
-`execution/controller/` 使用标准库管理远程作业；`execution/scheduling/` 负责资源准入，`execution/images/` 保存远程容器构建资源。所有 Python 导入使用 `a3_research_agent.*`。
+`execution/controller/` 使用标准库管理远程作业；`execution/scheduling/` 负责资源准入。所有 Python 导入使用 `a3_research_agent.*`。
 
 `harness/history.py` 检索原始执行历史，`harness/memory/` 管理主动长期经验，`harness/operational_state.py` 记录程序观察到的读取与作业状态。`path_safety.py` 提供路径校验，`harness_payload.py` 声明发布源码。
 

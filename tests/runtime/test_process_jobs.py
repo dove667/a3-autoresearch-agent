@@ -1,4 +1,4 @@
-"""Trusted process jobs coexist with legacy Docker jobs without restarting them."""
+"""Run and observe remote jobs using native Linux processes."""
 
 import json
 import os
@@ -16,7 +16,6 @@ from a3_research_agent.execution.scheduling import host_resources
 def options(root):
     return Namespace(
         root=root,
-        backend="process",
         data_root=root,
         tmp_root=root / "temp",
         process_python=sys.executable,
@@ -87,7 +86,6 @@ def test_cancel_never_signals_reused_pid(tmp_path, monkeypatch):
     store = JobStore(tmp_path)
     job = store.create("a", ["true"], False, {}, run_id="run-a")
     job.update(
-        backend="process",
         status="running",
         process={"pid": 123, "start_ticks": 1, "boot_id": "boot"},
     )
@@ -122,7 +120,6 @@ def test_missing_process_watcher_is_not_reported_as_still_running(tmp_path, monk
     store = JobStore(tmp_path)
     job = store.create("a", ["true"], False, {}, run_id="run-a")
     job.update(
-        backend="process",
         status="running",
         process={"pid": 123, "start_ticks": 1, "boot_id": "boot"},
     )
@@ -135,39 +132,26 @@ def test_missing_process_watcher_is_not_reported_as_still_running(tmp_path, monk
     assert "exit status" in result["error"]
 
 
-def test_large_legacy_inventory_does_not_inspect_absent_containers(tmp_path, monkeypatch):
-    import subprocess
-
+def test_scheduler_and_job_listing_ignore_unsupported_job_records(tmp_path):
     from a3_research_agent.execution.scheduling import gpu
 
     store = JobStore(tmp_path)
-    records = []
-    for index in range(34):
-        job = store.create("a", ["true"], False, {})
-        job.update(status="completed", container_id=f"{index:064x}")
-        store.save(job)
-        records.append(job)
-    live = records[-1]
-    monkeypatch.setattr(
-        gpu,
-        "docker",
-        lambda *a, **kw: subprocess.CompletedProcess([], 0, live["container_id"] + "\n", ""),
-    )
-    seen = []
-    monkeypatch.setattr(
-        gpu,
-        "container_states",
-        lambda ids: seen.extend(ids) or {cid: {"Status": "running"} for cid in ids},
-    )
-    assert gpu.active_jobs(store) == [live]
-    assert seen == [live["container_id"]]
-    assert len(list((store.root / "jobs").glob("*/container-absent.json"))) == 33
+    old = store.create("a", ["true"], False, {}, run_id="run-a")
+    old.pop("backend")
+    old["status"] = "running"
+    store.save(old)
+    current = store.create("a", ["true"], False, {}, run_id="run-a")
+
+    assert [job["job_id"] for job in gpu.active_jobs(store)] == [current["job_id"]]
+    listing = store.list_jobs({"experiment_id": "a", "run_id": "run-a"})
+    assert [job["job_id"] for job in listing["jobs"]] == [current["job_id"]]
+    with pytest.raises(PermissionError, match="job is not accessible"):
+        store.load(old["job_id"], "a")
 
 
 def test_native_episode_monitor_uses_host_available_memory(tmp_path, monkeypatch):
     from a3_research_agent.execution.episode_executor import ResourceMonitor
 
-    monkeypatch.setenv("A3_JOB_RESOURCE_BACKEND", "process")
     monkeypatch.setenv("A3_HOST_MEMORY_RESERVE_MB", "1")
     (tmp_path / "meminfo").write_text("MemTotal: 10000 kB\nMemAvailable: 8000 kB\n")
     (tmp_path / "stat").write_text("cpu 10 0 0 90 0 0 0 0\n")
@@ -186,15 +170,14 @@ def test_failed_native_attempt_does_not_reserve_gpu_while_retry_is_decided(tmp_p
     job = store.create("a", ["true"], True, {}, run_id="run-a")
     job.update(backend="process", status="failed", retry_pending=True)
     store.save(job)
-    monkeypatch.setattr(processes, "is_running", lambda job: False)
-    monkeypatch.setattr(processes, "process_ids", lambda job: pytest.fail("no live attempt"))
+    monkeypatch.setattr(gpu, "is_running", lambda job: False)
+    monkeypatch.setattr(gpu, "process_ids", lambda job: pytest.fail("no live attempt"))
     assert gpu.active_jobs(store) == []
 
 
-def test_process_deployment_advertises_real_paths_instead_of_container_aliases(monkeypatch):
+def test_process_deployment_advertises_real_paths(monkeypatch):
     from a3_research_agent.host import remote_client as transport
 
-    monkeypatch.setenv("A3_REMOTE_BACKEND", "process")
     monkeypatch.setenv("A3_REMOTE_A3_ROOT", "/data/project/a3")
     hints = transport.remote_path_hints()
     assert hints["remote_a3"] == "/data/project/a3"
@@ -202,14 +185,73 @@ def test_process_deployment_advertises_real_paths_instead_of_container_aliases(m
     assert "/outputs" not in hints["remote_outputs"]
 
 
-def test_process_limits_ignore_legacy_container_hard_caps(monkeypatch):
-    from a3_research_agent.host.remote_client import remote_limits
+def test_controller_health_uses_configured_process_environment(tmp_path, monkeypatch, capsys):
+    import io
+    from types import SimpleNamespace
 
-    monkeypatch.setenv("A3_REMOTE_MANAGED_JOBS", "0")
-    monkeypatch.setenv("A3_REMOTE_BACKEND", "process")
-    monkeypatch.setenv("A3_REMOTE_CPUS", "16")
-    monkeypatch.setenv("A3_REMOTE_MEMORY", "64g")
-    limits = remote_limits()
-    assert limits["cpus"] is None
-    assert limits["memory"] is None
-    assert limits["pids_limit"] is None
+    from a3_research_agent.execution.controller import cli, processes
+    from a3_research_agent.execution.scheduling import host_resources
+
+    monkeypatch.setattr(processes, "different_device_from_system", lambda path: True)
+    monkeypatch.setattr(host_resources, "sample", lambda path: {"disk_free_bytes": 100})
+    python = tmp_path / "python"
+    python.touch()
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "controller",
+            "--root",
+            str(tmp_path / "jobs"),
+            "--data-root",
+            str(tmp_path),
+            "--job-python",
+            str(python),
+            "health",
+        ],
+    )
+    monkeypatch.setattr(sys, "stdin", SimpleNamespace(buffer=io.BytesIO(b"{}")))
+    cli.main()
+    result = json.loads(capsys.readouterr().out)
+    assert result["status"] == "ok"
+    assert result["backend"] == "process"
+    assert result["python"] == str(python)
+
+
+def test_native_watcher_runs_cpu_job_and_retains_output(tmp_path, monkeypatch):
+    import base64
+
+    from a3_research_agent.execution.controller import artifacts, lifecycle
+
+    store = JobStore(tmp_path / "runtime")
+    job = store.create(
+        "owner",
+        ["python", "runner.py"],
+        False,
+        {
+            "runner.py": (
+                "from pathlib import Path\n"
+                "Path('result.txt').write_text('evaluation result')\n"
+                "print('native watcher completed')\n"
+            )
+        },
+        run_id="run-a",
+    )
+    monkeypatch.setattr(processes, "validate_data_paths", lambda *args: None)
+    monkeypatch.setattr(host_resources, "sample", lambda path: {"disk_free_bytes": 1000})
+    if sys.platform != "linux":
+        monkeypatch.setattr(processes, "read_process", lambda pid: {"start_ticks": pid})
+        monkeypatch.setattr(processes, "boot_id", lambda: "test-boot")
+        monkeypatch.setattr(processes, "process_ids", lambda job: [])
+    processes.prepare(store, job, options(tmp_path))
+
+    lifecycle.watch(Namespace(root=store.root, job_id=job["job_id"], timeout=5, lock_fd=None))
+
+    request = {"experiment_id": "owner", "job_id": job["job_id"]}
+    result = processes.status(store, request)
+    assert (result["status"], result["exit_code"]) == ("completed", 0)
+    artifact = artifacts.read_artifact(store, {**request, "path": "result.txt"})
+    assert base64.b64decode(artifact["data"]) == b"evaluation result"
+    path = store.metadata_path(job["job_id"]).with_name("terminal-archive.json")
+    archive = json.loads(path.read_text())
+    assert base64.b64decode(archive["stdout_base64"]) == b"native watcher completed\n"

@@ -24,7 +24,6 @@ def admission(measurement: dict, args, jobs: list[dict]) -> dict | None:
             0, job.get("host_memory_mb", args.host_job_memory_mb) - job.get("observed_memory_mb", 0)
         )
         for job in jobs
-        if job.get("backend") == "process"
     )
     reason = None
     if measurement["disk_free_bytes"] < args.disk_reserve_bytes:
@@ -35,11 +34,7 @@ def admission(measurement: dict, args, jobs: list[dict]) -> dict | None:
         reason = "host_memory_pressure"
     elif max(
         measurement["load"],
-        sum(
-            job.get("host_cpus", args.host_job_cpus)
-            for job in jobs
-            if job.get("backend") == "process"
-        ),
+        sum(job.get("host_cpus", args.host_job_cpus) for job in jobs),
     ) + args.host_job_cpus > max(1, measurement["cpus"] - args.host_cpu_reserve):
         reason = "host_cpu_pressure"
     if reason:

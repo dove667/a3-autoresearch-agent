@@ -43,7 +43,7 @@ def test_invalid_native_resume_is_rejected_without_mutation(tmp_path, change):
     elif change == "schema":
         state["version"] = 0
     elif change == "backend":
-        state["backend"] = "docker"
+        state["backend"] = "unsupported"
     elif change == "completed":
         state["status"] = "completed"
     elif change == "identity":

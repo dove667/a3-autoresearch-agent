@@ -46,10 +46,8 @@ def test_artifacts_contain_controller_resources_and_no_private_state(distributio
     wheel = next(distributions.glob("*.whl"))
     with zipfile.ZipFile(wheel) as archive:
         names = archive.namelist()
-        assert "a3_research_agent/execution/controller/nvidia_egl_vendor.json" in names
-        assert "a3_research_agent/execution/images/Dockerfile" in names
+        assert "a3_research_agent/execution/controller/processes.py" in names
         assert "a3_research_agent/host/dashboard/static/index.html" in names
-        assert "a3_research_agent/host/images/Dockerfile" not in names
         assert not any(name.startswith("runtime/") or name.endswith("_compat.py") for name in names)
         assert "a3_research_agent/execution/controller/remote_jobs.py" not in names
         assert not any(
@@ -58,7 +56,9 @@ def test_artifacts_contain_controller_resources_and_no_private_state(distributio
             for part in Path(name).parts
         )
     with tarfile.open(next(distributions.glob("*.tar.gz"))) as archive:
-        assert any(name.endswith("execution/images/Dockerfile") for name in archive.getnames())
+        assert any(
+            name.endswith("execution/controller/processes.py") for name in archive.getnames()
+        )
 
 
 def test_installed_wheel_runs_stdlib_controller_and_exports_complete_harness(
@@ -143,6 +143,9 @@ print(json.dumps(dict(package=a3_research_agent.__file__, root=checkout_root(), 
 
 def test_sdist_rebuilds_the_same_package_sources(distributions, tmp_path):
     with tarfile.open(next(distributions.glob("*.tar.gz"))) as archive:
+        assert any(
+            name.endswith("execution/controller/processes.py") for name in archive.getnames()
+        )
         for member in archive.getmembers():
             target = tmp_path / member.name
             assert target.resolve().is_relative_to(tmp_path.resolve())

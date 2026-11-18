@@ -93,7 +93,7 @@ class ReadonlyExports:
         return {
             key: value
             for key, value in record.items()
-            if key not in {"readers", "source_root", "plan", "sealer_pid"}
+            if key not in {"readers", "source_root", "plan", "sealer_pid", "mount"}
         }
 
     def read(self, actor: str, identifier: str) -> dict:
@@ -177,7 +177,6 @@ class ReadonlyExports:
             "created_at": time.time(),
             "planned_bytes": sum(item["size_bytes"] for item in files),
             "file_count": len(files),
-            "mount": "/inputs/" + identifier,
         }
         directory = self.root / "runs" / run_id / "readonly-exports" / identifier
         directory.mkdir(parents=True)

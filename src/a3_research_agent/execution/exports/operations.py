@@ -77,14 +77,14 @@ def export_operation(store: JobStore, request: dict, args) -> dict:
         if operation == "export-grant":
             return exports.grant(actor, identifier, request.get("recipient"))
         if operation in {"export-revoke", "export-delete"}:
-            mounted = active_jobs(store, input_export=identifier)
+            consumers = active_jobs(store, input_export=identifier)
             if operation == "export-revoke":
-                mounted = [
-                    job for job in mounted if job["experiment_id"] == request.get("recipient")
+                consumers = [
+                    job for job in consumers if job["experiment_id"] == request.get("recipient")
                 ]
-            if mounted:
+            if consumers:
                 raise ValueError(
-                    "Export is mounted by active jobs; wait before revoking or deleting"
+                    "Export is in use by active jobs; wait before revoking or deleting"
                 )
             if operation == "export-revoke":
                 return exports.revoke(actor, identifier, request.get("recipient"))

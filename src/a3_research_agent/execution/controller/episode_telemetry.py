@@ -56,20 +56,11 @@ def process_gpu_memory(device_arguments):
 def sample_gpu_resources(job: dict) -> dict:
     """Attribute compute and rendering memory to this job's host-visible processes."""
     sampled_at = time.time()
-    if job.get("backend") == "process":
-        from .processes import process_ids
+    from .processes import process_ids
 
-        pids = set(process_ids(job))
-        if not pids:
-            raise ValueError("Job has no measurable processes")
-    else:
-        process_table = command_output(["docker", "top", job["container_id"], "-eo", "pid"])
-        lines = process_table.splitlines()
-        if not lines or lines[0].strip().upper() != "PID":
-            raise ValueError("Container process table is unavailable")
-        pids = {int(line.strip()) for line in lines[1:] if line.strip()}
-        if not pids:
-            raise ValueError("Container has no measurable processes")
+    pids = set(process_ids(job))
+    if not pids:
+        raise ValueError("Job has no measurable processes")
     device_arguments = ["nvidia-smi", "-i", job["gpu_uuid"]]
     device_rows = list(
         csv.reader(

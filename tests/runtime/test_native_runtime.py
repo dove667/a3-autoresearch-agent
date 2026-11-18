@@ -1,4 +1,4 @@
-"""Published local Harness execution needs neither Docker nor workspace imports."""
+"""Published local Harness runs from its pinned Python source."""
 
 import json
 import time
@@ -81,7 +81,7 @@ def test_native_runtime_rejects_arbitrary_commands_and_nonlocal_gateway(tmp_path
             root=tmp_path / "other",
             inputs=local.inputs,
             public_a3=local.public_a3,
-            endpoint="http://host.docker.internal:9000",
+            endpoint="http://model-service.example:9000",
             published_source=local.published_source,
         )
     (local.published_source / "a3_research_agent/harness/paths.py").unlink()
@@ -277,8 +277,6 @@ def test_native_artifact_and_schema_use_only_current_session_contract(tmp_path, 
         assert base64.b64decode(result["data"]) == b"native evidence"
         assert local.records["main"]["version"] == 1
         assert local.records["main"]["backend"] == "process"
-        assert "container_removed" not in local.records["main"]
-        assert "container_id" not in local.records["main"]
         local.stop("main", "main")
         assert exit_archived(local.records["main"]) is True
     finally:
