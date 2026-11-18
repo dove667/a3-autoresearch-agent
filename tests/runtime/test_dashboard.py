@@ -329,3 +329,31 @@ def test_dashboard_lifecycle_refuses_an_occupied_port(tmp_path):
         service = DashboardService(tmp_path, port=occupied.getsockname()[1])
         assert service.start() is False
         service.stop()
+
+
+def test_overview_reports_tokens_and_spend(tmp_path):
+    """The overview shows what the run cost, priced from its own usage journal."""
+    from a3_research_agent.host.dashboard import runs
+
+    journal = tmp_path / "model-usage.jsonl"
+    journal.write_text(
+        json.dumps(
+            {
+                "usage": {
+                    "input_tokens": 1_000_000,
+                    "output_tokens": 200_000,
+                    "input_tokens_details": {"cached_tokens": 400_000},
+                },
+                "cost": 12.5,
+                "cost_currency": "cny",
+            }
+        )
+        + "\n"
+    )
+    usage = runs._usage(tmp_path, {})
+    assert usage["calls"] == 1
+    assert usage["input_tokens"] == 1_000_000
+    assert usage["cached_tokens"] == 400_000
+    assert usage["output_tokens"] == 200_000
+    assert usage["cost"] == 12.5
+    assert usage["currency"] == "cny"

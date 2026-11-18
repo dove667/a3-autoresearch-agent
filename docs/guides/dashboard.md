@@ -45,3 +45,9 @@ uv run a3-research-dashboard --port 8788  # 更换本地端口
 - 当前发布代码中的 `harness/tool_catalog.py` 高层工具声明。
 
 它不读取或返回 Host 的认证令牌，不提供写接口，不修改 plan、memory、skills、工具声明或研究文件。普通页面请求失败时保留上一帧，并在顶部显示错误提示。
+
+## 单独启动
+
+`bash start-dashboard.sh` 检查 `A3_DASHBOARD_PORT`（默认 8787）上的 `/api/health`：已经有看板就只打印地址，没有就启动一个新的并在终端打印 URL。加 `--open` 会同时打开浏览器。研究 Host 启动时仍会自动拉起看板；若看板已经由这个脚本启动，Host 只打印 “Research dashboard already running”。
+
+总览页显示本次运行的 token 与开销：输入、缓存命中、输出，以及按 `.env` 中 `A3_PRICE_*_PER_MTOK` 折算的金额（币种由 `A3_PRICE_CURRENCY` 标明）。旧的运行记录没有写入价格时，看板用当前单价按它们的用量补算。

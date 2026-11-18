@@ -281,6 +281,14 @@ function renderRuns(data) {
   select.value = state.run === "latest" ? "latest" : data.selected_run || "latest";
 }
 
+function spend(usage) {
+  if (!usage || usage.cost == null) return "开销 —";
+  const symbol = { cny: "¥", usd: "$", eur: "€" }[String(usage.currency || "").toLowerCase()];
+  const amount = usage.cost >= 1 ? usage.cost.toFixed(2) : usage.cost.toFixed(3);
+  const tokens = usage.calls ? ` · ${Math.round((usage.output_tokens || 0) / 1000)}k 输出` : "";
+  return `开销 ${symbol || ""}${amount}${tokens}`;
+}
+
 function renderStatus(data) {
   const agent = data.agent;
   const tone = toneClass(agent.tone);
@@ -318,6 +326,7 @@ function renderStatus(data) {
     usage.percent == null ? "上下文 —" : `上下文 ${usage.percent}%`;
   $("run-duration").textContent =
     agent.elapsed_seconds == null ? "运行时长 —" : `已运行 ${duration(agent.elapsed_seconds)}`;
+  $("run-cost").textContent = spend(usage);
 
   const activeJobs = agent.active_jobs || [];
   const liveStates = ["running", "waiting_jobs", "waiting_event", "context_waiting"];

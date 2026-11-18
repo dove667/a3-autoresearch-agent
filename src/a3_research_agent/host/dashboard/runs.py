@@ -8,6 +8,8 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+from a3_research_agent.host.models import pricing
+
 from .readers import mtime, newest_mtime, read_json, read_json_lines
 
 RUN_ID = re.compile(r"\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}-\d{6}")
@@ -195,6 +197,27 @@ def _decision_times(run):
 
 def _usage(run, startup):
     rows = read_json_lines(run / "model-usage.jsonl", max_bytes=2_000_000)
+    totals = {"input_tokens": 0, "cached_tokens": 0, "output_tokens": 0, "cost": 0.0}
+    currency = None
+    for row in rows:
+        usage = row.get("usage") if isinstance(row, dict) else None
+        if isinstance(usage, dict):
+            for key in ("input_tokens", "output_tokens"):
+                value = usage.get(key)
+                if type(value) is int:
+                    totals[key] += value
+            details = usage.get("input_tokens_details")
+            if isinstance(details, dict) and type(details.get("cached_tokens")) is int:
+                totals["cached_tokens"] += details["cached_tokens"]
+        cost = row.get("cost") if isinstance(row, dict) else None
+        if not isinstance(cost, (int, float)):
+            # Journals written before pricing existed still carry their usage.
+            cost = pricing.cost(usage)
+            if isinstance(cost, (int, float)):
+                currency = currency or pricing.currency()
+        if isinstance(cost, (int, float)):
+            totals["cost"] += cost
+            currency = (row.get("cost_currency") if isinstance(row, dict) else None) or currency
     last = rows[-1] if rows else None
     used = None
     if isinstance(last, dict):
@@ -212,6 +235,11 @@ def _usage(run, startup):
         "used_tokens": int(used) if isinstance(used, (int, float)) else None,
         "limit_tokens": int(limit) if isinstance(limit, (int, float)) else None,
         "percent": percent,
+        "input_tokens": totals["input_tokens"],
+        "cached_tokens": totals["cached_tokens"],
+        "output_tokens": totals["output_tokens"],
+        "cost": round(totals["cost"], 4) if currency else None,
+        "currency": currency,
     }
 
 

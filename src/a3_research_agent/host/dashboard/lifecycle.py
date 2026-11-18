@@ -4,6 +4,8 @@ import os
 import socket
 import threading
 import time
+import urllib.error
+import urllib.request
 
 import uvicorn
 
@@ -28,6 +30,16 @@ def port_available(host, port):
         except OSError:
             return False
     return True
+
+
+def serving(host, port, *, timeout=1.0):
+    """Report whether a dashboard already answers on this loopback port."""
+    url = f"http://{host}:{port}/api/health"
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as response:
+            return response.status == 200
+    except (urllib.error.URLError, OSError, ValueError):
+        return False
 
 
 class DashboardService:

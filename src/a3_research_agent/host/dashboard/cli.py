@@ -1,11 +1,13 @@
 """Launch the local, read-only research dashboard."""
 
 import argparse
+import os
 import threading
 import webbrowser
 from pathlib import Path
 
 import uvicorn
+from dotenv import load_dotenv
 
 from a3_research_agent.project import checkout_root, resolve_project_root
 
@@ -27,6 +29,7 @@ def main():
         parser.error(str(error))
     if args.host not in LOOPBACK:
         parser.error("The dashboard only listens on a loopback host")
+    load_dotenv(os.environ.get("A3_RSI_ENV_FILE", root / ".env"), override=False)
     url = f"http://{args.host}:{args.port}"
     print(f"A3 研究台  {url}", flush=True)
     print("只读面板，每 5 秒刷新；Ctrl+C 停止", flush=True)

@@ -14,7 +14,7 @@ Version: 0.3.2
 
 三种方式，按对研究的打扰从小到大：
 
-1. **软请求**：`python -m a3_research_agent.cli.request_stop <run> --reason "..."` 在当前轨迹的 `conversation/` 下写一个停止请求，进程在当前回合的工具结果保存完之后自己退出。已经交上去的作业照常跑完，结果仍在 outputs 里。
+1. **软请求**：`bash stop-autoresearch.sh`（默认取最新一次运行，可传 run 目录、`--reason`、`--force`）在当前轨迹的 `conversation/` 下写停止请求，进程在当前回合的工具结果保存完之后自己退出。已经交上去的作业照常跑完，结果仍在 outputs 里。没有研究进程在跑时脚本会拒绝写入，避免留下的请求让下一次启动立刻停掉；遗留请求会在进程启动时被清除并记日志。
 2. **Ctrl-C / SIGTERM**：两者都走同一条收尾路径——保存 checkpoint、把 supervision 记为 suspended 并关闭、退出码 130。代价是正在进行的模型调用被打断，恢复时该调用按未确认处理、不会重放。
 3. **Agent 自己收尾**：`session_stop(reason)` 由 Agent 在写完计划、经验和证据后调用。
 

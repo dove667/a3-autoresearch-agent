@@ -18,6 +18,7 @@ import litellm
 import uvicorn
 
 from a3_research_agent.host.dashboard.lifecycle import DashboardService
+from a3_research_agent.host.dashboard.lifecycle import serving as dashboard_serving
 from a3_research_agent.host.gateway.app import create_app
 from a3_research_agent.host.inputs.feedback import MAX_FEEDBACK_BYTES, HumanFeedback
 from a3_research_agent.host.inputs.research_preparation import input_hashes, prepare_research_start
@@ -366,7 +367,10 @@ def _launch_run(args, run: Path, a3: Path, start, services) -> None:
         store.update(status="running")
         try:
             dashboard = DashboardService(root)
-            if dashboard.start():
+            if dashboard_serving(dashboard.host, dashboard.port):
+                # Started separately by start-dashboard.sh; keep using it.
+                print(f"Research dashboard already running: {dashboard.url}", flush=True)
+            elif dashboard.start():
                 print(f"Research dashboard: {dashboard.url}", flush=True)
             else:
                 print(f"Research dashboard unavailable: {dashboard.url}", flush=True)

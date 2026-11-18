@@ -386,6 +386,9 @@ def main() -> None:
         log({"recovery_error": str(e)})
         sys.exit(1)
     WAIT_CURSOR = waiting.wait_cursor(messages)
+    if stale := stop_request.take():
+        # A request this process never consumed would stop it on its first turn.
+        log({"stale_stop_request_cleared": stale})
     empty = 0
     # Keep a drifting model inside real tool use instead of prose or repeat loops.
     guard = drift.DriftGuard()
