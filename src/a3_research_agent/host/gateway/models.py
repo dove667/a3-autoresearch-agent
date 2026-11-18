@@ -12,7 +12,11 @@ from a3_research_agent.host.models import pricing
 from a3_research_agent.host.models.settings import (
     validate_model_request_options,
 )
-from a3_research_agent.host.models.vision import prepare_vision_request
+from a3_research_agent.host.models.vision import (
+    VISION_OUTPUT_TOKENS,
+    VisionBudgetError,
+    prepare_vision_request,
+)
 from a3_research_agent.host.telemetry.diagnostics import CURRENT_REQUEST, upstream_status
 from a3_research_agent.token_count import count_tokens, estimate_request_tokens
 
@@ -32,6 +36,10 @@ def _web_enabled(service) -> bool:
     except (AttributeError, TypeError, ValueError):
         return False
     return isinstance(value, dict) and value.get("enabled") is True
+
+
+def model_input_headroom(window, output_tokens, output_reserve):
+    return window * 9 // 10 - max(output_tokens, output_reserve)
 
 
 class ModelRoutes:
@@ -114,8 +122,7 @@ class ModelRoutes:
         if self.token_budget:
             estimate_arguments = arguments
             if purpose == "vision":
-                # Binary transport length is not an image token count. Use a bounded,
-                # deliberately conservative per-image admission reserve instead.
+                # Use the resolution-based admission reserve for images.
                 estimate_arguments = deepcopy(arguments)
                 for message in estimate_arguments.get("input", []):
                     if isinstance(message.get("content"), list):
@@ -156,10 +163,12 @@ class ModelRoutes:
                     output_limit = available
                 limit = window - max(self.token_budget.output_reserve_tokens, output_limit)
             else:
-                limit = window * 9 // 10 - max(
-                    self.token_budget.output_reserve_tokens, output_tokens
+                limit = model_input_headroom(
+                    window, output_tokens, self.token_budget.output_reserve_tokens
                 )
             if estimated_tokens > limit:
+                if purpose == "vision":
+                    raise HTTPException(422, {"code": "vision_budget_exceeded"})
                 raise HTTPException(422, "Estimated model input exceeds configured token headroom")
         started = time.monotonic()
         try:
@@ -350,18 +359,24 @@ class ModelRoutes:
         return {
             "available": True,
             "operation": "/vision/inspect",
-            "max_frames": 6,
             "max_image_bytes": 512 * 1024,
             "max_total_bytes": 3 * 1024 * 1024,
             "max_side_pixels": 1024,
             "model_role": "worker",
             "source": "authorized job workspace or outputs PNG/JPEG artifacts",
-            "note": "Transport available; actual provider vision requires a successful image response",
+            "note": "Batch size depends on image bytes, context budget and provider limits",
         }
 
     def inspect_vision(self, body: dict, authorization: Annotated[str | None, Header()] = None):
         self.accepting_resources()
         actor = self.owner(authorization)
+        if self.token_budget is None:
+            raise HTTPException(503, "Model token budget is unavailable")
+        input_limit = model_input_headroom(
+            self.token_budget.worker_context_tokens,
+            VISION_OUTPUT_TOKENS,
+            self.token_budget.output_reserve_tokens,
+        )
         if not self.vision_slots.acquire(blocking=False):
             raise HTTPException(429, "Visual inspection busy; no model request was dispatched")
         try:
@@ -382,7 +397,11 @@ class ModelRoutes:
                 return artifact
 
             try:
-                arguments, metadata, reserve = prepare_vision_request(body, actor, read_frame)
+                arguments, metadata, reserve = prepare_vision_request(
+                    body, actor, read_frame, input_limit=input_limit
+                )
+            except VisionBudgetError:
+                raise HTTPException(422, {"code": "vision_budget_exceeded"}) from None
             except (ValueError, TypeError):
                 raise HTTPException(
                     422, "Invalid frame input, image, size or chronological labels"

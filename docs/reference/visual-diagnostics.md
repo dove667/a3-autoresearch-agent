@@ -10,23 +10,17 @@
 
 原回合未保存视频时应明确缺失。重新执行 Policy、动作回放或状态重建都是新的诊断材料，记录其来源、版本、种子及差异，不能标为原回合录像，也不自动替代原科学结果。先利用现有素材；只有新的执行能回答重要疑问且在研究授权范围内时，才安排独立诊断作业。
 
+## 在评测中录制
+
+对代表性 seed 调用 `benchmark(..., diagnostics=true)`。返回的 `diagnostics` 按 seed 列出正面与左右腕部录像和同步轨迹的 outputs 相对路径。作业完成后，根据 trace 找到第一次失败动作，用 CPU 作业抽取动作前、发生时和之后的帧。看不清时，补更密的帧或同一时刻的另一视角。
+
 ## A3 原生接口与实际保存范围
 
 以下按 A3 源码 `7c34d38e58b6d94e76a9dec8b2b3bbc912263e38` 核对：`workflows/benchmark.py`、`diagnostics.py`、`episode_execution.py` 及相关 CLI。实际部署版本仍需核对；这是源码检查，未运行仿真。
 
 `CookieBatchBenchmark.diagnostic_dir` 为 `None` 时不启用该追踪器。设置目录后，`run_episode` 创建 `EpisodeDiagnostic(root / f"seed_{seed}", config.control_hz)`，将它交给原生回合执行，最后在 `finally` 中关闭。诊断目录必须新建，重复 seed 目录会冲突。原生 CLI 的 `--diagnostic-dir` 会强制单进程 `workers=1`，不能把开录像后的吞吐直接当成未开录像的效率。
 
-如确需新诊断作业，在已授权的 A3 执行环境中使用既有命令，例如：
-
-```bash
-python -m a3_dual_arm_sim.workflows.benchmark_cookie_batch_cli \
-  --policy 'act:<checkpoint>' --device cuda --dataset-root '<dataset>' \
-  --task 2x5 --profile basic --source-column 1 --prompt-style training \
-  --episodes 1 --seed-start 10000 --max-steps 500 --workers 1 \
-  --diagnostic-dir diagnostics-new --output diagnostic-result.json
-```
-
-`examples/benchmark_cookie_batch.py` 是同一实现的兼容入口。示例是有副作用的评测，不是只读命令；Policy、数据、场景、种子和时长应按当前问题及协议选择，不能照抄示例更改正式比较。**正式闭环评测改用 `benchmark` 工具**：预算由工具按任务决定（2×5 500 步、2×10 3200 步），低于该值的命令会在提交前被拒绝；本节的命令只用于带 `--diagnostic-dir` 的帧级诊断，不作为成绩来源。模型计算仍使用既有 GPU 作业要求。`--compare` 不接受该诊断选项，需分别运行可比配置。
+研究作业通过 `benchmark` 使用录制开关，沿用任务的标准步数。原生 `--compare` 不接受诊断选项。
 
 | 文件／字段 | 含义与边界 |
 |---|---|
@@ -40,7 +34,7 @@ python -m a3_dual_arm_sim.workflows.benchmark_cookie_batch_cli \
 
 时间对齐须区分动作前后：视频第 `step` 帧是 `previous_observation`；同一 trace 行的 `after` 在 `env.step(action)` 后采集。优先使用 `observation_before.time` 的实际模拟时间；该 trace 没有另设 `sim_time_s` 字段。若需按固定控制频率推算，从零时刻开始的前帧约为 `step / control_hz`，动作后约为 `(step + 1) / control_hz`，这是模拟时间约定，不是墙钟时间。原生默认 20 Hz 也应核对实际配置。
 
-正常失败回合仍会关闭并保留已采集的诊断 trace／视频；异常路径执行 `finally` 关闭，但不能保证进程被强杀或磁盘失败时文件完整。视频先由 OpenCV 写 mp4v，关闭时如有 FFmpeg 则尝试 H.264/yuv420p 转码；转码失败或工具缺失保留原视频并警告。普通 dataset recorder 在该回合执行器中会丢弃失败回合，不能据“存在成功数据集”断言失败录像也保留。
+正常失败回合仍会关闭并保留已采集的诊断 trace／视频；异常路径执行 `finally` 关闭，但不能保证进程被强杀或磁盘失败时文件完整。视频由 OpenCV 写为 MP4。普通 dataset recorder 在该回合执行器中会丢弃失败回合，不能据“存在成功数据集”断言失败录像也保留。
 
 `EpisodeDiagnostic` 不自动写 NPZ。另一个原生 `run_cookie_same_column_cli` 的显式 `--save-second-batch-state`、`--save-second-aligned-state`、`--save-second-lift-state`、`--save-second-open-state` 才在对应专家阶段保存状态 NPZ：`state`（MuJoCo FULLPHYSICS）、`ctrl`、`last_action`、`step_count`、`batch_reports_json`，lift/open 还含 `group_offset`、`held_offsets`、`opening`。它不是 RGB 录像，也不是任意失败现场的完整可复现 checkpoint。该脚本的 `--snapshots` 在阶段变化或每 100 步保存 PNG，不提供连续动作覆盖。
 
@@ -56,9 +50,9 @@ python -m a3_dual_arm_sim.workflows.benchmark_cookie_batch_cli \
 
 对于上述原生 NPZ，读取使用 `allow_pickle=False`；恢复使用匹配配置的 `mjSTATE_FULLPHYSICS`，先检查 `state.size == mj_stateSize(model, mjSTATE_FULLPHYSICS)`，再恢复 `state`、`ctrl`、`last_action`、步号及相应专家阶段字段并调用 `mj_forward`。这些是该专家脚本的特定恢复约定；状态长度相同仍不证明模型资产、关节顺序或任务状态相同。若素材缺失所需信息，保留未知，不杜撰初始状态、补写原始视频或把新重放计作原评测回合。
 
-## 小批帧视觉问诊
+## 按动作窗口检查画面
 
-`POST /vision/inspect` 的接口约定是提交一个问题和 1–6 帧已有 PNG/JPEG 的引用；部署前核对当前 Host 是否实际提供该路由。`GET /vision/status` 可读取传输能力与上限，但不证明提供商实际看到了图像。它不自动下载或遍历视频。由当前 Agent 在自己的授权作业中，从已有录像提取围绕疑问的帧并保留来源、原帧索引和转换记录；这一步不需要重新运行 Policy。
+`POST /vision/inspect` 的接口约定是提交一个问题和按时间排列的 PNG/JPEG 引用；部署前核对当前 Host 是否实际提供该路由。`GET /vision/status` 可读取传输能力与上限，但不证明提供商实际看到了图像。它不自动下载或遍历视频。由当前 Agent 在自己的授权作业中，从已有录像提取围绕疑问的帧并保留来源、原帧索引和转换记录；这一步不需要重新运行 Policy。
 
 该接口复用现有作业产物读取权限。默认从指定作业的 `workspace` 读取，例如 `path: "frames/front_0180.png"`。已经保存的评估帧可以用 `area: "outputs"` 加输出目录下的相对路径直接读取。若只有视频，可由 CPU 作业按需抽帧并保存时间标签。按项目读取历史作业和帧，其他读取边界沿用作业权限。
 
@@ -72,7 +66,7 @@ python -m a3_dual_arm_sim.workflows.benchmark_cookie_batch_cli \
 }
 ```
 
-问题为 1–2000 字符的非空文本；同一 episode 的帧连续成组，组内 step 与模拟时间不倒退，不同相机可取同一时刻。Host 只读调用身份已授权的 job 图像；单图最多 512 KiB、宽高各不超过 1024 像素，总输入图像最多 3 MiB。时间与 camera 标签由调用者提供，不能把语法校验当作时间真实性认证。Host 校验实际图像、去除 metadata 并规范化后，强制走配置的视觉 helper；不自动附带主 Agent Prompt 或原始 human feedback，图像内文字也是不可信证据，不能成为指令。
+问题为 1–2000 字符的非空文本；同一 episode 的帧连续成组，组内 step 与模拟时间不倒退，不同相机可取同一时刻。Host 只读调用身份已授权的 job 图像；单图最多 512 KiB、宽高各不超过 1024 像素，原图和标准化图像各自合计最多 3 MiB。帧数由图片大小、worker 上下文和上游接口限制决定。时间与 camera 标签由调用者提供，不能把语法校验当作时间真实性认证。Host 校验实际图像、去除 metadata 并规范化后，强制走配置的视觉 helper；不自动附带主 Agent Prompt 或原始 human feedback，图像内文字也是不可信证据，不能成为指令。
 
 返回 `analysis`、`frames` 哈希／时间信息与实际响应 `model`，供原结果追溯和判断；原始 base64 不进入主对话或摘要。视觉答复是建议，不是验证通过、Policy 推理结果或自动采用决定。当前源码的通用 gateway 已允许 `/vision` 路径，可直接调用上述两个接口，无需另注册专门工具。历史工作区仍须显式更新并重新加载 Harness，才能采用该白名单。它不提供视频下载、Policy 重跑或自动 grant。
 

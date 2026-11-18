@@ -18,7 +18,10 @@ MAX_FRAME_BYTES = 512 * 1024
 MAX_TOTAL_BYTES = 3 * 1024 * 1024
 MAX_SIDE = 1024
 MAX_PIXELS = 1024 * 1024
-IMAGE_TOKEN_RESERVE = 32768
+IMAGE_PATCH_SIZE = 32
+IMAGE_TOKENS_PER_PATCH = 4
+IMAGE_BASE_RESERVE = 256
+VISION_OUTPUT_TOKENS = 4096
 
 VISION_INSTRUCTIONS = (
     "Answer the supplied visual diagnosis question using only the visible sampled frames. "
@@ -31,6 +34,10 @@ VISION_INSTRUCTIONS = (
     "scientific success/acceptance. State when sampling or viewpoints do not support a claim. "
     "Provide advisory diagnosis only; do not call tools or execute actions."
 )
+
+
+class VisionBudgetError(ValueError):
+    """The selected frame window exceeds the configured request budget."""
 
 
 class VisionFrame(BaseModel):
@@ -81,7 +88,7 @@ class VisionFrame(BaseModel):
 class VisionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     question: str = Field(min_length=1, max_length=2000)
-    frames: list[VisionFrame] = Field(min_length=1, max_length=6)
+    frames: list[VisionFrame] = Field(min_length=1)
 
     @field_validator("question")
     @classmethod
@@ -171,6 +178,8 @@ def prepare_vision_request(
     body: dict,
     owner: str,
     read_artifact: Callable[..., dict],
+    *,
+    input_limit: int | None = None,
 ) -> tuple[dict, list[dict], int]:
     """Read only validated owned sources; return normalized request and audit data.
 
@@ -179,6 +188,11 @@ def prepare_vision_request(
     The image reserve is conservative admission headroom, not measured token usage.
     """
     request = VisionRequest.model_validate(body)
+    # Reject impossible windows before the first artifact request.
+    minimum_reserve = IMAGE_BASE_RESERVE + IMAGE_TOKENS_PER_PATCH
+    frame_count = len(request.frames)
+    if input_limit is not None and frame_count * minimum_reserve > input_limit:
+        raise VisionBudgetError("Frames exceed worker context budget")
     # Finish label serialization before any reader call, including integer/Unicode
     # edge cases. The caller's objects and metadata are never modified in place.
     labels = [
@@ -193,7 +207,8 @@ def prepare_vision_request(
     ]
     label_text = [json.dumps(label, ensure_ascii=False) for label in labels]
     content = [{"type": "input_text", "text": "Diagnostic question: " + request.question}]
-    metadata, total_bytes = [], 0
+    metadata = []
+    source_bytes, normalized_bytes, image_reserve = 0, 0, 0
     for frame, label, text in zip(request.frames, labels, label_text, strict=True):
         source = (owner, frame.job_id, frame.path)
         artifact = (
@@ -202,10 +217,18 @@ def prepare_vision_request(
             else read_artifact(*source)
         )
         raw = _artifact_bytes(artifact)
-        total_bytes += len(raw)
-        if total_bytes > MAX_TOTAL_BYTES:
-            raise ValueError("Image artifacts exceed total byte limit")
+        source_bytes += len(raw)
+        if source_bytes > MAX_TOTAL_BYTES:
+            raise VisionBudgetError("Image artifacts exceed total byte limit")
         normalized, width, height = _normalize_image(raw)
+        normalized_bytes += len(normalized)
+        if normalized_bytes > MAX_TOTAL_BYTES:
+            raise VisionBudgetError("Normalized images exceed total byte limit")
+        patches = math.ceil(width / IMAGE_PATCH_SIZE) * math.ceil(height / IMAGE_PATCH_SIZE)
+        image_reserve += IMAGE_BASE_RESERVE + patches * IMAGE_TOKENS_PER_PATCH
+        remaining_frames = frame_count - label["frame_index"]
+        if input_limit is not None and image_reserve + remaining_frames * minimum_reserve > input_limit:
+            raise VisionBudgetError("Frames exceed worker context budget")
         metadata.append(
             {
                 **label,
@@ -235,9 +258,9 @@ def prepare_vision_request(
             "input": [{"role": "user", "content": content}],
             "tools": [],
             "tool_choice": "none",
-            "max_output_tokens": 4096,
+            "max_output_tokens": VISION_OUTPUT_TOKENS,
             "store": False,
         },
         metadata,
-        IMAGE_TOKEN_RESERVE * len(request.frames),
+        image_reserve,
     )

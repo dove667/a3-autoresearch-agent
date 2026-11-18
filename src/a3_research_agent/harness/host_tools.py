@@ -38,7 +38,7 @@ FIELDS = {
     "vision_status": {},
     "vision_inspect": {
         "question": STRING,
-        "frames": {"type": "array", "items": FRAME, "minItems": 1, "maxItems": 6},
+        "frames": {"type": "array", "items": FRAME, "minItems": 1},
     },
     "evaluation_compare": {
         "candidate_job_id": JOB_ID,
@@ -83,7 +83,11 @@ FIELDS = {
 }
 DESCRIPTIONS = {
     "vision_status": "Check visual inspection availability and frame limits.",
-    "vision_inspect": "Inspect 1–6 authorized PNG/JPEG frames for a specific research question. Supply real episode, step, simulation time and camera metadata. Group each episode contiguously in time order. area defaults outputs. Returns observations and source hashes.",
+    "vision_inspect": "Inspect authorized PNG/JPEG frames for a specific research question. Choose "
+    "frames around the event and across cameras. Batch size is governed by image bytes, context "
+    "budget and the provider. Supply real episode, step, simulation time and camera metadata. "
+    "Group each episode contiguously in time order. area defaults outputs. Returns observations "
+    "and source hashes.",
     "evaluation_compare": "Compare existing baseline/candidate episode results by job IDs and outputs-relative JSON manifests. Returns paired results and a ready-to-use visual inspection request when available.",
     "conditions_compare": "Compare declared baseline/candidate conditions. Each object includes status, report_present, and protocol(task,seeds,workers,step_budget,randomization,success_rule). Read actual results before judging improvement.",
     "benchmark_summary": "Combine the benchmark reports of one evaluation cell. Caps each episode at its own maximum, reports in-box counts and native passes separately, and names every protocol difference between segments (task, profile, step budget, action horizon, prompt style, checkpoint, duplicate seeds). Use it instead of adding report totals by hand.",
@@ -151,9 +155,9 @@ def area(value):
 def vision(arguments_value):
     text(arguments_value.get("question"), "question", 4000)
     frames = arguments_value.get("frames")
-    if not isinstance(frames, list) or not 1 <= len(frames) <= 6:
+    if not isinstance(frames, list) or not frames:
         fail(
-            "invalid_frames", "Supply 1–6 frames with real episode, step, time and camera metadata."
+            "invalid_frames", "Supply frames with real episode, step, time and camera metadata."
         )
     normalized, seen, previous = [], set(), None
     for frame in frames:

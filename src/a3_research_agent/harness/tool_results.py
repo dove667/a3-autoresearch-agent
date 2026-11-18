@@ -56,6 +56,8 @@ def rejected(status, body, code, hint):
                 code = candidate
                 break
         # Host-supplied hint text may carry private detail; keep our own wording only.
+        if code == "vision_budget_exceeded":
+            hint = "Split the action window across calls or resize its frames and try again."
         return code, hint
     if isinstance(detail, str) and detail in CONTROLLER_ERRORS:
         return CONTROLLER_ERRORS[detail]

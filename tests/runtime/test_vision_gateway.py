@@ -216,13 +216,16 @@ def test_vision_image_reserve_is_admitted_before_model_call(tmp_path):
         "trigger_tokens": 64000,
         "target_tokens": 32000,
     }
-    client, _, models = client_for(tmp_path, context_budget=budget)
+    client, reads, models = client_for(tmp_path, context_budget=budget)
     body = request_body()
-    third = {**body["frames"][-1], "step": 30, "sim_time_s": 1.5}
-    body["frames"].append(third)
+    body["frames"] = [
+        dict(body["frames"][0], step=index, sim_time_s=index / 20)
+        for index in range(400)
+    ]
     res = client.post("/vision/inspect", headers={"Authorization": "Bearer token-a"}, json=body)
     assert res.status_code == 422
-    assert not models
+    assert res.json()["detail"]["code"] == "vision_budget_exceeded"
+    assert not reads and not models
 
 
 def test_vision_provider_failure_is_sanitized_and_releases_slots(tmp_path):
@@ -267,3 +270,18 @@ def test_vision_concurrent_limit_does_not_dispatch_a_third_model(tmp_path):
         finally:
             release.set()
         assert all(f.result(timeout=3).status_code == 200 for f in running)
+
+
+def test_vision_allows_more_than_six_frames_within_the_worker_budget(tmp_path):
+    client, _, models = client_for(tmp_path)
+    body = request_body()
+    body["frames"] = [
+        dict(body["frames"][0], step=index, sim_time_s=index / 20)
+        for index in range(12)
+    ]
+    result = client.post(
+        "/vision/inspect", headers={"Authorization": "Bearer token-a"}, json=body
+    )
+    assert result.status_code == 200
+    assert len(result.json()["frames"]) == 12
+    assert len(models) == 1

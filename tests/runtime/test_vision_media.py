@@ -66,7 +66,7 @@ def test_safe_typed_request_preserves_order_owner_and_source_data():
     result, metadata, reserve = prepare_vision_request(body, "owner-a", reader(raw, calls))
     assert body == original
     assert calls == [("owner-a", JOB, "frames/first.png"), ("owner-a", JOB, "frames/second.png")]
-    assert reserve == 2 * 32768
+    assert reserve == 2 * 260
     assert result["tools"] == [] and result["tool_choice"] == "none"
     assert result["max_output_tokens"] == 4096
     assert "untrusted" in result["instructions"].lower()
@@ -92,7 +92,6 @@ def test_safe_typed_request_preserves_order_owner_and_source_data():
         {"question": "x" * 2001},
         {"question": True},
         {"frames": []},
-        {"frames": [frame()] * 7},
         {"url": "https://example.invalid/image.png"},
         {"base64": "YWJj"},
         {"model": "other"},
@@ -312,7 +311,9 @@ def test_transparency_is_composited_on_white_without_revealing_hidden_rgb():
         assert normalized.getpixel((0, 0)) == (255, 255, 255)
 
 
-def test_six_bounded_frames_have_exact_conservative_reserve():
-    body = request(*(frame(step=index, sim_time_s=index) for index in range(6)))
-    _, metadata, reserve = prepare_vision_request(body, "owner-a", reader(picture()))
-    assert len(metadata) == 6 and reserve == 6 * 32768
+def test_image_reserve_scales_with_frame_dimensions():
+    body = request(*(frame(step=index, sim_time_s=index) for index in range(8)))
+    _, metadata, reserve = prepare_vision_request(
+        body, "owner-a", reader(picture(size=(64, 96)))
+    )
+    assert len(metadata) == 8 and reserve == 8 * (256 + 2 * 3 * 4)

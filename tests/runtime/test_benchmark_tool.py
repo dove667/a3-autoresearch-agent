@@ -575,3 +575,76 @@ def test_scenario_tasks_carry_their_own_budget_and_score():
         benchmark_policy.check_command(
             ["python", "benchmark_cookie_batch_cli.py", "--task", "tilted", "--max-steps", "500"]
         )
+
+
+def test_benchmark_records_diagnostic_paths_for_each_seed(tmp_path):
+    from a3_research_agent.harness import benchmark_runner
+
+    calls, request = prepare_request()
+    result = job_tools.dispatch(
+        "benchmark",
+        {
+            "checkpoint": CHECKPOINT,
+            "task": "2x10",
+            "seed_start": 10003,
+            "episodes": 2,
+            "diagnostics": True,
+        },
+        request,
+        workspace=tmp_path,
+    )
+    args = benchmark_runner.parser().parse_args(preflight(calls)["command"][4:])
+    report = tmp_path / result["report"]
+    command = benchmark_runner.command(args, 3200, report, "python")["arguments"]
+    diagnostics = report.parent / "diagnostics"
+    assert command[command.index("--diagnostic-dir") + 1] == str(diagnostics)
+    for item, seed in zip(result["diagnostics"], (10003, 10004), strict=True):
+        episode = diagnostics / f"seed_{seed}"
+        assert item == {
+            "seed": seed,
+            "trace": str((episode / "trace.jsonl").relative_to(tmp_path)),
+            "videos": {
+                camera: str((episode / f"{camera}.mp4").relative_to(tmp_path))
+                for camera in ("front", "left_wrist", "right_wrist")
+            },
+        }
+
+
+def test_diagnostic_runner_publishes_report_and_video_together(tmp_path, monkeypatch):
+    runner, args = runner_args()
+    args.diagnostics = True
+    monkeypatch.setenv("A3_OUTPUTS", str(tmp_path))
+    attempts = iter([(1, False), (0, False), (0, True)])
+
+    def record(call):
+        argv = call["arguments"]
+        report = Path(argv[argv.index("--output") + 1])
+        diagnostics = Path(argv[argv.index("--diagnostic-dir") + 1])
+        assert not (tmp_path / args.output_dir).exists()
+        exit_code, complete = next(attempts)
+        metadata = {"output": str(report), "diagnostic_dir": str(diagnostics)}
+        report.write_text(json.dumps({"run": metadata}))
+        diagnostics.mkdir()
+        (diagnostics / "manifest.json").write_text(json.dumps(metadata))
+        episode = diagnostics / "seed_10000"
+        episode.mkdir()
+        (episode / "trace.jsonl").write_text("{}\n")
+        for camera in ("front", "left_wrist", "right_wrist"):
+            if complete or camera != "right_wrist":
+                (episode / f"{camera}.mp4").write_bytes(b"video")
+        return exit_code
+
+    monkeypatch.setattr(runner, "run_benchmark", record)
+    assert runner.run(args) == 1
+    assert not (tmp_path / args.output_dir).exists()
+    with pytest.raises(SystemExit, match="right_wrist.mp4"):
+        runner.run(args)
+    assert not (tmp_path / args.output_dir).exists()
+    assert runner.run(args) == 0
+    report = tmp_path / args.output_dir / "seed-10000.json"
+    diagnostics = report.parent / "diagnostics"
+    manifest = diagnostics / "manifest.json"
+    metadata = {"output": str(report), "diagnostic_dir": str(diagnostics)}
+    assert json.loads(report.read_text())["run"] == metadata
+    assert json.loads(manifest.read_text()) == metadata
+    assert (diagnostics / "seed_10000/front.mp4").is_file()

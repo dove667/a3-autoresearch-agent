@@ -8,7 +8,7 @@ import re
 from pathlib import Path, PurePosixPath
 from urllib.parse import urlencode
 
-from . import benchmark_policy, tool_results
+from . import benchmark_policy, benchmark_runner, tool_results
 from .job_outputs import ARTIFACT_FIELDS, read_batch
 from .tool_contracts import (
     ToolInputError,
@@ -72,6 +72,7 @@ BENCHMARK_FIELDS = {
     "source_column",
     "tilt_level",
     "box_quota",
+    "diagnostics",
     "name",
 }
 DATASET_FIELDS = {
@@ -140,7 +141,9 @@ TOOLS = [
         "benchmarks/a3_benchmark_runner.py, attaches it as benchmark_runner.py, chooses the "
         "task budget (2x5=500, 2x10=3200, scenarios=1000 except two-boxes with "
         "box_quota=10 uses 3200), and returns prepared_id, preflight_job_id, report "
-        "and max_steps. Do not hand-build benchmark commands. Pass max_steps only to raise "
+        "and max_steps. Set diagnostics=true to record synchronized camera videos and a trace "
+        "for each seed. The result includes outputs-relative diagnostic paths. Do not hand-build "
+        "benchmark commands. Pass max_steps only to raise "
         "the budget above the task standard; a lower value is rejected. The report path is "
         "relative to the job outputs area, for example 2x10-medium-5ep-seed10000-<hash>/seed-10000.json.",
         {
@@ -171,6 +174,10 @@ TOOLS = [
                 "type": "integer",
                 "enum": [5, 10],
                 "description": "Two-boxes task only. Cookies per target box, default 5.",
+            },
+            "diagnostics": {
+                "type": "boolean",
+                "description": "Save front and wrist camera videos and the per-step trace.",
             },
             "n_action_steps": {
                 "type": "integer",
@@ -487,6 +494,7 @@ def benchmark(args, request, workspace):
     source_column = args.get("source_column")
     if source_column is not None and source_column not in {1, 2, 3, 4}:
         fail("invalid_source_column", "Pass source_column 1-4, or omit it for scenarios.")
+    diagnostics = boolean(args.get("diagnostics", False), "diagnostics")
     install_runner(workspace)
     digest = hashlib.sha256(
         json.dumps(
@@ -501,6 +509,7 @@ def benchmark(args, request, workspace):
                 horizon,
                 tilt_level,
                 box_quota,
+                *([source_column, name, "diagnostics"] if diagnostics else []),
             ],
             sort_keys=True,
         ).encode()
@@ -526,6 +535,7 @@ def benchmark(args, request, workspace):
         *(["--source-column", str(source_column)] if source_column else []),
         *(["--tilt-level", tilt_level] if tilt_level else []),
         *(["--box-quota", str(box_quota)] if box_quota else []),
+        *(["--diagnostics"] if diagnostics else []),
         "--output-dir",
         output_dir,
     ]
@@ -551,7 +561,27 @@ def benchmark(args, request, workspace):
         **prepared,
         "report": f"{output_dir}/seed-{seed_start}.json",
         "max_steps": steps,
+        **(
+            {"diagnostics": diagnostic_paths(output_dir, seed_start, episodes)}
+            if diagnostics
+            else {}
+        ),
     }
+
+
+def diagnostic_paths(output_dir, seed_start, episodes):
+    paths = []
+    directory = PurePosixPath(output_dir, "diagnostics")
+    for seed in range(seed_start, seed_start + episodes):
+        trace, videos = benchmark_runner.diagnostic_artifacts(directory, seed)
+        paths.append(
+            {
+                "seed": seed,
+                "trace": trace.as_posix(),
+                "videos": {camera: path.as_posix() for camera, path in videos.items()},
+            }
+        )
+    return paths
 
 
 def dataset_audit(args, request, workspace):

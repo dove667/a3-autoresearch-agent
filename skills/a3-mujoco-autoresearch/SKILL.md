@@ -3,7 +3,7 @@ name: a3-mujoco-autoresearch
 description: A3机器人策略实验：选择ACT、扩散/流、VLA方法，诊断数据与训练，做配对闭环评测。Policy methods, training diagnostics
   and paired evaluation.
 metadata:
-  version: 0.2.1
+  version: 0.2.2
 ---
 
 # A3 Policy 实验入口

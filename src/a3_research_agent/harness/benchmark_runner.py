@@ -14,6 +14,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 SCENARIO_TASKS = (
     "missing-columns",
@@ -26,6 +27,7 @@ SCENARIO_TASKS = (
 TASK_STEPS = {"2x5": 500, "2x10": 3200, **dict.fromkeys(SCENARIO_TASKS, 1000)}
 PROFILES = ("basic", "medium", "advanced")
 REPORT = "a3-preflight.json"
+CAMERAS = ("front", "left_wrist", "right_wrist")
 
 
 def parser():
@@ -43,6 +45,7 @@ def parser():
     # The old expert picks a column; a scenario or a policy should choose itself.
     result.add_argument("--source-column", default=None)
     result.add_argument("--prompt-style", help="Language-conditioned policies only")
+    result.add_argument("--diagnostics", action="store_true")
     result.add_argument("--output-dir", required=True)
     return result
 
@@ -78,6 +81,9 @@ def preflight(args):
     import torch  # noqa: F401 - the deploy path needs the real runtime
     from safetensors.torch import load_file
 
+    if args.diagnostics:
+        import cv2  # noqa: F401 - the deployed diagnostic recorder writes MP4
+
     directory = checkpoint(args.policy.split(":", 1)[-1])
     weights = sorted(directory.glob("*.safetensors"))
     if not weights:
@@ -101,6 +107,7 @@ def preflight(args):
 def command(args, steps, output, python):
     """Forward to the deployed benchmark entry with the task's own budget."""
     root = os.environ.get("A3_A3") or os.getcwd()
+    diagnostics = Path(output).parent / "diagnostics"
     return {
         "arguments": [
             python,
@@ -130,6 +137,7 @@ def command(args, steps, output, python):
             str(args.n_action_steps),
             "--output",
             str(output),
+            *(["--diagnostic-dir", str(diagnostics)] if args.diagnostics else []),
         ],
         "cwd": root,
         "env": {**os.environ, "MUJOCO_GL": "egl"},
@@ -143,9 +151,57 @@ def run(args):
     if relative.is_absolute() or ".." in relative.parts:
         raise SystemExit("--output-dir must stay below A3_OUTPUTS")
     output = (output_root / relative / f"seed-{args.seed_start}.json").resolve()
-    output.parent.mkdir(parents=True, exist_ok=True)
-    call = command(args, steps, output, sys.executable)
     print(json.dumps({"benchmark": str(output), "max_steps": steps}), flush=True)
+    if args.diagnostics:
+        return record_benchmark(args, steps, output)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    return run_benchmark(command(args, steps, output, sys.executable))
+
+
+def diagnostic_artifacts(directory, seed):
+    episode = directory / f"seed_{seed}"
+    return episode / "trace.jsonl", {
+        camera: episode / f"{camera}.mp4" for camera in CAMERAS
+    }
+
+
+def record_benchmark(args, steps, output):
+    """Publish the report and recordings together after a successful process exit."""
+    destination = output.parent
+    if destination.exists():
+        raise SystemExit(f"benchmark output already exists: {destination}")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with TemporaryDirectory(prefix=".benchmark-", dir=destination.parent) as temporary:
+        staged = Path(temporary) / "result"
+        staged.mkdir()
+        call = command(args, steps, staged / output.name, sys.executable)
+        exit_code = run_benchmark(call)
+        if exit_code == 0:
+            finalize_diagnostics(args, staged, output)
+            staged.rename(destination)
+        return exit_code
+
+
+def finalize_diagnostics(args, staged, output):
+    diagnostics = staged / "diagnostics"
+    for seed in range(args.seed_start, args.seed_start + args.episodes):
+        trace, videos = diagnostic_artifacts(diagnostics, seed)
+        for artifact in (trace, *videos.values()):
+            if not artifact.is_file() or not artifact.stat().st_size:
+                raise SystemExit(f"missing or empty diagnostic artifact: {artifact.relative_to(staged)}")
+
+    paths = {"output": str(output), "diagnostic_dir": str(output.parent / "diagnostics")}
+    report = staged / output.name
+    result = json.loads(report.read_text())
+    result["run"].update(paths)
+    report.write_text(json.dumps(result, indent=2) + "\n")
+    manifest = diagnostics / "manifest.json"
+    metadata = json.loads(manifest.read_text())
+    metadata.update(paths)
+    manifest.write_text(json.dumps(metadata, indent=2) + "\n")
+
+
+def run_benchmark(call):
     return subprocess.run(call["arguments"], cwd=call["cwd"], env=call["env"], check=False).returncode
 
 

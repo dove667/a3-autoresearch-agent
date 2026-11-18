@@ -49,6 +49,8 @@ A3 的闭环评测统一由 `benchmark` 工具提交，不接受手拼的评测�
 
 `job_prepare` 与 `job_submit` 在提交前解析命令中的 `--task` 与 `--max-steps`：低于任务预算或省略而依赖入口默认值的评测命令会被拒绝，并在提示中给出该任务的正确数值。确实要做更长预算实验时显式提高 `max_steps`。工具返回 `report`，即结果 JSON 的 outputs 相对路径，可直接用 `job_artifact` 读取，不必猜测文件名。一格的多个 report 用 `benchmark_summary` 合并：它按每回合的任务上限截断入盒数、把原生通过单独计数，并在预算、动作块、prompt 风格、checkpoint 或 seed 不一致时点名——手工求和会把超过上限的回合和不同协议的分段算进同一个数。
 
+传入 `diagnostics=true` 可为选中的 seed 保存正面与左右腕部录像和逐步轨迹。工具回执的 `diagnostics` 按 seed 提供 `videos` 和 `trace` 的 outputs 相对路径，随正式 GPU 作业完成后使用。录制沿用 A3 的单 worker 模式，普通评测无需开启。按事件选帧见[视觉过程诊断](visual-diagnostics.md)。
+
 ## A3 接口查询
 
 `a3_api(symbols=[...])` 读取部署的 A3 源码，返回核心函数的文件、行号与完整签名，以及采集和评测 CLI 的开关与默认值。它只读文件，不 import 模块，因此不会因副作用失败。用途是替代“先跑挂、再读栈、再改脚本”：`train_act` 的模块位置、`aggregate_datasets` 的参数名、`merge_cookie_datasets` 对双 root 的要求都属于会漂移的契约。

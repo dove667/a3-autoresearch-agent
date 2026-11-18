@@ -13,12 +13,12 @@
 
 已检查A3 revision `7c34d38e58b6d94e76a9dec8b2b3bbc912263e38` 的 `CookieBatchBenchmark.diagnostic_dir` / `EpisodeDiagnostic`：CLI `--diagnostic-dir` 在正常返回时保存相机MP4、`trace.jsonl`、`success_diagnostics.json`和`result.json`，并使用workers=1。trace的零基step对应before-action图像，另记动作和after-step状态。部署前核对当前版本接口；突然终止可能留下部分文件。
 
-缺少原录制时，新rollout或重放作为新的诊断记录。原生 `a3-sim replay` 从parquet读动作、关闭观察相机渲染，但只恢复其支持的seed/task条件，不自动恢复任意benchmark状态或导出指定帧。
+缺少原录制时，可用 `benchmark(diagnostics=true)` 针对代表性 seed 补录；回执给出每个 seed 的正面、左右腕部录像和轨迹路径。新 rollout 或重放保存为新的诊断记录。原生 `a3-sim replay` 从parquet读动作、关闭观察相机渲染，但只恢复其支持的seed/task条件，不自动恢复任意benchmark状态或导出指定帧。
 
 需要选帧重构时，使用已授权driver推进每一步动力学，仅在目标step渲染指定相机；核对初态、动作约定、版本、控制频率和可用已保存状态。不要跳过中间step，也不要把重构帧标为原录制。
 
 ## 调用视觉辅助工具
 
-调用 `vision_inspect`，提供 `question` 和1–6个按时间排列的 `frames`。每帧填写 `job_id`、相对 `path`、`episode_id`、`step`、`sim_time_s`、`camera`；area默认outputs，图片在job工作区时填写area="workspace"。
+调用 `vision_inspect`，提供 `question` 和按时间排列的 `frames`。根据动作窗口选择帧数，遮挡或信号不足时按视角和动作阶段补查。每帧填写 `job_id`、相对 `path`、`episode_id`、`step`、`sim_time_s`、`camera`；area默认outputs，图片在job工作区时填写area="workspace"。
 
-每张PNG/JPEG最多512 KiB、边长最多1024像素，总量最多3 MiB。同一episode按step递增排列。保存返回的帧来源、模型和分析；结合原始动作与状态判断结论，避免把大段Base64或全部视频放进主上下文。当前execution提示词定义实际接口限制。
+每张PNG/JPEG最多512 KiB、边长最多1024像素，原图和标准化图像各自合计最多3 MiB，帧数还受 worker 上下文和上游接口限制。同一episode按step递增排列。保存返回的帧来源、模型和分析；结合原始动作与状态判断结论，避免把大段Base64或全部视频放进主上下文。当前execution提示词定义实际接口限制。

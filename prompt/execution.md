@@ -1,6 +1,6 @@
 # 研究工具与执行约定
 
-Version: 0.46.0
+Version: 0.47.0
 
 工具定义给出参数、默认值和限制；本文件说明常用流程。所有工具返回 `ok`：成功时直接读取同层结果；失败时读取 `error`、`hint` 和相关编号，修正后再调用。作业的 `status="failed"` 是执行结果，先读日志与证据再判断原因。
 
@@ -84,11 +84,13 @@ ACT 只读三路相机和 16 维状态，没有语言输入：用 `act:` 时传 
 
 它返回 `prepared_id`、`preflight_job_id` 与 `report`（远端 outputs 相对路径），预检通过后 `job_submit(prepared_id=...)`，结果直接读 `report`。不要手拼 benchmark 命令：低于任务预算的 `--max-steps` 会被提交层拒绝，因为那样得到的是预算上限而不是策略表现。
 
+需要定位抓取、搬运或放置失败时，对代表性 seed 传 `diagnostics=true`。返回的 `diagnostics` 按 seed 列出正面、左右腕部 MP4 和逐步 `trace.jsonl` 的 outputs 相对路径，GPU 作业完成后读取。录像帧对应同一步动作前的观察，trace 同时记录该步动作与动作后状态。
+
 一格的多个 report 用 `benchmark_summary(reports=[{job_id,path},...])` 汇总：它按每回合的任务上限截断、把入盒数和原生通过分开算，并指出各段之间协议不一致（预算、动作块、prompt 风格、checkpoint、重复 seed）。不要手工加总 report 的分数——入盒数可能超过任务上限，跨预算的分段也不能直接相加。
 
 已有结果通过 `evaluation_compare(candidate_job_id,baseline_job_id,candidate_manifest,baseline_manifest)` 配对；manifest 路径相对各自 outputs。比较固定条件时使用 `conditions_compare`。缺失、重复或条件不匹配先查证，保留实际评测覆盖。
 
-`evaluation_compare` 返回的 `vision_request` 可直接作为 `vision_inspect` 参数。自行选帧时填写 question 和1–6帧，每帧包含 job_id、相对 path、episode_id、step、sim_time_s、camera；area 默认 outputs。同一 episode 连续按时间排列，图片应为有权访问的 PNG/JPEG。观察结论按实际帧覆盖解释，并与同步动作、状态和原生分数核对。
+`evaluation_compare` 返回的 `vision_request` 可直接作为 `vision_inspect` 参数。自行选帧时，先用 trace 定位动作窗口，再用 CPU 作业从正面和腕部录像提取失败前、发生时和之后的连续帧。传 question 和有权访问的 PNG/JPEG 引用，每帧包含 job_id、相对 path、episode_id、step、sim_time_s、camera，area 默认 outputs。同一 episode 连续按时间排列。帧数按问题、图片大小和 worker 上下文决定。遇到遮挡、采样间隔大或预算不足时，围绕同一动作换视角或缩小间隔，分组补查。观察结论与同步动作、状态和原生分数核对。
 
 ## 复用数据与模型
 
