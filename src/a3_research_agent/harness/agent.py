@@ -26,6 +26,7 @@ from a3_research_agent.harness import (
     skill_registry,
     tool_catalog,
     tool_contracts,
+    tool_json,
     tool_results,
     waiting,
 )
@@ -146,10 +147,13 @@ def tool(name, arguments):
 def dispatch_tool_call(call):
     try:
         try:
-            arguments = json.loads(call.get("arguments", ""))
+            # A model sometimes leaks a protocol delimiter into the argument text;
+            # that marker is unambiguous, so it is removed before failing the call.
+            arguments = tool_json.loads(call.get("arguments", ""))
         except (ValueError, TypeError):
             return tool_results.failure(
-                "invalid_tool_json", "Send one valid JSON object as arguments."
+                "invalid_tool_json",
+                "Send one valid JSON object as arguments; do not include tool delimiters.",
             )
         if not isinstance(arguments, dict):
             return tool_results.failure(
