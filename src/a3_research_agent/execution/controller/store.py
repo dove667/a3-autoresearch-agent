@@ -30,7 +30,15 @@ class JobStore:
             raise ValueError("Job IDs must be strings")
         if len(set(identifiers)) != len(identifiers):
             raise ValueError("Select distinct job IDs")
-        jobs = [self.load(identifier, request.get("experiment_id")) for identifier in identifiers]
+        jobs = []
+        unresolved = []
+        for identifier in identifiers:
+            try:
+                jobs.append(self.load(identifier, request.get("experiment_id")))
+            except PermissionError:
+                if request.get("allow_missing") is not True:
+                    raise
+                unresolved.append(identifier)
         observed_at = time.time()
         records = []
         for job in jobs:
@@ -42,6 +50,11 @@ class JobStore:
                 else None,
                 "retry_count": job.get("retry_count", 0),
                 "observed_at": observed_at,
+                **(
+                    {"benchmark_receipt": job["benchmark_receipt"]}
+                    if job.get("benchmark_receipt")
+                    else {}
+                ),
                 **({"error": job["error"]} if "error" in job else {}),
             }
             if (
@@ -60,6 +73,7 @@ class JobStore:
             records.append(record)
         return {
             "jobs": records,
+            **({"unresolved_jobs": unresolved} if unresolved else {}),
         }
 
     def find_process_job(self, job_id: str) -> dict | None:
@@ -107,6 +121,11 @@ class JobStore:
             jobs.append(
                 {
                     "status": public_job_status(job),
+                    **(
+                        {"benchmark_receipt": job["benchmark_receipt"]}
+                        if job.get("benchmark_receipt")
+                        else {}
+                    ),
                     **{
                         key: job.get(key)
                         for key in ("job_id", "created_at", "gpu", "gpu_uuid", "exit_code")
@@ -184,6 +203,7 @@ class JobStore:
         *,
         run_id: str | None = None,
         job_id: str | None = None,
+        benchmark_receipt: str | None = None,
     ) -> dict:
         job = {
             "job_id": job_id or uuid.uuid4().hex,
@@ -195,6 +215,7 @@ class JobStore:
             "created_at": time.time(),
             "backend": "process",
             **({"run_id": run_id} if run_id else {}),
+            **({"benchmark_receipt": benchmark_receipt} if benchmark_receipt else {}),
         }
         directory = self.metadata_path(job["job_id"]).parent
         directory.mkdir(mode=0o700)

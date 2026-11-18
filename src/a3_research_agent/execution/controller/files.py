@@ -61,6 +61,7 @@ def validate_submit(request: dict) -> None:
         "input_exports",
         "job_id",
         "retry_on_gpu_contention",
+        "benchmark_receipt",
     }:
         raise ValueError("unknown submit fields")
     if "job_id" in request and (
@@ -83,6 +84,13 @@ def validate_submit(request: dict) -> None:
         raise TypeError("gpu must be a boolean")
     if type(request.get("retry_on_gpu_contention", True)) is not bool:
         raise TypeError("retry_on_gpu_contention must be a boolean")
+    receipt = request.get("benchmark_receipt")
+    if receipt is not None and (
+        not isinstance(receipt, str)
+        or len(receipt) > 512
+        or not re.fullmatch(r"[a-z0-9-]+/seed-[0-9]+\.receipt\.json", receipt)
+    ):
+        raise ValueError("invalid benchmark receipt path")
     memory = request.get("gpu_memory_mb")
     if memory is not None and (type(memory) is not int or memory < 1):
         raise ValueError("gpu_memory_mb must be a positive integer")

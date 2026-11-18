@@ -35,6 +35,7 @@ FRAME = {
     "additionalProperties": False,
 }
 FIELDS = {
+    "startup_checks": {},
     "vision_status": {},
     "vision_inspect": {
         "question": STRING,
@@ -59,11 +60,23 @@ FIELDS = {
             "items": {
                 "type": "object",
                 "properties": {"job_id": JOB_ID, "path": STRING},
-                "required": ["job_id", "path"],
+                "required": ["job_id"],
                 "additionalProperties": False,
             },
         },
-        "task": {"type": "string", "enum": ["2x5", "2x10"]},
+        "task": {
+            "type": "string",
+            "enum": [
+                "2x5",
+                "2x10",
+                "missing-columns",
+                "partial-gaps",
+                "cross-column",
+                "tilted",
+                "prefilled",
+                "two-boxes",
+            ],
+        },
     },
     "gpu_status": {},
     "runtime_status": {"scope": {"type": "string", "enum": ["self", "run"]}},
@@ -86,6 +99,8 @@ FIELDS = {
     "session_cancel": {"session_id": SESSION_ID},
 }
 DESCRIPTIONS = {
+    "startup_checks": "Read this run's A3 and dataset startup job IDs, status, report paths, "
+    "and available audit results. Use it before repeating these checks.",
     "vision_status": "Check visual inspection availability and frame limits.",
     "vision_inspect": "Use the visual helper first when locating a failure or screening several "
     "action windows or cameras. Returns observations and source hashes for authorized PNG/JPEG "
@@ -98,7 +113,9 @@ DESCRIPTIONS = {
     "Use smaller groups if needed for the request budget.",
     "evaluation_compare": "Compare existing baseline/candidate episode results by job IDs and outputs-relative JSON manifests. Returns paired results and a ready-to-use visual inspection request when available.",
     "conditions_compare": "Compare declared baseline/candidate conditions. Each object includes status, report_present, and protocol(task,seeds,workers,step_budget,randomization,success_rule). Read actual results before judging improvement.",
-    "benchmark_summary": "Combine the benchmark reports of one evaluation cell. Caps each episode at its own maximum, reports in-box counts and native passes separately, and names every protocol difference between segments (task, profile, step budget, action horizon, prompt style, checkpoint, duplicate seeds). Use it instead of adding report totals by hand.",
+    "benchmark_summary": "Combine benchmark results for one evaluation cell. Pass job IDs alone "
+    "for jobs with a registered receipt, or add the outputs-relative report path for older jobs. "
+    "Reports raw counts, capped scores, native passes, and protocol differences.",
     "gpu_status": "Read aggregate available GPU capacity and utilization; the Controller selects actual devices.",
     "runtime_status": "Read model usage and runtime telemetry for self (default) or the current run.",
     "export_create": "Seal job files into a reusable read-only export. area defaults outputs. Creation is asynchronous; check export_status, then export_manifest.",
@@ -214,8 +231,9 @@ def dispatch(name, args, request):
         if name not in FIELDS:
             fail("unknown_host_tool", "Choose a registered high-level research tool.")
         arguments(args, FIELDS[name])
-        if name in {"vision_status", "gpu_status", "export_list", "session_list"}:
+        if name in {"startup_checks", "vision_status", "gpu_status", "export_list", "session_list"}:
             route = {
+                "startup_checks": "/startup-checks",
                 "vision_status": "/vision/status",
                 "gpu_status": "/resources/gpus",
                 "export_list": "/jobs/exports",

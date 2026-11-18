@@ -131,7 +131,9 @@ def test_agent_loop_recovers_context_config_and_compaction_without_tool_replay(
     monkeypatch.setattr(agent.compaction, "ForkCompactor", Compactor)
     monkeypatch.setattr(cm, "configure", configure)
     monkeypatch.setattr(agent, "req", lambda *args, **kwargs: {})
-    monkeypatch.setattr(agent, "operational_message", lambda: {"role": "user", "content": "state"})
+    monkeypatch.setattr(
+        agent, "operational_message", lambda **kwargs: {"role": "user", "content": "state"}
+    )
     monkeypatch.setattr(recovery, "wait", lambda error, *args, **kwargs: waits.append(error))
     monkeypatch.setattr(
         agent, "dispatch_tool_call", lambda call: tools.append(call) or {"ok": True}

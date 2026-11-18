@@ -13,15 +13,21 @@ Run it through the `dataset_audit` tool; it is not a research script.
 """
 
 import argparse
+import inspect
 import json
 import os
 from collections import Counter
+from importlib import import_module
 from pathlib import Path
 
 REPORT = "a3-preflight.json"
 OUTPUT = "audit.json"
 TASK_HINTS = (("2x10", "2x10"), ("2x5", "2x5"))
-EXPECTED_STATE = 16
+A3_AUDIT_MODULES = (
+    "a3_dual_arm_sim.data.audit",
+    "a3_dual_arm_sim.learning.act_training",
+    "a3_dual_arm_sim.learning.training",
+)
 
 
 def parser():
@@ -69,21 +75,24 @@ def layout(task):
 
 def audit(dataset_root, repo_id):
     """Call the deployed auditor through whichever layout the package exposes."""
-    from a3_dual_arm_sim.learning.training import audit_training_dataset
-
-    try:
-        from a3_dual_arm_sim.learning.act_training import audit_training_dataset as act_audit
-    except ImportError:
-        act_audit = None
-    for candidate in (act_audit, audit_training_dataset):
-        if candidate is None:
-            continue
+    for name in A3_AUDIT_MODULES:
         try:
-            value = candidate(dataset_root, repo_id=repo_id) if repo_id else candidate(dataset_root)
-            return value if isinstance(value, dict) else {"result": repr(value)}
-        except TypeError:
+            module = import_module(name)
+        except ModuleNotFoundError as error:
+            if error.name and (name == error.name or name.startswith(error.name + ".")):
+                continue
+            raise
+        candidate = getattr(module, "audit_training_dataset", None)
+        if not callable(candidate):
             continue
-    raise SystemExit("the deployed A3 package exposes no usable dataset auditor")
+        signature = inspect.signature(candidate)
+        try:
+            arguments = signature.bind(dataset_root, repo_id=repo_id)
+        except TypeError:
+            arguments = signature.bind(dataset_root)
+        value = candidate(*arguments.args, **arguments.kwargs)
+        return value if isinstance(value, dict) else {"result": repr(value)}
+    return None
 
 
 def breakdown(rows):
@@ -97,12 +106,8 @@ def breakdown(rows):
         "unrated": sum(1 for row in rows if row.get("success") is None),
         "seeds": len({row.get("seed") for row in rows if row.get("seed") is not None}),
         "frames": sum(row.get("frames") or 0 for row in rows),
-        "stored_action_mode": dict(
-            Counter(str(row.get("stored_action_mode")) for row in rows)
-        ),
-        "source_action_mode": dict(
-            Counter(str(row.get("source_action_mode")) for row in rows)
-        ),
+        "stored_action_mode": dict(Counter(str(row.get("stored_action_mode")) for row in rows)),
+        "source_action_mode": dict(Counter(str(row.get("source_action_mode")) for row in rows)),
     }
 
 
@@ -135,18 +140,27 @@ def warnings(summary, counts, info):
 
 def main(argv=None):
     args = parser().parse_args(argv)
-    root = Path(args.dataset_root)
+    root = Path(args.dataset_root).resolve()
     if not root.is_dir():
         raise SystemExit(f"dataset directory missing: {root}")
     info = load_json(root / "meta" / "info.json")
     summary = load_json(root / "collection_summary.json")
     rows = episodes(root / "a3_episode_metadata.jsonl")
     counts = breakdown(rows)
+    repo_id = args.repo_id or info.get("repo_id") or f"local/{root.name}"
+    audit_result = audit(root, repo_id)
+    messages = warnings(summary, counts, info)
+    if audit_result is None:
+        if not info or not rows:
+            raise SystemExit(
+                "dataset validation requires the A3 auditor or readable metadata and episodes"
+            )
+        messages.append("A3 auditor is unavailable. Only local dataset metadata was examined.")
     report = {
         "schema": 1,
         "status": "passed",
         "dataset_root": str(root),
-        "repo_id": args.repo_id,
+        "repo_id": repo_id,
         "info": {
             key: info.get(key)
             for key in ("total_episodes", "total_frames", "total_tasks", "fps", "codebase_version")
@@ -162,8 +176,9 @@ def main(argv=None):
             )
         },
         "metadata": counts,
-        "audit": audit(str(root), args.repo_id),
-        "warnings": warnings(summary, counts, info),
+        "audit": audit_result,
+        "validation": "metadata_only" if audit_result is None else "a3_auditor",
+        "warnings": messages,
     }
     if os.environ.get("A3_RESEARCH_PREFLIGHT") == "1":
         compact = {
@@ -172,6 +187,7 @@ def main(argv=None):
             "dataset_root": str(root),
             "episodes": counts.get("episodes"),
             "layouts": counts.get("layouts"),
+            "validation": report["validation"],
         }
         Path.cwd().joinpath(REPORT).write_text(json.dumps(compact, sort_keys=True) + "\n")
         print(json.dumps(compact, sort_keys=True))

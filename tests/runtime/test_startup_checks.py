@@ -51,6 +51,41 @@ def test_a_failing_controller_cannot_stop_the_window(tmp_path):
 
 
 def test_the_result_is_recorded_next_to_the_run(tmp_path):
-    startup_checks.record(tmp_path, {"jobs": [{"kind": "a3_api", "job_id": "c" * 32}], "errors": []})
+    startup_checks.record(
+        tmp_path, {"jobs": [{"kind": "a3_api", "job_id": "c" * 32}], "errors": []}
+    )
     written = json.loads((tmp_path / "startup-checks.json").read_text())
     assert written["jobs"][0]["kind"] == "a3_api"
+
+
+def test_startup_observation_records_final_dataset_report(tmp_path):
+    identifier = "a" * 32
+    checks = {"jobs": [{"kind": "dataset_audit", "job_id": identifier}], "errors": []}
+    startup_checks.record(tmp_path, checks)
+    requests = []
+
+    def get(path):
+        requests.append(path)
+        if "artifacts?" in path:
+            return {
+                "encoding": "utf-8",
+                "content": json.dumps(
+                    {
+                        "schema": 1,
+                        "status": "passed",
+                        "metadata": {"episodes": 37, "layouts": {"2x5": 37}},
+                        "warnings": ["mixed layout absent"],
+                    }
+                ),
+            }
+        return {"job_id": identifier, "status": "completed", "exit_code": 0}
+
+    assert startup_checks.observe(tmp_path, checks, get)
+    assert startup_checks.observe(tmp_path, checks, get)
+    written = json.loads((tmp_path / "startup-checks.json").read_text())
+    job = written["jobs"][0]
+    assert job["status"] == "completed"
+    assert job["report"] == "dataset-audit-startup/audit.json"
+    assert job["result"]["episodes"] == 37
+    assert job["result"]["warnings"] == ["mixed layout absent"]
+    assert len(requests) == 2

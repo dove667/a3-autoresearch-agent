@@ -9,7 +9,10 @@ from fastapi.testclient import TestClient
 
 from a3_research_agent.execution.controller.store import JobStore
 from a3_research_agent.host.gateway.app import create_app
-from a3_research_agent.host.gateway.job_observation import JobStatusCache
+from a3_research_agent.host.gateway.job_observation import (
+    ControllerObservationUnavailable,
+    JobStatusCache,
+)
 
 
 def api(tmp_path, remote):
@@ -38,6 +41,16 @@ def test_compact_controller_batch_keeps_retry_nonterminal(tmp_path):
     assert "gpu_uuid" not in result["jobs"][0]
     with pytest.raises(PermissionError):
         store.job_statuses({"experiment_id": "other", "job_ids": [job["job_id"]]})
+    missing_id = "a" * 32
+    partial = store.job_statuses(
+        {
+            "experiment_id": "main",
+            "job_ids": [missing_id, job["job_id"]],
+            "allow_missing": True,
+        }
+    )
+    assert partial["unresolved_jobs"] == [missing_id]
+    assert partial["jobs"][0]["status"] == "restarting"
     with pytest.raises(ValueError):
         store.job_statuses({"experiment_id": "main", "job_ids": []})
 
@@ -75,15 +88,22 @@ def test_wait_batches_and_caches_without_logs_or_hardware(tmp_path):
     assert client.post("/jobs/wait", json=body).status_code == 401
 
 
-def test_controller_transport_fault_is_recorded_for_operator_not_returned_to_model(tmp_path):
+def test_controller_transport_fault_is_visible_and_backoff_shared(tmp_path):
+    calls = []
+
     def unavailable(*a):
+        calls.append(a)
         raise HTTPException(502, "PRIVATE_CONTROLLER_DIAGNOSTIC")
 
     client = api(tmp_path, unavailable)
-    response = client.post("/jobs/wait", headers=HEADERS, json={"job_ids": ["first"], "seconds": 0})
-    assert response.status_code == 200
-    assert response.json()["reason"] == "timeout"
-    assert "PRIVATE_CONTROLLER_DIAGNOSTIC" not in response.text
+    for job in ("first", "second"):
+        response = client.post("/jobs/wait", headers=HEADERS, json={"job_ids": [job], "seconds": 0})
+        assert response.status_code == 200
+        assert response.json()["reason"] == "observation_error"
+        assert response.json()["observation"]["status"] == "controller_unavailable"
+        assert response.json()["observation"]["retry_after_seconds"] > 0
+        assert "PRIVATE_CONTROLLER_DIAGNOSTIC" not in response.text
+    assert len(calls) == 1
     assert "502" in (tmp_path / "controller-incidents.jsonl").read_text()
 
 
@@ -166,6 +186,29 @@ def test_cache_expiry_and_failed_refresh_do_not_hide_state_changes():
         cache.read_many([key], lambda keys: {key: {"status": "completed"}})[key]["status"]
         == "completed"
     )
+
+
+def test_cache_backoff_only_logs_real_attempts_and_resets_after_success():
+    now = [0]
+    incidents = []
+    cache = JobStatusCache(clock=lambda: now[0], on_transport_error=incidents.append)
+    key = ("summary", "main", "first")
+
+    def unavailable(_):
+        raise HTTPException(502)
+
+    for moment, retry in [(0, 5), (2, 3), (5, 10), (7, 8)]:
+        now[0] = moment
+        with pytest.raises(ControllerObservationUnavailable) as error:
+            cache.read_many([key], unavailable)
+        assert error.value.detail["retry_after_seconds"] == retry
+    assert incidents == [502, 502]
+    now[0] = 15
+    cache.read_many([key], lambda _: {key: {"status": "running"}})
+    now[0] = 45
+    with pytest.raises(ControllerObservationUnavailable) as error:
+        cache.read_many([key], unavailable)
+    assert error.value.detail["retry_after_seconds"] == 5
 
 
 def test_wait_does_not_hold_the_session_lock(tmp_path):

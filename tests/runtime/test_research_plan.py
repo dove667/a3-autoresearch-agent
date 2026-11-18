@@ -98,13 +98,115 @@ def test_plan_show_orders_steps_by_dependencies_and_priority(tmp_path, monkeypat
                 "depends_on": ["first"],
             },
             {"id": "first", "task": "first", "criterion": "first done", "priority": 100},
-            {"id": "independent", "task": "independent", "criterion": "independent done", "priority": 50},
+            {
+                "id": "independent",
+                "task": "independent",
+                "criterion": "independent done",
+                "priority": 50,
+            },
         ],
     )
     view = call("plan", action="show")
     assert view["order"] == ["first", "independent", "later"]
     assert list(view["steps"]) == view["order"]
     assert view["steps"]["later"]["depends_on"] == ["first"]
+
+
+def test_decision_refresh_reconciles_a_historical_job_without_changing_the_plan(
+    tmp_path, monkeypatch
+):
+    for variable in ("A3_WORKSPACE", "A3_INPUT_ROOT", "A3_REFERENCE_ROOT"):
+        monkeypatch.setenv(variable, str(tmp_path))
+    job = "a" * 32
+    call(
+        "plan",
+        action="update",
+        revision=0,
+        direction={"objective": "Compare evaluation outcomes"},
+        steps=[
+            {"id": "evaluate", "task": "Evaluate", "criterion": "Check report", "jobs": [job]},
+            {
+                "id": "analyze",
+                "task": "Analyze",
+                "criterion": "Write findings",
+                "depends_on": ["evaluate"],
+            },
+        ],
+    )
+    before = call("plan", action="show")
+    assert before["ready"] == []
+    assert "job_status" in before["next_action"]
+
+    requests = []
+
+    def observe(method, path, body, **kwargs):
+        assert (method, path, body) == ("POST", "/jobs/observe", {"job_ids": [job]})
+        requests.append(job)
+        return {
+            "jobs": [
+                {
+                    "job_id": job,
+                    "status": "completed",
+                    "access": "read_only",
+                    "owner_scope": "prior-agent",
+                    "owner_run": "prior-run",
+                    "observed_at": 100,
+                }
+            ],
+        }
+
+    monkeypatch.setattr(agent, "req", observe)
+    source = agent.planning.load()
+    refreshed = json.loads(agent.operational_message(observe_jobs=True)["content"])
+    agent.operational_message(observe_jobs=True)
+    assert requests == [job]
+    assert refreshed["job_reconciliation"]["status"] == "observed"
+    assert agent.planning.load() == source
+    current = call("plan", action="show")
+    assert current["review_due"] == [{"step": "evaluate", "route": "", "jobs": {job: "completed"}}]
+    assert current["steps"]["evaluate"]["status"] == "pending"
+    assert current["steps"]["analyze"]["unmet_dependencies"] == ["evaluate"]
+    receipt = current["steps"]["evaluate"]["job_observations"][job]
+    assert receipt["owner_run"] == "prior-run" and receipt["access"] == "read_only"
+    unrelated_jobs = [
+        {"job_id": f"{index:032x}", "status": "completed", "observed_at": 200 + index}
+        for index in range(65)
+    ]
+    agent.operational_state.record_gateway("GET", "/jobs", {"jobs": unrelated_jobs})
+    assert len(agent.operational_state.load()["jobs"]) == 65
+    assert call("plan", action="show")["steps"]["evaluate"]["observed_jobs"] == {job: "completed"}
+
+
+def test_list_and_wait_update_lifecycle_without_regressing_to_cached_rows():
+    job = "b" * 32
+    operations = agent.operational_state
+    operations.record_gateway(
+        "GET",
+        "/jobs?scope=other",
+        {"jobs": [{"job_id": job, "status": "running", "observed_at": 100, "access": "read_only"}]},
+    )
+    operations.record_gateway(
+        "POST",
+        "/jobs/wait",
+        {"jobs": [{"job_id": job, "status": "queued", "observed_at": 90}]},
+    )
+    operations.record_gateway(
+        "POST",
+        "/jobs/wait",
+        {"jobs": [{"job_id": job, "status": "observation_error", "observed_at": 101}]},
+    )
+    receipt = operations.load()["jobs"][job]
+    assert receipt["status"] == "running"
+    assert receipt["observed_at"] == 100
+    assert receipt["access"] == "read_only"
+    assert receipt["observation_error"] == "job_metadata_unavailable"
+    operations.record_gateway(
+        "POST",
+        "/jobs/wait",
+        {"jobs": [{"job_id": job, "status": "completed", "observed_at": 110}]},
+    )
+    receipt = operations.load()["jobs"][job]
+    assert receipt["status"] == "completed" and "observation_error" not in receipt
 
 
 def test_memory_search_preserves_sources_and_superseded_notes(tmp_path, monkeypatch):

@@ -341,6 +341,12 @@ def test_runner_budget_and_output_directory_are_bounded(tmp_path, monkeypatch):
 
     def fake_run(arguments, cwd, env, check):
         seen.update(arguments=arguments, cwd=cwd, env=env, check=check)
+        report = Path(arguments[arguments.index("--output") + 1])
+        episodes = [
+            {"seed": seed, "max_score": 10, "score": 0, "success": False, "steps": 500}
+            for seed in range(10000, 10005)
+        ]
+        report.write_text(json.dumps({"run": {}, "episodes": episodes}))
         return type("Done", (), {"returncode": 0})()
 
     monkeypatch.setattr(benchmark_runner.subprocess, "run", fake_run)
@@ -623,12 +629,17 @@ def test_diagnostic_runner_publishes_report_and_video_together(tmp_path, monkeyp
         assert not (tmp_path / args.output_dir).exists()
         exit_code, complete = next(attempts)
         metadata = {"output": str(report), "diagnostic_dir": str(diagnostics)}
-        report.write_text(json.dumps({"run": metadata}))
+        report.write_text(json.dumps({
+            "run": metadata,
+            "episodes": [
+                {"seed": 10000, "score": 5, "max_score": 20, "success": False, "steps": 1}
+            ],
+        }))
         diagnostics.mkdir()
         (diagnostics / "manifest.json").write_text(json.dumps(metadata))
         episode = diagnostics / "seed_10000"
         episode.mkdir()
-        (episode / "trace.jsonl").write_text("{}\n")
+        (episode / "trace.jsonl").write_text('{"step": 0, "after": {}}\n')
         for camera in ("front", "left_wrist", "right_wrist"):
             if complete or camera != "right_wrist":
                 (episode / f"{camera}.mp4").write_bytes(b"video")
@@ -648,3 +659,4 @@ def test_diagnostic_runner_publishes_report_and_video_together(tmp_path, monkeyp
     assert json.loads(report.read_text())["run"] == metadata
     assert json.loads(manifest.read_text()) == metadata
     assert (diagnostics / "seed_10000/front.mp4").is_file()
+    assert (report.parent / "seed-10000.receipt.json").is_file()

@@ -66,6 +66,17 @@ def next_action(steps, ready, review_due, routes):
     if running:
         job, status = next(iter(running.items()))
         return f"没有可开工的步骤，作业 {job} 在 {status}：等通知，不要重复提交。"
+    for key, step in steps.items():
+        if step["status"] not in ("pending", "active") or step["unmet_dependencies"]:
+            continue
+        unobserved = [
+            job for job, status in step["observed_jobs"].items() if status == "unobserved"
+        ]
+        if unobserved and routes.get(step.get("route"), {}).get("status") not in (
+            "paused",
+            "completed",
+        ):
+            return f"先确认 {key} 的已有作业 {unobserved[0]}，用 job_status 核对后再决定是否提交。"
     blocked = [key for key, step in steps.items() if step["status"] == "blocked"]
     if blocked:
         key = blocked[0]
@@ -83,7 +94,7 @@ def next_action(steps, ready, review_due, routes):
         )
         if any(term in reason.casefold() for term in operator_terms):
             return (
-                f"{key} 需要操作者处理：先 research_status(status=\"blocked\", reason=..., "
+                f'{key} 需要操作者处理：先 research_status(status="blocked", reason=..., '
                 "required_action=..., evidence=[...]) 上报，不要自行绕过或重复检查。"
             )
         return f"所有步骤都停着（{key} 等）：改变条件或新增可执行步骤，别只重复检查。"
@@ -97,22 +108,29 @@ def view(plan=None, *, jobs=None, compact=False):
     order = ordered_steps(plan["steps"])
     ready = []
     steps = {}
+    covered = dict(plan.get("reviewed_jobs", {}))
+    for review in plan.get("reviews", []):
+        covered.update(review["observed_jobs"])
     for key in order:
         step = plan["steps"][key]
         pending = [dep for dep in step["depends_on"] if plan["steps"][dep]["status"] != "done"]
-        observed = {job: jobs.get(job, {}).get("status", "unobserved") for job in step["jobs"]}
+        observed = {
+            job: jobs.get(job, {}).get("status", covered.get(job, "unobserved"))
+            for job in step["jobs"]
+        }
         if (
             step["status"] in ("pending", "active")
             and not pending
             and plan.get("routes", {}).get(step.get("route"), {}).get("status")
             not in ("paused", "completed")
-            and all(
-                status in operational.TERMINAL_JOB_STATES or status == "unobserved"
-                for status in observed.values()
-            )
+            and all(status in operational.TERMINAL_JOB_STATES for status in observed.values())
         ):
             ready.append(key)
         steps[key] = {**step, "unmet_dependencies": pending, "observed_jobs": observed}
+        if not compact and observed:
+            steps[key]["job_observations"] = {
+                job: operational.job_observation(jobs[job]) for job in observed if job in jobs
+            }
     ready.sort(
         key=lambda key: (
             steps[key].get("priority", 0),
@@ -121,9 +139,6 @@ def view(plan=None, *, jobs=None, compact=False):
         reverse=True,
     )
     routes = plan.get("routes", {})
-    covered = dict(plan.get("reviewed_jobs", {}))
-    for review in plan.get("reviews", []):
-        covered.update(review["observed_jobs"])
     review_due = []
     for key, step in steps.items():
         terminal = {
@@ -173,11 +188,13 @@ def view(plan=None, *, jobs=None, compact=False):
         ]
         result["parallelism"] = {
             "ready_steps": len(ready),
-            "active_jobs": sum(
-                1
-                for step in steps.values()
-                for status in step["observed_jobs"].values()
-                if status not in operational.TERMINAL_JOB_STATES
+            "active_jobs": len(
+                {
+                    job
+                    for step in steps.values()
+                    for job, status in step["observed_jobs"].items()
+                    if status in operational.JOB_STATES - operational.TERMINAL_JOB_STATES
+                }
             ),
         }
         visible = {key: steps[key] for key in ordered[:5]}
@@ -313,9 +330,9 @@ def dispatch_locked(arguments):
             observed = operational.load().get("jobs", {})
             jobs = {
                 job: observed.get(job, {}).get("status", "unobserved")
-                for step in plan["steps"].values()
-                if step.get("route") == key
-                for job in step["jobs"]
+                for step_id, item in plan["steps"].items()
+                if item.get("route") == key and (step is None or step_id == step)
+                for job in item["jobs"]
                 if observed.get(job, {}).get("status") in operational.TERMINAL_JOB_STATES
             }
             proposed = {**plan, "routes": {k: dict(v) for k, v in plan["routes"].items()}}

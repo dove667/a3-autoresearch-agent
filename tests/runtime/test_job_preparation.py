@@ -216,3 +216,72 @@ def test_rejected_preflight_does_not_block_corrected_deployment_retry(tmp_path):
         job_tools.dispatch("job_prepare", args, request, workspace=tmp_path)["preflight_job_id"]
         == CPU_ID
     )
+
+
+def test_cuda_preflight_uses_frozen_request_and_fences_production(tmp_path):
+    from a3_research_agent.harness import job_preparation
+
+    probe_id = "d" * 32
+    posts = []
+    statuses = {
+        CPU_ID: {"job_id": CPU_ID, "status": "completed", "exit_code": 0},
+        probe_id: {"job_id": probe_id, "status": "queued", "exit_code": None},
+    }
+
+    def request(method, path, body=None):
+        if method == "POST":
+            posts.append(body)
+            return {"job_id": [CPU_ID, probe_id, GPU_ID][len(posts) - 1]}
+        if "artifacts?" in path:
+            return {"encoding": "utf-8", "content": '{"schema": 1, "status": "passed"}'}
+        return statuses[path.rsplit("/", 1)[-1]]
+
+    job = job_tools.submit_request(gpu_request(tmp_path), tmp_path, default_gpu=True)
+    job["preflight"] = {"cuda": True}
+    prepared = job_preparation.prepare(job, request)
+    pending = job_preparation.submit(prepared["prepared_id"], request, tmp_path)
+    assert pending["gpu_preflight_job_id"] == probe_id
+    assert job_preparation.submit(prepared["prepared_id"], request, tmp_path) == pending
+    assert len(posts) == 2
+    cpu, probe = posts
+    assert cpu["gpu"] is False
+    assert probe["gpu"] is True and probe["gpu_memory_mb"] == job["gpu_memory_mb"]
+    for field in ("workspace_files", "input_exports"):
+        assert probe[field] == cpu[field] == job[field]
+    assert probe["command"][-len(job["command"]) :] == job["command"]
+    statuses[probe_id].update(status="completed", exit_code=0)
+    result = job_preparation.submit(prepared["prepared_id"], request, tmp_path)
+    assert result["job_id"] == GPU_ID
+    assert posts[-1]["command"] == job["command"]
+    assert all("preflight" not in body for body in posts)
+
+
+def test_cpu_submit_cannot_forward_a_preflight_contract(tmp_path):
+    calls = []
+    result = job_tools.dispatch(
+        "job_submit",
+        {"command": ["python", "train.py"], "gpu": False, "preflight": {"cuda": True}},
+        lambda *args: calls.append(args),
+        workspace=tmp_path,
+    )
+    assert result["error"] == "invalid_preflight"
+    assert calls == []
+
+
+def test_definite_resource_rejection_can_be_retried(tmp_path):
+    args = gpu_request(tmp_path)
+    _, _, _, base_request = request_fixture()
+    checked = job_tools.dispatch("job_prepare", args, base_request, workspace=tmp_path)
+    admission = iter([{"status": "resource_busy"}, {"job_id": GPU_ID, "status": "queued"}])
+
+    def request(method, path, body=None):
+        if method == "POST":
+            return next(admission)
+        return base_request(method, path, body)
+
+    submit = {"prepared_id": checked["prepared_id"]}
+    assert (
+        job_tools.dispatch("job_submit", submit, request, workspace=tmp_path)["status"]
+        == "resource_busy"
+    )
+    assert job_tools.dispatch("job_submit", submit, request, workspace=tmp_path)["job_id"] == GPU_ID

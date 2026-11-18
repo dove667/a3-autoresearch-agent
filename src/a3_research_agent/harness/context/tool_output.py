@@ -9,6 +9,7 @@ RECEIPT_FIELDS = (
     "job_id",
     "prepared_id",
     "preflight_job_id",
+    "gpu_preflight_job_id",
     "export_id",
     "session_id",
     "status",

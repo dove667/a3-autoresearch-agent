@@ -89,11 +89,20 @@ CPU作业使用 `job_submit(name="训练ACT", command=[...], attachments=[{"path
 收到 prepared_id 和 preflight_job_id 后，调用 `job_wait(job_ids=[preflight_job_id])`；
 检查完成，再用 `job_submit(prepared_id="...")` 提交保存的请求，无需重填参数。
 
+需要实际 CUDA 设备的作业可在请求中设置 `preflight={"cuda":true}`。CPU 检查通过后，首次提交会返回
+`gpu_preflight_job_id`。Controller 为该探针安排 GPU，先执行一次 PyTorch CUDA 运算，再用已保存的命令和输入执行
+`A3_RESEARCH_PREFLIGHT_DEVICE=cuda` 分支。两项共用 120 秒预算。探针写入同样的通过报告后，再次提交原
+`prepared_id` 启动正式作业。
+
+在同一 `preflight` 对象中可声明 `output_paths` 和 `checkpoint_paths`。路径相对共享的 `A3_OUTPUTS`，checkpoint
+须在已声明的输出路径内。检查和正式执行前都会拒绝已存在的输出目标。正式运行期间会锁住声明的顶层输出目录名，
+并在脚本成功退出后核对 checkpoint 是否生成。并行作业使用各自的顶层输出目录。
+
 独立且输入就绪的任务可以并行提交。`job_wait` 默认持续等待指定作业终态或通知，显式填写timeout_seconds才限时；省略job_ids时
 等待程序已观察到的活动作业。`idle_wait(seconds=30)` 只等操作者或输入通知，不轮询作业。
 Controller负责排队、GPU分配与生命周期。提交结果未知时先按编号查询，避免重复启动。
 
-`job_status`、`job_list` 查询实际状态，`job_artifact` 按字符分页读取结果和哈希。
+`job_status`、`job_list` 查询带时间和权限的状态，`job_artifact` 按字符分页读取结果和哈希。显式 seed 组用 `benchmark(seeds=[...])` 创建，通过 `benchmark_group` 推进并汇总。闭环终态附逐 seed 回执，启用录像时附轨迹事件摘要。
 资产通过 `export_create`、`export_status`、`export_manifest`、`export_list` 管理；
 `evaluation_compare` 比较已有配对结果。`vision_inspect` 用视觉助手扫看指定帧，`vision_view` 把关键帧直接送入主 Agent 的下一次决策。
 `search_files` 查找源码与记录，`edit` 精确修改工作区文件；覆盖现有文件的write需要当前哈希。

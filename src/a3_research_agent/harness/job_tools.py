@@ -10,6 +10,7 @@ from urllib.parse import urlencode
 
 from . import benchmark_policy, benchmark_runner, tool_results
 from .job_outputs import ARTIFACT_FIELDS, read_batch
+from .job_preparation import PREFLIGHT_SCHEMA, normalize_preflight
 from .tool_contracts import (
     ToolInputError,
     arguments,
@@ -47,6 +48,7 @@ REQUEST_FIELDS = {
     "input_exports": {"type": "array", "items": STRING, "maxItems": 64},
     "gpu_memory_mb": {"type": "integer", "minimum": 1},
     "retry_on_gpu_contention": {"type": "boolean"},
+    "preflight": PREFLIGHT_SCHEMA,
     "evaluation": {
         "type": "object",
         "properties": {
@@ -66,6 +68,7 @@ BENCHMARK_FIELDS = {
     "profile",
     "episodes",
     "seed_start",
+    "seeds",
     "policy",
     "max_steps",
     "n_action_steps",
@@ -145,7 +148,9 @@ TOOLS = [
         "for each seed. The result includes outputs-relative diagnostic paths. Do not hand-build "
         "benchmark commands. Pass max_steps only to raise "
         "the budget above the task standard; a lower value is rejected. The report path is "
-        "relative to the job outputs area, for example 2x10-medium-5ep-seed10000-<hash>/seed-10000.json.",
+        "relative to the job outputs area. For an explicit seed list, pass seeds instead of "
+        "episodes/seed_start, then use benchmark_group with the returned group_id. "
+        "It advances preflights and aggregates per-seed results.",
         {
             "checkpoint": {
                 "type": "string",
@@ -158,6 +163,13 @@ TOOLS = [
             },
             "episodes": {"type": "integer", "minimum": 1, "maximum": 20},
             "seed_start": {"type": "integer", "minimum": 0, "maximum": 2147483647},
+            "seeds": {
+                "type": "array",
+                "items": {"type": "integer", "minimum": 0, "maximum": 2147483647},
+                "minItems": 1,
+                "maxItems": 20,
+                "uniqueItems": True,
+            },
             "policy": {"type": "string", "enum": ["act", "smolvla"]},
             "max_steps": {"type": "integer", "minimum": 1, "maximum": 2147483647},
             "source_column": {
@@ -193,6 +205,18 @@ TOOLS = [
             },
         },
         ["checkpoint", "task"],
+    ),
+    definition(
+        "benchmark_group",
+        "Advance an explicit-seed benchmark group and collect completed results. Schedules "
+        "shards whose preflights passed, lets the Controller assign devices, and returns "
+        "per-seed outcomes plus partial or complete totals. Pass timeout_seconds to wait "
+        "for an event if nothing changed. Repeat with the same group_id after a notification.",
+        {
+            "group_id": {"type": "string", "pattern": "^benchmark-[0-9a-f]{32}$"},
+            "timeout_seconds": {"type": "integer", "minimum": 0, "maximum": 300},
+        },
+        ["group_id"],
     ),
     definition(
         "dataset_audit",
@@ -446,9 +470,13 @@ def install_runner(workspace, module="benchmark_runner.py", name="a3_benchmark_r
     return relative
 
 
-def benchmark(args, request, workspace):
+def benchmark(args, request, workspace, *, group_id=None):
     """Prepare one task/profile/seed cell with the fixed runner and its budget."""
     arguments(args, BENCHMARK_FIELDS)
+    if "seeds" in args:
+        from .benchmark_groups import prepare_group
+
+        return prepare_group(args, request, workspace, benchmark)
     checkpoint = text(args.get("checkpoint"), "checkpoint", 2048).strip()
     if not checkpoint.startswith("/") or "\n" in checkpoint or "\r" in checkpoint:
         fail(
@@ -509,7 +537,14 @@ def benchmark(args, request, workspace):
                 horizon,
                 tilt_level,
                 box_quota,
-                *([source_column, name, "diagnostics"] if diagnostics else []),
+                *(
+                    [source_column, name, "diagnostics"]
+                    if diagnostics
+                    else [source_column]
+                    if source_column
+                    else []
+                ),
+                *([group_id] if group_id else []),
             ],
             sort_keys=True,
         ).encode()
@@ -556,10 +591,13 @@ def benchmark(args, request, workspace):
     )
     from . import job_preparation
 
+    receipt = f"{output_dir}/seed-{seed_start}.receipt.json"
+    job["benchmark_receipt"] = receipt
     prepared = job_preparation.prepare(job, request)
     return {
         **prepared,
         "report": f"{output_dir}/seed-{seed_start}.json",
+        "receipt": receipt,
         "max_steps": steps,
         **(
             {"diagnostics": diagnostic_paths(output_dir, seed_start, episodes)}
@@ -677,6 +715,13 @@ def submit_request(args, workspace, *, default_gpu=False):
             fail("invalid_job_name", "Use a nonempty job name of at most 120 characters.")
         body["name"] = name.strip()
     body["gpu"] = boolean(args.get("gpu", default_gpu), "gpu")
+    if "preflight" in body:
+        if not body["gpu"]:
+            fail("invalid_preflight", "Preflight contracts apply to prepared GPU jobs.")
+        try:
+            body["preflight"] = normalize_preflight(body["preflight"])
+        except ValueError as error:
+            fail("invalid_preflight", str(error))
     references = attachment_references(args.get("attachments", []), workspace)
     check_scripts(command, references)
     check_output_paths(command)
@@ -712,8 +757,8 @@ def submit_request(args, workspace, *, default_gpu=False):
 
 GPU_NEEDS_PREPARATION = (
     "This is a GPU job, so it needs a preparation step first. Send the same request to "
-    'job_prepare(jobs=[{...}]) (or job_prepare(command, attachments,...)) — it runs the CPU '
-    "preflight and returns prepared_id. Then call job_submit(prepared_id=\"<that id>\")."
+    "job_prepare(jobs=[{...}]) (or job_prepare(command, attachments,...)) — it runs the CPU "
+    'preflight and returns prepared_id. Then call job_submit(prepared_id="<that id>").'
 )
 BATCH_HINT = (
     "Independent commands can go in one call: job_submit(jobs=[{...}, {...}]) submits them "
@@ -743,6 +788,7 @@ def submission_result(result):
 
 def artifact(args, request):
     return read_batch(args, request)
+
 
 def collection(results):
     """Report every item of a batch, never hiding partial success."""
@@ -819,10 +865,18 @@ def batch(name, args, request, root):
     return collection(results)
 
 
-def dispatch(name, args, request, *, workspace=None):
+def dispatch(name, args, request, *, workspace=None, cursor=None):
     try:
         if name == "benchmark":
             return benchmark(args, request, workspace or Path.cwd())
+        if name == "benchmark_group":
+            from .benchmark_groups import advance_group
+
+            arguments(args, {"group_id", "timeout_seconds"})
+            timeout = integer(args.get("timeout_seconds", 0), "timeout_seconds", 0, 300)
+            return advance_group(
+                args.get("group_id"), request, workspace or Path.cwd(), timeout, cursor=cursor
+            )
         if name in {"job_prepare", "job_submit"}:
             from . import job_preparation
 

@@ -16,6 +16,7 @@ FIELDS = (
     "job_id",
     "prepared_id",
     "preflight_job_id",
+    "gpu_preflight_job_id",
     "export_id",
     "candidate_job_id",
     "baseline_job_id",

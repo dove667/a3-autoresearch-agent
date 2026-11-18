@@ -5,6 +5,11 @@ guesses a cause that the text does not support.
 """
 
 RULES = (
+    ("output_collision", ("output_collision:",)),
+    ("unsafe_output_path", ("unsafe_output_path:",)),
+    ("checkpoint_missing", ("checkpoint_missing:",)),
+    ("cuda_preflight_timeout", ("cuda_preflight_timeout:",)),
+    ("cuda_preflight_unavailable", ("cuda_preflight_unavailable:",)),
     ("dependency_missing", ("ModuleNotFoundError", "ImportError", "No module named")),
     ("gpu_oom", ("CUDA out of memory", "OutOfMemoryError", "CUDA_ERROR_OUT_OF_MEMORY")),
     ("storage_full", ("No space left on device", "Disk quota exceeded")),
@@ -16,6 +21,11 @@ RULES = (
     ("preflight_unimplemented", ("a3-preflight.json",)),
 )
 ACTIONS = {
+    "output_collision": "Choose a fresh output namespace and update both the production command and output_paths.",
+    "unsafe_output_path": "Choose an A3_OUTPUTS-relative path with directory parents and no symlinks.",
+    "checkpoint_missing": "Check the training save location, save interval, and checkpoint_paths before submitting again.",
+    "cuda_preflight_timeout": "Limit the CUDA branch to one small forward or data read and finish within 120 seconds.",
+    "cuda_preflight_unavailable": "Check the deployed PyTorch/CUDA environment and GPU assignment before trying again.",
     "dependency_missing": "Attach or install the missing module, then prepare the request again.",
     "gpu_oom": "Lower batch or model size, or raise gpu_memory_mb, then resubmit.",
     "storage_full": "Remove unreferenced outputs under your own job or shrink the artifacts.",

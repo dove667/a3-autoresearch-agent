@@ -36,8 +36,11 @@ def test_current_agent_can_reuse_a_historical_job_and_export(tmp_path):
         if operation in {"jobs-status", "status", "cancel", "artifact", "export-create"}:
             ids = request.get("job_ids", [request.get("job_id")])
             if ids != [historical] or actor != "old-agent":
+                assert operation != "cancel"
                 return {"status": "error", "error": "PermissionError"}
             assert operation != "cancel"
+            if operation == "jobs-status":
+                return {"jobs": [{"job_id": historical, "status": "completed"}]}
             return {"status": "completed", "area": "outputs", "job_id": historical}
         if operation == "jobs-list":
             assert (actor, request["run_id"]) == ("old-agent", previous.name)
@@ -67,9 +70,20 @@ def test_current_agent_can_reuse_a_historical_job_and_export(tmp_path):
         )
     )
     headers = {"Authorization": "Bearer main-token"}
-    assert client.get(f"/jobs/{historical}", headers=headers).status_code == 200
+    status = client.get(f"/jobs/{historical}", headers=headers).json()
+    assert (status["access"], status["owner_scope"], status["owner_run"]) == (
+        "read_only",
+        "old-agent",
+        previous.name,
+    )
     assert client.get(f"/jobs/{outside}", headers=headers).status_code == 403
-    assert client.get("/jobs", params={"scope": "old-agent"}, headers=headers).json()["jobs"]
+    listed = client.get("/jobs", params={"scope": "old-agent"}, headers=headers).json()
+    assert listed["jobs"][0]["access"] == "read_only"
+    observed = client.post(
+        "/jobs/observe", headers=headers, json={"job_ids": [historical, outside]}
+    ).json()
+    assert observed["unresolved_jobs"] == [outside]
+    assert observed["jobs"][0]["access"] == "read_only"
     assert (
         client.get(
             f"/jobs/{historical}/artifacts",
@@ -84,7 +98,9 @@ def test_current_agent_can_reuse_a_historical_job_and_export(tmp_path):
         ).status_code
         == 200
     )
-    assert client.delete(f"/jobs/{historical}", headers=headers).status_code == 403
+    cancelled = client.delete(f"/jobs/{historical}", headers=headers)
+    assert cancelled.status_code == 403
+    assert cancelled.json()["detail"]["code"] == "job_read_only"
     assert (
         client.post(
             "/jobs",

@@ -6,11 +6,16 @@ from typing import Annotated, Literal
 from fastapi import Header
 
 from a3_research_agent.host.gateway.wait_signals import snapshot as wait_snapshot
+from a3_research_agent.host.startup_checks import load as load_startup_checks
 
 from .schemas import ObservationRequest
 
 
 class TelemetryRoutes:
+    def startup_check_results(self, authorization: Annotated[str | None, Header()] = None):
+        self.owner(authorization)
+        return load_startup_checks(self.usage_log.parent)
+
     def read_telemetry(
         self,
         authorization: Annotated[str | None, Header()] = None,

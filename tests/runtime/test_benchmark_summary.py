@@ -129,3 +129,32 @@ def test_missing_report_returns_an_actionable_error():
         assert getattr(error, "code", "") == "benchmark_report_unreadable"
     else:
         raise AssertionError("a missing report must not produce a summary")
+
+
+def test_registered_receipt_can_be_reused_without_a_guessed_report_path():
+    receipt_path = "cell/seed-10000.receipt.json"
+    document = {
+        "schema": 1,
+        "report": "cell/seed-10000.json",
+        "protocol": {"task": "2x5", "episodes": 1, "seed_start": 10000},
+        "episodes": [
+            {
+                "seed": 10000,
+                "score_raw": 11,
+                "score_capped": 10,
+                "max_score": 10,
+                "steps": 500,
+                "success": False,
+            }
+        ],
+    }
+    artifact = request_for(json.dumps(document))
+
+    def request(method, path):
+        if path == f"/jobs/{JOB_A}":
+            return {"benchmark_receipt": receipt_path}
+        assert receipt_path in path or receipt_path.replace("/", "%2F") in path
+        return artifact(method, path)
+
+    result = benchmark_report.summary(request, {"reports": [{"job_id": JOB_A}]})
+    assert (result["in_box_raw"], result["in_box"], result["passed"]) == (11, 10, 0)

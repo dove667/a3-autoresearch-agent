@@ -1,6 +1,6 @@
 # 研究工具与执行约定
 
-Version: 0.48.1
+Version: 0.49.0
 
 工具定义给出参数、默认值和限制；本文件说明常用流程。所有工具返回 `ok`：成功时直接读取同层结果；失败时读取 `error`、`hint` 和相关编号，修正后再调用。作业的 `status="failed"` 是执行结果，先读日志与证据再判断原因。
 
@@ -15,8 +15,8 @@ Version: 0.48.1
 | 当前 run 原始对话 | `recall` |
 | 运行状态或需人工处理的阻塞 | `research_status` |
 | 远程执行与结果 | `job_prepare`、`job_submit`、`job_status`、`job_list`、`job_artifact`、`job_cancel` |
-| A3 闭环评测 | `benchmark`、`benchmark_summary` |
-| 数据集体检 | `dataset_audit` |
+| A3 闭环评测 | `benchmark`、`benchmark_group`、`benchmark_summary` |
+| 数据集体检 | `startup_checks`、`dataset_audit` |
 | A3 接口查询 | `a3_api` |
 | 等待指定作业／空闲等待 | `job_wait`／`idle_wait` |
 | 资产复用 | `export_create`、`export_status`、`export_manifest`、`export_list` |
@@ -54,7 +54,9 @@ GPU 作业先调用 `job_prepare`，同样填写 name、command、attachments、
 {"schema":1,"status":"passed"}
 ```
 
-检查分支随后退出，不写正式训练产物。用 `job_wait(job_ids=[<preflight_job_id>])` 等检查完成，再调用 `job_submit(prepared_id=<返回编号>)`。不重填 command 或附件。输入或源码变化后重新 prepare；CPU 预检覆盖加载与最小执行，CUDA/EGL 行为由后续真实运行核对。
+检查分支随后退出，不写正式训练产物。用 `job_wait(job_ids=[<preflight_job_id>])` 等检查完成，再调用 `job_submit(prepared_id=<返回编号>)`。不重填 command 或附件。输入或源码变化后重新 prepare。预检涉及设备放置、混合 batch 或 CUDA 前向时，传 `preflight={"cuda":true}`，并在脚本检查分支按 `A3_RESEARCH_PREFLIGHT_DEVICE=cpu|cuda` 选择设备。CPU 通过后的第一次 submit 会返回 `gpu_preflight_job_id`，等 CUDA 检查通过，再提交原 `prepared_id`。CUDA 检查分支只做最小可验证计算。
+
+需要保护输出目录时，传 `preflight={"output_paths":["runs/my-run"],"checkpoint_paths":["runs/my-run/checkpoint.pt"]}`，路径相对 `A3_OUTPUTS`，脚本也使用该目录。已有输出或缺失预期 checkpoint 会给出明确错误。训练脚本同时记录 checkpoint 类型、实际 loader、归一化来源及评测 adapter，裸权重要使用对应的训练和评测入口。
 
 独立作业批量提交可以省掉多次决策：`job_prepare(jobs=[...])` 一次准备并预检最多 16 个 GPU 请求，`job_submit(prepared_ids=[...])` 或 `job_submit(jobs=[...])` 一次提交多个，返回逐项结果；部分失败只补做失败项。
 
@@ -72,7 +74,7 @@ GPU 作业先调用 `job_prepare`，同样填写 name、command、attachments、
 
 ACT 只读三路相机和 16 维状态，没有语言输入：用 `act:` 时传 `--prompt-style` 不会改变它的行为，提交层会直接拒绝。语言指令只对 `smolvla:` 这类条件策略有意义，任务的块数由 `--task` 和 `--profile` 决定，不由指令决定。
 
-**开局先体检。** Host 在窗口启动时已经提交了两个 CPU 作业：`startup-a3_api` 与 `startup-dataset_audit`（后者依赖 `A3_STARTUP_DATASET`）。用一次 `job_wait()` 等它们，直接读回执里的结果——接口快照说明要 import 的函数签名，数据集体检说明有哪些任务布局。不要另写探针重做这两件事。
+**开局先体检。** Host 在窗口启动时已经提交了两个 CPU 作业：`startup-a3_api` 与 `startup-dataset_audit`（后者依赖 `A3_STARTUP_DATASET`）。用 `startup_checks()` 查这些作业的状态和审计结果，必要时用返回的编号等待或读取报告。接口快照说明可 import 的函数签名，体检给出任务布局；返回 `metadata_only` 时只验证了元数据。
 
 写任何 import A3 的脚本之前，先用 `a3_api()` 查签名：它返回核心函数所在文件、行号和完整参数表，以及采集/评测 CLI 的开关与默认值。这些接口会漂移——`train_act` 在 `learning.act_training` 而不是 `learning.training`，`aggregate_datasets` 要 `repo_ids`/`aggr_repo_id`/`roots=`/`aggr_root=`——凭记忆写只会换来一次 ImportError 或 TypeError。
 
@@ -82,11 +84,13 @@ ACT 只读三路相机和 16 维状态，没有语言输入：用 `act:` 时传 
 
 `task` 除 `2x5`、`2x10` 外还有六个扩展场景，都是 2×5 尺度的搬 10 块任务，预算 1000 步：`missing-columns`（随机少 1–2 列）、`partial-gaps`（列内缺块）、`cross-column`（每列只剩连续 8 块，必须跨列取料）、`tilted`（有饼干被倾倒，`tilt_level=fallen` 为平躺）、`prefilled`（目标盒预放 5 块，只需补 5 块，满分 5）、`two-boxes`（一个源盒两个目标盒，`box_quota=10` 时预算 3200、满分 20）。场景任务不要传 `source_column`，让策略自己选列。这些任务直接回答"搬完一批就不启动第二批"：缺列和跨列看它会不会换列取材，双盒看它会不会切换目标，预填充看它能否在已有排列上补齐。ACT 不消费任务文本，用它跑场景时要在记录里写明输入条件，不能与文本条件策略的成功率直接对比。
 
-它返回 `prepared_id`、`preflight_job_id` 与 `report`（远端 outputs 相对路径），预检通过后 `job_submit(prepared_id=...)`，结果直接读 `report`。不要手拼 benchmark 命令：低于任务预算的 `--max-steps` 会被提交层拒绝，因为那样得到的是预算上限而不是策略表现。
+单作业返回 `prepared_id`、`preflight_job_id`、`report` 和 `receipt`。预检通过后 `job_submit(prepared_id=...)`。终态回执的 `benchmark` 给出逐 seed 的原始计数、封顶分数、原生通过、步数与实际协议。路径相对远端 outputs。不要手拼 benchmark 命令，提交层会拒绝低于任务预算的 `--max-steps`。
 
-需要定位抓取、搬运或放置失败时，对代表性 seed 传 `diagnostics=true`。返回的 `diagnostics` 按 seed 列出正面、左右腕部 MP4 和逐步 `trace.jsonl` 的 outputs 相对路径。GPU 作业完成后，在同一 run 的 CPU 作业中从 `A3_OUTPUTS` 逐行读取大型 trace，提取目标计数和物体 ID 的变化，再通过 `job_artifact` 读小摘要。录像帧对应同一步动作前的观察，trace 同时记录该步动作与动作后状态。
+批量比较优先给 `benchmark(...,seeds=[10000,10002,10007])`。返回的 `group_id` 交给 `benchmark_group(group_id=...,timeout_seconds=120)`，同一编号推进所有已就绪分片，Controller 分配设备，工具核对实际协议并回传逐 seed 与汇总结果。遇到通知、超时或部分结果，用同一编号继续。记录缺失和失败 seed，按需要用新的组补做。
 
-一格的多个 report 用 `benchmark_summary(reports=[{job_id,path},...])` 汇总：它按每回合的任务上限截断、把入盒数和原生通过分开算，并指出各段之间协议不一致（预算、动作块、prompt 风格、checkpoint、重复 seed）。不要手工加总 report 的分数——入盒数可能超过任务上限，跨预算的分段也不能直接相加。
+需要定位抓取、搬运或放置失败时，对代表性 seed 传 `diagnostics=true`。返回的 `diagnostics` 按 seed 列出正面、左右腕部 MP4 和逐步 `trace.jsonl` 的 outputs 相对路径。GPU 作业终态回执包含事件预览及逐 seed 的 `events.json`，记录物体离开源盒、进入目标盒、首次目标盒接触及最终判据。需要额外字段时再用同一 run 的 CPU 作业逐行解析原始 trace。录像帧对应同一步动作前的观察，trace 同时记录该步动作与动作后状态。
+
+一格的多个结果用 `benchmark_summary(reports=[{job_id},...])` 汇总，旧作业额外填写 report 的 `path`：它按每回合的任务上限截断、把入盒数和原生通过分开算，并指出各段之间协议不一致（预算、动作块、prompt 风格、checkpoint、重复 seed）。不要手工加总 report 的分数——入盒数可能超过任务上限，跨预算的分段也不能直接相加。
 
 已有结果通过 `evaluation_compare(candidate_job_id,baseline_job_id,candidate_manifest,baseline_manifest)` 配对；manifest 路径相对各自 outputs。比较固定条件时使用 `conditions_compare`。缺失、重复或条件不匹配先查证，保留实际评测覆盖。
 
@@ -133,7 +137,7 @@ skills 使用 `list(query="任务或症状",limit=3)` 找方法，只返回摘�
 
 连续五轮只做检索、没有改变计划或作业时，程序会追加一句提醒，要求先说明已知事实、结论和下一步动作。这只是提醒：工具照常可用，研究不会因此停止。收到后先写结论，再继续原来的工作。
 
-每轮的 CURRENT_STATE_REFRESH 提供最新计划、近期复盘、活动作业和关键工具回执；先用它核对旧摘要里的待办。job 状态是最后一次观察，提交不确定时先查现有编号，不重发。计划显示已结束的路线、memory 中的失败条件和已验证结果，用于避免重复实验。
+每轮的 CURRENT_STATE_REFRESH 提供最新计划、近期复盘、活动作业和关键工具回执；先用它核对旧摘要里的待办。作业状态带观察时间与权限。遇到 Controller 暂不可用，使用最后一次已知观察定位作业，等自动退避恢复再确认。跨 run 作业可复用结果，取消由原身份或操作者执行。提交结果不确定时先查已有编号。计划显示已结束的路线、memory 中的失败条件和已验证结果，用于避免重复实验。
 
 大工具结果会保留编号、状态、错误和关键指标，正文可能只有部分预览；facts_complete=false 或 preview_complete=false 时，按问题读取来源或用 recall 搜索原文，再作结论。压缩摘要保留来源摘录，但细节仍需按源核对。模型摘要若连续无法通过校验，程序会生成一份逐字摘录的降级交接并继续研究，记录在压缩日志与 `research-ledger.jsonl` 中。
 

@@ -50,7 +50,7 @@ PLAN_STALE_TURNS = 6
 PLAN_PROGRESS_NOTICE = (
     "Plan revision has not advanced for several decisions. Stop adding inspection jobs. "
     "Write the observed facts and the single next action into plan (update or review), "
-    "or call research_status(status=\"blocked\", reason=..., required_action=...) if a "
+    'or call research_status(status="blocked", reason=..., required_action=...) if a '
     "missing permission or resource prevents progress. A job that is not bound to a plan "
     "step is not research progress."
 )
@@ -127,7 +127,7 @@ def tool(name, arguments):
     if name in file_tools.NAMES:
         return file_tools.dispatch(name, arguments)
     if name in job_tools.NAMES:
-        return job_tools.dispatch(name, arguments, request_host)
+        return job_tools.dispatch(name, arguments, request_host, cursor=WAIT_CURSOR)
     if name in host_tools.NAMES:
         return host_tools.dispatch(name, arguments, request_host)
     if name in control_tools.NAMES:
@@ -286,15 +286,17 @@ def save_manifest():
         context_manager.atomic(state_paths.path(filename), json.dumps(data))
 
 
-def operational_message():
+def operational_message(*, observe_jobs=False):
     state = operational_state.load()
+    plan = planning.load()
+    if observe_jobs:
+        operational_state.reconcile_jobs(req, plan, state)
     value = operational_state.view(state)
     value["frame"] = "CURRENT_STATE_REFRESH"
     value["state_authority"] = (
         "Current source refresh. Reconcile historical summaries against this plan revision, "
         "receipts and observed job states; do not repeat completed work or uncertain submissions."
     )
-    plan = planning.load()
     value["research_plan"] = planning.view(plan, jobs=state.get("jobs", {}), compact=True)
     value["research_facts"] = research_facts.view(plan, state.get("jobs", {}))
     value["research_experience"] = memory_client.suggestions(value["research_plan"])
@@ -413,7 +415,7 @@ def main() -> None:
             capabilities = configured.get("capabilities") if isinstance(configured, dict) else None
             tools = tool_catalog.enabled(capabilities)
             compactor.tools = tools
-            operational = operational_message()
+            operational = operational_message(observe_jobs=True)
             state_reference = context_manager.archive(operational, "operational-view")
             # Asynchronous fork: this decision keeps the full history; a finished
             # compaction result is applied before a later decision, never mid-flight.

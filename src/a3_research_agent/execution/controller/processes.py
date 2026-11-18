@@ -421,6 +421,11 @@ def status(store, request: dict) -> dict:
             "backend": "process",
             "managed": job.get("managed", False),
             "status": public_job_status(job),
+            **(
+                {"benchmark_receipt": job["benchmark_receipt"]}
+                if job.get("benchmark_receipt")
+                else {}
+            ),
             "gpu_uuid": job.get("gpu_uuid"),
             "gpu_shared": job.get("gpu_shared", False),
             "gpu_memory_mb": job.get("gpu_memory_mb", 0),

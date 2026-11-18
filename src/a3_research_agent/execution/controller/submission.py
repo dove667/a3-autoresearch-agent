@@ -124,6 +124,7 @@ def submit(store: JobStore, request: dict, args, *, queued_job: dict | None = No
                     request.get("files", {}),
                     run_id=run_id,
                     job_id=request.get("job_id"),
+                    benchmark_receipt=request.get("benchmark_receipt"),
                 )
             job["controller_options"] = {
                 key: str(value) if isinstance(value, Path) else value

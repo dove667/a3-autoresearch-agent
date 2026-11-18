@@ -42,12 +42,18 @@ class JobRequest(BaseModel):
     files: dict[str, str] = Field(default_factory=dict)
     input_exports: list[str] = Field(default_factory=list, max_length=64)
     evaluation: EvaluationComparison | None = None
+    benchmark_receipt: str | None = Field(
+        default=None, max_length=512, pattern=r"^[a-z0-9-]+/seed-[0-9]+\.receipt\.json$"
+    )
     workspace_files: list[JobWorkspaceFileReference] = Field(default_factory=list, max_length=16)
 
 
-class JobWaitRequest(BaseModel):
+class JobObservationRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     job_ids: list[str] = Field(min_length=1, max_length=64)
+
+
+class JobWaitRequest(JobObservationRequest):
     seconds: int = Field(default=25, ge=0, le=300, strict=True)
     cursor: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
 

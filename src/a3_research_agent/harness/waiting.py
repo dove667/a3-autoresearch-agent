@@ -8,7 +8,9 @@ import re
 import time
 
 from a3_research_agent.harness import state_paths
+from a3_research_agent.harness.benchmark_report import read_receipt
 from a3_research_agent.harness.context.tool_output import select_facts
+from a3_research_agent.harness.tool_contracts import ToolInputError
 
 TERMINAL_STATES = frozenset({"completed", "failed", "cancelled"})
 
@@ -20,7 +22,19 @@ except ImportError:  # pragma: no cover - the lister ships with the job tools
 MAX_RECEIPT_JOBS = 6
 MAX_RECEIPT_OUTPUTS = 12
 MAX_RECEIPT_METRICS = 10
-RECEIPT_FIELDS = ("status", "exit_code", "error", "evaluation")
+MAX_INLINE_TRACE_CHARS = 4000
+NONACTIVE_STATES = TERMINAL_STATES | {"observation_error", "submission_unknown", "unobserved"}
+RECEIPT_FIELDS = (
+    "status",
+    "exit_code",
+    "error",
+    "evaluation",
+    "owner_scope",
+    "owner_run",
+    "access",
+    "observed_at",
+    "benchmark_receipt",
+)
 
 
 def wait_cursor(messages):
@@ -57,7 +71,9 @@ def active_jobs():
     return sorted(
         job
         for job, row in json.loads(path.read_text()).get("jobs", {}).items()
-        if row.get("status") not in TERMINAL_STATES and re.fullmatch(r"[0-9a-f]{32}", job)
+        if row.get("status")
+        and row["status"] not in NONACTIVE_STATES
+        and re.fullmatch(r"[0-9a-f]{32}", job)
     )
 
 
@@ -160,7 +176,35 @@ def terminal_receipt(req, row, *, list_outputs=True):
         receipt.update(outputs_receipt(outputs_listing(req, row["job_id"])))
     else:
         receipt["outputs_unavailable"] = "batch_limit"
+    path = row.get("benchmark_receipt")
+    if path and row.get("status") == "completed":
+        if list_outputs:
+            try:
+                result = read_receipt(req, row["job_id"], path)
+            except (ToolInputError, OSError, TimeoutError) as error:
+                receipt["benchmark_unavailable"] = getattr(error, "code", "transport_error")
+            else:
+                receipt["benchmark"] = inline_benchmark_receipt(result)
+        else:
+            receipt["benchmark_unavailable"] = "batch_limit"
     return receipt
+
+
+def inline_benchmark_receipt(result):
+    """Keep every exact score and artifact link within the terminal preview."""
+    episodes = []
+    remaining = MAX_INLINE_TRACE_CHARS
+    for episode in result["episodes"]:
+        row = {key: value for key, value in episode.items() if key != "trace_events"}
+        if "trace_events" in episode:
+            size = len(json.dumps(episode["trace_events"], separators=(",", ":")))
+            if size <= remaining:
+                row["trace_events"] = episode["trace_events"]
+                remaining -= size
+            else:
+                row["trace_events_omitted"] = True
+        episodes.append(row)
+    return {**result, "episodes": episodes}
 
 
 def wait_for_jobs(
@@ -266,7 +310,12 @@ def wait_for_jobs(
                 notifications={key: signals.get(key) for key in ("feedback", "inputs", "is_main")},
             )
         if value.get("reason") != "timeout":
-            return result("observation_error", jobs=rows)
+            observation = value.get("observation")
+            return result(
+                "observation_error",
+                jobs=rows,
+                **({"observation": observation} if isinstance(observation, dict) else {}),
+            )
         offset = offset + 64 if offset + 64 < len(jobs) else 0
         sleep(min(max(0, 1 - (clock() - started)), max(0, deadline - clock())))
 

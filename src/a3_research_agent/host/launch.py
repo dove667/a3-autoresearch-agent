@@ -50,6 +50,8 @@ from a3_research_agent.host.runs.suspension import suspend_interrupted
 from a3_research_agent.host.sessions.isolation import IsolationFixtures
 from a3_research_agent.host.sessions.processes import ProcessRuntime
 from a3_research_agent.host.sessions.workspace import MAX_ACTIVE_SESSIONS, write_durable
+from a3_research_agent.host.startup_checks import load as load_startup_checks
+from a3_research_agent.host.startup_checks import observe as observe_startup_checks
 from a3_research_agent.host.startup_checks import record as record_startup_checks
 from a3_research_agent.host.startup_checks import submit as submit_startup_checks
 from a3_research_agent.host.web.gateway import WebConfig, WebGateway
@@ -384,25 +386,42 @@ def _launch_run(args, run: Path, a3: Path, start, services) -> None:
             if dashboard is not None:
                 dashboard.stop()
             dashboard = None
-        with httpx.Client(trust_env=False,
-            base_url=endpoint, headers={"Authorization": "Bearer " + token}, timeout=90
+        with httpx.Client(
+            trust_env=False,
+            base_url=endpoint,
+            headers={"Authorization": "Bearer " + token},
+            timeout=90,
         ) as client:
             job_status_client["client"] = client
             # Both readiness checks are one CPU job each; submitting them here saves the
             # Agent the first turn of a window and cannot fail the launch.
-            checks = submit_startup_checks(
-                client, result_workspace(), os.environ.get("A3_STARTUP_DATASET")
-            )
-            record_startup_checks(run, checks)
+            if resuming:
+                checks = load_startup_checks(run)
+            else:
+                checks = submit_startup_checks(
+                    client, result_workspace(), os.environ.get("A3_STARTUP_DATASET")
+                )
+                record_startup_checks(run, checks)
             for job in checks.get("jobs") or []:
                 print(f"Startup check {job['kind']}: {job['job_id']}", flush=True)
             for error in checks.get("errors") or []:
                 print(f"Startup check failed: {error}", flush=True)
+
+            def get_startup_status(path):
+                response = client.get(path, timeout=5)
+                response.raise_for_status()
+                return response.json()
+
+            def observe_sessions():
+                sessions = supervised_sessions(client)
+                observe_startup_checks(run, checks, get_startup_status)
+                return sessions
+
             supervisor = RunSupervisor(
                 run=run,
                 log_directory=debug_directory(run),
                 workspace=result_workspace(),
-                sessions=lambda: supervised_sessions(client),
+                sessions=observe_sessions,
                 retain=retain_research,
                 result_workspace=result_workspace,
                 input_manifest=lambda: input_versions.manifest,

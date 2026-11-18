@@ -12,6 +12,7 @@ def operation_ids(value):
     patterns = {
         "job_id": r"[0-9a-f]{32}",
         "preflight_job_id": r"[0-9a-f]{32}",
+        "gpu_preflight_job_id": r"[0-9a-f]{32}",
         "prepared_id": r"prepared-[0-9a-f]{32}",
         "export_id": r"export-[0-9a-f]{32}",
     }
@@ -58,6 +59,8 @@ def rejected(status, body, code, hint):
         # Host-supplied hint text may carry private detail; keep our own wording only.
         if code == "vision_budget_exceeded":
             hint = "Split the action window across calls or resize its frames and try again."
+        elif code == "job_read_only":
+            hint = "Only the submitting session can cancel this job. Read its status or outputs."
         return code, hint
     if isinstance(detail, str) and detail in CONTROLLER_ERRORS:
         return CONTROLLER_ERRORS[detail]

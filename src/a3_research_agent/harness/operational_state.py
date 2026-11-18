@@ -2,9 +2,11 @@
 
 import codecs
 import hashlib
+import http.client
 import json
 import os
 import pathlib
+import re
 import time
 
 from a3_research_agent.harness import state_paths
@@ -254,6 +256,12 @@ def view(state=None):
         ],
         "omitted_reads": max(0, len(reads) - 8),
     }
+    if refresh := state.get("job_reconciliation"):
+        value["job_reconciliation"] = {
+            key: item
+            for key, item in refresh.items()
+            if key not in {"next_offset", "protected_jobs"}
+        }
     while value["reads"] and context_manager.size(value) > 8000:
         value["reads"].pop()
         value["omitted_reads"] += 1
@@ -272,29 +280,28 @@ def counters():
 def record_gateway(method, path, result):
     if not isinstance(result, dict):
         return
-    job = result.get("job_id")
-    if (
-        method not in {"GET", "POST"}
-        or not (path == "/jobs" or path.startswith("/jobs/"))
-        or not isinstance(job, str)
-        or len(job) != 32
-        or not all(c in "0123456789abcdef" for c in job)
-    ):
-        return
-    status = result.get("status")
-    if status not in {
-        "created",
-        "pending",
-        "queued",
-        "running",
-        "restarting",
-        "completed",
-        "cancelled",
-        "failed",
-    }:
+    path = path.partition("?")[0]
+    if (method, path) in {("GET", "/jobs"), ("POST", "/jobs/wait")}:
+        rows = result.get("jobs", [])
+        source = result.get("status_source") or "controller_metadata"
+    elif method == "POST" and path == "/jobs":
+        rows = [result]
+        source = "submission"
+        if result.get("http_error") == 502:
+            try:
+                body = json.loads(result.get("body", "{}"))
+            except (TypeError, ValueError):
+                return
+            detail = body.get("detail") if isinstance(body, dict) else None
+            if isinstance(detail, dict) and detail.get("code") == "submission_unknown":
+                rows = [detail | {"status": "submission_unknown"}]
+    elif method in {"GET", "DELETE"} and re.fullmatch(r"/jobs/[0-9a-f]{32}", path):
+        rows = [result | {"job_id": path.rsplit("/", 1)[1]}]
+        source = "controller_status"
+    else:
         return
     state = load()
-    if update_job(state, job, status):
+    if record_jobs(state, rows, source):
         save(state)
 
 
@@ -302,31 +309,145 @@ def record_wait(result):
     if not isinstance(result, dict) or result.get("reason") != "state_changed":
         return
     state = load()
-    changed = False
-    for path, row in result.get("changes", {}).items():
-        job = path.removeprefix("/jobs/")
-        if job in state.get("jobs", {}) and row.get("status") in TERMINAL_JOB_STATES:
-            changed |= update_job(state, job, row["status"])
-    if changed:
+    rows = [
+        row | {"job_id": path.removeprefix("/jobs/")}
+        for path, row in result.get("changes", {}).items()
+        if row.get("status") in TERMINAL_JOB_STATES
+    ]
+    if record_jobs(state, rows, "controller_metadata"):
         save(state)
 
 
 TERMINAL_JOB_STATES = frozenset({"completed", "cancelled", "failed"})
+JOB_STATES = TERMINAL_JOB_STATES | {
+    "created",
+    "pending",
+    "queued",
+    "running",
+    "restarting",
+    "submission_unknown",
+}
+JOB_PROVENANCE = ("owner_scope", "owner_run", "access", "benchmark_receipt")
 
 
-def update_job(state, job, status):
-    jobs = state.setdefault("jobs", {})
-    previous = jobs.get(job, {}).get("status")
-    if previous in TERMINAL_JOB_STATES:
-        return False
-    jobs[job] = {"status": status, "observed_at": time.time()}
-    terminal = sorted(
-        (key for key, record in jobs.items() if record["status"] in TERMINAL_JOB_STATES),
-        key=lambda key: jobs[key]["observed_at"],
+def job_observation(row):
+    fields = (
+        *JOB_PROVENANCE,
+        "status",
+        "observed_at",
+        "status_source",
+        "observation_error",
+        "observation_error_at",
     )
-    for key in terminal[: max(0, len(terminal) - 64)]:
-        del jobs[key]
+    return {key: row[key] for key in fields if key in row}
+
+
+def record_jobs(state, rows, source):
+    if not isinstance(rows, list):
+        return False
+    changed = False
+    for row in rows:
+        job = row.get("job_id") if isinstance(row, dict) else None
+        if isinstance(job, str) and re.fullmatch(r"[0-9a-f]{32}", job):
+            changed |= update_job(state, job, row, source)
+    if changed:
+        protected = set(state.get("job_reconciliation", {}).get("protected_jobs", ()))
+        jobs = state["jobs"]
+        terminal = sorted(
+            (
+                job
+                for job, value in jobs.items()
+                if job not in protected and value.get("status") in TERMINAL_JOB_STATES
+            ),
+            key=lambda job: jobs[job]["observed_at"],
+        )
+        for job in terminal[: max(0, len(terminal) - 64)]:
+            del jobs[job]
+    return changed
+
+
+def update_job(state, job, row, source):
+    jobs = state.setdefault("jobs", {})
+    previous = jobs.get(job, {})
+    status = row.get("status")
+    if not isinstance(status, str):
+        return False
+    observed_at = row.get("observed_at")
+    if not isinstance(observed_at, (int, float)):
+        observed_at = time.time()
+    latest = max(previous.get("observed_at", 0), previous.get("observation_error_at", 0))
+    if observed_at < latest:
+        return False
+    value = previous | {key: row[key] for key in JOB_PROVENANCE if row.get(key)}
+    if status == "observation_error":
+        if previous.get("status") not in TERMINAL_JOB_STATES:
+            value["observation_error"] = row.get("error") or "job_metadata_unavailable"
+            value["observation_error_at"] = observed_at
+            value.setdefault("status", "unobserved")
+    elif status in JOB_STATES:
+        if previous.get("status") not in TERMINAL_JOB_STATES:
+            value.update(status=status, observed_at=observed_at, status_source=source)
+            value.pop("observation_error", None)
+            value.pop("observation_error_at", None)
+    else:
+        return False
+    if value == previous:
+        return False
+    jobs[job] = value
     return True
+
+
+def reconcile_jobs(req, plan, state, *, now=None):
+    """Refresh indexed, unresolved plan links and active jobs at a bounded rate."""
+    now = time.time() if now is None else now
+    refresh = state.get("job_reconciliation", {})
+    if refresh and now < refresh["checked_at"] + 30:
+        return
+    jobs = state["jobs"]
+    linked = {job for step in plan["steps"].values() for job in step["jobs"]}
+    linked.difference_update(plan.get("reviewed_jobs", {}))
+    identifiers = sorted(
+        job
+        for job in linked | jobs.keys()
+        if jobs.get(job, {}).get("status") not in TERMINAL_JOB_STATES
+    )
+    if not identifiers:
+        if set(refresh.get("protected_jobs", ())) != linked:
+            state["job_reconciliation"] = {
+                "checked_at": now,
+                "protected_jobs": sorted(linked),
+            }
+            save(state)
+        return
+    offset = refresh.get("next_offset", 0)
+    if offset >= len(identifiers):
+        offset = 0
+    batch = identifiers[offset : offset + 64]
+    refresh = {
+        "checked_at": now,
+        "next_offset": offset + len(batch),
+        "protected_jobs": sorted(linked),
+    }
+    state["job_reconciliation"] = refresh
+    try:
+        response = req("POST", "/jobs/observe", {"job_ids": batch}, timeout=2)
+    except (OSError, ValueError, http.client.HTTPException):
+        response = {}
+    if isinstance(response, dict) and isinstance(response.get("jobs"), list):
+        observation = response.get("observation")
+        if isinstance(observation, dict):
+            refresh["status"] = observation.get("status", "unavailable")
+            if delay := observation.get("retry_after_seconds"):
+                refresh["retry_after_seconds"] = delay
+        else:
+            refresh["status"] = "observed"
+            unresolved = response.get("unresolved_jobs", [])
+            if isinstance(unresolved, list):
+                refresh["unresolved_jobs"] = [job for job in unresolved if job in batch]
+            record_jobs(state, response["jobs"], "controller_metadata")
+    else:
+        refresh["status"] = "unavailable"
+    save(state)
 
 
 def delivered_before(page):

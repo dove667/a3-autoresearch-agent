@@ -106,7 +106,7 @@ class Gateway(
         self.job_evaluations = {}
         self.evaluation_workers = ThreadPoolExecutor(max_workers=2)
         self.evaluation_receipts = {}
-        self.job_status_cache = JobStatusCache()
+        self.job_status_cache = JobStatusCache(on_transport_error=self.log_job_observation_error)
         self.gpu_snapshot_cache = JobStatusCache(capacity=1)
         self.project_scope_runs, self.project_job_scopes = project_job_index(project_history_run)
         self.root_owners = set(self.sessions.values())
@@ -145,6 +145,7 @@ class Gateway(
         self.app.state.validate_exports = self.validate_exports
         self.vision_slots = threading.BoundedSemaphore(2)
         self.app.add_api_route("/telemetry", self.read_telemetry, methods=["GET"])
+        self.app.add_api_route("/startup-checks", self.startup_check_results, methods=["GET"])
         self.app.add_api_route(
             "/telemetry/observations", self.record_observations, methods=["POST"]
         )
@@ -182,6 +183,7 @@ class Gateway(
         self.app.add_api_route("/jobs", self.list_jobs, methods=["GET"])
         self.app.add_api_route("/resources/gpus", self.gpu_snapshot, methods=["GET"])
         self.app.add_api_route("/jobs/wait", self.wait_jobs, methods=["POST"])
+        self.app.add_api_route("/jobs/observe", self.reconcile_jobs, methods=["POST"])
         self.app.add_api_route("/jobs/exports", self.list_exports, methods=["GET"])
         self.app.add_api_route("/jobs/{job_id}/exports", self.publish_export, methods=["POST"])
         self.app.add_api_route("/jobs/exports/{export_id}", self.export_status, methods=["GET"])

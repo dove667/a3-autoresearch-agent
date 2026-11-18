@@ -13,10 +13,11 @@ from fastapi import Header, HTTPException, Query
 from a3_research_agent.execution.controller.files import MAX_FILE_BYTES
 
 from .evaluation import EvaluationComparison, evaluation_diagnostics
-from .job_observation import TERMINAL_STATES, compact_status
+from .job_observation import TERMINAL_STATES, ControllerObservationUnavailable, compact_status
 from .schemas import (
     ExportGrantRequest,
     ExportRequest,
+    JobObservationRequest,
     JobRequest,
     JobWaitRequest,
 )
@@ -40,7 +41,7 @@ class JobRoutes:
         scopes = self.research_read_scopes(actor)
         return list(dict.fromkeys([*scopes, *self.project_scope_runs]))
 
-    def job_owner(self, actor, job_id, *, shared_read=False):
+    def known_job_scope(self, actor, job_id, *, shared_read=False):
         with self.session_lock:
             scopes = (
                 self.research_read_scopes(actor) if shared_read else self.research_scopes(actor)
@@ -49,9 +50,17 @@ class JobRoutes:
                 if job_id in self.jobs.get(scope, set()):
                     return scope
             if not shared_read or not self.project_scope_runs:
-                return actor
-            scope = self.project_job_scopes.get(job_id)
-        return scope or actor
+                return None
+            return self.project_job_scopes.get(job_id)
+
+    def job_owner(self, actor, job_id, *, shared_read=False):
+        return self.known_job_scope(actor, job_id, shared_read=shared_read) or actor
+
+    def job_access(self, actor, scope):
+        provenance = {"owner_scope": scope, "access": "owned" if scope == actor else "read_only"}
+        if run := self.project_scope_runs.get(scope):
+            provenance["owner_run"] = run
+        return provenance
 
     def accessible_export(self, actor, export_id):
         """Authorize a sealed input export for the requesting research identity."""
@@ -153,6 +162,7 @@ class JobRoutes:
                         {
                             "code": "submission_unknown",
                             "job_id": job_id,
+                            **self.job_access(experiment, experiment),
                             "status_path": f"/jobs/{job_id}",
                             "hint": "Submission may still complete. Query this ID or GET /jobs; do not submit the experiment again.",
                         },
@@ -185,6 +195,7 @@ class JobRoutes:
                     stream.write(json.dumps(receipt) + "\n")
                 if source_files:
                     result = result | {"source_files": source_files}
+                result = result | self.job_access(experiment, experiment)
             return result
 
     def list_jobs(
@@ -212,7 +223,14 @@ class JobRoutes:
                 self.save_checkpoint()
         if self.project_scope_runs:
             result["historical_scopes"] = self.project_scope_runs
-        return result | {"scope": scope, "status_source": "controller_metadata"}
+        provenance = self.job_access(actor, scope)
+        observed_at = time.time()
+        return result | {
+            "jobs": [job | provenance | {"observed_at": observed_at} for job in result["jobs"]],
+            "scope": scope,
+            "status_source": "controller_metadata",
+            **provenance,
+        }
 
     def gpu_snapshot(self, authorization: Annotated[str | None, Header()] = None):
         self.owner(authorization)
@@ -298,14 +316,22 @@ class JobRoutes:
         actor = self.owner(authorization)
         scope = self.job_owner(actor, job_id, shared_read=True)
         key = ("detail", scope, job_id)
-        result = self.job_status_cache.read_many(
-            [key],
-            lambda keys: {key: self.remote("status", {"experiment_id": scope, "job_id": job_id})},
-        )[key]
+
+        def fetch(_):
+            value = self.remote("status", {"experiment_id": scope, "job_id": job_id})
+            return {key: value | {"observed_at": time.time()}}
+
+        result = self.job_status_cache.read_many([key], fetch)[key]
+        if scope == actor and result.get("job_id") == job_id:
+            with self.session_lock:
+                identifiers = self.jobs.setdefault(actor, set())
+                if job_id not in identifiers:
+                    identifiers.add(job_id)
+                    self.save_checkpoint()
         if result.get("managed"):
             for name in ("gpu_uuid", "gpu_shared", "gpu_memory_mb", "gpu_allocation"):
                 result.pop(name, None)
-        return result
+        return result | self.job_access(actor, scope)
 
     def observe_jobs(self, actor, job_ids):
         keys = [
@@ -320,25 +346,78 @@ class JobRoutes:
             values = {}
             for scope, identifiers in groups.items():
                 response = self.remote(
-                    "jobs-status", {"experiment_id": scope, "job_ids": identifiers}
+                    "jobs-status",
+                    {
+                        "experiment_id": scope,
+                        "job_ids": identifiers,
+                        "allow_missing": True,
+                    },
                 )
                 rows = response.get("jobs", [])
+                unresolved = response.get("unresolved_jobs", [])
                 if (
                     not isinstance(rows, list)
                     or not all(isinstance(row, dict) for row in rows)
-                    or len(rows) != len(identifiers)
-                    or {row.get("job_id") for row in rows} != set(identifiers)
+                    or not all(isinstance(row.get("job_id"), str) for row in rows)
+                    or not isinstance(unresolved, list)
+                    or not all(isinstance(identifier, str) for identifier in unresolved)
+                    or len(rows) + len(unresolved) != len(identifiers)
+                    or {row["job_id"] for row in rows}.union(unresolved) != set(identifiers)
                 ):
                     raise HTTPException(502, "Controller returned incomplete job observations")
+                observed_at = time.time()
                 for row in rows:
                     try:
-                        values[("summary", scope, row["job_id"])] = compact_status(row)
+                        values[("summary", scope, row["job_id"])] = compact_status(
+                            row | {"observed_at": observed_at}
+                        )
                     except ValueError:
                         raise HTTPException(502, "Controller omitted job status") from None
+                for job_id in unresolved:
+                    values[("summary", scope, job_id)] = {
+                        "job_id": job_id,
+                        "status": "observation_error",
+                        "error": "job_metadata_unavailable",
+                        "observed_at": observed_at,
+                    }
             return values
 
         values = self.job_status_cache.read_many(keys, fetch)
-        return [values[key] for key in keys]
+        return [
+            row | self.job_access(actor, key[1])
+            if row.get("error") != "job_metadata_unavailable"
+            else row
+            for key, row in values.items()
+        ]
+
+    def reconcile_jobs(
+        self, body: JobObservationRequest, authorization: Annotated[str | None, Header()] = None
+    ):
+        """Read watcher metadata for jobs already indexed to this project."""
+        actor = self.owner(authorization)
+        known, unresolved = [], []
+        for job_id in dict.fromkeys(body.job_ids):
+            if self.known_job_scope(actor, job_id, shared_read=True) is None:
+                unresolved.append(job_id)
+            else:
+                known.append(job_id)
+        try:
+            rows = self.observe_jobs(actor, known)
+        except ControllerObservationUnavailable as error:
+            return {"jobs": [], "unresolved_jobs": unresolved, "observation": error.detail}
+        return {"jobs": rows, "unresolved_jobs": unresolved, "status_source": "controller_metadata"}
+
+    def log_job_observation_error(self, status_code):
+        with (
+            self.log_lock,
+            self.usage_log.with_name("controller-incidents.jsonl").open("a") as stream,
+        ):
+            stream.write(
+                json.dumps(
+                    {"time": time.time(), "operation": "jobs-status", "status_code": status_code}
+                )
+                + "\n"
+            )
 
     def build_evaluation_diagnostics(self, actor, job_id, comparison):
         scopes = {
@@ -458,8 +537,8 @@ class JobRoutes:
         signals = self.wait_signals(authorization)
         cursor = body.cursor or signals["cursor"]
         rows = []
-        retry_delay = 5
         retry_at = 0
+        observation = None
         while True:
             self.accepting_resources()
             if signals["cursor"] != cursor or (body.cursor is None and signals["pending"]):
@@ -471,27 +550,11 @@ class JobRoutes:
                     rows = self.attach_evaluation_diagnostics(
                         actor, self.observe_jobs(actor, body.job_ids)
                     )
-                except HTTPException as error:
-                    if error.status_code < 500:
-                        raise
-                    with (
-                        self.log_lock,
-                        self.usage_log.with_name("controller-incidents.jsonl").open("a") as stream,
-                    ):
-                        stream.write(
-                            json.dumps(
-                                {
-                                    "time": time.time(),
-                                    "operation": "jobs-status",
-                                    "status_code": error.status_code,
-                                }
-                            )
-                            + "\n"
-                        )
-                    retry_at = time.monotonic() + retry_delay
-                    retry_delay = min(30, retry_delay * 2)
+                except ControllerObservationUnavailable as error:
+                    observation = error.detail
+                    retry_at = time.monotonic() + observation["retry_after_seconds"]
                 else:
-                    retry_delay = 5
+                    observation = None
                     if any(row["status"] in TERMINAL_STATES for row in rows):
                         reason = "terminal"
                         break
@@ -500,7 +563,7 @@ class JobRoutes:
                         break
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                reason = "timeout"
+                reason = "observation_error" if observation else "timeout"
                 break
             time.sleep(min(1, remaining))
             signals = self.wait_signals(authorization)
@@ -508,12 +571,23 @@ class JobRoutes:
             "reason": reason,
             "jobs": rows,
             "status_source": "controller_metadata",
+            **({"observation": observation} if observation else {}),
             **({"signals": signals} if reason == "notification" else {}),
         }
 
     def cancel(self, job_id: str, authorization: Annotated[str | None, Header()] = None):
         actor = self.owner(authorization)
-        scope = self.job_owner(actor, job_id)
+        scope = self.job_owner(actor, job_id, shared_read=True)
+        if scope != actor:
+            raise HTTPException(
+                403,
+                {
+                    "code": "job_read_only",
+                    "job_id": job_id,
+                    **self.job_access(actor, scope),
+                    "hint": "Only the submitting session can cancel this job.",
+                },
+            )
         try:
             return self.remote("cancel", {"experiment_id": scope, "job_id": job_id})
         finally:

@@ -10,7 +10,7 @@ import hashlib
 import json
 import re
 
-from a3_research_agent.harness import state_paths
+from a3_research_agent.harness import operational_state, state_paths
 from a3_research_agent.harness.context import manager as cm
 
 INDEX = "research-receipts.json"
@@ -19,6 +19,7 @@ OBSERVATION_TOOLS = frozenset(
     {
         "job_submit",
         "job_prepare",
+        "job_list",
         "job_status",
         "job_cancel",
         "job_wait",
@@ -160,9 +161,17 @@ def view(plan, jobs):
     active_all = {
         job: row["status"]
         for job, row in jobs.items()
-        if row.get("status") not in {"completed", "failed", "cancelled"}
+        if row.get("status") in operational_state.JOB_STATES - operational_state.TERMINAL_JOB_STATES
     }
     active = dict(list(active_all.items())[-32:])
+    observations = _bounded_items(
+        (
+            {"job_id": job, **operational_state.job_observation(row)}
+            for job, row in reversed(jobs.items())
+        ),
+        12,
+        2400,
+    )
     return {
         "notice": (
             "Fresh source state; use it to reconcile older summary tasks. Receipts are exact tool "
@@ -172,6 +181,7 @@ def view(plan, jobs):
         ),
         "plan_revision": plan["revision"],
         "active_jobs": active,
+        "job_observations": observations,
         "omitted_active_jobs": len(active_all) - len(active),
         "recent_reviews": reviews,
         "closed_routes": conclusions,

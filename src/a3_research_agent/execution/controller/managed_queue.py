@@ -73,6 +73,7 @@ def enqueue(store: JobStore, request: dict, args) -> dict:
             request.get("files", {}),
             run_id=run_id,
             job_id=request.get("job_id"),
+            benchmark_receipt=request.get("benchmark_receipt"),
         )
         try:
             job.update(
