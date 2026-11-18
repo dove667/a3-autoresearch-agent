@@ -156,3 +156,29 @@ def test_successful_summary_clears_the_breaker(context, monkeypatch):
     _, record = cm.prepare(history(), [], good, force_summary=True)
     assert record["summary_mode"] == "model"
     assert not cm.summary_suspended()
+
+
+def test_degraded_handoff_records_measured_results(context):
+    """A finished job with a measurement belongs in Results, not queue traffic."""
+    job = "b" * 32
+    messages = [
+        {"role": "user", "content": "开始评测 " * 800},
+        {"type": "function_call", "call_id": "c9", "name": "job_status", "arguments": "{}"},
+        {
+            "type": "function_call_output",
+            "call_id": "c9",
+            "output": json.dumps(
+                {
+                    "ok": True,
+                    "job_id": job,
+                    "status": "completed",
+                    "exit_code": 0,
+                    "evaluation": {"cookies_in_target": 279, "episodes": 60},
+                }
+            ),
+        },
+    ]
+    document, _ = research_summary.degraded(messages)
+    assert document["results"]
+    assert any("cookies_in_target" in item["quote"] for item in document["results"])
+    research_summary.validate(document, messages)

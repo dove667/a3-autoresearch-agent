@@ -184,6 +184,17 @@ def _from_operational(document, index, value, texts):
             )
 
 
+MEASURED_FIELDS = ("evaluation", "report", "metrics", "score", "results", "summary")
+SECTION_ENTRIES = {"failures": 4, "results": 3, "active_jobs": 3, "sources": 2}
+
+
+def _measured(value):
+    """Report whether a finished job carries a result a reader can act on."""
+    if not isinstance(value, dict) or value.get("status") not in {"completed", "failed"}:
+        return False
+    return any(key in value for key in MEASURED_FIELDS) or "exit_code" in value
+
+
 def _tool_sections(messages, names):
     """Classify recent results by tool so a degraded handoff stays useful."""
     sections = {}
@@ -202,6 +213,9 @@ def _tool_sections(messages, names):
             value.get("ok") is False or value.get("status") in {"failed", "cancelled"}
         ):
             section = "failures"
+        elif _measured(value):
+            # A finished job with measured values is a result, not queue traffic.
+            section = "results"
         elif name in {"job_status", "job_wait", "job_list", "job_submit", "job_prepare"}:
             section = "active_jobs"
         elif name in {"read", "list", "search_files", "write", "edit"}:
@@ -230,9 +244,17 @@ def degraded(messages, *, fits=None, quote_limit=200, entries=8):
         _from_operational(document, index, value, texts)
     sections = _tool_sections(messages, names)
     emitted = 0
+    # Every section gets its own allowance: a run whose recent traffic is all job
+    # polling must still hand over the measured results it did produce.
     for section in ("failures", "results", "active_jobs", "sources"):
+        if emitted >= entries:
+            break
         call_ids = set(sections.get(section, []))
+        quota = min(SECTION_ENTRIES[section], entries - emitted)
+        taken = 0
         for position in range(len(messages) - 1, -1, -1):
+            if taken >= quota:
+                break
             message = messages[position]
             if message.get("call_id") not in call_ids:
                 continue
@@ -241,10 +263,7 @@ def degraded(messages, *, fits=None, quote_limit=200, entries=8):
                 continue
             if _quote(document, section, position, texts, raw.strip()[:quote_limit]):
                 emitted += 1
-            if emitted >= entries:
-                break
-        if emitted >= entries:
-            break
+                taken += 1
     if not any(document[section] for section in SECTIONS):
         _quote(document, "sources", len(messages) - 1, texts, texts[-1][:quote_limit])
     rendered = render(document)

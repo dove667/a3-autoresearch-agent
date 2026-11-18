@@ -68,7 +68,11 @@ def metric(value):
 
 
 def message_cost(messages):
-    return metric(messages) + 16 * len(messages)
+    """Count only what the Host forwards; reasoning items are never replayed."""
+    from a3_research_agent.token_count import replayed_input
+
+    sent = replayed_input(messages)
+    return metric(sent) + 16 * len(sent)
 
 
 def decision_budget(tools):
@@ -239,6 +243,35 @@ def text_response(response):
         and part.get("type") in ("output_text", "text")
         and isinstance(part.get("text"), str)
     ).strip()
+
+
+def reasoning_only_output(response):
+    """Report an answer spent entirely on reasoning before any visible text.
+
+    Reasoning shares the output allowance with the handoff text. When the provider
+    reports that all generated tokens were reasoning, retrying the same request and
+    the same output budget reproduces the same empty answer.
+    """
+    if not isinstance(response, dict):
+        return False
+    usage = response.get("usage")
+    usage = usage if isinstance(usage, dict) else {}
+    details = usage.get("output_tokens_details")
+    details = details if isinstance(details, dict) else {}
+    output_tokens, reasoning_tokens = usage.get("output_tokens"), details.get("reasoning_tokens")
+    if type(output_tokens) is int and type(reasoning_tokens) is int and output_tokens > 0:
+        return reasoning_tokens >= output_tokens
+    output = response.get("output")
+    kinds = {
+        item.get("type") for item in output if isinstance(item, dict)
+    } if isinstance(output, list) else set()
+    return bool(kinds) and kinds <= {"reasoning"}
+
+
+def incomplete_reason(response):
+    details = response.get("incomplete_details") if isinstance(response, dict) else None
+    reason = details.get("reason") if isinstance(details, dict) else None
+    return reason if isinstance(reason, str) and reason else None
 
 
 def summary_message(message):
@@ -423,17 +456,32 @@ def full_summary(messages, source, req, *, output_tokens=None):
         retry_count = 0
         summary = text_response(response) if isinstance(response, dict) else ""
         failure, retryable = None, True
+        reason = incomplete_reason(response)
+        exhausted = reasoning_only_output(response)
         if (
             not isinstance(response, dict)
             or response.get("status") != "completed"
             or response.get("error")
         ):
-            failure = "summary_response_not_completed"
             status = response.get("http_error") if isinstance(response, dict) else None
             if status is not None:
+                failure = "summary_response_not_completed"
                 retryable = status in {408, 429, 500, 502, 503, 504}
+            elif reason == "max_output_tokens" and exhausted:
+                # Deterministic: the same request would spend its allowance on
+                # reasoning again, so repair attempts cannot help.
+                failure, retryable = "summary_output_exhausted_by_reasoning", False
+            elif reason == "max_output_tokens":
+                failure, retryable = "summary_incomplete_max_output_tokens", False
+            elif reason:
+                failure, retryable = "summary_incomplete_" + reason[:40], False
+            else:
+                failure = "summary_response_not_completed"
         elif not summary:
-            failure = "summary_text_empty"
+            if exhausted:
+                failure, retryable = "summary_output_exhausted_by_reasoning", False
+            else:
+                failure = "summary_text_empty"
         elif metric(summary) > request["max_output_tokens"]:
             failure, retryable = "summary_text_exceeds_token_budget", False
         if failure is None:

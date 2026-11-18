@@ -122,6 +122,22 @@ its saved request. Modified inputs require a new preparation. CPU work uses
 submission or raw HTTP entry is exposed. Saved receipts fence uncertain sends and avoid
 repeating a production request; inspect `job_status` or `job_list` to reconcile uncertainty.
 
+## Summaries never spend their answer on reasoning
+
+A summary request uses the same output allowance for reasoning and for the handoff text.
+When a provider reports every generated token as reasoning, the answer contains no
+citable section, and resending the identical request reproduces it. The shipped
+configuration therefore routes summaries without reasoning (`A3_SUMMARY_REASONING_EFFORT`
+set to `none`). The context manager also reads `incomplete_details`, treats an answer
+spent entirely on reasoning as a deterministic failure, and skips the repair attempts
+that would only repeat it. A degraded handoff then fills every section from the
+archived sources, including measured results, so compaction no longer drops them.
+
+Token estimates count only the input the runtime actually forwards: provider-internal
+reasoning items are removed before a request and are excluded from the estimate as well.
+Previously they inflated the estimate by roughly 29%, which triggered compaction far
+before the window was full.
+
 ## Token budgets and full-transcript summaries
 
 Before each decision, the Harness reads authenticated `GET /context/config` and

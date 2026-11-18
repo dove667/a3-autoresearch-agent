@@ -660,7 +660,11 @@ def test_summary_does_not_spend_calls_on_opaque_provider_ciphertext(tmp_path, mo
             "summary": [],
         },
     ]
-    original += [{"role": "user", "content": "Later bounded observation."} for _ in range(6)]
+    # Reasoning items are never replayed, so the replayed text must reach the
+    # trigger on its own; long observations keep this a real compaction case.
+    original += [
+        {"role": "user", "content": "Later bounded observation. " * 300} for _ in range(6)
+    ]
     requests = []
     result, record = context.prepare(
         original, [], lambda *args, **kwargs: requests.append(args[-1]) or completed(args[-1])

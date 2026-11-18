@@ -53,6 +53,9 @@ def validate_role_models(routes: dict | None) -> dict:
             or "://" in name
         ):
             raise ValueError("Invalid operator model identifier")
+        # A summary route may still be configured with reasoning; the context manager
+        # detects an answer spent entirely on reasoning and falls back instead of
+        # retrying it. The shipped configuration uses a non-reasoning summary route.
         result[role] = {
             "model_name": name,
             "request_options": validate_model_request_options(route["request_options"]),
