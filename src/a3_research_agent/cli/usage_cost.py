@@ -2,7 +2,12 @@
 
 import argparse
 import json
+import os
 from pathlib import Path
+
+from dotenv import load_dotenv
+
+from a3_research_agent.host.models import pricing
 
 
 def totals(path):
@@ -33,15 +38,22 @@ def totals(path):
         if isinstance(details, dict) and type(details.get("cached_tokens")) is int:
             item["cached_tokens"] += details["cached_tokens"]
         cost = entry.get("cost")
+        if not isinstance(cost, (int, float)):
+            # Older journals predate priced entries; price them from their usage.
+            cost = pricing.cost(usage)
         if isinstance(cost, (int, float)):
             item["cost"] += cost
+            item["priced"] = True
     currency = next(
         (entry.get("cost_currency") for entry in rows if entry.get("cost_currency")), None
     )
+    if currency is None and any(item.get("priced") for item in summary.values()):
+        currency = pricing.currency()
     return {"currency": currency, "roles": summary}
 
 
 def main() -> None:
+    load_dotenv(os.environ.get("A3_RSI_ENV_FILE", ".env"), override=False)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("run", type=Path, help="Trajectory directory or its model-usage.jsonl")
     args = parser.parse_args()

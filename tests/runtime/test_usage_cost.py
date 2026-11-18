@@ -36,7 +36,11 @@ def test_invalid_rates_are_ignored():
     assert pricing.cost(USAGE, {"A3_PRICE_INPUT_PER_MTOK": "abc", "A3_PRICE_OUTPUT_PER_MTOK": "1"}) is None
 
 
-def test_totals_group_by_role_and_keep_the_currency(tmp_path):
+def test_totals_group_by_role_and_keep_the_currency(tmp_path, monkeypatch):
+    # Another test may have loaded the deployment .env, which prices new entries.
+    for key in ("A3_PRICE_INPUT_PER_MTOK", "A3_PRICE_CACHED_INPUT_PER_MTOK",
+                "A3_PRICE_OUTPUT_PER_MTOK"):
+        monkeypatch.setenv(key, "")
     journal = tmp_path / "model-usage.jsonl"
     rows = [
         {"model_role": "main", "usage": USAGE, "cost": 2.475, "cost_currency": "usd"},
@@ -50,3 +54,14 @@ def test_totals_group_by_role_and_keep_the_currency(tmp_path):
     assert result["roles"]["main"]["input_tokens"] == 2_000_000
     assert result["roles"]["main"]["cost"] == 4.95
     assert result["roles"]["summary"]["cost"] == 0
+
+
+def test_an_unpriced_journal_is_priced_from_its_usage(tmp_path, monkeypatch):
+    for key, value in RATES.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setenv("A3_PRICE_CURRENCY", "cny")
+    journal = tmp_path / "model-usage.jsonl"
+    journal.write_text(json.dumps({"model_role": "main", "usage": USAGE}) + "\n")
+    result = usage_cost.totals(journal)
+    assert result["currency"] == "cny"
+    assert result["roles"]["main"]["cost"] == round(0.75 + 0.225 + 1.5, 6)
