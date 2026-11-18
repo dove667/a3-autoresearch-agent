@@ -12,7 +12,7 @@
 
 ## 在评测中录制
 
-对代表性 seed 调用 `benchmark(..., diagnostics=true)`。返回的 `diagnostics` 按 seed 列出正面与左右腕部录像和同步轨迹的 outputs 相对路径。作业完成后，根据 trace 找到第一次失败动作，用 CPU 作业抽取动作前、发生时和之后的帧。看不清时，补更密的帧或同一时刻的另一视角。
+对代表性 seed 调用 `benchmark(..., diagnostics=true)`。返回的 `diagnostics` 按 seed 列出正面与左右腕部录像和同步轨迹的 outputs 相对路径。作业完成后，在同一 run 的 CPU 作业中从 `A3_OUTPUTS` 逐行读取大型 trace，再用 `job_artifact` 读取提取后的事件摘要。依据计数和物体 ID 变化定位失败动作，抽取动作前、发生时和之后的帧。看不清时，补更密的帧或同一时刻的另一视角。
 
 ## A3 原生接口与实际保存范围
 

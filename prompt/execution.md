@@ -1,6 +1,6 @@
 # 研究工具与执行约定
 
-Version: 0.47.0
+Version: 0.47.1
 
 工具定义给出参数、默认值和限制；本文件说明常用流程。所有工具返回 `ok`：成功时直接读取同层结果；失败时读取 `error`、`hint` 和相关编号，修正后再调用。作业的 `status="failed"` 是执行结果，先读日志与证据再判断原因。
 
@@ -84,7 +84,7 @@ ACT 只读三路相机和 16 维状态，没有语言输入：用 `act:` 时传 
 
 它返回 `prepared_id`、`preflight_job_id` 与 `report`（远端 outputs 相对路径），预检通过后 `job_submit(prepared_id=...)`，结果直接读 `report`。不要手拼 benchmark 命令：低于任务预算的 `--max-steps` 会被提交层拒绝，因为那样得到的是预算上限而不是策略表现。
 
-需要定位抓取、搬运或放置失败时，对代表性 seed 传 `diagnostics=true`。返回的 `diagnostics` 按 seed 列出正面、左右腕部 MP4 和逐步 `trace.jsonl` 的 outputs 相对路径，GPU 作业完成后读取。录像帧对应同一步动作前的观察，trace 同时记录该步动作与动作后状态。
+需要定位抓取、搬运或放置失败时，对代表性 seed 传 `diagnostics=true`。返回的 `diagnostics` 按 seed 列出正面、左右腕部 MP4 和逐步 `trace.jsonl` 的 outputs 相对路径。GPU 作业完成后，在同一 run 的 CPU 作业中从 `A3_OUTPUTS` 逐行读取大型 trace，提取目标计数和物体 ID 的变化，再通过 `job_artifact` 读小摘要。录像帧对应同一步动作前的观察，trace 同时记录该步动作与动作后状态。
 
 一格的多个 report 用 `benchmark_summary(reports=[{job_id,path},...])` 汇总：它按每回合的任务上限截断、把入盒数和原生通过分开算，并指出各段之间协议不一致（预算、动作块、prompt 风格、checkpoint、重复 seed）。不要手工加总 report 的分数——入盒数可能超过任务上限，跨预算的分段也不能直接相加。
 
