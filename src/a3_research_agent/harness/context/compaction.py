@@ -69,9 +69,9 @@ class ForkCompactor:
         budget = cm.decision_budget(self.tools)
         if extra_messages:
             budget -= cm.message_cost(extra_messages)
-        if budget <= 0:
+        if budget <= 0 and not cm.TOKEN_CONFIG.get("provider_token_usage"):
             raise cm.ContextError("Operational/tool reserves exhaust decision budget")
-        return budget
+        return max(1, budget)
 
     def _target_budget(self, budget):
         extra_cost = max(0, cm.decision_budget(self.tools) - budget)
@@ -84,13 +84,16 @@ class ForkCompactor:
         )
         return min(budget, max(1, target))
 
-    def before_request(self, messages, *, extra_messages=None):
+    def before_request(
+        self, messages, *, extra_messages=None, observed_input_tokens=None, force=False
+    ):
         if not cm.paired(messages):
             raise cm.ContextError("Unsafe tool call/result boundary")
         budget = self._budget(extra_messages)
+        provider_usage = cm.TOKEN_CONFIG.get("provider_token_usage")
         candidate, record = self._apply_if_ready(messages, budget)
         if record and record.get("kind") == "applied":
-            if cm.message_cost(candidate) > budget:
+            if not provider_usage and cm.message_cost(candidate) > budget:
                 raise cm.ContextError(
                     "Compaction result exceeds current decision reserves; originals retained"
                 )
@@ -99,7 +102,7 @@ class ForkCompactor:
             raise cm.ContextPending(
                 record["reason"], retry_after=record.get("retry_after", 30), blocked=True
             )
-        if cm.message_cost(messages) > budget:
+        if force or (not provider_usage and cm.message_cost(messages) > budget):
             if not self._busy() and not record:
                 self.start(messages, extra_messages=extra_messages, budget=budget)
             raise cm.ContextPending(
@@ -108,16 +111,19 @@ class ForkCompactor:
             )
         if self._busy() or record and record.get("kind") in {"retry_wait", "fork_resumed"}:
             return messages, record
-        size = cm.message_cost(messages)
-        trigger = budget - (
-            cm.TOKEN_CONFIG["decision_input_tokens"]
-            - (
-                self.trigger_tokens
-                if self.trigger_tokens is not None
-                else cm.TOKEN_CONFIG["trigger_tokens"]
-            )
+        trigger = (
+            self.trigger_tokens
+            if self.trigger_tokens is not None
+            else cm.TOKEN_CONFIG["trigger_tokens"]
         )
-        floor = max(trigger, int(self._last_after_tokens * 1.1))
+        if provider_usage:
+            size, floor = observed_input_tokens or 0, trigger
+        else:
+            trigger -= cm.TOKEN_CONFIG["decision_input_tokens"] - budget
+            size, floor = (
+                cm.message_cost(messages),
+                max(trigger, int(self._last_after_tokens * 1.1)),
+            )
         if size >= floor:
             return messages, self.start(messages, extra_messages=extra_messages, budget=budget)
         return messages, record
@@ -130,7 +136,8 @@ class ForkCompactor:
             messages, self._budget(extra_messages), resume=False
         )
         if (
-            record
+            not cm.TOKEN_CONFIG.get("provider_token_usage")
+            and record
             and record.get("kind") == "applied"
             and cm.message_cost(candidate) > self._budget(extra_messages)
         ):
@@ -223,6 +230,7 @@ class ForkCompactor:
                 budget_limit=budget,
                 force_summary=True,
                 extra_messages=record.get("state_refresh", []),
+                summary_attempt_id=record.get("summary_attempt_id"),
             )
             if progress is None:
                 raise cm.ContextError("Soft fork produced no compression")
@@ -241,6 +249,16 @@ class ForkCompactor:
                     next_retry_at=self.clock() + error.retry_after,
                     retry_count=result.get("retry_count", 0) + 1,
                     blocked=error.blocked,
+                )
+            elif isinstance(error, cm.ContextFitError):
+                result.update(
+                    status="retry_wait",
+                    reason=str(error)[:500],
+                    retry_after=30,
+                    next_retry_at=self.clock() + 30,
+                    retry_count=result.get("retry_count", 0) + 1,
+                    summary_attempt_id=uuid.uuid4().hex,
+                    blocked=False,
                 )
             else:
                 result.update(
@@ -271,7 +289,8 @@ class ForkCompactor:
         self._last_after_tokens = cm.message_cost(published)
 
     def _context_signature(self, budget):
-        return digest({"token_contract": cm.TOKEN_CONFIG, "budget": budget})
+        # A new fitting algorithm can recover a previously blocked source.
+        return digest({"token_contract": cm.TOKEN_CONFIG, "budget": budget, "fit_version": 2})
 
     def _restart(self, result, archived, budget):
         running = {**result, "status": "running"}
@@ -390,7 +409,7 @@ class ForkCompactor:
             raise cm.ContextError("Compaction would orphan tool results")
         budget = self._budget() if budget is None else budget
         soft_target = self._target_budget(budget)
-        if cm.message_cost(candidate) > budget:
+        if not cm.TOKEN_CONFIG.get("provider_token_usage") and cm.message_cost(candidate) > budget:
             newest = messages[count:]
             old_tail = replacement[1:]
             remaining = budget - cm.message_cost([replacement[0]] + newest)

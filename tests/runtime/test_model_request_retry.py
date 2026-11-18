@@ -56,6 +56,21 @@ def test_permanent_http_failures_do_not_retry(monkeypatch, status):
     transport.assert_called_once()
 
 
+def test_upstream_context_limit_returns_control_to_compaction(monkeypatch):
+    from a3_research_agent.harness.context.manager import ModelContextLimit
+
+    transport = Mock(
+        return_value={
+            "http_error": 422,
+            "body": '{"detail":"model_context_limit_exceeded"}',
+        }
+    )
+    monkeypatch.setattr(agent, "req", transport)
+    with pytest.raises(ModelContextLimit):
+        agent.request_model({})
+    transport.assert_called_once()
+
+
 def test_model_retry_wait_can_be_interrupted(monkeypatch):
     transport = Mock(return_value={"http_error": 503})
     monkeypatch.setattr(agent, "req", transport)

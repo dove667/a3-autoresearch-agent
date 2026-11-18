@@ -50,7 +50,10 @@ def configure(req):
         or config.get("tokenizer") != "o200k_base"
         or any(type(config.get(k)) is not int or config[k] <= 0 for k in required)
         or not config["target_tokens"] < config["trigger_tokens"]
-        or config["injected_reserve_tokens"] >= config["target_tokens"]
+        or (
+            not config.get("provider_token_usage")
+            and config["injected_reserve_tokens"] >= config["target_tokens"]
+        )
         or config["decision_input_tokens"] < config["trigger_tokens"]
     ):
         raise ContextError("invalid or unusable Host token budget")
@@ -119,6 +122,14 @@ def add_budget_metrics(record, messages, candidate, tools, extra_messages):
 
 class ContextError(Exception):
     pass
+
+
+class ContextFitError(ContextError):
+    """A new handoff may fit where the current compaction could not."""
+
+
+class ModelContextLimit(ContextError):
+    """The upstream model rejected the request at its context window."""
 
 
 class ContextPending(ContextError):
@@ -212,7 +223,7 @@ def paired(messages):
     return not pending
 
 
-def _token_tail_boundary(messages, target, last_boundary):
+def _token_tail_boundary(messages, target, last_boundary, *, prefix=()):
     """Find a paired tail using logarithmically many full-history token counts.
 
     The caller has validated the complete call/result sequence. Each candidate
@@ -226,7 +237,8 @@ def _token_tail_boundary(messages, target, last_boundary):
             pending.remove(message["call_id"])
         if not pending:
             boundaries.append(boundary)
-    index = bisect_left(boundaries, -target, key=lambda cut: -message_cost(messages[cut:]))
+    prefix = list(prefix)
+    index = bisect_left(boundaries, -target, key=lambda cut: -message_cost(prefix + messages[cut:]))
     return boundaries[index] if index < len(boundaries) else None
 
 
@@ -291,7 +303,7 @@ def minimum_summary_tokens():
     return max(metric(json.dumps(document)), metric(research_summary.render(document)))
 
 
-def full_summary(messages, source, req, *, output_tokens=None):
+def full_summary(messages, source, req, *, output_tokens=None, summary_attempt_id=None):
     """Summarize a source snapshot, scheduling transient failures durably."""
     if output_tokens is None:
         output_tokens = TOKEN_CONFIG.get("target_tokens")
@@ -305,12 +317,12 @@ def full_summary(messages, source, req, *, output_tokens=None):
     }
     request = {**original, "max_output_tokens": output_tokens}
     limit = TOKEN_CONFIG["summary_input_tokens"]
+    provider_usage = TOKEN_CONFIG.get("provider_token_usage")
     cost = request_cost(request)
-    fingerprint = hashlib.sha256(
-        json.dumps(
-            {**original, "handoff_version": research_summary.VERSION}, sort_keys=True
-        ).encode()
-    ).hexdigest()
+    identity = {**original, "handoff_version": research_summary.VERSION}
+    if summary_attempt_id is not None:
+        identity["summary_attempt_id"] = summary_attempt_id
+    fingerprint = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
     path = state_paths.path(ROOT / ("summary-request-" + fingerprint + ".json"))
     retry_contract = {
         name: TOKEN_CONFIG.get(name)
@@ -321,6 +333,8 @@ def full_summary(messages, source, req, *, output_tokens=None):
             "target_tokens",
         )
     }
+    if provider_usage:
+        retry_contract["provider_token_usage"] = True
     attempts = 0
     retry_count = 0
     validation_attempts = 0
@@ -346,7 +360,7 @@ def full_summary(messages, source, req, *, output_tokens=None):
                     raise research_summary.SummaryValidationError("saved_summary_render_mismatch")
             except research_summary.SummaryValidationError as error:
                 raise SummaryStateError("Saved summary failed source validation") from error
-            if metric(state["summary"]) > output_tokens:
+            if not provider_usage and metric(state["summary"]) > output_tokens:
                 raise SummaryStateError("Saved summary exceeds the current context-token budget")
             return state["summary"], state.get("usage"), cost
         if state.get("retry_contract") != retry_contract:
@@ -356,6 +370,7 @@ def full_summary(messages, source, req, *, output_tokens=None):
         retry_count = state.get("retry_count", 0)
         validation_attempts = state.get("validation_attempts", 0)
         validation_feedback = state.get("validation_feedback")
+        request["max_output_tokens"] = max(output_tokens, state.get("next_output_tokens", 0))
         if validation_attempts >= SUMMARY_REPAIR_ATTEMPTS or state.get("retryable") is False:
             raise ContextError(
                 "Summary request blocked after bounded attempts to repair; original snapshot retained"
@@ -367,9 +382,9 @@ def full_summary(messages, source, req, *, output_tokens=None):
                 next_retry_at - time.time(),
                 blocked=state.get("blocked", False),
             )
-    if cost > limit:
+    if not provider_usage and cost > limit:
         raise ContextError("Full summary input exceeds model context; original snapshot retained")
-    window = TOKEN_CONFIG.get("summary_context_tokens")
+    window = None if provider_usage else TOKEN_CONFIG.get("summary_context_tokens")
     if window is not None:
         while cost + request["max_output_tokens"] > window:
             request["max_output_tokens"] = window - cost
@@ -405,7 +420,7 @@ def full_summary(messages, source, req, *, output_tokens=None):
                 ensure_ascii=False,
             )
             cost = request_cost(request)
-            if cost > limit:
+            if not provider_usage and cost > limit:
                 raise ContextError(
                     "Summary repair metadata exceeds input budget; original snapshot retained"
                 )
@@ -421,6 +436,7 @@ def full_summary(messages, source, req, *, output_tokens=None):
             attempts=attempts,
             max_output_tokens=request["max_output_tokens"],
             validation_feedback=validation_feedback,
+            next_output_tokens=request["max_output_tokens"] if provider_usage else 0,
         )
         try:
             response = req("POST", "/v1/summary", request, timeout=960)
@@ -451,6 +467,7 @@ def full_summary(messages, source, req, *, output_tokens=None):
                 failure=failure_record,
                 next_retry_at=time.time() + delay,
                 blocked=auth_unavailable,
+                next_output_tokens=request["max_output_tokens"] if provider_usage else 0,
             )
             raise SummaryRetry(reason, delay, blocked=auth_unavailable)
         retry_count = 0
@@ -472,7 +489,12 @@ def full_summary(messages, source, req, *, output_tokens=None):
                 # reasoning again, so repair attempts cannot help.
                 failure, retryable = "summary_output_exhausted_by_reasoning", False
             elif reason == "max_output_tokens":
-                failure, retryable = "summary_incomplete_max_output_tokens", False
+                failure = "summary_incomplete_max_output_tokens"
+                ceiling = TOKEN_CONFIG["target_tokens"]
+                allowance = request["max_output_tokens"]
+                retryable = provider_usage and allowance < ceiling
+                if retryable:
+                    request["max_output_tokens"] = min(ceiling, allowance * 2)
             elif reason:
                 failure, retryable = "summary_incomplete_" + reason[:40], False
             else:
@@ -482,12 +504,12 @@ def full_summary(messages, source, req, *, output_tokens=None):
                 failure, retryable = "summary_output_exhausted_by_reasoning", False
             else:
                 failure = "summary_text_empty"
-        elif metric(summary) > request["max_output_tokens"]:
+        elif not provider_usage and metric(summary) > request["max_output_tokens"]:
             failure, retryable = "summary_text_exceeds_token_budget", False
         if failure is None:
             try:
                 document, rendered, validation = research_summary.parse(summary, readable)
-                if metric(rendered) > request["max_output_tokens"]:
+                if not provider_usage and metric(rendered) > request["max_output_tokens"]:
                     raise research_summary.SummaryValidationError("summary_rendered_exceeds_budget")
             except research_summary.SummaryValidationError as error:
                 failure = str(error)
@@ -517,15 +539,16 @@ def full_summary(messages, source, req, *, output_tokens=None):
             failure=record,
             reason=failure,
             retryable=retryable and validation_attempts < SUMMARY_REPAIR_ATTEMPTS,
+            next_output_tokens=request["max_output_tokens"] if provider_usage else 0,
         )
         if not retryable or validation_attempts >= SUMMARY_REPAIR_ATTEMPTS:
             raise ContextError(failure + "; original snapshot retained; record=" + record)
 
 
-def degraded_handoff(messages, output_tokens):
+def degraded_handoff(messages, output_tokens, *, fits=None):
     """Program-built excerpt handoff used when the model summary cannot be repaired."""
     document, rendered = research_summary.degraded(
-        messages, fits=lambda value: metric(value) <= output_tokens
+        messages, fits=fits if fits is not None else (lambda value: metric(value) <= output_tokens)
     )
     report = research_summary.validate(document, messages)
     usage = {
@@ -788,10 +811,11 @@ def restore_artifact_views(messages):
             raise ContextError("decoded artifact reference differs from its verified original")
 
 
-def fit_tool_outputs(messages, budget, *, start_index=0, stop_index=None):
+def fit_tool_outputs(messages, budget, *, start_index=0, stop_index=None, prefix=()):
     """Model-free fitting; preserve ordinary fresh results and all call/result IDs."""
     work = list(messages)
-    if message_cost(work) <= budget:
+    prefix = list(prefix)
+    if message_cost(prefix + work) <= budget:
         return work
     fresh = fresh_tool_boundary(messages)
     end = len(messages) if stop_index is None else stop_index
@@ -810,7 +834,7 @@ def fit_tool_outputs(messages, budget, *, start_index=0, stop_index=None):
                     continue
                 raise
             work[index] = bounded
-            if message_cost(work) <= budget:
+            if message_cost(prefix + work) <= budget:
                 return work
     # A fixed cap is not the true reference floor. Remove optional preview text
     # before declaring a batch irreducible; keep every source and call/result ID.
@@ -821,20 +845,33 @@ def fit_tool_outputs(messages, budget, *, start_index=0, stop_index=None):
         minimal = dict(bounded, output=json.dumps(view, ensure_ascii=False))
         if size(minimal) < size(work[index]):
             work[index] = minimal
-        if message_cost(work) <= budget:
+        if message_cost(prefix + work) <= budget:
             return work
-    raise ContextError(
+    raise ContextFitError(
         "Irreducible call/result metadata exceeds decision budget; originals retained"
     )
 
 
-def prepare(messages, tools, req, *, extra_messages=None, budget_limit=None, force_summary=False):
+def prepare(
+    messages,
+    tools,
+    req,
+    *,
+    extra_messages=None,
+    budget_limit=None,
+    force_summary=False,
+    summary_attempt_id=None,
+):
     before, overhead = size(messages), size(tools)
+    provider_usage = TOKEN_CONFIG.get("provider_token_usage")
     budget = decision_budget(tools) - (message_cost(extra_messages) if extra_messages else 0)
     if budget_limit is not None:
         if type(budget_limit) is not int or budget_limit <= 0:
             raise ContextError("invalid explicit compression budget")
         budget = min(budget, budget_limit)
+    if provider_usage:
+        # A layout allowance for creating a compact handoff. The provider owns admission.
+        budget = max(budget, TOKEN_CONFIG["target_tokens"])
     if budget <= 0:
         raise ContextError("reserved request budget exhausted")
     if message_cost(messages) <= budget and not force_summary:
@@ -858,7 +895,9 @@ def prepare(messages, tools, req, *, extra_messages=None, budget_limit=None, for
     wrapper_cost = message_cost([memory_message("", source)])
     fresh_fitted = False
     summary_floor = minimum_summary_tokens()
-    if budget - wrapper_cost - message_cost(required_tail) < summary_floor:
+    if provider_usage:
+        budget = max(budget, wrapper_cost + message_cost(required_tail) + summary_floor + 1)
+    elif budget - wrapper_cost - message_cost(required_tail) < summary_floor:
         required_tail = fit_tool_outputs(required_tail, budget - wrapper_cost - summary_floor)
         work = work[:fresh] + required_tail
         summary_messages = work + list(extra_messages or [])
@@ -871,16 +910,17 @@ def prepare(messages, tools, req, *, extra_messages=None, budget_limit=None, for
     target = min(budget, max(soft_target, minimum_target))
     output_tokens = target - message_cost([memory_message("", source)] + required_tail)
     if output_tokens <= 0:
-        raise ContextError("Fresh observations leave no summary space in the context target")
+        raise ContextFitError("Fresh observations leave no summary space in the context target")
     summary_mode, degraded_reason = "model", None
-    if summary_suspended():
+    if summary_attempt_id is None and summary_suspended():
         summary_mode = "degraded"
         degraded_reason = "summary_breaker_open"
         summary, usage, summary_cost = degraded_handoff(summary_messages, output_tokens)
     else:
         try:
+            attempt = {"summary_attempt_id": summary_attempt_id} if summary_attempt_id else {}
             summary, usage, summary_cost = full_summary(
-                summary_messages, source, req, output_tokens=output_tokens
+                summary_messages, source, req, output_tokens=output_tokens, **attempt
             )
             clear_summary_failure()
         except SummaryRetry:
@@ -895,14 +935,36 @@ def prepare(messages, tools, req, *, extra_messages=None, budget_limit=None, for
             summary, usage, summary_cost = degraded_handoff(summary_messages, output_tokens)
             record_summary_failure(degraded_reason)
     memory = memory_message(summary, source)
-    tail_target = target - message_cost([memory])
-    cut = _token_tail_boundary(work, tail_target, fresh if required_tail else len(work))
+    # JSON escaping changes the cost of a handoff once quoted inside a message.
+    # Prefer preserving the handoff and fresh batch when they fit the hard limit.
+    fresh_cost = message_cost([memory] + required_tail)
+    if not provider_usage and fresh_cost > budget:
+        degraded_reason = "wrapped_summary_exceeds_decision_budget"
+        summary_mode = "degraded"
+        summary, fallback_usage, _ = degraded_handoff(
+            summary_messages,
+            output_tokens,
+            fits=lambda text: (
+                message_cost([memory_message(text, source)] + required_tail) <= budget
+            ),
+        )
+        usage = {**usage, **fallback_usage}
+        memory = memory_message(summary, source)
+        if message_cost([memory] + required_tail) > budget:
+            required_tail = fit_tool_outputs(required_tail, budget, prefix=[memory])
+            work = work[:fresh] + required_tail
+            fresh_fitted = True
+        fresh_cost = message_cost([memory] + required_tail)
+    target = max(target, fresh_cost)
+    cut = _token_tail_boundary(work, target, fresh, prefix=[memory])
     if cut is None:
-        cut = fresh if required_tail else len(work)
+        cut = fresh
     recent = work[cut:]
     candidate = [memory] + recent
-    if not paired(candidate) or message_cost(candidate) > target:
-        raise ContextError("compressed context exceeds budget; original snapshot retained")
+    if not paired(candidate):
+        raise ContextError("Compaction cannot preserve the call and result pairs")
+    if not provider_usage and message_cost(candidate) > budget:
+        raise ContextFitError("Compaction cannot fit a paired handoff within the hard budget")
     record = {
         "source": source,
         "summary": summary,

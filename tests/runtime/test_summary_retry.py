@@ -137,3 +137,37 @@ def test_transport_errors_do_not_spend_handoff_repair_budget(setup_retry):
     assert len(attempts) == 4
     state = json.loads(next(state_paths.path(cm.ROOT).glob("summary-request-*")).read_text())
     assert state["validation_attempts"] == 3 and state["attempts"] == 4
+
+
+def test_provider_summary_retries_truncated_text_with_more_output_room(setup_retry):
+    _, messages, source = setup_retry
+    cm.TOKEN_CONFIG["provider_token_usage"] = True
+    allowances = []
+
+    def provider(method, path, body, **kwargs):
+        allowances.append(body["max_output_tokens"])
+        if len(allowances) == 1:
+            return {
+                "status": "incomplete",
+                "incomplete_details": {"reason": "max_output_tokens"},
+                "output": [{"type": "message", "content": [{"type": "output_text", "text": "{"}]}],
+            }
+        return completed(body)
+
+    text, usage, _ = cm.full_summary(messages, source, provider, output_tokens=300)
+    assert text and usage["a3_summary_attempts"] == 2
+    assert allowances == [300, 600]
+
+
+def test_new_fit_attempt_reissues_a_previously_completed_summary(setup_retry):
+    _, messages, source = setup_retry
+    calls = []
+
+    def provider(method, path, body, **kwargs):
+        calls.append(body)
+        return completed(body)
+
+    first, _, _ = cm.full_summary(messages, source, provider)
+    replacement, _, _ = cm.full_summary(messages, source, provider, summary_attempt_id="new-fit")
+    assert first == replacement
+    assert len(calls) == 2 and calls[0] == calls[1]

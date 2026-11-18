@@ -147,11 +147,14 @@ tracking, so a read after a rewrite of the history returns the text again.
 
 ## Token budgets and full-transcript summaries
 
-Before each decision, the Harness reads authenticated `GET /context/config` and
-estimates the entire request with the bundled offline `o200k_base` tokenizer.
-The count includes messages, tool definitions, operational state, injected inputs,
-feedback and provider framing. Deployers configure the actual model windows and
-compare estimates with returned usage.
+Before each decision, the Harness reads authenticated `GET /context/config`.
+With a configured Responses upstream, the previous decision's actual
+`usage.input_tokens` drives the background compaction trigger. The upstream
+admits the complete request and an explicit context-window rejection forces
+compaction before another decision. The same provider admits summary requests.
+The Harness uses the bundled `o200k_base` tokenizer for sizing the handoff and
+retained tail. Deployments without a configured Responses upstream also use
+this tokenizer and the configured windows for request admission.
 
 `A3_CONTEXT_TARGET_TOKENS` is the target for the complete post-compaction decision
 input. For a 32k target, the Harness deducts fixed instructions, tools, the current
@@ -159,9 +162,14 @@ operational frame, the summary wrapper and the newest complete tool batch. The
 remaining tokens fund the summary. A large fresh observation can raise this soft
 target within the hard decision budget, preserving useful summary space. Only
 the model window and framing/output reserves are hard admission limits.
-Its output allocation follows the remaining
-budget and the summary model's actual window; there is no separate fixed 1000- or
-4096-token cap, byte ceiling or fixed short-summary length.
+Summary output allocation follows the remaining budget and the summary model's
+actual window.
+
+The final fit counts the serialized handoff together with the retained messages.
+If JSON escaping pushes this minimum package over the soft target, the Harness
+can raise the target to keep the verified handoff and fresh batch intact. If the
+minimum package exceeds the hard budget, it tries a shorter source-quoted handoff
+before bounding fresh tool outputs.
 
 The summary request contains the complete readable current context in one pass,
 followed by a saved `CURRENT_STATE_REFRESH` frame when available. Its source
@@ -169,9 +177,10 @@ snapshot includes both, so every source index remains inspectable. Previous
 summaries remain part of current context; compression does not reread the entire
 lifetime history. Large outputs contribute semantic facts and partial previews;
 their complete originals are available through recall and read.
-The Host checks its input and requested output together against the configured
-summary window. A complete successful response is required before compacted state
-is published. Temporary transport failures use persisted exponential backoff,
+The summary request specifies an output allowance. If a Responses upstream
+truncates visible summary text at that allowance, the next attempt increases it
+within the repair budget. Before publishing compacted state, the Harness validates
+the full model handoff or a source-quoted fallback. Temporary transport failures use persisted exponential backoff,
 capped at 60 seconds between attempts, with no total time or attempt cutoff.
 Each summary request has a 960-second transport timeout; a timeout schedules
 another attempt rather than ending the run. Invalid summary content has three
@@ -189,13 +198,13 @@ requests, so a weak summarizer cannot spend three full-transcript requests per
 compaction; one successful summary clears it. Damaged saved-summary state is a
 different case: it still raises and stays visible rather than being overwritten.
 
-There is no 300-second compaction exit deadline. While history fits the hard
-budget, a pending background summary can coexist with normal decisions. At the
-hard budget, the decision loop waits in the same process until a valid summary
-can be admitted. Authentication, source-integrity or repeated validation errors
-enter a visible blocked state without generating research decisions. Source and
-budget contracts are rechecked; repaired configuration can enable another attempt.
-The runtime preserves its existing context and journal throughout this wait.
+A pending background summary can coexist with normal decisions. When context
+pressure requires a summary first, the decision loop waits in the same process.
+A failed fit reschedules a fresh summary request after 30 seconds, using the
+verified source and a new request identity. Credential failures also reissue a
+request on their retry schedule. Damaged source or checkpoint records enter a
+visible blocked state and require repair. The runtime preserves its existing
+context and journal throughout these waits.
 
 `conversation/context-failure.json` reports `waiting` or `blocked`, the reason,
 start/update time and next recheck interval. A successful decision gate clears

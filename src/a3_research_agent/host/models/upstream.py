@@ -1,10 +1,42 @@
 """Optional Host-only Responses endpoint for an existing run identity."""
 
+import json
 import os
 
 import httpx
 
 from .direct import DirectHTTPError, DirectTransportError, post_json
+
+
+def context_limit_rejected(error, status):
+    """Recognize explicit provider context errors without exposing the payload."""
+    if status not in {400, 413, 422}:
+        return False
+    try:
+        body = (
+            json.loads(error.body) if isinstance(error, DirectHTTPError) else error.response.json()
+        )
+    except (AttributeError, ValueError):
+        return False
+    if not isinstance(body, dict):
+        return False
+    detail = body.get("error", body)
+    if isinstance(detail, dict):
+        if detail.get("code") in (
+            "context_length_exceeded",
+            "context_window_exceeded",
+            "input_too_long",
+        ):
+            return True
+        detail = detail.get("message")
+    return isinstance(detail, str) and any(
+        phrase in detail.casefold()
+        for phrase in (
+            "maximum context length",
+            "exceeds the context window",
+            "context length exceeded",
+        )
+    )
 
 
 def chatgpt_history(items: list) -> list:
@@ -94,4 +126,5 @@ def configured_upstream(default):
         response.raise_for_status()
         return response.json()
 
+    forward.provider_token_usage = True
     return forward
