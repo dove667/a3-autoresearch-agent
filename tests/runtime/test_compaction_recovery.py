@@ -136,6 +136,86 @@ def test_permanent_error_stays_observable_until_contract_changes(context, monkey
     assert len(calls) == 2
 
 
+def test_upgraded_fit_retries_a_saved_blocked_snapshot(context, monkeypatch):
+    monkeypatch.setattr(cm, "prepare", lambda *a, **k: ready())
+    fork = compaction.ForkCompactor(lambda *a, **k: {})
+    fork.start(context)
+    fork.wait(5)
+    result = fork.status()["result"]
+    cm.atomic(
+        fork.result_path,
+        json.dumps(
+            {
+                **result,
+                "status": "blocked",
+                "reason": "compressed context exceeds budget; original snapshot retained",
+                "blocked_context": compaction.digest(
+                    {"token_contract": cm.TOKEN_CONFIG, "budget": fork._budget()}
+                ),
+            }
+        ),
+    )
+
+    with pytest.raises(cm.ContextPending) as pending:
+        fork.before_request(context)
+    assert not pending.value.blocked
+    fork.wait(5)
+    candidate, report = fork.before_request(context)
+    assert report["kind"] == "applied" and candidate == ready()[0]
+    assert json.loads(state_paths.path(result["source"]).read_text()) == context
+
+
+def test_provider_usage_drives_compaction_without_local_admission(context, monkeypatch):
+    monkeypatch.setitem(cm.TOKEN_CONFIG, "provider_token_usage", True)
+    monkeypatch.setattr(cm, "prepare", lambda *a, **k: ready())
+    fork = compaction.ForkCompactor(lambda *a, **k: {})
+
+    messages, record = fork.before_request(context, observed_input_tokens=100)
+    assert messages is context and record is None
+    assert cm.message_cost(context) > fork._budget()
+    messages, record = fork.before_request(context, observed_input_tokens=40000)
+    assert messages is context and record["kind"] == "fork_started"
+    fork.wait(5)
+
+
+def test_provider_rejection_compacts_before_next_decision(context, monkeypatch):
+    monkeypatch.setitem(cm.TOKEN_CONFIG, "provider_token_usage", True)
+    monkeypatch.setattr(cm, "prepare", lambda *a, **k: ready())
+    fork = compaction.ForkCompactor(lambda *a, **k: {})
+
+    with pytest.raises(cm.ContextPending):
+        fork.before_request(context, force=True)
+    fork.wait(5)
+    messages, record = fork.before_request(context, force=True)
+    assert messages == ready()[0] and record["kind"] == "applied"
+
+
+def test_fit_retry_issues_a_new_summary_request(context, monkeypatch):
+    clock = [0]
+    attempts = []
+
+    def prepare(*args, summary_attempt_id=None, **kwargs):
+        attempts.append(summary_attempt_id)
+        if summary_attempt_id is None:
+            raise cm.ContextFitError("no room for handoff")
+        return ready()
+
+    monkeypatch.setattr(cm, "prepare", prepare)
+    fork = compaction.ForkCompactor(lambda *a, **k: {}, clock=lambda: clock[0])
+    fork.start(context)
+    fork.wait(5)
+    with pytest.raises(cm.ContextPending) as pending:
+        fork.before_request(context)
+    assert not pending.value.blocked and pending.value.retry_after == 30
+    clock[0] = 30
+    with pytest.raises(cm.ContextPending):
+        fork.before_request(context)
+    fork.wait(5)
+    messages, record = fork.before_request(context)
+    assert messages == ready()[0] and record["kind"] == "applied"
+    assert len(attempts) == 2 and attempts[1]
+
+
 def test_shutdown_does_not_restart_due_summary_retry(context, monkeypatch):
     calls = []
 

@@ -12,9 +12,14 @@ from a3_research_agent.host.models import pricing
 from a3_research_agent.host.models.settings import (
     validate_model_request_options,
 )
+from a3_research_agent.host.models.upstream import context_limit_rejected
 from a3_research_agent.host.models.vision import prepare_vision_request
 from a3_research_agent.host.telemetry.diagnostics import CURRENT_REQUEST, upstream_status
-from a3_research_agent.token_count import count_tokens, estimate_request_tokens
+from a3_research_agent.token_count import (
+    MODEL_CONTEXT_LIMIT_EXCEEDED,
+    count_tokens,
+    estimate_request_tokens,
+)
 
 from .instructions import MODEL_FIELDS, SUMMARY_INSTRUCTIONS
 from .schemas import (
@@ -111,7 +116,14 @@ class ModelRoutes:
             raise HTTPException(422, "Output allowance must be a positive integer")
         arguments["max_output_tokens"] = output_tokens
         estimated_tokens = None
-        if self.token_budget:
+        if getattr(self.forward_model, "provider_token_usage", False) is True:
+            if role == "summary":
+                arguments["instructions"] = (
+                    arguments.get("instructions", "")
+                    + f" Working-memory output budget: {output_tokens} tokens. "
+                    "Return a complete summary within this budget."
+                )
+        else:
             estimate_arguments = arguments
             if purpose == "vision":
                 # Binary transport length is not an image token count. Use a bounded,
@@ -186,6 +198,8 @@ class ModelRoutes:
                 }
             self.diagnostics.error("model_provider", error)
             status = upstream_status(error)
+            if context_limit_rejected(error, status):
+                raise HTTPException(422, MODEL_CONTEXT_LIMIT_EXCEEDED) from None
             if status is not None and 400 <= status < 500:
                 raise HTTPException(status, "Model upstream request failed") from None
             raise HTTPException(502, "Model forwarding failed") from None
@@ -270,6 +284,7 @@ class ModelRoutes:
             if main_route
             else self.token_budget.worker_context_tokens
         )
+        provider_usage = getattr(self.forward_model, "provider_token_usage", False) is True
         injected_reserve = (
             count_tokens(injected)
             + self.token_budget.provider_reserve_tokens
@@ -286,6 +301,7 @@ class ModelRoutes:
             },
             "unit": "estimated_tokens",
             "tokenizer": "o200k_base",
+            "provider_token_usage": provider_usage,
             "trigger_tokens": self.token_budget.trigger_tokens,
             "decision_input_tokens": window * 9 // 10 - self.token_budget.output_reserve_tokens,
             "target_tokens": self.token_budget.target_tokens,
