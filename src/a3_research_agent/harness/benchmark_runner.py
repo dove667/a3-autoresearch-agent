@@ -28,7 +28,7 @@ def parser():
     result.add_argument("--episodes", type=int, default=5)
     result.add_argument("--seed-start", type=int, default=10000)
     result.add_argument("--max-steps", type=int)
-    result.add_argument("--n-action-steps", type=int, default=8)
+    result.add_argument("--n-action-steps", type=int, default=25)
     result.add_argument("--workers", type=int, default=1)
     result.add_argument("--source-column", type=int, default=1)
     result.add_argument("--prompt-style", default="training")

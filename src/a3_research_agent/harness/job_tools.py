@@ -68,6 +68,7 @@ BENCHMARK_FIELDS = {
     "seed_start",
     "policy",
     "max_steps",
+    "n_action_steps",
     "name",
 }
 BATCH_FIELDS = {
@@ -133,6 +134,12 @@ TOOLS = [
             "seed_start": {"type": "integer", "minimum": 0, "maximum": 2147483647},
             "policy": {"type": "string", "enum": ["act", "smolvla"]},
             "max_steps": {"type": "integer", "minimum": 1, "maximum": 2147483647},
+            "n_action_steps": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 50,
+                "description": "Action horizon per replan; defaults to 25, the measured best setting.",
+            },
             "name": {
                 "type": "string",
                 "minLength": 1,
@@ -397,6 +404,7 @@ def benchmark(args, request, workspace):
     if max_steps is not None:
         max_steps = integer(max_steps, "max_steps", 1, 2**31 - 1)
     steps = benchmark_policy.budget(task, max_steps)
+    horizon = integer(args.get("n_action_steps", 25), "n_action_steps", 1, 50)
     name = args.get("name")
     if name is not None:
         name = text(name, "name", 120).strip()
@@ -404,7 +412,7 @@ def benchmark(args, request, workspace):
     install_runner(workspace)
     digest = hashlib.sha256(
         json.dumps(
-            [task, profile, episodes, seed_start, policy, checkpoint, steps],
+            [task, profile, episodes, seed_start, policy, checkpoint, steps, horizon],
             sort_keys=True,
         ).encode()
     ).hexdigest()[:8]
@@ -424,6 +432,8 @@ def benchmark(args, request, workspace):
         str(seed_start),
         "--max-steps",
         str(steps),
+        "--n-action-steps",
+        str(horizon),
         "--output-dir",
         output_dir,
     ]

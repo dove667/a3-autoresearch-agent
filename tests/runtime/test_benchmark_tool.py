@@ -314,7 +314,7 @@ def test_runner_forwards_to_the_deployed_entry_with_the_job_area(tmp_path, monke
     assert call["arguments"][1:3] == ["-m", "a3_dual_arm_sim.workflows.benchmark_cookie_batch_cli"]
     assert call["arguments"][call["arguments"].index("--device") + 1] == "cuda"
     assert call["arguments"][call["arguments"].index("--max-steps") + 1] == "3200"
-    assert call["arguments"][call["arguments"].index("--n-action-steps") + 1] == "8"
+    assert call["arguments"][call["arguments"].index("--n-action-steps") + 1] == "25"
     assert str(tmp_path / "out/seed-10000.json") == call["arguments"][-1]
     assert call["env"]["MUJOCO_GL"] == "egl"
 
