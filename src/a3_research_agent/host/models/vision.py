@@ -21,7 +21,6 @@ MAX_PIXELS = 1024 * 1024
 IMAGE_PATCH_SIZE = 32
 IMAGE_TOKENS_PER_PATCH = 4
 IMAGE_BASE_RESERVE = 256
-VISION_OUTPUT_TOKENS = 12288
 
 VISION_INSTRUCTIONS = (
     "Answer the supplied visual diagnosis question using only the visible sampled frames. "
@@ -258,7 +257,6 @@ def prepare_vision_request(
             "input": [{"role": "user", "content": content}],
             "tools": [],
             "tool_choice": "none",
-            "max_output_tokens": VISION_OUTPUT_TOKENS,
             "store": False,
         },
         metadata,

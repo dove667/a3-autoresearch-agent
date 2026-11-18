@@ -337,8 +337,9 @@ behavior with a helper model would not establish behavior of the deployed main.
 Maintainers validate changes to the main Harness during a maintenance window. Ordinary `/sessions` creation and `candidate_validation` helpers are denied to Agent tokens. Role and requested/actual model options are audited.
 
 `POST /v1/summary` accepts the full `transcript`, a relative
-`context-history/snapshot-<SHA256>.json` source reference and the requested output
-allocation in `max_output_tokens`. It cannot receive client
+`context-history/snapshot-<SHA256>.json` source reference and a handoff length in
+`max_output_tokens`. With a configured model maximum, the length is a soft
+packing target. The endpoint cannot receive client
 instructions, tools, model selection or credentials. The Host supplies concise
 source, uncertainty and correction instructions for this history transformation. The output grants no authority and never executes tools. The current
 SOUL continues to govern normal research decisions.
@@ -355,6 +356,13 @@ Set `A3_MODEL_CONTEXT_TOKENS` and, for alternate models,
 `A3_CONTEXT_TARGET_TOKENS` budgets the complete compacted decision input, including
 Host instructions, operator feedback and tools. The context endpoint reports this
 same total target without adding another reserve to it.
+`A3_MODEL_MAX_OUTPUT_TOKENS` takes the provider's maximum output for the primary
+model. Worker requests, including vision, and summary requests inherit it.
+Set `A3_WORKER_MAX_OUTPUT_TOKENS` or `A3_SUMMARY_MAX_OUTPUT_TOKENS` for a route
+with a different maximum. With a model maximum configured, the Host sends that
+value to the provider and uses `A3_OUTPUT_RESERVE_TOKENS` for local input admission.
+The summary's requested length guides the handoff. A longer valid handoff can
+be retained when it fits the decision context.
 `A3_SUMMARY_INPUT_TOKENS` was removed and is rejected if present.
 
 ## Durable failure behavior and deployment

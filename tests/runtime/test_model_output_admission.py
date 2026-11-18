@@ -9,11 +9,12 @@ from a3_research_agent.host.models.context import read_context_budget
 from a3_research_agent.token_count import estimate_request_tokens
 
 
-def configured(tmp_path):
+def configured(tmp_path, **budget_overrides):
     calls = []
     sessions = {"main-token": "main", "worker-token": "worker"}
     budget = read_context_budget({"A3_MODEL_CONTEXT_TOKENS": "500000"})
     budget["output_reserve_tokens"] = 10240
+    budget.update(budget_overrides)
     app = create_app(
         model_name="fake/main",
         main_owner="main",
@@ -107,3 +108,50 @@ def test_valid_large_output_remains_explicit_and_inside_headroom(tmp_path):
     arguments = {key: value for key, value in calls[0].items() if key != "model"}
     assert arguments["max_output_tokens"] == 400000
     assert estimate_request_tokens(arguments) + arguments["max_output_tokens"] <= 450000
+
+
+@pytest.mark.parametrize(
+    ("actor", "purpose", "maximum"),
+    [
+        ("main", "decision", 1048576),
+        ("worker", "decision", 262144),
+        ("main", "vision", 262144),
+        ("main", "summary", 524288),
+    ],
+)
+def test_configured_model_limits_take_precedence_over_request_allowance(
+    tmp_path, actor, purpose, maximum
+):
+    _, gateway, calls = configured(
+        tmp_path,
+        main_max_output_tokens=1048576,
+        worker_max_output_tokens=262144,
+        summary_max_output_tokens=524288,
+    )
+    gateway.forward_response(
+        {"input": "tiny input", "max_output_tokens": 2048},
+        f"Bearer {actor}-token",
+        purpose=purpose,
+    )
+    assert calls[0]["max_output_tokens"] == maximum
+
+
+def test_model_output_maximum_inherits_across_roles():
+    from a3_research_agent.host.models.context import ContextBudget
+
+    config = read_context_budget({"A3_MODEL_MAX_OUTPUT_TOKENS": "1048576"})
+    budget = ContextBudget(**config)
+    assert budget.maximum_output_tokens("main") == 1048576
+    assert budget.maximum_output_tokens("worker") == 1048576
+    assert budget.maximum_output_tokens("summary") == 1048576
+
+
+def test_summary_output_maximum_changes_the_route_identity(tmp_path):
+    original, _, _ = configured(tmp_path)
+    updated, _, _ = configured(tmp_path, main_max_output_tokens=1048576)
+    headers = {"Authorization": "Bearer main-token"}
+    before = original.get("/context/config", headers=headers).json()
+    after = updated.get("/context/config", headers=headers).json()
+    assert after["summary_model_max_output_tokens"] == 1048576
+    assert after["model_routes_sha256"] != before["model_routes_sha256"]
+    assert after["decision_input_tokens"] == before["decision_input_tokens"]

@@ -13,12 +13,24 @@ class ContextBudget:
     target_tokens: int = 32000
     output_reserve_tokens: int = 8192
     provider_reserve_tokens: int = 4096
+    main_max_output_tokens: int | None = None
+    worker_max_output_tokens: int | None = None
+    summary_max_output_tokens: int | None = None
 
     def __post_init__(self):
+        settings = asdict(self)
         if any(
-            type(value) is not int or not 0 < value <= 2000000 for value in asdict(self).values()
+            type(value) is not int or not 0 < value <= 2000000
+            for name, value in settings.items()
+            if not name.endswith("_max_output_tokens")
         ):
             raise ValueError("Context budgets require bounded positive integer token counts")
+        if any(
+            type(value) is not int or value <= 0
+            for name, value in settings.items()
+            if name.endswith("_max_output_tokens") and value is not None
+        ):
+            raise ValueError("Model output maxima must be positive integer token counts")
         available = (
             min(self.main_context_tokens, self.worker_context_tokens) * 9 // 10
             - self.output_reserve_tokens
@@ -31,6 +43,13 @@ class ContextBudget:
     @property
     def summary_input_tokens(self):
         return self.summary_context_tokens - self.output_reserve_tokens
+
+    def maximum_output_tokens(self, role):
+        if role == "worker" and self.worker_max_output_tokens is not None:
+            return self.worker_max_output_tokens
+        if role == "summary" and self.summary_max_output_tokens is not None:
+            return self.summary_max_output_tokens
+        return self.main_max_output_tokens
 
 
 def read_context_budget(environment: Mapping[str, str]) -> dict:
@@ -49,7 +68,11 @@ def read_context_budget(environment: Mapping[str, str]) -> dict:
             "trigger_tokens": "A3_CONTEXT_TRIGGER_TOKENS",
             "target_tokens": "A3_CONTEXT_TARGET_TOKENS",
             "output_reserve_tokens": "A3_OUTPUT_RESERVE_TOKENS",
+            "main_max_output_tokens": "A3_MODEL_MAX_OUTPUT_TOKENS",
+            "worker_max_output_tokens": "A3_WORKER_MAX_OUTPUT_TOKENS",
+            "summary_max_output_tokens": "A3_SUMMARY_MAX_OUTPUT_TOKENS",
         }.items()
         if environment.get(key)
     }
-    return asdict(ContextBudget(main_context_tokens=main, **windows, **options))
+    budget = ContextBudget(main_context_tokens=main, **windows, **options)
+    return {name: value for name, value in asdict(budget).items() if value is not None}

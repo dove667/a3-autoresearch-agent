@@ -285,3 +285,26 @@ def test_vision_allows_more_than_six_frames_within_the_worker_budget(tmp_path):
     assert result.status_code == 200
     assert len(result.json()["frames"]) == 12
     assert len(models) == 1
+
+
+def test_vision_returns_complete_analysis_at_model_output_maximum(tmp_path):
+    analysis = "Visible observation. " * 1000
+    client, _, models = client_for(
+        tmp_path,
+        response={
+            "status": "completed",
+            "output": [{"type": "message", "content": [{"type": "output_text", "text": analysis}]}],
+        },
+        context_budget={
+            "main_context_tokens": 500000,
+            "worker_context_tokens": 500000,
+            "summary_context_tokens": 500000,
+            "worker_max_output_tokens": 1048576,
+        },
+    )
+    result = client.post(
+        "/vision/inspect", headers={"Authorization": "Bearer token-a"}, json=request_body()
+    )
+    assert result.status_code == 200
+    assert result.json()["analysis"] == analysis
+    assert models[0]["max_output_tokens"] == 1048576

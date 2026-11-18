@@ -493,6 +493,22 @@ def test_complete_utf8_summary_can_exceed_old_byte_limit(tmp_path, monkeypatch):
     assert json.loads(state_paths.path(calls[0]["source"]).read_text()) == messages()
 
 
+def test_model_maximum_accepts_valid_handoff_above_the_soft_target(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    context = load_context()
+    context.TOKEN_CONFIG["summary_model_max_output_tokens"] = 1048576
+    original = messages(1000)
+    source = context.archive(original, "snapshot")
+
+    def provider(method, path, body, **kwargs):
+        assert body["max_output_tokens"] == 100
+        return completed(body, text="Evidence survives the soft target. " * 20)
+
+    summary, _, _ = context.full_summary(original, source, provider, output_tokens=100)
+    assert context.metric(summary) > 100
+    assert "Evidence survives the soft target." in summary
+
+
 def test_failed_summary_remains_failed_after_restart(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     context = load_context()

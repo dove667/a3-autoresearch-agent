@@ -13,7 +13,6 @@ from a3_research_agent.host.models.settings import (
     validate_model_request_options,
 )
 from a3_research_agent.host.models.vision import (
-    VISION_OUTPUT_TOKENS,
     VisionBudgetError,
     prepare_vision_request,
 )
@@ -117,7 +116,13 @@ class ModelRoutes:
             output_tokens = self.token_budget.output_reserve_tokens
         if type(output_tokens) is not int or output_tokens <= 0:
             raise HTTPException(422, "Output allowance must be a positive integer")
-        arguments["max_output_tokens"] = output_tokens
+        model_maximum = self.token_budget.maximum_output_tokens(role)
+        arguments["max_output_tokens"] = model_maximum or output_tokens
+        if role == "summary" and model_maximum is not None:
+            arguments["instructions"] = (
+                arguments.get("instructions", "")
+                + f" Aim for {output_tokens} tokens in the handoff and keep the required evidence."
+            )
         estimated_tokens = None
         if self.token_budget:
             estimate_arguments = arguments
@@ -142,7 +147,9 @@ class ModelRoutes:
                 if role == "worker"
                 else self.token_budget.main_context_tokens
             )
-            if role == "summary":
+            if role == "summary" and model_maximum is not None:
+                limit = self.token_budget.summary_input_tokens
+            elif role == "summary":
                 output_limit = arguments["max_output_tokens"]
                 summary_instructions = arguments.get("instructions", "")
                 while True:
@@ -164,7 +171,9 @@ class ModelRoutes:
                 limit = window - max(self.token_budget.output_reserve_tokens, output_limit)
             else:
                 limit = model_input_headroom(
-                    window, output_tokens, self.token_budget.output_reserve_tokens
+                    window,
+                    output_tokens if model_maximum is None else 0,
+                    self.token_budget.output_reserve_tokens,
                 )
             if estimated_tokens > limit:
                 if purpose == "vision":
@@ -285,6 +294,7 @@ class ModelRoutes:
             + 512
             + 16 * len(notes)
         )
+        summary_maximum = self.token_budget.maximum_output_tokens("summary")
         return {
             "enabled": True,
             "summary_operation": "/v1/summary",
@@ -306,6 +316,11 @@ class ModelRoutes:
             + 256,
             "main_context_tokens": self.token_budget.main_context_tokens,
             "summary_context_tokens": self.token_budget.summary_context_tokens,
+            **(
+                {"summary_model_max_output_tokens": summary_maximum}
+                if summary_maximum is not None
+                else {}
+            ),
             "feedback_refs": refs,
             "model_routes_sha256": hashlib.sha256(
                 json.dumps(
@@ -313,6 +328,11 @@ class ModelRoutes:
                         "main": self.model_name,
                         "main_options": self.fixed_model_options,
                         "roles": self.fixed_roles,
+                        **(
+                            {"summary_max_output_tokens": summary_maximum}
+                            if summary_maximum is not None
+                            else {}
+                        ),
                     },
                     sort_keys=True,
                 ).encode()
@@ -374,7 +394,7 @@ class ModelRoutes:
             raise HTTPException(503, "Model token budget is unavailable")
         input_limit = model_input_headroom(
             self.token_budget.worker_context_tokens,
-            VISION_OUTPUT_TOKENS,
+            0,
             self.token_budget.output_reserve_tokens,
         )
         if not self.vision_slots.acquire(blocking=False):
@@ -422,10 +442,10 @@ class ModelRoutes:
                 for part in message.get("content", [])
                 if part.get("type") == "output_text"
             )
-            if result.get("status") != "completed" or not text.strip() or len(text) > 16000:
+            if result.get("status") != "completed" or not text.strip():
                 raise HTTPException(
                     502,
-                    "Visual response incomplete, missing or oversized; no observation confirmed",
+                    "Visual response incomplete or missing; no observation confirmed",
                 )
             reasoning = result.get("reasoning") or {}
             return {

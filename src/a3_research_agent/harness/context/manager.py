@@ -325,6 +325,9 @@ def full_summary(messages, source, req, *, output_tokens=None, summary_attempt_i
             "target_tokens",
         )
     }
+    model_maximum = TOKEN_CONFIG.get("summary_model_max_output_tokens")
+    if model_maximum is not None:
+        retry_contract["summary_model_max_output_tokens"] = model_maximum
     attempts = 0
     retry_count = 0
     validation_attempts = 0
@@ -402,7 +405,7 @@ def full_summary(messages, source, req, *, output_tokens=None, summary_attempt_i
         cost = request_cost(request)
         if cost > limit:
             raise ContextError("Full summary input exceeds model context; original snapshot retained")
-        if window is not None:
+        if window is not None and model_maximum is None:
             while cost + request["max_output_tokens"] > window:
                 request["max_output_tokens"] = window - cost
                 if request["max_output_tokens"] <= 0:
@@ -472,7 +475,7 @@ def full_summary(messages, source, req, *, output_tokens=None, summary_attempt_i
                 if window is not None:
                     ceiling = min(ceiling, window - cost)
                 allowance = request["max_output_tokens"]
-                retryable = allowance < ceiling
+                retryable = model_maximum is None and allowance < ceiling
                 if retryable:
                     request["max_output_tokens"] = min(ceiling, allowance * 2)
             elif reason:
@@ -484,12 +487,12 @@ def full_summary(messages, source, req, *, output_tokens=None, summary_attempt_i
                 failure, retryable = "summary_output_exhausted_by_reasoning", False
             else:
                 failure = "summary_text_empty"
-        elif metric(summary) > request["max_output_tokens"]:
+        elif model_maximum is None and metric(summary) > request["max_output_tokens"]:
             failure, retryable = "summary_text_exceeds_token_budget", False
         if failure is None:
             try:
                 document, rendered, validation = research_summary.parse(summary, readable)
-                if metric(rendered) > request["max_output_tokens"]:
+                if model_maximum is None and metric(rendered) > request["max_output_tokens"]:
                     raise research_summary.SummaryValidationError("summary_rendered_exceeds_budget")
             except research_summary.SummaryValidationError as error:
                 failure = str(error)
