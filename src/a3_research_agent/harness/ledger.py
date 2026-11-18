@@ -22,6 +22,7 @@ FIELDS = (
     "status",
     "exit_code",
 )
+GPU_FIELDS = ("gpu_util_percent", "gpu_used_mb", "gpu_sampled_at")
 RECORDED_TOOLS = frozenset(
     {
         "job_submit",
@@ -70,10 +71,14 @@ def from_tool(call, result):
         for item in batch:
             event = {"event": name + "_item", "call_id": call.get("call_id")}
             event.update({field: item.get(field) for field in FIELDS if item.get(field)})
+            event.update({field: item.get(field) for field in GPU_FIELDS if item.get(field)})
             if len(event) > 2:
                 lines.append(append(event))
         return lines or None
     observed = {field: result[field] for field in FIELDS if result.get(field) is not None}
+    observed.update(
+        {field: result.get(field) for field in GPU_FIELDS if result.get(field) is not None}
+    )
     if name == "job_wait":
         observed["reason"] = result.get("reason")
         observed["jobs"] = sorted(result.get("observed") or result.get("changes") or {})
@@ -86,15 +91,53 @@ def from_tool(call, result):
     return append(event)
 
 
+def _measured(record, names, missing):
+    """Take the first reported byte count; say why when the result omits it."""
+    for name in names:
+        value = record.get(name)
+        if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+            return value
+    return missing
+
+
 def from_compaction(record):
+    """Record measured compaction sizes without hiding fields the result omits.
+
+    ``ForkCompactor`` reports a start event with ``snapshot_bytes`` and an applied
+    event with ``before_bytes``/``after_bytes``. The compaction result does not
+    carry the summary mode or degradation reason, so those fields state why the
+    value is unavailable instead of repeating the old all-null ledger rows.
+    """
     if not isinstance(record, dict):
         return None
-    return append(
-        {
-            "event": "context_compaction",
-            "summary_mode": record.get("summary_mode"),
-            "before_bytes": record.get("before_estimated_bytes"),
-            "after_bytes": record.get("after_estimated_bytes"),
-            "degraded_reason": (record.get("degraded_reason") or "")[:200] or None,
-        }
+    applied = (
+        record.get("kind") == "applied"
+        or record.get("status") == "ready"
+        or record.get("applied") is True
     )
+    pending = "pending:summary_not_applied"
+    summary_mode = record.get("summary_mode")
+    if not isinstance(summary_mode, str) or not summary_mode:
+        summary_mode = "unavailable:summary_mode_not_reported"
+    degraded_reason = record.get("degraded_reason")
+    if not isinstance(degraded_reason, str) or not degraded_reason:
+        degraded_reason = "none" if applied else pending
+    event = {
+        "event": "context_compaction",
+        "kind": record.get("kind") or "unknown",
+        "summary_mode": summary_mode[:200],
+        "before_bytes": _measured(
+            record,
+            ("before_bytes", "before_estimated_bytes", "snapshot_bytes"),
+            "unavailable:before_bytes_not_reported",
+        ),
+        "after_bytes": _measured(
+            record,
+            ("after_bytes", "after_estimated_bytes"),
+            "unavailable:after_bytes_not_reported" if applied else pending,
+        ),
+        "degraded_reason": degraded_reason[:200],
+    }
+    if isinstance(record.get("strategy"), str):
+        event["strategy"] = record["strategy"]
+    return append(event)

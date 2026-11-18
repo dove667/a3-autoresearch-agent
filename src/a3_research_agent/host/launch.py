@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import secrets
+import signal
 import socket
 import threading
 import time
@@ -42,7 +43,8 @@ from a3_research_agent.host.runs.resume import (
     preflight_blocked_resume,
 )
 from a3_research_agent.host.runs.state import RunStateStore
-from a3_research_agent.host.runs.supervisor import RunSupervisor
+from a3_research_agent.host.runs.supervisor import SIGINT_EXIT_CODE, RunSupervisor
+from a3_research_agent.host.runs.suspension import suspend_interrupted
 from a3_research_agent.host.sessions.isolation import IsolationFixtures
 from a3_research_agent.host.sessions.processes import ProcessRuntime
 from a3_research_agent.host.sessions.workspace import MAX_ACTIVE_SESSIONS, write_durable
@@ -285,6 +287,10 @@ def _launch_run(args, run: Path, a3: Path, start, services) -> None:
                 )
                 + "\n"
             )
+    interrupted = False
+    exit_code = 0
+    previous_sigint = None
+    supervisor = None
     try:
         if package:
             command, files = package
@@ -367,7 +373,7 @@ def _launch_run(args, run: Path, a3: Path, start, services) -> None:
         with httpx.Client(trust_env=False, 
             base_url=endpoint, headers={"Authorization": "Bearer " + token}, timeout=90
         ) as client:
-            RunSupervisor(
+            supervisor = RunSupervisor(
                 run=run,
                 log_directory=debug_directory(run),
                 workspace=result_workspace(),
@@ -376,9 +382,13 @@ def _launch_run(args, run: Path, a3: Path, start, services) -> None:
                 result_workspace=result_workspace,
                 input_manifest=lambda: input_versions.manifest,
                 on_finishing=app.state.begin_shutdown,
-            ).run()
+            )
+            supervisor.run()
     except KeyboardInterrupt:
-        print("Run interrupted; preserving identities and resources for --resume-from", flush=True)
+        # A window-boundary or operator SIGINT is an explicit stop. Ignore a
+        # second SIGINT while checkpoints are flushed on the way out.
+        interrupted = True
+        previous_sigint = signal.signal(signal.SIGINT, signal.SIG_IGN)
     finally:
         if dashboard is not None:
             dashboard.stop()
@@ -390,10 +400,27 @@ def _launch_run(args, run: Path, a3: Path, start, services) -> None:
             except (OSError, ValueError, RuntimeError):
                 cleanup_errors.append("research suspension")
             app.state.save_checkpoint()
-            store.update(status="suspended")
+            if interrupted:
+                try:
+                    exit_code = suspend_interrupted(supervisor, store)
+                except OSError:
+                    # The process still stops cleanly; the missing observation is
+                    # reported instead of replacing the one-line stop notice with a traceback.
+                    cleanup_errors.append("supervision state")
+                    exit_code = SIGINT_EXIT_CODE
+            else:
+                store.update(status="suspended")
             if cleanup_errors:
                 (run / "cleanup-errors.json").write_text(json.dumps(cleanup_errors))
                 print("Cleanup requires review: " + ", ".join(cleanup_errors), flush=True)
         finally:
             server.should_exit = True
             thread.join(timeout=10)
+            if previous_sigint is not None:
+                signal.signal(signal.SIGINT, previous_sigint)
+    if interrupted:
+        print(
+            f"Run suspended by SIGINT; checkpoint saved under {run}; exit code {exit_code}",
+            flush=True,
+        )
+        raise SystemExit(exit_code)

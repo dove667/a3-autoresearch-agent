@@ -9,6 +9,8 @@ from a3_research_agent.harness.research_status import read_outcome
 from a3_research_agent.host.published_harness import conversation_root
 
 ACTIVE_STATES = {"running", "created", "restarting", "paused"}
+SIGINT_EXIT_CODE = 130
+SIGINT_REASON = "SIGINT: operator interrupt or night-window boundary"
 
 
 def evaluate_outcome(workspace: Path, state_root: Path) -> dict:
@@ -39,14 +41,16 @@ class RunSupervisor:
         self.input_manifest = input_manifest
         self.on_finishing = on_finishing
         self.last_event = None
+        self.last_sessions: list[dict] = []
         self.log_directory = log_directory if log_directory is not None else run / "logs"
 
-    def record(self, phase: str, outcome: dict, sessions: list[dict]) -> None:
+    def record(self, phase: str, outcome: dict, sessions: list[dict], **extra) -> None:
         state = {
             "phase": phase,
             "outcome": outcome,
             "sessions": sessions,
             "updated_at": time.time(),
+            **extra,
         }
         if self.input_manifest is not None:
             state["input_manifest"] = outcome.get("input_manifest") or self.input_manifest()
@@ -63,6 +67,27 @@ class RunSupervisor:
                 stream.write(json.dumps(state, ensure_ascii=False) + "\n")
             self.last_event = event
 
+    def record_suspended(self, reason: str = SIGINT_REASON) -> None:
+        """Close the observation with the same state the Host checkpoint will save."""
+        sessions = [dict(item) for item in self.last_sessions]
+        if not sessions:
+            try:
+                sessions = [dict(item) for item in self.sessions()]
+            except Exception:  # noqa: BLE001 - the last observed list is enough
+                sessions = []
+        for item in sessions:
+            if not item.get("closed"):
+                item["closed"] = True
+                item["status"] = "suspended"
+                item["exit_code"] = SIGINT_EXIT_CODE
+        self.record(
+            "suspended",
+            {"status": "suspended", "reason": reason, "exit_code": SIGINT_EXIT_CODE},
+            sessions,
+            exit_code=SIGINT_EXIT_CODE,
+            closed=True,
+        )
+
     @staticmethod
     def active(sessions: list[dict]) -> list[str]:
         return sorted(
@@ -75,10 +100,12 @@ class RunSupervisor:
         """Observe the process until it stops, then preserve its progress."""
 
         sessions = self.sessions()
+        self.last_sessions = sessions
         while self.active(sessions):
             self.record("supervising", {}, sessions)
             self.wait(15)
             sessions = self.sessions()
+            self.last_sessions = sessions
 
         if self.on_finishing is not None:
             self.on_finishing()
