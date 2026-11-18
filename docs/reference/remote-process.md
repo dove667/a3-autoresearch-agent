@@ -54,6 +54,10 @@ A3 的闭环评测统一由 `benchmark` 工具提交，不接受手拼的评测�
 
 `a3_api(symbols=[...])` 读取部署的 A3 源码，返回核心函数的文件、行号与完整签名，以及采集和评测 CLI 的开关与默认值。它只读文件，不 import 模块，因此不会因副作用失败。用途是替代“先跑挂、再读栈、再改脚本”：`train_act` 的模块位置、`aggregate_datasets` 的参数名、`merge_cookie_datasets` 对双 root 的要求都属于会漂移的契约。
 
+## 失败分类与重试
+
+`job_status` 与 `job_wait` 的诊断带 `retry` 字段。只有 `killed` 与 `distributed_failure` 允许原样重做一个请求：前者是调度或主机终止，后者是端口或 NCCL 冲突，都与脚本内容无关。其余分类明确标为不可重做——同样的代码再跑一次只会再失败一次，还要再占一次 GPU。
+
 ## 数据集体检
 
 `dataset_audit(dataset_root)` 在 CPU 作业里调用部署的 A3 审计函数，并补上审计本身不提供的分布信息：每种任务布局（2×5／2×10）的回合数、逐条指令的计数、成功标记、seed 数、总帧数和存储动作模式。它对三种情况给出警告——`complete_demonstrations` 为 false、数据集只有一种布局、元数据计数与 `meta/info.json` 不一致。新增这些检查的原因是现写探针会失败：CLI 把相对 `--root` 解析到项目根，曾把 37 条已保存回合报成 0。

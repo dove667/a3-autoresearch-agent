@@ -30,6 +30,7 @@ HARNESS_MODULES = (
     "benchmark_report.py",
     "dataset_audit_runner.py",
     "a3_api_runner.py",
+    "plan/inconsistency.py",
     "control_tools.py",
     "file_tools.py",
     "host_tools.py",

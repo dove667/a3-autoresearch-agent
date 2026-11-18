@@ -1,6 +1,6 @@
 # 研究工具与执行约定
 
-Version: 0.41.0
+Version: 0.42.0
 
 工具定义给出参数、默认值和限制；本文件说明常用流程。所有工具返回 `ok`：成功时直接读取同层结果；失败时读取 `error`、`hint` 和相关编号，修正后再调用。作业的 `status="failed"` 是执行结果，先读日志与证据再判断原因。
 
@@ -70,6 +70,8 @@ GPU 作业先调用 `job_prepare`，同样填写 name、command、attachments、
 
 ACT 只读三路相机和 16 维状态，没有语言输入：用 `act:` 时传 `--prompt-style` 不会改变它的行为，提交层会直接拒绝。语言指令只对 `smolvla:` 这类条件策略有意义，任务的块数由 `--task` 和 `--profile` 决定，不由指令决定。
 
+**开局先体检。** 一个窗口的第一件事不是立刻开跑，而是两项各一个 CPU 作业：`dataset_audit(dataset_root)` 看数据里有哪些任务布局，`a3_api()` 看要 import 的函数签名。两项加起来几十秒，能挡掉开局摸索的几十分钟。
+
 写任何 import A3 的脚本之前，先用 `a3_api()` 查签名：它返回核心函数所在文件、行号和完整参数表，以及采集/评测 CLI 的开关与默认值。这些接口会漂移——`train_act` 在 `learning.act_training` 而不是 `learning.training`，`aggregate_datasets` 要 `repo_ids`/`aggr_repo_id`/`roots=`/`aggr_root=`——凭记忆写只会换来一次 ImportError 或 TypeError。
 
 设计混训或续训之前，先 `dataset_audit(dataset_root)` 看数据本身：它返回每个任务布局（2×5 还是 2×10）的回合数、逐条指令计数、成功标记、seed 数和存储动作模式，并对“只有一种布局”“complete_demonstrations 为 false”“计数与 meta/info.json 不符”给出警告。不要用现写的探针脚本统计这些——探针会把相对 root 解析到项目根，报出 0 回合。`ds-merged` 这类数据集如果只有 2×10 回合，“混训保住 2×5”的判据就不成立。
@@ -121,6 +123,8 @@ skills 使用 `list(query="任务或症状",limit=3)` 找方法，只返回摘�
 每轮的 CURRENT_STATE_REFRESH 提供最新计划、近期复盘、活动作业和关键工具回执；先用它核对旧摘要里的待办。job 状态是最后一次观察，提交不确定时先查现有编号，不重发。计划显示已结束的路线、memory 中的失败条件和已验证结果，用于避免重复实验。
 
 大工具结果会保留编号、状态、错误和关键指标，正文可能只有部分预览；facts_complete=false 或 preview_complete=false 时，按问题读取来源或用 recall 搜索原文，再作结论。压缩摘要保留来源摘录，但细节仍需按源核对。模型摘要若连续无法通过校验，程序会生成一份逐字摘录的降级交接并继续研究，记录在压缩日志与 `research-ledger.jsonl` 中。
+
+写 review 时，结论引用的数字要与本路线已记录的实测对齐：程序会把引用的 a/b 与该路线历史 metrics 中同分母的最大值比较，判据低于最新实测时也会给出 `warnings`。收到就先确认引用的是最新结果，再决定继续还是结束。
 
 完成重要结果分析后，先用 plan review 记录结论、证据和路线决定；值得跨 run 复用的发现写 memory；成熟操作方法写 skills。程序会持续刷新这些来源，尚未记录的研究判断仍可能在反复压缩后遗漏。
 

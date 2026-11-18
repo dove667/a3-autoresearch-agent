@@ -27,6 +27,13 @@ ACTIONS = {
     "preflight_unimplemented": "Add the A3_RESEARCH_PREFLIGHT branch that writes a3-preflight.json.",
 }
 ERROR_LINE = ("Error", "Exception", "error:", "ERROR", "Traceback")
+# Only a failure that says nothing about the script may be repeated unchanged.
+# Everything else would run the same wrong code again and spend the same GPU time.
+RETRYABLE = frozenset({"killed", "distributed_failure"})
+RETRY_REASONS = {
+    "killed": "The scheduler or host stopped the process; the same request may finish next time.",
+    "distributed_failure": "A port or NCCL setup collided; the same request may succeed alone.",
+}
 
 
 def _tail(result):
@@ -68,9 +75,21 @@ def diagnose(result):
             "failure_class": "unclassified",
             "error_line": line,
             "suggested_action": "Read the full log and the artifacts before changing the script.",
+            "retry": {"resubmit": False, "reason": "The cause is unknown; read the log first."},
         }
     return {
         "failure_class": name,
         "error_line": line,
         "suggested_action": ACTIONS[name],
+        "retry": retry_advice(name),
+    }
+
+
+def retry_advice(name):
+    """Say whether resubmitting the identical request is defensible."""
+    if name in RETRYABLE:
+        return {"resubmit": True, "max_attempts": 1, "reason": RETRY_REASONS[name]}
+    return {
+        "resubmit": False,
+        "reason": "This failure comes from the request or the code; repeating it reproduces it.",
     }

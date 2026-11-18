@@ -146,3 +146,15 @@ def test_a_repeated_read_loop_still_gets_the_reminder():
     same = {"name": "read", "arguments": json.dumps({"path": "f"})}
     notices = [guard.observe([same], False) for _ in range(drift.ANSWER_TURNS)]
     assert drift.ANSWER_NOTICE in notices
+
+
+def test_retry_advice_only_repeats_infrastructure_failures():
+    """Resubmitting identical code after a script error just repeats the error."""
+    from a3_research_agent.harness import job_failure
+
+    killed = job_failure.diagnose({"status": "failed", "output": "Killed"})
+    assert killed["retry"]["resubmit"] is True
+    assert killed["retry"]["max_attempts"] == 1
+
+    missing = job_failure.diagnose({"status": "failed", "output": "ImportError: no module"})
+    assert missing["retry"]["resubmit"] is False

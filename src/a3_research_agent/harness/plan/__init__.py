@@ -3,6 +3,7 @@
 from a3_research_agent.harness import operational_state as operational
 from a3_research_agent.harness import paths
 from a3_research_agent.harness.context import manager
+from a3_research_agent.harness.plan import inconsistency
 from a3_research_agent.harness.plan import store as plan_store
 from a3_research_agent.harness.plan.model import MAX_STEPS as MAX_STEPS
 from a3_research_agent.harness.plan.model import STATUSES as STATUSES
@@ -266,6 +267,7 @@ def dispatch_locked(arguments):
             "revision": plan["revision"],
             "hint": "Show the plan first",
         }
+    review_warnings = []
     try:
         if action == "review":
             key = arguments.get("id")
@@ -338,6 +340,12 @@ def dispatch_locked(arguments):
                 },
             ]
             proposed["reviews"] = proposed["reviews"][-20:]
+            criterion = None
+            if step:
+                criterion = plan["steps"][step].get("criterion")
+            review_warnings = inconsistency.warnings(
+                plan, key, conclusion, metrics, criterion=criterion
+            )
         else:
             proposed = revise(plan, arguments)
     except ValueError as error:
@@ -348,4 +356,8 @@ def dispatch_locked(arguments):
         proposed["revision"] += 1
         plan_store.save(plan_file(), proposed, paths.plan_snapshots_root())
         plan = proposed
-    return view(plan, compact=True)
+    result = view(plan, compact=True)
+    if action == "review" and review_warnings:
+        result["warnings"] = review_warnings
+        result["hint"] = "Re-read the recorded measurements before relying on the cited number."
+    return result
