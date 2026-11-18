@@ -219,8 +219,7 @@ def test_vision_image_reserve_is_admitted_before_model_call(tmp_path):
     client, reads, models = client_for(tmp_path, context_budget=budget)
     body = request_body()
     body["frames"] = [
-        dict(body["frames"][0], step=index, sim_time_s=index / 20)
-        for index in range(400)
+        dict(body["frames"][0], step=index, sim_time_s=index / 20) for index in range(400)
     ]
     res = client.post("/vision/inspect", headers={"Authorization": "Bearer token-a"}, json=body)
     assert res.status_code == 422
@@ -276,12 +275,9 @@ def test_vision_allows_more_than_six_frames_within_the_worker_budget(tmp_path):
     client, _, models = client_for(tmp_path)
     body = request_body()
     body["frames"] = [
-        dict(body["frames"][0], step=index, sim_time_s=index / 20)
-        for index in range(12)
+        dict(body["frames"][0], step=index, sim_time_s=index / 20) for index in range(12)
     ]
-    result = client.post(
-        "/vision/inspect", headers={"Authorization": "Bearer token-a"}, json=body
-    )
+    result = client.post("/vision/inspect", headers={"Authorization": "Bearer token-a"}, json=body)
     assert result.status_code == 200
     assert len(result.json()["frames"]) == 12
     assert len(models) == 1
@@ -308,3 +304,176 @@ def test_vision_returns_complete_analysis_at_model_output_maximum(tmp_path):
     assert result.status_code == 200
     assert result.json()["analysis"] == analysis
     assert models[0]["max_output_tokens"] == 1048576
+
+
+def test_main_direct_view_attaches_original_frames_only_to_next_decision(tmp_path):
+    from a3_research_agent.harness import host_tools
+    from a3_research_agent.harness.context.manager import output_message
+
+    client, reads, models = client_for(tmp_path)
+    body = request_body()
+    body["frames"] *= 4
+    body["frames"].sort(key=lambda frame: frame["step"])
+    result = host_tools.dispatch(
+        "vision_view", body, lambda *_: pytest.fail("Selection must not call a provider")
+    )
+    assert result["status"] == "frames_selected"
+    messages = [
+        {
+            "type": "function_call",
+            "name": "vision_view",
+            "call_id": "call_view",
+            "arguments": json.dumps(body),
+        },
+        output_message({"ok": True, **result}, "call_view"),
+        {"role": "user", "content": "Current operational state"},
+    ]
+    headers = {"Authorization": "Bearer token-a"}
+    tools = [{"type": "function", "name": "read", "parameters": {"type": "object"}}]
+    response = client.post(
+        "/v1/responses", headers=headers, json={"input": messages, "tools": tools}
+    )
+    assert response.status_code == 200, response.text
+    assert len(reads) == 8
+    assert all(read["area"] == "outputs" for read in reads)
+    assert len(models) == 1 and models[0]["model"] == "fixture/main"
+    assert models[0]["tools"] == tools
+    assert "PRIVATE_MAIN_PHASE" in models[0]["instructions"]
+    images = [
+        part
+        for message in models[0]["input"]
+        for part in (message["content"] if isinstance(message.get("content"), list) else [])
+        if part["type"] == "input_image"
+    ]
+    assert len(images) == 8
+    assert images[0]["image_url"].startswith("data:image/png;base64,")
+    original = io.BytesIO()
+    Image.new("RGB", (64, 48), "red").save(original, format="PNG")
+    assert base64.b64decode(images[0]["image_url"].split(",", 1)[1]) == original.getvalue()
+    usage = json.loads((tmp_path / "usage.jsonl").read_text().splitlines()[-1])
+    assert usage["model_role"] == "main" and usage["vision_frame_count"] == 8
+    assert "image_url" not in json.dumps(usage)
+    messages.append({"role": "assistant", "content": "I saw the frames."})
+    assert (
+        client.post("/v1/responses", headers=headers, json={"input": messages}).status_code == 200
+    )
+    assert len(reads) == 8 and "image_url" not in json.dumps(models[-1])
+
+
+@pytest.mark.parametrize("forbidden", [True, False])
+def test_main_view_unavailable_frames_give_recoverable_notice(tmp_path, forbidden):
+    client, _, models = client_for(tmp_path, forbidden=forbidden)
+    body = request_body()
+    if not forbidden:
+        body["frames"][0]["path"] = "../outside.png"
+    messages = [
+        {
+            "type": "function_call",
+            "name": "vision_view",
+            "call_id": "call_view",
+            "arguments": json.dumps(body),
+        },
+        {
+            "type": "function_call_output",
+            "call_id": "call_view",
+            "output": '{"ok":true,"status":"frames_selected"}',
+        },
+    ]
+    response = client.post(
+        "/v1/responses", headers={"Authorization": "Bearer token-a"}, json={"input": messages}
+    )
+    assert response.status_code == 200, response.text
+    assert "could not attach" in json.dumps(models[0])
+    assert "image_url" not in json.dumps(models[0])
+
+
+def test_direct_view_pairs_calls_in_latest_batch_even_with_provider_reasoning(tmp_path):
+    from a3_research_agent.harness.context.manager import output_message
+
+    client, reads, models = client_for(tmp_path)
+    view = {
+        "type": "function_call",
+        "name": "vision_view",
+        "call_id": "call_view",
+        "arguments": json.dumps(request_body()),
+    }
+    earlier = {**view, "call_id": "call_earlier"}
+    selected = {"ok": True, "status": "frames_selected"}
+    messages = [
+        earlier,
+        output_message(selected, "call_earlier"),
+        view,
+        {"type": "reasoning", "summary": []},
+        {"type": "function_call", "name": "read", "call_id": "call_read", "arguments": "{}"},
+        output_message(selected, "call_view"),
+        output_message({"ok": True}, "call_read"),
+    ]
+    response = client.post(
+        "/v1/responses", headers={"Authorization": "Bearer token-a"}, json={"input": messages}
+    )
+    assert response.status_code == 200, response.text
+    assert len(reads) == 2
+    assert "vision_view (call_view)" in json.dumps(models[0])
+    assert "vision_view (call_earlier)" not in json.dumps(models[0])
+
+
+def test_direct_view_provider_media_rejection_retries_plain_decision(tmp_path):
+    from a3_research_agent.harness.context.manager import output_message
+    from a3_research_agent.host.models.direct import DirectHTTPError
+
+    attempts = 0
+
+    def reject_once():
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise DirectHTTPError(400, "input_image unsupported")
+
+    client, reads, models = client_for(tmp_path, forward_hook=reject_once)
+    messages = [
+        {
+            "type": "function_call",
+            "name": "vision_view",
+            "call_id": "view",
+            "arguments": json.dumps(request_body()),
+        },
+        output_message({"ok": True, "status": "frames_selected"}, "view"),
+    ]
+    response = client.post(
+        "/v1/responses", headers={"Authorization": "Bearer token-a"}, json={"input": messages}
+    )
+    assert response.status_code == 200, response.text
+    assert len(reads) == 2 and len(models) == 2
+    assert "image_url" in json.dumps(models[0])
+    assert "image_url" not in json.dumps(models[1])
+    assert "provider rejected the images" in json.dumps(models[1])
+    log = json.loads((tmp_path / "usage.jsonl").read_text().splitlines()[-1])
+    assert log["model_role"] == "main" and log["vision_provider_rejected"] is True
+
+
+def test_direct_view_text_decision_still_fits_when_images_and_notice_do_not(tmp_path, monkeypatch):
+    from a3_research_agent.harness.context.manager import output_message
+    from a3_research_agent.host.gateway import models as gateway_models
+
+    client, reads, models = client_for(tmp_path)
+    monkeypatch.setattr(gateway_models, "model_input_headroom", lambda *_: 100)
+    monkeypatch.setattr(
+        gateway_models,
+        "estimate_request_tokens",
+        lambda arguments, _: 110 if "could not attach" in json.dumps(arguments) else 95,
+    )
+    messages = [
+        {
+            "type": "function_call",
+            "name": "vision_view",
+            "call_id": "view",
+            "arguments": json.dumps(request_body()),
+        },
+        output_message({"ok": True, "status": "frames_selected"}, "view"),
+    ]
+    response = client.post(
+        "/v1/responses", headers={"Authorization": "Bearer token-a"}, json={"input": messages}
+    )
+    assert response.status_code == 200, response.text
+    assert not reads and "image_url" not in json.dumps(models[0])
+    assert "frames_unavailable" in json.dumps(models[0])

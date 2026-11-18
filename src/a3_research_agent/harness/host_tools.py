@@ -40,6 +40,10 @@ FIELDS = {
         "question": STRING,
         "frames": {"type": "array", "items": FRAME, "minItems": 1},
     },
+    "vision_view": {
+        "question": STRING,
+        "frames": {"type": "array", "items": FRAME, "minItems": 1},
+    },
     "evaluation_compare": {
         "candidate_job_id": JOB_ID,
         "baseline_job_id": JOB_ID,
@@ -88,6 +92,10 @@ DESCRIPTIONS = {
     "budget and the provider. Supply real episode, step, simulation time and camera metadata. "
     "Group each episode contiguously in time order. area defaults outputs. Returns observations "
     "and source hashes.",
+    "vision_view": "See selected original PNG/JPEG frames yourself in your next decision, "
+    "alongside your current research context. Uses the same frame references as vision_inspect. "
+    "Choose key frames after scanning, and compare the actual images with the synchronized trace. "
+    "If the images exceed the request budget, use smaller groups. Call again to revisit them.",
     "evaluation_compare": "Compare existing baseline/candidate episode results by job IDs and outputs-relative JSON manifests. Returns paired results and a ready-to-use visual inspection request when available.",
     "conditions_compare": "Compare declared baseline/candidate conditions. Each object includes status, report_present, and protocol(task,seeds,workers,step_budget,randomization,success_rule). Read actual results before judging improvement.",
     "benchmark_summary": "Combine the benchmark reports of one evaluation cell. Caps each episode at its own maximum, reports in-box counts and native passes separately, and names every protocol difference between segments (task, profile, step budget, action horizon, prompt style, checkpoint, duplicate seeds). Use it instead of adding report totals by hand.",
@@ -108,6 +116,7 @@ DESCRIPTIONS = {
 }
 REQUIRED = {
     "vision_inspect": ["question", "frames"],
+    "vision_view": ["question", "frames"],
     "evaluation_compare": [
         "candidate_job_id",
         "baseline_job_id",
@@ -153,12 +162,10 @@ def area(value):
 
 
 def vision(arguments_value):
-    text(arguments_value.get("question"), "question", 4000)
+    text(arguments_value.get("question"), "question", 2000)
     frames = arguments_value.get("frames")
     if not isinstance(frames, list) or not frames:
-        fail(
-            "invalid_frames", "Supply frames with real episode, step, time and camera metadata."
-        )
+        fail("invalid_frames", "Supply frames with real episode, step, time and camera metadata.")
     normalized, seen, previous = [], set(), None
     for frame in frames:
         arguments(frame, FRAME["properties"])
@@ -217,6 +224,9 @@ def dispatch(name, args, request):
             return request("GET", route)
         if name == "vision_inspect":
             return request("POST", "/vision/inspect", vision(args))
+        if name == "vision_view":
+            selection = vision(args)
+            return {"status": "frames_selected", "frame_count": len(selection["frames"])}
         if name == "runtime_status":
             scope = args.get("scope", "self")
             if scope not in {"self", "run"}:

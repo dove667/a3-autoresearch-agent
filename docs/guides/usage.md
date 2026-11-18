@@ -95,7 +95,7 @@ Controller负责排队、GPU分配与生命周期。提交结果未知时先按�
 
 `job_status`、`job_list` 查询实际状态，`job_artifact` 按字符分页读取结果和哈希。
 资产通过 `export_create`、`export_status`、`export_manifest`、`export_list` 管理；
-`evaluation_compare` 比较已有配对结果，`vision_inspect` 检查指定的原始帧。
+`evaluation_compare` 比较已有配对结果。`vision_inspect` 用视觉助手扫看指定帧，`vision_view` 把关键帧直接送入主 Agent 的下一次决策。
 `search_files` 查找源码与记录，`edit` 精确修改工作区文件；覆盖现有文件的write需要当前哈希。
 高层工具返回统一ok标志、失败提示和分页游标，模型无需构造HTTP方法、URL或原始body。
 详细参数见[执行接口](../../prompt/execution.md)。

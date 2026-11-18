@@ -1,6 +1,6 @@
 # 研究工具与执行约定
 
-Version: 0.47.1
+Version: 0.48.0
 
 工具定义给出参数、默认值和限制；本文件说明常用流程。所有工具返回 `ok`：成功时直接读取同层结果；失败时读取 `error`、`hint` 和相关编号，修正后再调用。作业的 `status="failed"` 是执行结果，先读日志与证据再判断原因。
 
@@ -20,7 +20,7 @@ Version: 0.47.1
 | A3 接口查询 | `a3_api` |
 | 等待指定作业／空闲等待 | `job_wait`／`idle_wait` |
 | 资产复用 | `export_create`、`export_status`、`export_manifest`、`export_list` |
-| 配对评测与视觉诊断 | `evaluation_compare`、`conditions_compare`、`vision_status`、`vision_inspect` |
+| 配对评测与视觉诊断 | `evaluation_compare`、`conditions_compare`、`vision_status`、`vision_inspect`、`vision_view` |
 | 资源与运行信息 | `gpu_status`、`runtime_status`、`session_status` |
 | 网页资料 | `web_status`、`web_search`、`web_fetch` |
 
@@ -90,7 +90,9 @@ ACT 只读三路相机和 16 维状态，没有语言输入：用 `act:` 时传 
 
 已有结果通过 `evaluation_compare(candidate_job_id,baseline_job_id,candidate_manifest,baseline_manifest)` 配对；manifest 路径相对各自 outputs。比较固定条件时使用 `conditions_compare`。缺失、重复或条件不匹配先查证，保留实际评测覆盖。
 
-`evaluation_compare` 返回的 `vision_request` 可直接作为 `vision_inspect` 参数。自行选帧时，先用 trace 定位动作窗口，再用 CPU 作业从正面和腕部录像提取失败前、发生时和之后的连续帧。传 question 和有权访问的 PNG/JPEG 引用，每帧包含 job_id、相对 path、episode_id、step、sim_time_s、camera，area 默认 outputs。同一 episode 连续按时间排列。帧数按问题、图片大小和 worker 上下文决定。遇到遮挡、采样间隔大或预算不足时，围绕同一动作换视角或缩小间隔，分组补查。观察结论与同步动作、状态和原生分数核对。
+`evaluation_compare` 返回的 `vision_request` 可直接作为 `vision_inspect` 或 `vision_view` 参数。自行选帧时，用 trace 找动作窗口，再用 CPU 作业从正面和腕部录像抽帧。两种工具都接收 question 和有权访问的 PNG/JPEG 引用，每帧包含 job_id、相对 path、episode_id、step、sim_time_s、camera，area 默认 outputs。同一 episode 连续按时间排列。
+
+用 `vision_inspect` 扫看多个动作窗口，找出值得复核的时间段。用 `vision_view` 选关键帧，下一次主模型决策会直接收到图像和时间标签。需要重看时再次调用。由你选择帧数和视角，按图片大小、请求上下文和上游能力组织批次。遇到遮挡、采样间隔大或预算不足时，换视角或缩小时间跨度补看。把画面与同步动作、状态和原生分数核对后再记录结论。
 
 ## 复用数据与模型
 

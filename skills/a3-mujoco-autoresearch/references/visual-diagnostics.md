@@ -17,8 +17,8 @@
 
 需要选帧重构时，使用已授权driver推进每一步动力学，仅在目标step渲染指定相机；核对初态、动作约定、版本、控制频率和可用已保存状态。不要跳过中间step，也不要把重构帧标为原录制。
 
-## 调用视觉辅助工具
+## 扫录像与复核关键帧
 
-调用 `vision_inspect`，提供 `question` 和按时间排列的 `frames`。根据动作窗口选择帧数，遮挡或信号不足时按视角和动作阶段补查。每帧填写 `job_id`、相对 `path`、`episode_id`、`step`、`sim_time_s`、`camera`；area默认outputs，图片在job工作区时填写area="workspace"。
+用 `vision_inspect` 扫过几个动作阶段，返回视觉助手的描述和来源。筛到影响结论的时间段后，用 `vision_view` 选择需要亲自复核的帧。主 Agent 在下一次决策看到保留分辨率的图像，并可结合同步轨迹判断。重看或加密采样时再次调用。
 
-每张PNG/JPEG最多512 KiB、边长最多1024像素，原图和标准化图像各自合计最多3 MiB，帧数还受 worker 上下文和上游接口限制。同一episode按step递增排列。保存返回的帧来源、模型和分析；结合原始动作与状态判断结论，避免把大段Base64或全部视频放进主上下文。当前execution提示词定义实际接口限制。
+两种调用都需要 `question` 和按时间排列的 `frames`。每帧填写 `job_id`、相对 `path`、`episode_id`、`step`、`sim_time_s`、`camera`。area 默认 outputs，图片在作业工作区时可填 `area="workspace"`。每张 PNG/JPEG 上传源文件最多 512 KiB，边长最多 1024 像素。按总图像字节、模型上下文和上游限制安排批次。记录所用视角、step、接触和原生分数，便于复查。

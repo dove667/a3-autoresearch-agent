@@ -329,8 +329,18 @@ arbitrary role-model mappings. The supported service-tier override remains
 
 | Session or operation | Route and authoritative contract |
 | --- | --- |
-| Current main | Primary model |
+| Current main, including `vision_view` | Primary model |
+| `vision_inspect` | Worker override, otherwise primary |
 | `POST /v1/summary` | Summary override, otherwise primary; data transformation only |
+
+`vision_view` validates frame references as a Harness tool. On the next decision,
+the Host uses the completed tool batch to resolve the authorized job artifacts and
+adds labeled image items to the primary request. It preserves spatial resolution
+and encodes the visible pixels losslessly in PNG. Images use the primary context
+and request-byte budgets and stay out of persisted history. The tool call retains
+the references and the Host usage record includes source hashes, steps and cameras.
+Calling the tool again supplies the images to a later decision. A selection that
+cannot be attached locally yields a notice in that decision with a recovery hint.
 
 A test assistant and a model under test are different roles. Testing a future main's
 behavior with a helper model would not establish behavior of the deployed main.

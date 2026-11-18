@@ -2,19 +2,27 @@
 
 import hashlib
 import json
+import re
 import time
 from copy import deepcopy
 from typing import Annotated
 
 from fastapi import Header, HTTPException
 
+from a3_research_agent.harness import tool_json
 from a3_research_agent.host.models import pricing
 from a3_research_agent.host.models.settings import (
     validate_model_request_options,
 )
 from a3_research_agent.host.models.vision import (
+    DIRECT_VISION_INSTRUCTIONS,
+    MAX_FRAME_BYTES,
+    MAX_TOTAL_BYTES,
     VisionBudgetError,
+    VisionRequest,
+    prepare_frame_content,
     prepare_vision_request,
+    selected_frame_calls,
 )
 from a3_research_agent.host.telemetry.diagnostics import CURRENT_REQUEST, upstream_status
 from a3_research_agent.token_count import count_tokens, estimate_request_tokens
@@ -39,6 +47,20 @@ def _web_enabled(service) -> bool:
 
 def model_input_headroom(window, output_tokens, output_reserve):
     return window * 9 // 10 - max(output_tokens, output_reserve)
+
+
+def provider_rejected_images(error):
+    status = upstream_status(error)
+    if status in {413, 415}:
+        return True
+    if status not in {400, 422}:
+        return False
+    body = getattr(error, "body", None) or getattr(getattr(error, "response", None), "text", "")
+    return bool(
+        re.search(
+            r"\b(input_image|image_url|images?|vision|multimodal)\b", str(body), re.IGNORECASE
+        )
+    )
 
 
 class ModelRoutes:
@@ -103,6 +125,11 @@ class ModelRoutes:
             arguments["instructions"] = active_task + "\n\n" + specific if specific else active_task
         if isinstance(arguments.get("input"), str):
             arguments["input"] = [{"role": "user", "content": arguments["input"]}]
+        selections = (
+            selected_frame_calls(arguments.get("input"))
+            if purpose == "decision" and role == "main"
+            else []
+        )
         feedback_ids = []
         if self.human_feedback is not None and purpose == "decision":
             try:
@@ -124,6 +151,8 @@ class ModelRoutes:
                 + f" Aim for {output_tokens} tokens in the handoff and keep the required evidence."
             )
         estimated_tokens = None
+        frames_rejected = False
+        text_arguments = arguments
         if self.token_budget:
             estimate_arguments = arguments
             if purpose == "vision":
@@ -179,9 +208,32 @@ class ModelRoutes:
                 if purpose == "vision":
                     raise HTTPException(422, {"code": "vision_budget_exceeded"})
                 raise HTTPException(422, "Estimated model input exceeds configured token headroom")
+            if selections:
+                text_arguments = arguments.copy()
+                vision_frames, vision_image_reserve, estimated_tokens = self.attach_selected_frames(
+                    arguments, experiment, selections, limit, estimated_tokens
+                )
         started = time.monotonic()
         try:
-            response = self.forward_model(model=route["model_name"], **arguments)
+            try:
+                response = self.forward_model(model=route["model_name"], **arguments)
+            except Exception as error:
+                if not (selections and vision_frames and provider_rejected_images(error)):
+                    raise
+                # The provider rejected the request before inference. Keep the completed
+                # tool batch and tell the next decision to retry with smaller selections.
+                arguments = text_arguments
+                for selection in selections:
+                    estimated_tokens = self.vision_notice(
+                        arguments,
+                        selection,
+                        "could not attach the frames because the provider rejected the images. "
+                        "Try a smaller group or use vision_inspect.",
+                        limit,
+                    )
+                vision_frames, vision_image_reserve = [], 0
+                frames_rejected = True
+                response = self.forward_model(model=route["model_name"], **arguments)
             data = response.model_dump(mode="json") if hasattr(response, "model_dump") else response
             request = CURRENT_REQUEST.get()
             if request is not None:
@@ -235,13 +287,15 @@ class ModelRoutes:
             entry["cost_currency"] = pricing.currency()
         if purpose == "summary":
             entry["summary_feedback_refs"] = summary_refs or []
-        if purpose == "vision":
+        if purpose == "vision" or vision_frames:
             entry.update(
-                model_purpose="vision",
+                model_purpose="vision" if purpose == "vision" else "decision",
                 vision_frame_count=len(vision_frames or []),
                 vision_frames=vision_frames or [],
                 image_admission_reserve_tokens=vision_image_reserve,
             )
+        if frames_rejected:
+            entry["vision_provider_rejected"] = True
         if feedback_ids:
             entry["human_feedback_ids"] = feedback_ids
         if inject_task:
@@ -379,6 +433,7 @@ class ModelRoutes:
         return {
             "available": True,
             "operation": "/vision/inspect",
+            "direct_tool": "vision_view",
             "max_image_bytes": 512 * 1024,
             "max_total_bytes": 3 * 1024 * 1024,
             "max_side_pixels": 1024,
@@ -386,6 +441,106 @@ class ModelRoutes:
             "source": "authorized job workspace or outputs PNG/JPEG artifacts",
             "note": "Batch size depends on image bytes, context budget and provider limits",
         }
+
+    def read_vision_frame(self, owner, job_id, path, *, area="workspace"):
+        artifact = self.remote(
+            "artifact",
+            {
+                "experiment_id": self.job_owner(owner, job_id, shared_read=True),
+                "job_id": job_id,
+                "path": path,
+                "max_bytes": MAX_FRAME_BYTES,
+                **({"area": area} if area == "outputs" else {}),
+            },
+        )
+        if area == "outputs" and artifact.get("area") != "outputs":
+            raise ValueError("Controller did not confirm the outputs area")
+        return artifact
+
+    def attach_selected_frames(self, arguments, owner, selections, limit, estimated_tokens):
+        """Add original pixels to this decision with safe text fallbacks per selection."""
+        text_view = {**arguments, "input": list(arguments["input"])}
+        image_messages = {}
+        reserve = byte_count = 0
+        frames = []
+        provider_reserve = self.token_budget.provider_reserve_tokens
+        for selection in selections:
+            prefix = f"vision_view ({selection['call_id']}): "
+            try:
+                if byte_count >= MAX_TOTAL_BYTES:
+                    raise VisionBudgetError("Decision image byte budget exhausted")
+                request = VisionRequest.model_validate(
+                    tool_json.loads(selection.get("arguments", ""))
+                )
+                for frame in request.frames:
+                    if "area" not in frame.model_fields_set:
+                        frame.area = "outputs"
+                content, metadata, image_tokens = prepare_frame_content(
+                    request,
+                    owner,
+                    self.read_vision_frame,
+                    input_limit=limit - estimated_tokens,
+                    byte_limit=MAX_TOTAL_BYTES - byte_count,
+                    lossless=True,
+                )
+                content.insert(0, {"type": "input_text", "text": prefix + "Selected frames"})
+                caption = [part for part in content if part["type"] == "input_text"]
+                text_message = {"role": "user", "content": caption}
+                candidate = {**text_view, "input": [*text_view["input"], text_message]}
+                if not frames:
+                    candidate["instructions"] = (
+                        arguments.get("instructions", "") + "\n\n" + DIRECT_VISION_INSTRUCTIONS
+                    ).strip()
+                next_estimate = (
+                    estimate_request_tokens(candidate, provider_reserve) + reserve + image_tokens
+                )
+                if next_estimate > limit:
+                    raise VisionBudgetError("Labeled images exceed available input")
+            except VisionBudgetError:
+                notice = "could not attach the frames within the image or context budget. Select smaller groups or resize."
+            except (HTTPException, ValueError, TypeError):
+                notice = "could not attach the selected frames. Check artifact access, paths, format and labels."
+            else:
+                image_messages[len(text_view["input"])] = {"role": "user", "content": content}
+                text_view = candidate
+                estimated_tokens = next_estimate
+                reserve += image_tokens
+                byte_count += sum(frame["request_bytes"] for frame in metadata)
+                frames.extend({**frame, "call_id": selection["call_id"]} for frame in metadata)
+                continue
+            estimated_tokens = (
+                self.vision_notice(text_view, selection, notice, limit - reserve) + reserve
+            )
+        arguments.update(text_view)
+        for index, message in image_messages.items():
+            arguments["input"][index] = message
+        return frames, reserve, estimated_tokens
+
+    def vision_notice(self, arguments, selection, notice, limit):
+        """Use a short tool result if the regular notice cannot fit."""
+        messages = list(arguments["input"])
+        text = f"vision_view ({selection['call_id']}): {notice}"
+        candidate = {**arguments, "input": [*messages, {"role": "user", "content": text}]}
+        provider_reserve = self.token_budget.provider_reserve_tokens
+        estimated = estimate_request_tokens(candidate, provider_reserve)
+        if estimated <= limit:
+            arguments.update(candidate)
+            return estimated
+        for index in range(len(messages) - 1, -1, -1):
+            item = messages[index]
+            if (
+                isinstance(item, dict)
+                and item.get("type") == "function_call_output"
+                and item.get("call_id") == selection["call_id"]
+            ):
+                messages[index] = {**item, "output": '{"error":"frames_unavailable"}'}
+                break
+        candidate["input"] = messages
+        estimated = estimate_request_tokens(candidate, provider_reserve)
+        if estimated <= limit:
+            arguments.update(candidate)
+            return estimated
+        return estimate_request_tokens(arguments, provider_reserve)
 
     def inspect_vision(self, body: dict, authorization: Annotated[str | None, Header()] = None):
         self.accepting_resources()
@@ -400,25 +555,9 @@ class ModelRoutes:
         if not self.vision_slots.acquire(blocking=False):
             raise HTTPException(429, "Visual inspection busy; no model request was dispatched")
         try:
-
-            def read_frame(frame_owner, job_id, path, *, area="workspace"):
-                artifact = self.remote(
-                    "artifact",
-                    {
-                        "experiment_id": self.job_owner(frame_owner, job_id, shared_read=True),
-                        "job_id": job_id,
-                        "path": path,
-                        "max_bytes": 512 * 1024,
-                        **({"area": area} if area == "outputs" else {}),
-                    },
-                )
-                if area == "outputs" and artifact.get("area") != area:
-                    raise ValueError("Controller did not confirm the outputs area")
-                return artifact
-
             try:
                 arguments, metadata, reserve = prepare_vision_request(
-                    body, actor, read_frame, input_limit=input_limit
+                    body, actor, self.read_vision_frame, input_limit=input_limit
                 )
             except VisionBudgetError:
                 raise HTTPException(422, {"code": "vision_budget_exceeded"}) from None
