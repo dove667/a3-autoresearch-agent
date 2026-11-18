@@ -5,7 +5,6 @@ from fastapi.testclient import TestClient
 
 from a3_research_agent.host.gateway.app import create_app
 from a3_research_agent.host.inputs.feedback import HumanFeedback
-from a3_research_agent.host.models.direct import DirectHTTPError
 
 
 def test_context_configuration_counts_injected_input_without_model_call(tmp_path):
@@ -97,16 +96,13 @@ def test_output_reserve_can_be_lowered_for_a_slow_provider(monkeypatch):
     assert budget["output_reserve_tokens"] == 2048
 
 
-def test_responses_upstream_owns_token_admission(tmp_path):
+def test_responses_upstream_uses_local_token_admission(tmp_path):
     calls = []
 
     def upstream(**request):
         calls.append(request)
-        if len(calls) == 2:
-            raise DirectHTTPError(400, '{"error":{"code":"context_length_exceeded"}}')
         return {"status": "completed", "output": [], "usage": {"input_tokens": 55}}
 
-    upstream.provider_token_usage = True
     log = tmp_path / "usage.jsonl"
     client = TestClient(
         create_app(
@@ -125,11 +121,12 @@ def test_responses_upstream_owns_token_admission(tmp_path):
         )
     )
     headers = {"Authorization": "Bearer token"}
-    assert client.get("/context/config", headers=headers).json()["provider_token_usage"]
-    request = {"input": [{"role": "user", "content": "word " * 70000}]}
-    first = client.post("/v1/responses", headers=headers, json=request)
+    first = client.post(
+        "/v1/responses", headers=headers, json={"input": [{"role": "user", "content": "hello"}]}
+    )
     assert first.json()["usage"]["input_tokens"] == 55
-    assert json.loads(log.read_text())["estimated_input_tokens"] is None
+    assert json.loads(log.read_text())["estimated_input_tokens"] > 55
+    request = {"input": [{"role": "user", "content": "word " * 70000}]}
     second = client.post("/v1/responses", headers=headers, json=request)
     assert second.status_code == 422
-    assert second.json() == {"detail": "model_context_limit_exceeded"}
+    assert len(calls) == 1

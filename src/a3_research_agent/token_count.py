@@ -3,8 +3,6 @@
 import json
 from functools import lru_cache
 
-MODEL_CONTEXT_LIMIT_EXCEEDED = "model_context_limit_exceeded"
-
 
 @lru_cache(maxsize=1)
 def encoding():

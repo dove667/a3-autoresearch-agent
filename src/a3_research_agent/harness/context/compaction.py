@@ -69,9 +69,9 @@ class ForkCompactor:
         budget = cm.decision_budget(self.tools)
         if extra_messages:
             budget -= cm.message_cost(extra_messages)
-        if budget <= 0 and not cm.TOKEN_CONFIG.get("provider_token_usage"):
+        if budget <= 0:
             raise cm.ContextError("Operational/tool reserves exhaust decision budget")
-        return max(1, budget)
+        return budget
 
     def _target_budget(self, budget):
         extra_cost = max(0, cm.decision_budget(self.tools) - budget)
@@ -84,16 +84,13 @@ class ForkCompactor:
         )
         return min(budget, max(1, target))
 
-    def before_request(
-        self, messages, *, extra_messages=None, observed_input_tokens=None, force=False
-    ):
+    def before_request(self, messages, *, extra_messages=None):
         if not cm.paired(messages):
             raise cm.ContextError("Unsafe tool call/result boundary")
         budget = self._budget(extra_messages)
-        provider_usage = cm.TOKEN_CONFIG.get("provider_token_usage")
         candidate, record = self._apply_if_ready(messages, budget)
         if record and record.get("kind") == "applied":
-            if not provider_usage and cm.message_cost(candidate) > budget:
+            if cm.message_cost(candidate) > budget:
                 raise cm.ContextError(
                     "Compaction result exceeds current decision reserves; originals retained"
                 )
@@ -102,7 +99,7 @@ class ForkCompactor:
             raise cm.ContextPending(
                 record["reason"], retry_after=record.get("retry_after", 30), blocked=True
             )
-        if force or (not provider_usage and cm.message_cost(messages) > budget):
+        if cm.message_cost(messages) > budget:
             if not self._busy() and not record:
                 self.start(messages, extra_messages=extra_messages, budget=budget)
             raise cm.ContextPending(
@@ -116,14 +113,9 @@ class ForkCompactor:
             if self.trigger_tokens is not None
             else cm.TOKEN_CONFIG["trigger_tokens"]
         )
-        if provider_usage:
-            size, floor = observed_input_tokens or 0, trigger
-        else:
-            trigger -= cm.TOKEN_CONFIG["decision_input_tokens"] - budget
-            size, floor = (
-                cm.message_cost(messages),
-                max(trigger, int(self._last_after_tokens * 1.1)),
-            )
+        trigger -= cm.TOKEN_CONFIG["decision_input_tokens"] - budget
+        size = cm.message_cost(messages)
+        floor = max(trigger, int(self._last_after_tokens * 1.1))
         if size >= floor:
             return messages, self.start(messages, extra_messages=extra_messages, budget=budget)
         return messages, record
@@ -136,8 +128,7 @@ class ForkCompactor:
             messages, self._budget(extra_messages), resume=False
         )
         if (
-            not cm.TOKEN_CONFIG.get("provider_token_usage")
-            and record
+            record
             and record.get("kind") == "applied"
             and cm.message_cost(candidate) > self._budget(extra_messages)
         ):
@@ -409,7 +400,7 @@ class ForkCompactor:
             raise cm.ContextError("Compaction would orphan tool results")
         budget = self._budget() if budget is None else budget
         soft_target = self._target_budget(budget)
-        if not cm.TOKEN_CONFIG.get("provider_token_usage") and cm.message_cost(candidate) > budget:
+        if cm.message_cost(candidate) > budget:
             newest = messages[count:]
             old_tail = replacement[1:]
             remaining = budget - cm.message_cost([replacement[0]] + newest)

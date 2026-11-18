@@ -139,9 +139,8 @@ def test_transport_errors_do_not_spend_handoff_repair_budget(setup_retry):
     assert state["validation_attempts"] == 3 and state["attempts"] == 4
 
 
-def test_provider_summary_retries_truncated_text_with_more_output_room(setup_retry):
+def test_summary_retries_truncated_text_with_more_output_room(setup_retry):
     _, messages, source = setup_retry
-    cm.TOKEN_CONFIG["provider_token_usage"] = True
     allowances = []
 
     def provider(method, path, body, **kwargs):

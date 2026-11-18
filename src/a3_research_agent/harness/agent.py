@@ -43,7 +43,6 @@ from a3_research_agent.harness.context import facts as research_facts
 from a3_research_agent.harness.context import manager as context_manager
 from a3_research_agent.harness.context import recovery as context_recovery
 from a3_research_agent.harness.memory import client as memory_client
-from a3_research_agent.token_count import MODEL_CONTEXT_LIMIT_EXCEEDED
 
 BASE = None
 TOKEN = None
@@ -96,16 +95,6 @@ def request_model(request):
             status = response.get("http_error")
             if status is None:
                 return response
-            if status == 422:
-                try:
-                    detail = json.loads(response.get("body", "{}"))
-                except (TypeError, ValueError):
-                    detail = None
-                if (
-                    isinstance(detail, dict)
-                    and detail.get("detail") == MODEL_CONTEXT_LIMIT_EXCEEDED
-                ):
-                    raise context_manager.ModelContextLimit(MODEL_CONTEXT_LIMIT_EXCEEDED)
             if status not in retryable_statuses:
                 raise RuntimeError(f"Model request rejected: HTTP {status}")
             failure = {"http_status": status}
@@ -408,8 +397,6 @@ def main() -> None:
     except Exception:  # noqa: BLE001 - a missing plan is handled by the normal tool path
         last_plan_revision = None
     plan_stale = 0
-    observed_input_tokens = None
-    force_compaction = False
     log({"model_request_tools": tools})
     loop_phase = "decision_prepare"
     while True:
@@ -432,10 +419,7 @@ def main() -> None:
             # compaction result is applied before a later decision, never mid-flight.
             # The operational view rides outside history, so only its size is budgeted.
             prepared_messages, compaction_record = compactor.before_request(
-                messages,
-                extra_messages=[operational],
-                observed_input_tokens=observed_input_tokens,
-                force=force_compaction,
+                messages, extra_messages=[operational]
             )
             if compaction_record:
                 log({"context_compaction": compaction_record})
@@ -474,10 +458,6 @@ def main() -> None:
                 else:
                     raise
             guard.spent()
-            usage = resp.get("usage")
-            reported = usage.get("input_tokens") if isinstance(usage, dict) else None
-            observed_input_tokens = reported if type(reported) is int and reported >= 0 else None
-            force_compaction = False
             if resp.get("status") == "completed":
                 operational_state.mark_delivered(messages)
             log({"response": resp})
@@ -556,10 +536,6 @@ def main() -> None:
                 log({"model_drift_exhausted": guard.snapshot(), "state": "corrections spent"})
                 checkpoint(messages)
                 break
-        except context_manager.ModelContextLimit:
-            force_compaction = True
-            log({"model_context_limit": "upstream rejected input; prepare a compacted request"})
-            continue
         except context_manager.ContextError as error:
             try:
                 context_recovery.wait(error, req, log=log)

@@ -165,31 +165,6 @@ def test_upgraded_fit_retries_a_saved_blocked_snapshot(context, monkeypatch):
     assert json.loads(state_paths.path(result["source"]).read_text()) == context
 
 
-def test_provider_usage_drives_compaction_without_local_admission(context, monkeypatch):
-    monkeypatch.setitem(cm.TOKEN_CONFIG, "provider_token_usage", True)
-    monkeypatch.setattr(cm, "prepare", lambda *a, **k: ready())
-    fork = compaction.ForkCompactor(lambda *a, **k: {})
-
-    messages, record = fork.before_request(context, observed_input_tokens=100)
-    assert messages is context and record is None
-    assert cm.message_cost(context) > fork._budget()
-    messages, record = fork.before_request(context, observed_input_tokens=40000)
-    assert messages is context and record["kind"] == "fork_started"
-    fork.wait(5)
-
-
-def test_provider_rejection_compacts_before_next_decision(context, monkeypatch):
-    monkeypatch.setitem(cm.TOKEN_CONFIG, "provider_token_usage", True)
-    monkeypatch.setattr(cm, "prepare", lambda *a, **k: ready())
-    fork = compaction.ForkCompactor(lambda *a, **k: {})
-
-    with pytest.raises(cm.ContextPending):
-        fork.before_request(context, force=True)
-    fork.wait(5)
-    messages, record = fork.before_request(context, force=True)
-    assert messages == ready()[0] and record["kind"] == "applied"
-
-
 def test_fit_retry_issues_a_new_summary_request(context, monkeypatch):
     clock = [0]
     attempts = []

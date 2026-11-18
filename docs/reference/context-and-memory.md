@@ -148,13 +148,11 @@ tracking, so a read after a rewrite of the history returns the text again.
 ## Token budgets and full-transcript summaries
 
 Before each decision, the Harness reads authenticated `GET /context/config`.
-With a configured Responses upstream, the previous decision's actual
-`usage.input_tokens` drives the background compaction trigger. The upstream
-admits the complete request and an explicit context-window rejection forces
-compaction before another decision. The same provider admits summary requests.
-The Harness uses the bundled `o200k_base` tokenizer for sizing the handoff and
-retained tail. Deployments without a configured Responses upstream also use
-this tokenizer and the configured windows for request admission.
+The Harness and Host use the bundled `o200k_base` tokenizer for triggering
+compaction, sizing the handoff and retained history, and admitting decision and
+summary requests. The budget accounts for instructions, feedback, tool schemas,
+operational state, output allowance and request framing. Provider-reported
+`usage` is recorded for cost and diagnostics.
 
 `A3_CONTEXT_TARGET_TOKENS` is the target for the complete post-compaction decision
 input. For a 32k target, the Harness deducts fixed instructions, tools, the current
@@ -177,10 +175,11 @@ snapshot includes both, so every source index remains inspectable. Previous
 summaries remain part of current context; compression does not reread the entire
 lifetime history. Large outputs contribute semantic facts and partial previews;
 their complete originals are available through recall and read.
-The summary request specifies an output allowance. If a Responses upstream
-truncates visible summary text at that allowance, the next attempt increases it
-within the repair budget. Before publishing compacted state, the Harness validates
-the full model handoff or a source-quoted fallback. Temporary transport failures use persisted exponential backoff,
+The summary request specifies an output allowance. If the model truncates
+visible summary text at that allowance, the next attempt can increase it
+within the locally checked window and repair budget. Before publishing compacted
+state, the Harness validates the full model handoff or a source-quoted fallback.
+Temporary transport failures use persisted exponential backoff,
 capped at 60 seconds between attempts, with no total time or attempt cutoff.
 Each summary request has a 960-second transport timeout; a timeout schedules
 another attempt rather than ending the run. Invalid summary content has three
