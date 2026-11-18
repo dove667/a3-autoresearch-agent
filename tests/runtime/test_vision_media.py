@@ -68,7 +68,7 @@ def test_safe_typed_request_preserves_order_owner_and_source_data():
     assert calls == [("owner-a", JOB, "frames/first.png"), ("owner-a", JOB, "frames/second.png")]
     assert reserve == 2 * 260
     assert result["tools"] == [] and result["tool_choice"] == "none"
-    assert result["max_output_tokens"] == 4096
+    assert result["max_output_tokens"] == 12288
     assert "untrusted" in result["instructions"].lower()
     assert [m["step"] for m in metadata] == [1, 2]
     assert metadata[0]["source_job"] == JOB and metadata[0]["path"] == "frames/first.png"

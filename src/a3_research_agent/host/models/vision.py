@@ -21,7 +21,7 @@ MAX_PIXELS = 1024 * 1024
 IMAGE_PATCH_SIZE = 32
 IMAGE_TOKENS_PER_PATCH = 4
 IMAGE_BASE_RESERVE = 256
-VISION_OUTPUT_TOKENS = 4096
+VISION_OUTPUT_TOKENS = 12288
 
 VISION_INSTRUCTIONS = (
     "Answer the supplied visual diagnosis question using only the visible sampled frames. "
@@ -32,7 +32,7 @@ VISION_INSTRUCTIONS = (
     "Clearly separate direct observations, hypotheses and unknowns. Do not invent unseen "
     "actions, intermediate motion, events before or after the samples, measurements, or "
     "scientific success/acceptance. State when sampling or viewpoints do not support a claim. "
-    "Provide advisory diagnosis only; do not call tools or execute actions."
+    "Answer the specific question concisely. Do not call tools or execute actions."
 )
 
 
