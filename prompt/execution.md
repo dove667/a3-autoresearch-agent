@@ -1,6 +1,6 @@
 # 研究工具与执行约定
 
-Version: 0.45.0
+Version: 0.46.0
 
 工具定义给出参数、默认值和限制；本文件说明常用流程。所有工具返回 `ok`：成功时直接读取同层结果；失败时读取 `error`、`hint` 和相关编号，修正后再调用。作业的 `status="failed"` 是执行结果，先读日志与证据再判断原因。
 
@@ -78,7 +78,11 @@ ACT 只读三路相机和 16 维状态，没有语言输入：用 `act:` 时传 
 
 设计混训或续训之前，先 `dataset_audit(dataset_root)` 看数据本身：它返回每个任务布局（2×5 还是 2×10）的回合数、逐条指令计数、成功标记、seed 数和存储动作模式，并对“只有一种布局”“complete_demonstrations 为 false”“计数与 meta/info.json 不符”给出警告。不要用现写的探针脚本统计这些——探针会把相对 root 解析到项目根，报出 0 回合。`ds-merged` 这类数据集如果只有 2×10 回合，“混训保住 2×5”的判据就不成立。
 
-闭环评测统一用 `benchmark(checkpoint, task, profile, episodes, seed_start)`：命令、预算和输出目录由工具决定，2×5 固定 500 步、2×10 固定 3200 步；确实要做更长预算实验时才传 `max_steps`。它返回 `prepared_id`、`preflight_job_id` 与 `report`（远端 outputs 相对路径），预检通过后 `job_submit(prepared_id=...)`，结果直接读 `report`。不要手拼 benchmark 命令：低于任务预算的 `--max-steps` 会被提交层拒绝，因为那样得到的是预算上限而不是策略表现。
+闭环评测统一用 `benchmark(checkpoint, task, profile, episodes, seed_start)`：命令、预算和输出目录由工具决定，2×5 固定 500 步、2×10 固定 3200 步；确实要做更长预算实验时才传 `max_steps`。
+
+`task` 除 `2x5`、`2x10` 外还有六个扩展场景，都是 2×5 尺度的搬 10 块任务，预算 1000 步：`missing-columns`（随机少 1–2 列）、`partial-gaps`（列内缺块）、`cross-column`（每列只剩连续 8 块，必须跨列取料）、`tilted`（有饼干被倾倒，`tilt_level=fallen` 为平躺）、`prefilled`（目标盒预放 5 块，只需补 5 块，满分 5）、`two-boxes`（一个源盒两个目标盒，`box_quota=10` 时预算 3200、满分 20）。场景任务不要传 `source_column`，让策略自己选列。这些任务直接回答"搬完一批就不启动第二批"：缺列和跨列看它会不会换列取材，双盒看它会不会切换目标，预填充看它能否在已有排列上补齐。ACT 不消费任务文本，用它跑场景时要在记录里写明输入条件，不能与文本条件策略的成功率直接对比。
+
+它返回 `prepared_id`、`preflight_job_id` 与 `report`（远端 outputs 相对路径），预检通过后 `job_submit(prepared_id=...)`，结果直接读 `report`。不要手拼 benchmark 命令：低于任务预算的 `--max-steps` 会被提交层拒绝，因为那样得到的是预算上限而不是策略表现。
 
 一格的多个 report 用 `benchmark_summary(reports=[{job_id,path},...])` 汇总：它按每回合的任务上限截断、把入盒数和原生通过分开算，并指出各段之间协议不一致（预算、动作块、prompt 风格、checkpoint、重复 seed）。不要手工加总 report 的分数——入盒数可能超过任务上限，跨预算的分段也不能直接相加。
 

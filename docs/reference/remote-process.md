@@ -54,6 +54,10 @@ A3 的闭环评测统一由 `benchmark` 工具提交，不接受手拼的评测�
 
 `a3_api(symbols=[...])` 读取部署的 A3 源码，返回核心函数的文件、行号与完整签名，以及采集和评测 CLI 的开关与默认值。它只读文件，不 import 模块，因此不会因副作用失败。用途是替代“先跑挂、再读栈、再改脚本”：`train_act` 的模块位置、`aggregate_datasets` 的参数名、`merge_cookie_datasets` 对双 root 的要求都属于会漂移的契约。
 
+## 扩展场景任务
+
+`benchmark` 的 `task` 接受六个扩展场景（`missing-columns`、`partial-gaps`、`cross-column`、`tilted`、`prefilled`、`two-boxes`），与 `2x5`、`2x10` 共用同一个上游入口。预算是 1000 步，`two-boxes` 传 `box_quota=10` 时按 2×10 的 3200 步；满分取 `benchmark_policy.MAX_SCORE`，`prefilled` 是 5，其余是 10。场景任务不传 `source_column`：旧专家的选列参数不改变场景生成，交给策略自己选。
+
 ## 失败分类与重试
 
 `job_status` 与 `job_wait` 的诊断带 `retry` 字段。只有 `killed` 与 `distributed_failure` 允许原样重做一个请求：前者是调度或主机终止，后者是端口或 NCCL 冲突，都与脚本内容无关。其余分类明确标为不可重做——同样的代码再跑一次只会再失败一次，还要再占一次 GPU。

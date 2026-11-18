@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from a3_research_agent.harness import job_tools
+from a3_research_agent.harness.tool_contracts import ToolInputError
 
 CPU_ID = "a" * 32
 GPU_ID = "b" * 32
@@ -536,3 +537,18 @@ def test_a3_api_reader_reports_definitions_and_cli_defaults(tmp_path, monkeypatc
     flags = report["cli"][0]["flags"]
     assert {"flag": "--max-steps", "default": "1000"} in flags
     assert {"flag": "--task", "default": '"2x5"'} in flags
+
+
+def test_scenario_tasks_carry_their_own_budget_and_score(tmp_path):
+    """The six extension scenarios are 2x5-scale; two full boxes follow 2x10."""
+    from a3_research_agent.harness import benchmark_policy
+
+    assert benchmark_policy.steps_for("partial-gaps", []) == 1000
+    assert benchmark_policy.max_score("prefilled") == 5
+    assert benchmark_policy.steps_for("two-boxes", ["--box-quota", "10"]) == 3200
+    assert benchmark_policy.max_score("two-boxes", ["--box-quota", "10"]) == 20
+    # A 2x5 budget is still refused for a scenario that moves twice the cookies.
+    with pytest.raises(ToolInputError):
+        benchmark_policy.check_command(
+            ["python", "benchmark_cookie_batch_cli.py", "--task", "tilted", "--max-steps", "500"]
+        )

@@ -69,6 +69,9 @@ BENCHMARK_FIELDS = {
     "policy",
     "max_steps",
     "n_action_steps",
+    "source_column",
+    "tilt_level",
+    "box_quota",
     "name",
 }
 DATASET_FIELDS = {
@@ -431,8 +434,12 @@ def benchmark(args, request, workspace):
             "for example /data/.../checkpoints/020000/pretrained_model.",
         )
     task = args.get("task")
-    if task not in benchmark_policy.TASK_STEPS:
-        fail("invalid_task", "Use task 2x5 or 2x10; each has its own step budget.")
+    if task not in benchmark_policy.MAX_SCORE:
+        fail(
+            "invalid_task",
+            "Use 2x5, 2x10, or one of the six extension scenarios "
+            "(missing-columns, partial-gaps, cross-column, tilted, prefilled, two-boxes).",
+        )
     profile = args.get("profile", "basic")
     if profile not in {"basic", "medium", "advanced"}:
         fail("invalid_profile", "Use basic, medium or advanced.")
@@ -444,16 +451,41 @@ def benchmark(args, request, workspace):
     max_steps = args.get("max_steps")
     if max_steps is not None:
         max_steps = integer(max_steps, "max_steps", 1, 2**31 - 1)
-    steps = benchmark_policy.budget(task, max_steps)
+    budget_values = []
+    if args.get("box_quota") is not None:
+        budget_values = ["--box-quota", str(args["box_quota"])]
+    steps = benchmark_policy.budget(
+        task, max_steps, benchmark_policy.steps_for(task, budget_values)
+    )
     horizon = integer(args.get("n_action_steps", 25), "n_action_steps", 1, 50)
     name = args.get("name")
     if name is not None:
         name = text(name, "name", 120).strip()
     name = name or f"{task}-{profile}-{episodes}ep"
+    tilt_level = args.get("tilt_level")
+    if tilt_level is not None and (tilt_level not in {"mild", "fallen"} or task != "tilted"):
+        fail("invalid_tilt_level", "Pass tilt_level mild or fallen with task tilted.")
+    box_quota = args.get("box_quota")
+    if box_quota is not None and (box_quota not in {5, 10} or task != "two-boxes"):
+        fail("invalid_box_quota", "Pass box_quota 5 or 10 with task two-boxes.")
+    source_column = args.get("source_column")
+    if source_column is not None and source_column not in {1, 2, 3, 4}:
+        fail("invalid_source_column", "Pass source_column 1-4, or omit it for scenarios.")
     install_runner(workspace)
     digest = hashlib.sha256(
         json.dumps(
-            [task, profile, episodes, seed_start, policy, checkpoint, steps, horizon],
+            [
+                task,
+                profile,
+                episodes,
+                seed_start,
+                policy,
+                checkpoint,
+                steps,
+                horizon,
+                tilt_level,
+                box_quota,
+            ],
             sort_keys=True,
         ).encode()
     ).hexdigest()[:8]
@@ -475,6 +507,9 @@ def benchmark(args, request, workspace):
         str(steps),
         "--n-action-steps",
         str(horizon),
+        *(["--source-column", str(source_column)] if source_column else []),
+        *(["--tilt-level", tilt_level] if tilt_level else []),
+        *(["--box-quota", str(box_quota)] if box_quota else []),
         "--output-dir",
         output_dir,
     ]

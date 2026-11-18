@@ -16,7 +16,8 @@ from .tool_contracts import fail, relative_name
 PAGE_LIMIT = 8000
 REPORT_BYTES = 262144
 MAX_EPISODES = 60
-TASK_MAX = {"2x5": 10, "2x10": 20}
+from .benchmark_policy import MAX_SCORE as TASK_MAX
+
 IDENTITY_FIELDS = ("task", "profile", "max_steps", "n_action_steps", "prompt_style")
 
 

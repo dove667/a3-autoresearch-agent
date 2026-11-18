@@ -15,7 +15,15 @@ import subprocess
 import sys
 from pathlib import Path
 
-TASK_STEPS = {"2x5": 500, "2x10": 3200}
+SCENARIO_TASKS = (
+    "missing-columns",
+    "partial-gaps",
+    "cross-column",
+    "tilted",
+    "prefilled",
+    "two-boxes",
+)
+TASK_STEPS = {"2x5": 500, "2x10": 3200, **dict.fromkeys(SCENARIO_TASKS, 1000)}
 PROFILES = ("basic", "medium", "advanced")
 REPORT = "a3-preflight.json"
 
@@ -23,6 +31,8 @@ REPORT = "a3-preflight.json"
 def parser():
     result = argparse.ArgumentParser(description=__doc__)
     result.add_argument("--task", required=True, choices=sorted(TASK_STEPS))
+    result.add_argument("--tilt-level", choices=("mild", "fallen"))
+    result.add_argument("--box-quota", type=int, choices=(5, 10))
     result.add_argument("--policy", required=True, help="act:<checkpoint> or smolvla:<checkpoint>")
     result.add_argument("--profile", default="basic", choices=PROFILES)
     result.add_argument("--episodes", type=int, default=5)
@@ -30,7 +40,8 @@ def parser():
     result.add_argument("--max-steps", type=int)
     result.add_argument("--n-action-steps", type=int, default=25)
     result.add_argument("--workers", type=int, default=1)
-    result.add_argument("--source-column", type=int, default=1)
+    # The old expert picks a column; a scenario or a policy should choose itself.
+    result.add_argument("--source-column", default=None)
     result.add_argument("--prompt-style", help="Language-conditioned policies only")
     result.add_argument("--output-dir", required=True)
     return result
@@ -43,7 +54,7 @@ def requires_prompt(args):
 
 def budget(args):
     """Never run a task below the budget the A3 repository uses for it."""
-    minimum = TASK_STEPS[args.task]
+    minimum = TASK_STEPS["2x10"] if (args.task == "two-boxes" and args.box_quota == 10) else TASK_STEPS[args.task]
     if args.max_steps is not None and args.max_steps < minimum:
         raise SystemExit(f"{args.task} needs at least {minimum} steps, not {args.max_steps}")
     return max(args.max_steps or minimum, minimum)
@@ -111,8 +122,9 @@ def command(args, steps, output, python):
             str(steps),
             "--workers",
             str(args.workers),
-            "--source-column",
-            str(args.source_column),
+            *(["--source-column", str(args.source_column)] if args.source_column else []),
+            *(["--tilt-level", args.tilt_level] if args.tilt_level else []),
+            *(["--box-quota", str(args.box_quota)] if args.box_quota else []),
             *(["--prompt-style", args.prompt_style] if requires_prompt(args) and args.prompt_style else []),
             "--n-action-steps",
             str(args.n_action_steps),

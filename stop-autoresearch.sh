@@ -13,9 +13,16 @@ export PYTHONPATH="$harness_root/src${PYTHONPATH:+:$PYTHONPATH}"
 run=""
 force=0
 arguments=()
+expect_reason=0
 for argument in "$@"; do
+    if [[ "$expect_reason" -eq 1 ]]; then
+        arguments+=("$argument")
+        expect_reason=0
+        continue
+    fi
     case "$argument" in
         --force) force=1 ;;
+        --reason) arguments+=("$argument"); expect_reason=1 ;;
         -h|--help)
             sed -n '2,7p' "${BASH_SOURCE[0]}" | sed 's/^# \\?//'
             exit 0
