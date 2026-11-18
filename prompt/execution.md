@@ -1,6 +1,6 @@
 # 研究工具与执行约定
 
-Version: 0.39.0
+Version: 0.40.0
 
 工具定义给出参数、默认值和限制；本文件说明常用流程。所有工具返回 `ok`：成功时直接读取同层结果；失败时读取 `error`、`hint` 和相关编号，修正后再调用。作业的 `status="failed"` 是执行结果，先读日志与证据再判断原因。
 
@@ -16,6 +16,7 @@ Version: 0.39.0
 | 运行状态或需人工处理的阻塞 | `research_status` |
 | 远程执行与结果 | `job_prepare`、`job_submit`、`job_status`、`job_list`、`job_artifact`、`job_cancel` |
 | A3 闭环评测 | `benchmark`、`benchmark_summary` |
+| 数据集体检 | `dataset_audit` |
 | 等待指定作业／空闲等待 | `job_wait`／`idle_wait` |
 | 资产复用 | `export_create`、`export_status`、`export_manifest`、`export_list` |
 | 配对评测与视觉诊断 | `evaluation_compare`、`conditions_compare`、`vision_status`、`vision_inspect` |
@@ -67,6 +68,8 @@ GPU 作业先调用 `job_prepare`，同样填写 name、command、attachments、
 长批次可使用部署的 episode executor。每个 episode 的 id 唯一，command 是参数数组，report 指向命令实际写出的 JSON。保存 manifest、ledger 和逐回合结果；恢复前核对原编号与已完成记录。执行成功且报告有效时，科学结果 success=false 仍是有效观察。
 
 ACT 只读三路相机和 16 维状态，没有语言输入：用 `act:` 时传 `--prompt-style` 不会改变它的行为，提交层会直接拒绝。语言指令只对 `smolvla:` 这类条件策略有意义，任务的块数由 `--task` 和 `--profile` 决定，不由指令决定。
+
+设计混训或续训之前，先 `dataset_audit(dataset_root)` 看数据本身：它返回每个任务布局（2×5 还是 2×10）的回合数、逐条指令计数、成功标记、seed 数和存储动作模式，并对“只有一种布局”“complete_demonstrations 为 false”“计数与 meta/info.json 不符”给出警告。不要用现写的探针脚本统计这些——探针会把相对 root 解析到项目根，报出 0 回合。`ds-merged` 这类数据集如果只有 2×10 回合，“混训保住 2×5”的判据就不成立。
 
 闭环评测统一用 `benchmark(checkpoint, task, profile, episodes, seed_start)`：命令、预算和输出目录由工具决定，2×5 固定 500 步、2×10 固定 3200 步；确实要做更长预算实验时才传 `max_steps`。它返回 `prepared_id`、`preflight_job_id` 与 `report`（远端 outputs 相对路径），预检通过后 `job_submit(prepared_id=...)`，结果直接读 `report`。不要手拼 benchmark 命令：低于任务预算的 `--max-steps` 会被提交层拒绝，因为那样得到的是预算上限而不是策略表现。
 

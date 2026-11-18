@@ -28,6 +28,7 @@ HARNESS_MODULES = (
     "benchmark_runner.py",
     "tool_json.py",
     "benchmark_report.py",
+    "dataset_audit_runner.py",
     "control_tools.py",
     "file_tools.py",
     "host_tools.py",

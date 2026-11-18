@@ -71,6 +71,16 @@ BENCHMARK_FIELDS = {
     "n_action_steps",
     "name",
 }
+DATASET_FIELDS = {
+    "dataset_root": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 1024,
+        "description": "Remote absolute dataset directory, for example /data1/.../ds-merged.",
+    },
+    "repo_id": {"type": "string", "maxLength": 200},
+    "name": {"type": "string", "minLength": 1, "maxLength": 120},
+}
 BATCH_FIELDS = {
     "jobs": {
         "type": "array",
@@ -148,6 +158,17 @@ TOOLS = [
             },
         },
         ["checkpoint", "task"],
+    ),
+    definition(
+        "dataset_audit",
+        "Describe a training dataset before spending GPU time on it. Runs the deployed A3 "
+        "auditor on a CPU job and adds the breakdown the auditor omits: episodes per task "
+        "layout (2x5 or 2x10), per task instruction, success labels, seeds, frames and stored "
+        "action mode, plus warnings for incomplete demonstrations, a single layout, or a "
+        "count that disagrees with meta/info.json. Returns job_id and report (outputs-relative "
+        "audit.json). Run it before designing a mixed-training step.",
+        DATASET_FIELDS,
+        ["dataset_root"],
     ),
     definition(
         "job_status",
@@ -355,11 +376,12 @@ def check_output_paths(command):
             )
 
 
-def install_runner(workspace):
-    """Write the maintained launcher into the workspace; every call overwrites it."""
+def install_runner(workspace, module="benchmark_runner.py", name="a3_benchmark_runner.py"):
+    """Write a maintained launcher into the workspace; every call overwrites it."""
     root = Path(workspace).resolve()
     directory = root / "benchmarks"
-    target = directory / "a3_benchmark_runner.py"
+    target = directory / name
+    relative = f"benchmarks/{name}"
     if directory.is_symlink() or target.is_symlink():
         fail(
             "invalid_benchmark_path",
@@ -368,15 +390,15 @@ def install_runner(workspace):
     try:
         directory.mkdir(parents=True, exist_ok=True)
         if not target.parent.resolve().is_relative_to(root):
-            fail("invalid_benchmark_path", "Keep benchmarks/a3_benchmark_runner.py in workspace.")
-        source = Path(__file__).with_name("benchmark_runner.py")
+            fail("invalid_benchmark_path", f"Keep {relative} in workspace.")
+        source = Path(__file__).with_name(module)
         target.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
     except OSError:
         fail(
             "invalid_benchmark_path",
             "Replace any file named benchmarks with a regular directory and retry.",
         )
-    return "benchmarks/a3_benchmark_runner.py"
+    return relative
 
 
 def benchmark(args, request, workspace):
@@ -459,6 +481,48 @@ def benchmark(args, request, workspace):
         **prepared,
         "report": f"{output_dir}/seed-{seed_start}.json",
         "max_steps": steps,
+    }
+
+
+def dataset_audit(args, request, workspace):
+    """Submit the maintained dataset auditor and say where its report lands."""
+    arguments(args, DATASET_FIELDS)
+    root = text(args.get("dataset_root"), "dataset_root", 1024).strip()
+    if not root.startswith("/") or any(char in root for char in "\n\r"):
+        fail(
+            "invalid_dataset_root",
+            "Pass the remote absolute dataset directory, for example "
+            "/data1/zsh/a3_dual_arm_sim/mixed-2x10-v1/ds-merged.",
+        )
+    repo = args.get("repo_id")
+    if repo is not None:
+        repo = text(repo, "repo_id", 200).strip()
+    digest = hashlib.sha256(json.dumps([root, repo], sort_keys=True).encode()).hexdigest()[:8]
+    output_dir = "dataset-audit-" + digest
+    path = install_runner(workspace, "dataset_audit_runner.py", "a3_dataset_audit_runner.py")
+    command = [
+        "python",
+        "a3_dataset_audit_runner.py",
+        "--dataset-root",
+        root,
+        "--output-dir",
+        output_dir,
+    ]
+    if repo:
+        command += ["--repo-id", repo]
+    job = submit_request(
+        {
+            "command": command,
+            "attachments": [{"path": path, "destination": "a3_dataset_audit_runner.py"}],
+            "gpu": False,
+            "name": args.get("name") or "dataset-audit-" + digest,
+        },
+        Path(workspace).resolve(),
+    )
+    return {
+        **submission_result(request("POST", "/jobs", job)),
+        "report": f"{output_dir}/audit.json",
+        "hint": "Wait for this job, then read report from the outputs area.",
     }
 
 
@@ -660,6 +724,8 @@ def dispatch(name, args, request, *, workspace=None):
                     ),
                 }
             return submission_result(request("POST", "/jobs", job))
+        if name == "dataset_audit":
+            return dataset_audit(args, request, Path(workspace or Path.cwd()))
         if name == "job_artifact":
             return artifact(args, request)
         if name == "job_list":

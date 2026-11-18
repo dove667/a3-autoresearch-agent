@@ -433,3 +433,65 @@ def test_runner_omits_prompt_style_for_act():
     )
     call = benchmark_runner.command(args, 3200, "/out/r.json", "python")
     assert "--prompt-style" in call["arguments"]
+
+
+def test_dataset_audit_submits_a_cpu_job_and_names_the_report(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    sent = {}
+
+    def request(method, path, body=None, **kwargs):
+        sent["method"], sent["path"], sent["body"] = method, path, body
+        return {"ok": True, "job_id": "c" * 32}
+
+    from a3_research_agent.harness import job_tools
+
+    result = job_tools.dispatch(
+        "dataset_audit",
+        {"dataset_root": "/data1/zsh/a3_dual_arm_sim/mixed-2x10-v1/ds-merged"},
+        request,
+        workspace=str(tmp_path),
+    )
+    assert sent["path"] == "/jobs" and sent["body"]["gpu"] is False
+    assert sent["body"]["command"][:2] == ["python", "a3_dataset_audit_runner.py"]
+    assert result["report"].endswith("/audit.json")
+    attached = sent["body"]["workspace_files"][0]
+    assert attached["destination"] == "a3_dataset_audit_runner.py"
+    assert (tmp_path / "benchmarks" / "a3_dataset_audit_runner.py").is_file()
+
+
+def test_dataset_audit_requires_an_absolute_remote_path(tmp_path):
+    from a3_research_agent.harness import job_tools
+
+    result = job_tools.dispatch(
+        "dataset_audit",
+        {"dataset_root": "datasets/local"},
+        lambda *a, **k: {},
+        workspace=str(tmp_path),
+    )
+    assert result["error"] == "invalid_dataset_root"
+
+
+def test_dataset_audit_runner_reports_layouts_and_warnings(tmp_path, monkeypatch):
+    from a3_research_agent.harness import dataset_audit_runner as runner
+
+    root = tmp_path / "ds"
+    (root / "meta").mkdir(parents=True)
+    (root / "meta" / "info.json").write_text(json.dumps({"total_episodes": 2, "total_tasks": 1}))
+    (root / "collection_summary.json").write_text(
+        json.dumps({"complete_demonstrations": False, "target_layout": "2x10"})
+    )
+    rows = [
+        {"task": "Transfer 20 cookies into the 2x10 target box.", "seed": 20000, "frames": 1000},
+        {"task": "Transfer 20 cookies into the 2x10 target box.", "seed": 20001, "frames": 1000},
+    ]
+    (root / "a3_episode_metadata.jsonl").write_text(
+        "\n".join(json.dumps(row) for row in rows) + "\n"
+    )
+    monkeypatch.setattr(runner, "audit", lambda *a, **k: {"episodes": 2})
+    outputs = tmp_path / "outputs"
+    monkeypatch.setenv("A3_OUTPUTS", str(outputs))
+    runner.main(["--dataset-root", str(root), "--output-dir", "cell"])
+    report = json.loads((outputs / "cell" / "audit.json").read_text())
+    assert report["metadata"]["layouts"] == {"2x10": 2}
+    assert any("only one task layout" in warning for warning in report["warnings"])
+    assert any("complete_demonstrations" in warning for warning in report["warnings"])
