@@ -477,8 +477,10 @@ def _schedule(project_root, now):
     return None
 
 
-def build_snapshot(project_root, selector="latest", *, now=None, process_observer=None):
-    """Build the complete dashboard payload from files only."""
+def build_snapshot(
+    project_root, selector="latest", *, now=None, process_observer=None, job_status=None
+):
+    """Build the dashboard payload from files, with live job states when supplied."""
     now = _clock(now)
     root = Path(project_root).resolve()
     selected = select_run(root, selector)
@@ -488,6 +490,18 @@ def build_snapshot(project_root, selector="latest", *, now=None, process_observe
         options["process_observer"] = process_observer
     run = read_run(run_path, **options) if run_path else None
     jobs = run.get("jobs", {}) if run else {}
+    live_status = {}
+    if jobs and job_status is not None:
+        live_status = job_status(selected) if callable(job_status) else job_status
+    if jobs and live_status:
+        # The Agent records a job's state only when it polls; the Host knows it now.
+        for identifier, row in jobs.items():
+            live = live_status.get(identifier)
+            if isinstance(live, dict) and live.get("status"):
+                row["status"] = live["status"]
+                row["live"] = True
+                if live.get("exit_code") is not None:
+                    row["exit_code"] = live["exit_code"]
     plan = plan_payload(root / "plan/current.json", jobs)
     memory = knowledge.load_memory(root / "memory")
     skills = knowledge.load_skills(root / "skills")

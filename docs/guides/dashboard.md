@@ -51,3 +51,11 @@ uv run a3-research-dashboard --port 8788  # 更换本地端口
 `bash start-dashboard.sh` 检查 `A3_DASHBOARD_PORT`（默认 8787）上的 `/api/health`：已经有看板就只打印地址，没有就启动一个新的并在终端打印 URL。加 `--open` 会同时打开浏览器。研究 Host 启动时仍会自动拉起看板；若看板已经由这个脚本启动，Host 只打印 “Research dashboard already running”。
 
 总览页显示本次运行的 token 与开销：输入、缓存命中、输出，以及按 `.env` 中 `A3_PRICE_*_PER_MTOK` 折算的金额（币种由 `A3_PRICE_CURRENCY` 标明）。旧的运行记录没有写入价格时，看板用当前单价按它们的用量补算。
+
+## 作业状态是实时的
+
+作业状态有两个来源。Agent 每次 `job_status` / `job_wait` 会把状态写进 `conversation/operational-state.json`；看板优先向正在运行的 Host 查询当前状态（`/sessions` 与 `/jobs`），只有查不到时才回落到 Agent 记下的快照。
+
+- Host 内嵌的看板直接用进程内的 Gateway 客户端。
+- 单独启动的看板（`start-dashboard.sh`）从 `trajectories/<run>/.host/state.json` 读取回环地址和本 run 的令牌，只用于本地读取，不写入页面。
+- 查询结果缓存 10 秒，避免浏览器每 5 秒刷新就产生一次远程调用；查询失败时显示上一次已知状态，不显示错误。

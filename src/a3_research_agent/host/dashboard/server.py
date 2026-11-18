@@ -10,7 +10,7 @@ from .runs import select_run
 from .snapshot import build_snapshot
 
 
-def create_app(project_root, *, process_observer=None):
+def create_app(project_root, *, process_observer=None, job_status=None):
     """Build one dashboard app; every endpoint is a read-only observation."""
     root = Path(project_root).resolve()
     static = Path(__file__).with_name("static")
@@ -40,7 +40,14 @@ def create_app(project_root, *, process_observer=None):
         if run not in {"", "latest"} and select_run(root, run) is None:
             raise HTTPException(status_code=404, detail="unknown run")
         try:
-            return build_snapshot(root, run or "latest", process_observer=process_observer)
+            # build_snapshot resolves the selector, so it must receive the feed
+            # rather than a status map keyed to an unresolved name.
+            return build_snapshot(
+                root,
+                run or "latest",
+                process_observer=process_observer,
+                job_status=job_status,
+            )
         except Exception as error:
             raise HTTPException(
                 status_code=500,

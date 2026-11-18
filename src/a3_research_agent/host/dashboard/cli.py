@@ -35,8 +35,10 @@ def main():
     print("只读面板，每 5 秒刷新；Ctrl+C 停止", flush=True)
     if args.open:
         threading.Timer(1.0, lambda: webbrowser.open(url)).start()
+    from .live import JobStatusFeed
+
     uvicorn.run(
-        create_app(root),
+        create_app(root, job_status=JobStatusFeed(root=root).statuses),
         host=args.host,
         port=args.port,
         log_level="warning",

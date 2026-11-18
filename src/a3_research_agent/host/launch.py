@@ -19,6 +19,7 @@ import uvicorn
 
 from a3_research_agent.host.dashboard.lifecycle import DashboardService
 from a3_research_agent.host.dashboard.lifecycle import serving as dashboard_serving
+from a3_research_agent.host.dashboard.live import JobStatusFeed
 from a3_research_agent.host.gateway.app import create_app
 from a3_research_agent.host.inputs.feedback import MAX_FEEDBACK_BYTES, HumanFeedback
 from a3_research_agent.host.inputs.research_preparation import input_hashes, prepare_research_start
@@ -365,8 +366,12 @@ def _launch_run(args, run: Path, a3: Path, start, services) -> None:
                     + "\n"
                 )
         store.update(status="running")
+        job_status_client = {}
+        # The Gateway client exists a few lines below; until then the feed reports
+        # nothing and the overview falls back to the Agent's recorded snapshot.
+        job_feed = JobStatusFeed(lambda: job_status_client["client"])
         try:
-            dashboard = DashboardService(root)
+            dashboard = DashboardService(root, job_status=job_feed.statuses)
             if dashboard_serving(dashboard.host, dashboard.port):
                 # Started separately by start-dashboard.sh; keep using it.
                 print(f"Research dashboard already running: {dashboard.url}", flush=True)
@@ -379,9 +384,10 @@ def _launch_run(args, run: Path, a3: Path, start, services) -> None:
             if dashboard is not None:
                 dashboard.stop()
             dashboard = None
-        with httpx.Client(trust_env=False, 
+        with httpx.Client(trust_env=False,
             base_url=endpoint, headers={"Authorization": "Bearer " + token}, timeout=90
         ) as client:
+            job_status_client["client"] = client
             # Both readiness checks are one CPU job each; submitting them here saves the
             # Agent the first turn of a window and cannot fail the launch.
             checks = submit_startup_checks(

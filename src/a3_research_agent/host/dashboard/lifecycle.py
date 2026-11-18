@@ -45,10 +45,11 @@ def serving(host, port, *, timeout=1.0):
 class DashboardService:
     """Serve the dashboard in a daemon thread and stop it with the Host."""
 
-    def __init__(self, project_root, *, host="127.0.0.1", port=None):
+    def __init__(self, project_root, *, host="127.0.0.1", port=None, job_status=None):
         self.project_root = project_root
         self.host = host
         self.port = configured_port() if port is None else port
+        self.job_status = job_status
         self.url = f"http://{host}:{self.port}"
         self.server = None
         self.thread = None
@@ -57,7 +58,7 @@ class DashboardService:
         if not port_available(self.host, self.port):
             return False
         config = uvicorn.Config(
-            create_app(self.project_root),
+            create_app(self.project_root, job_status=self.job_status),
             host=self.host,
             port=self.port,
             log_level="warning",
