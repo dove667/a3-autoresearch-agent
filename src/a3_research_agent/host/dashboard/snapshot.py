@@ -55,11 +55,6 @@ def _clock(now):
     return time.time() if now is None else now
 
 
-def _short(text, limit=48):
-    text = " ".join(str(text or "").split())
-    return text if len(text) <= limit else text[: limit - 1] + "…"
-
-
 def _empty_plan():
     return {
         "revision": 0,
@@ -263,7 +258,7 @@ def plan_payload(plan_file, jobs):
     if review_due:
         next_hint = f"有 {len(review_due)} 个作业已经结束，等待写入复盘。"
     elif focus_step:
-        next_hint = f"下一步：{_short(focus_step['task'], 60)}"
+        next_hint = f"下一步：{focus_step['task']}"
     elif active_jobs:
         next_hint = f"等待 {len(active_jobs)} 个远程作业完成。"
     elif counts["blocked"]:
@@ -351,7 +346,7 @@ def _agent(run, plan, now):
     elif state in {"context_waiting", "context_blocked"}:
         headline = "正在整理研究上下文"
     elif focus:
-        headline = f"正在推进「{_short(focus['task'], 30)}」"
+        headline = f"正在推进「{focus['task']}」"
     else:
         headline = "Agent 正在运行"
 
@@ -369,7 +364,7 @@ def _agent(run, plan, now):
         "state_label": label,
         "tone": tone,
         "headline": headline,
-        "detail": _short(detail, 200),
+        "detail": detail,
         "focus": focus,
         "active_jobs": [
             {

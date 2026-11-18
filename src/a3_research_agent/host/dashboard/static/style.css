@@ -589,11 +589,15 @@ main {
 
 /* Overview */
 
+#page-overview .page-head h2 {
+  font-size: 1.25rem;
+}
+
 .overview-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1.35fr) minmax(290px, 0.85fr);
-  gap: clamp(28px, 4vw, 60px);
-  align-items: end;
+  grid-template-columns: minmax(0, 2fr) minmax(240px, 1fr);
+  gap: clamp(24px, 3vw, 40px);
+  align-items: start;
   min-height: 0;
   padding-bottom: 26px;
   border-bottom: 1px solid var(--line);
@@ -604,7 +608,7 @@ main {
   align-items: center;
   flex-wrap: wrap;
   gap: 8px;
-  margin: 0 0 16px;
+  margin: 0 0 12px;
   color: var(--muted);
   font-size: 12px;
 }
@@ -625,31 +629,30 @@ main {
 }
 
 .headline {
-  max-width: 20ch;
   margin: 0;
   color: var(--gold-bright);
   font-family: var(--display);
-  font-size: clamp(2rem, 3.6vw, 3.1rem);
+  font-size: clamp(1.125rem, 1.7vw, 1.5rem);
   font-weight: 600;
   letter-spacing: 0.01em;
-  line-height: 1.16;
-  text-wrap: balance;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
 }
 
 .hero-detail {
-  max-width: 48ch;
-  margin: 18px 0 0;
+  margin: 12px 0 0;
   color: var(--muted);
   font-size: 13px;
-  line-height: 1.8;
+  line-height: 1.65;
   overflow-wrap: anywhere;
+  white-space: pre-line;
 }
 
 .hero-meta {
   display: flex;
   flex-wrap: wrap;
   gap: 0;
-  margin-top: 20px;
+  margin-top: 14px;
   color: var(--muted);
   font-size: 11px;
 }
@@ -665,14 +668,15 @@ main {
 }
 
 .hero-hint {
-  max-width: 54ch;
-  margin: 18px 0 0;
+  margin: 12px 0 0;
   padding: 8px 12px;
   border-left: 1px solid var(--gold);
   background: var(--gold-soft);
   color: var(--gold-bright);
-  font-size: 11px;
-  line-height: 1.7;
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+  white-space: pre-line;
 }
 
 .hero-hint:empty {
@@ -763,7 +767,7 @@ main {
   margin-top: 3px;
   color: var(--gold-bright);
   font-family: var(--display);
-  font-size: clamp(1.45rem, 2.2vw, 1.9rem);
+  font-size: clamp(1.125rem, 1.6vw, 1.5rem);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   line-height: 1.2;
@@ -1989,20 +1993,11 @@ main {
     padding-bottom: 18px;
   }
 
-  .headline {
-    font-size: clamp(1.8rem, 9vw, 2.4rem);
-  }
-
-  .hero-detail {
-    margin-top: 12px;
-  }
-
   .hero-meta {
     margin-top: 12px;
   }
 
   .hero-hint {
-    margin-top: 12px;
     padding: 6px 10px;
   }
 

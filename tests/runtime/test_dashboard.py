@@ -209,6 +209,23 @@ def build_project(root, *, alive=True):
     return run, (lambda pid, started: alive)
 
 
+def test_overview_preserves_full_task_progress_and_next_hint(tmp_path):
+    run, observer = build_project(tmp_path)
+    (run / "conversation/pending-calls.json").unlink()
+    plan_path = tmp_path / "plan/current.json"
+    plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    task = "按种子对比全量评测的入盒准确率和通过率，" * 4 + "汇总失败类型。"
+    progress = "对照组已完成，正在核对每个回合的评测记录和指标口径。\n" * 9
+    plan["steps"]["s1"].update(task=task, progress=progress)
+    write(plan_path, plan)
+
+    snapshot = build_snapshot(tmp_path, "latest", process_observer=observer)
+
+    assert snapshot["agent"]["headline"] == f"正在推进「{task}」"
+    assert snapshot["agent"]["detail"] == progress
+    assert snapshot["plan"]["next_hint"] == f"下一步：{task}"
+
+
 def test_snapshot_reads_live_run_plan_memory_and_skills(tmp_path):
     _run, observer = build_project(tmp_path)
     snapshot = build_snapshot(tmp_path, "latest", now=1_800_000_300, process_observer=observer)
