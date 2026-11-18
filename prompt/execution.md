@@ -1,6 +1,6 @@
 # 研究工具与执行约定
 
-Version: 0.36.0
+Version: 0.37.0
 
 工具定义给出参数、默认值和限制；本文件说明常用流程。所有工具返回 `ok`：成功时直接读取同层结果；失败时读取 `error`、`hint` 和相关编号，修正后再调用。作业的 `status="failed"` 是执行结果，先读日志与证据再判断原因。
 
@@ -15,6 +15,7 @@ Version: 0.36.0
 | 当前 run 原始对话 | `recall` |
 | 运行状态或需人工处理的阻塞 | `research_status` |
 | 远程执行与结果 | `job_prepare`、`job_submit`、`job_status`、`job_list`、`job_artifact`、`job_cancel` |
+| A3 闭环评测 | `benchmark` |
 | 等待指定作业／空闲等待 | `job_wait`／`idle_wait` |
 | 资产复用 | `export_create`、`export_status`、`export_manifest`、`export_list` |
 | 配对评测与视觉诊断 | `evaluation_compare`、`conditions_compare`、`vision_status`、`vision_inspect` |
@@ -57,11 +58,15 @@ GPU 作业先调用 `job_prepare`，同样填写 name、command、attachments、
 
 ## 等待和检查结果
 
-`job_wait(job_ids=[...])` 默认持续等指定作业终态或通知，内部续接不唤醒模型；需要限时才填写 timeout_seconds，0表示单次观察。省略 job_ids 时使用当前观察到的活动作业。没有目标会立即返回。`idle_wait(seconds=30)` 只暂停并响应通知，不轮询作业。独立且输入就绪的作业可以先提交，再等待；有依赖时先处理上游结果。
+提交后先推进队列，再等待：把输入已经就绪的独立作业一次 prepare／submit 完，然后用**一次** `job_wait()`（省略 job_ids）等全部活动作业，而不是提交一个就等一个。十秒级的 CPU 小作业不值得单独开一轮，攒进同一批。
+
+`job_wait` 默认持续等终态或通知，内部续接不唤醒模型；需要限时才填 timeout_seconds，0表示单次观察。没有目标会立即返回。终态回执已带该作业的 `outputs`（顶层产物清单，可直接读）和 `metrics`（已观测到的指标预览），因此通常不需要紧跟一次 `job_status` 或 `job_artifact`；只有需要完整正文时才读文件。`idle_wait(seconds=30)` 只暂停并响应通知，不轮询作业。有依赖的作业先处理上游结果。
 
 `job_status` 读状态和日志尾。作业失败时返回 `diagnosis`：`failure_class`（依赖缺失、显存不足、输入缺失、被系统终止等）、`error_line` 和建议动作；先读它再改脚本。`job_list` 分页查找有权访问的历史作业。`job_artifact(job_id,path,area="outputs")` 读持久结果；area="workspace" 读作业源码与工作文件。日志、输入和输出路径以当前作业实际环境为准，使用部署提供的 `A3_OUTPUTS` 等路径，不复制其他后端的绝对路径。
 
 长批次可使用部署的 episode executor。每个 episode 的 id 唯一，command 是参数数组，report 指向命令实际写出的 JSON。保存 manifest、ledger 和逐回合结果；恢复前核对原编号与已完成记录。执行成功且报告有效时，科学结果 success=false 仍是有效观察。
+
+闭环评测统一用 `benchmark(checkpoint, task, profile, episodes, seed_start)`：命令、预算和输出目录由工具决定，2×5 固定 500 步、2×10 固定 3200 步；确实要做更长预算实验时才传 `max_steps`。它返回 `prepared_id`、`preflight_job_id` 与 `report`（远端 outputs 相对路径），预检通过后 `job_submit(prepared_id=...)`，结果直接读 `report`。不要手拼 benchmark 命令：低于任务预算的 `--max-steps` 会被提交层拒绝，因为那样得到的是预算上限而不是策略表现。
 
 已有结果通过 `evaluation_compare(candidate_job_id,baseline_job_id,candidate_manifest,baseline_manifest)` 配对；manifest 路径相对各自 outputs。比较固定条件时使用 `conditions_compare`。缺失、重复或条件不匹配先查证，保留实际评测覆盖。
 
@@ -89,7 +94,7 @@ GPU 作业先调用 `job_prepare`，同样填写 name、command、attachments、
 
 `research_plan.next_action` 每轮给出一句“下一步该做什么”：有作业结束时先复盘该路线，有可开工步骤时点名步骤与完成判据，都停着时提示改条件或新增步骤。按它推进，比重新浏览整份计划省轮次。
 
-所有待办和进展都在 plan 中维护。完成一个 step 后立即 `plan update` 写 `status="done"`、`evidence` 和实际 `progress`；不要只在结果文件或文字里宣布完成。已学到的发现写 memory，稳定可复用的操作方法写 skills。
+所有待办和进展都在 plan 中维护。**一个 step 是一批工作**（例如“2×5 六格 × 三难度全量评测”），不是一个作业；批次内多个作业并行推进。一批结束后再 `plan update` 写 `status="done"`、`evidence` 和实际 `progress`，不要每提交一个作业就重写整份计划，也不要在结果文件或文字里单方面宣布完成。已学到的发现写 memory，稳定可复用的操作方法写 skills。
 
 memory 使用 `search(query="当前研究问题")` 检索摘要，`read(id)` 读正文与 revision；`sources(id)` 列证据，再用 sources(id,ref) 读取来源。当前上下文会提供少量相关经验摘要，先确认 scope。用 write(content,scope,refs,kind) 保存值得跨实验复用的结论；临时观察用 lifetime="run"。update(id,revision,reason,content) 修正，archive／restore(id,revision,reason) 管理有效性。相似写入提示出现时先读原条目；同一发现更新原 ID，独立发现写明区别后 force=true、reason=... 保存。历史条目不授予当前权限。
 

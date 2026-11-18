@@ -5,13 +5,23 @@ import re
 STATUSES = ("pending", "active", "blocked", "done", "skipped")
 ID = re.compile(r"[A-Za-z0-9_-]{1,48}")
 JOB_ID = re.compile(r"[0-9a-f]{32}")
-MAX_STEPS = 20
+MAX_STEPS = 32
 
 
 def bounded_text(value, limit, name, *, required=False):
     if not isinstance(value, str) or len(value) > limit or (required and not value.strip()):
         raise ValueError(f"{name} must be text of at most {limit} characters")
     return value.strip()
+
+
+def truncated_text(value, limit, name, *, required=False):
+    """Keep a long note by shortening it; reject only wrong types or empty required text."""
+    if not isinstance(value, str) or (required and not value.strip()):
+        raise ValueError(f"{name} must be text of at most {limit} characters")
+    text = value.strip()
+    if len(text) <= limit:
+        return text
+    return text[: limit - 1].rstrip() + "…"
 
 
 def bounded_list(value, limit, valid, name):
@@ -42,8 +52,10 @@ def merge_step(previous, changes):
     step["route"] = bounded_text(step["route"], 48, "route")
     if type(step["priority"]) is not int or not 0 <= step["priority"] <= 100:
         raise ValueError("priority must be an integer from 0 to 100")
-    for name, limit in (("task", 200), ("criterion", 240), ("progress", 300)):
-        step[name] = bounded_text(step[name], limit, name, required=name != "progress")
+    for name, limit in (("task", 200), ("criterion", 240), ("progress", 600)):
+        # A long progress note is a record, not an invalid argument: keep it and
+        # shorten it rather than rejecting the whole revision.
+        step[name] = truncated_text(step[name], limit, name)
     step["depends_on"] = bounded_list(step["depends_on"], 8, ID.fullmatch, "dependency IDs")
     step["jobs"] = bounded_list(step["jobs"], 8, JOB_ID.fullmatch, "Controller job IDs")
     step["evidence"] = bounded_list(

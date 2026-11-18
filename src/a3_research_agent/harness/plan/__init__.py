@@ -6,7 +6,21 @@ from a3_research_agent.harness.context import manager
 from a3_research_agent.harness.plan import store as plan_store
 from a3_research_agent.harness.plan.model import MAX_STEPS as MAX_STEPS
 from a3_research_agent.harness.plan.model import STATUSES as STATUSES
-from a3_research_agent.harness.plan.model import bounded_list, bounded_text, ordered_steps, revise
+from a3_research_agent.harness.plan.model import (
+    bounded_list as bounded_list,
+)
+from a3_research_agent.harness.plan.model import (
+    bounded_text as bounded_text,
+)
+from a3_research_agent.harness.plan.model import (
+    ordered_steps as ordered_steps,
+)
+from a3_research_agent.harness.plan.model import (
+    revise as revise,
+)
+from a3_research_agent.harness.plan.model import (
+    truncated_text as truncated_text,
+)
 
 
 def plan_file():
@@ -260,8 +274,9 @@ def dispatch_locked(arguments):
             decision = arguments.get("decision")
             if decision not in ("continue", "pause", "complete"):
                 raise ValueError("decision must be continue, pause or complete")
-            conclusion = bounded_text(
-                arguments.get("conclusion", ""), 1200, "conclusion", required=True
+            # Keep the review comparable and small: the plan archives the full text.
+            conclusion = truncated_text(
+                arguments.get("conclusion", ""), 600, "conclusion", required=True
             )
             evidence = bounded_list(
                 arguments.get("evidence", []),
@@ -315,7 +330,7 @@ def dispatch_locked(arguments):
                     "route": key,
                     "step": step,
                     "decision": decision,
-                    "reason": bounded_text(arguments.get("reason", ""), 1200, "reason"),
+                    "reason": truncated_text(arguments.get("reason", ""), 400, "reason"),
                     "conclusion": conclusion,
                     "evidence": evidence,
                     "metrics": metrics,

@@ -8,8 +8,19 @@ import re
 import time
 
 from a3_research_agent.harness import state_paths
+from a3_research_agent.harness.context.tool_output import select_facts
 
 TERMINAL_STATES = frozenset({"completed", "failed", "cancelled"})
+
+try:  # Job outputs are read through the job tools' shared lister, never a second parser.
+    from a3_research_agent.harness.job_outputs import listing as _outputs_listing
+except ImportError:  # pragma: no cover - the lister ships with the job tools
+    _outputs_listing = None
+
+MAX_RECEIPT_JOBS = 6
+MAX_RECEIPT_OUTPUTS = 12
+MAX_RECEIPT_METRICS = 10
+RECEIPT_FIELDS = ("status", "exit_code", "error", "evaluation")
 
 
 def wait_cursor(messages):
@@ -71,6 +82,87 @@ def bounded_seconds(value):
     return value
 
 
+def outputs_listing(req, job_id):
+    """One job's top-level outputs, or the reason they are unavailable.
+
+    The lister is shared with the job tools so a wait receipt and an artifact read
+    name the same files. A missing or faulty lister shortens the receipt; it never
+    fails a wait that already observed a terminal state.
+    """
+    if _outputs_listing is None:
+        return {"unavailable": "outputs_lister_missing"}
+    try:
+        value = _outputs_listing(req, job_id, area="outputs")
+    except Exception:  # noqa: BLE001 - a receipt detail must not fail the wait
+        return {"unavailable": "outputs_listing_failed"}
+    return value if isinstance(value, dict) else {"unavailable": "invalid_listing"}
+
+
+def entry_view(entry):
+    """Keep a name and the size needed to choose the next artifact page."""
+    if isinstance(entry, str):
+        return {"path": entry[:200]} if entry.strip() else None
+    if not isinstance(entry, dict):
+        return None
+    name = entry.get("path") or entry.get("name")
+    if not isinstance(name, str) or not name.strip():
+        return None
+    view = {"path": name[:200]}
+    kind = entry.get("kind") or entry.get("type")
+    if isinstance(kind, str) and kind in {"file", "directory", "dir"}:
+        view["kind"] = "directory" if kind == "dir" else kind
+    size = entry.get("bytes", entry.get("size"))
+    if type(size) is int and size >= 0:
+        view["bytes"] = size
+    return view
+
+
+def outputs_receipt(listing):
+    """Carry a bounded output listing; an unreadable listing degrades to a reason."""
+    entries = listing.get("entries") if isinstance(listing, dict) else None
+    if not isinstance(entries, list):
+        reason = listing.get("unavailable") if isinstance(listing, dict) else None
+        reason = reason if isinstance(reason, str) and reason else "outputs_listing_failed"
+        return {"outputs_unavailable": reason[:80]}
+    items = [view for entry in entries if (view := entry_view(entry))]
+    receipt = {"outputs": items[:MAX_RECEIPT_OUTPUTS]}
+    if len(items) > MAX_RECEIPT_OUTPUTS:
+        receipt["outputs_omitted"] = len(items) - MAX_RECEIPT_OUTPUTS
+    return receipt
+
+
+def metrics_receipt(row):
+    """Preview measured values already present in this observation.
+
+    The wait response carries the evaluation diagnostics; reuse the context facts
+    selector instead of teaching the receipt its own JSON walk.
+    """
+    facts, omitted, complete = select_facts(row)
+    facts = {key: value for key, value in facts.items() if key not in {"job_id", *RECEIPT_FIELDS}}
+    if not facts:
+        return {}
+    if len(facts) > MAX_RECEIPT_METRICS:
+        omitted += len(facts) - MAX_RECEIPT_METRICS
+        facts = dict(list(facts.items())[:MAX_RECEIPT_METRICS])
+    receipt = {"metrics": facts}
+    if omitted:
+        receipt["metrics_omitted"] = omitted
+    if not complete:
+        receipt["metrics_incomplete"] = True
+    return receipt
+
+
+def terminal_receipt(req, row, *, list_outputs=True):
+    """One finished job's receipt: outcome, measured values and its outputs."""
+    receipt = {key: row[key] for key in RECEIPT_FIELDS if key in row}
+    receipt.update(metrics_receipt(row))
+    if list_outputs:
+        receipt.update(outputs_receipt(outputs_listing(req, row["job_id"])))
+    else:
+        receipt["outputs_unavailable"] = "batch_limit"
+    return receipt
+
+
 def wait_for_jobs(
     req,
     jobs,
@@ -101,7 +193,7 @@ def wait_for_jobs(
         return {
             "wait_schema": 1,
             "reason": reason,
-            "elapsed_seconds": clock() - start,
+            "elapsed_seconds": round(clock() - start, 3),
             **({"wake_cursor": cursor} if cursor else {}),
             **fields,
         }
@@ -151,16 +243,16 @@ def wait_for_jobs(
         ):
             return result("observation_error", error="invalid_wait_response")
         observed.update({"/jobs/" + row["job_id"]: row for row in rows})
-        terminal = {
-            "/jobs/" + row["job_id"]: {
-                key: row[key]
-                for key in ("status", "exit_code", "error", "evaluation")
-                if key in row
+        finished = [row for row in rows if row.get("status") in TERMINAL_STATES]
+        if finished:
+            # One receipt per finished job. The model should not spend a follow-up
+            # turn asking for a status or an output listing it already has here.
+            terminal = {
+                "/jobs/" + row["job_id"]: terminal_receipt(
+                    req, row, list_outputs=index < MAX_RECEIPT_JOBS
+                )
+                for index, row in enumerate(finished)
             }
-            for row in rows
-            if row.get("status") in TERMINAL_STATES
-        }
-        if terminal:
             return result("state_changed", changes=terminal)
         if value.get("reason") == "notification":
             signals = value.get("signals")
@@ -198,7 +290,7 @@ def wait_idle(
         return {
             "wait_schema": 1,
             "reason": reason,
-            "elapsed_seconds": clock() - start,
+            "elapsed_seconds": round(clock() - start, 3),
             **({"wake_cursor": cursor} if cursor else {}),
             **fields,
         }
