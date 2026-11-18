@@ -1,6 +1,6 @@
 # 研究工具与执行约定
 
-Version: 0.37.0
+Version: 0.38.0
 
 工具定义给出参数、默认值和限制；本文件说明常用流程。所有工具返回 `ok`：成功时直接读取同层结果；失败时读取 `error`、`hint` 和相关编号，修正后再调用。作业的 `status="failed"` 是执行结果，先读日志与证据再判断原因。
 
@@ -15,7 +15,7 @@ Version: 0.37.0
 | 当前 run 原始对话 | `recall` |
 | 运行状态或需人工处理的阻塞 | `research_status` |
 | 远程执行与结果 | `job_prepare`、`job_submit`、`job_status`、`job_list`、`job_artifact`、`job_cancel` |
-| A3 闭环评测 | `benchmark` |
+| A3 闭环评测 | `benchmark`、`benchmark_summary` |
 | 等待指定作业／空闲等待 | `job_wait`／`idle_wait` |
 | 资产复用 | `export_create`、`export_status`、`export_manifest`、`export_list` |
 | 配对评测与视觉诊断 | `evaluation_compare`、`conditions_compare`、`vision_status`、`vision_inspect` |
@@ -67,6 +67,8 @@ GPU 作业先调用 `job_prepare`，同样填写 name、command、attachments、
 长批次可使用部署的 episode executor。每个 episode 的 id 唯一，command 是参数数组，report 指向命令实际写出的 JSON。保存 manifest、ledger 和逐回合结果；恢复前核对原编号与已完成记录。执行成功且报告有效时，科学结果 success=false 仍是有效观察。
 
 闭环评测统一用 `benchmark(checkpoint, task, profile, episodes, seed_start)`：命令、预算和输出目录由工具决定，2×5 固定 500 步、2×10 固定 3200 步；确实要做更长预算实验时才传 `max_steps`。它返回 `prepared_id`、`preflight_job_id` 与 `report`（远端 outputs 相对路径），预检通过后 `job_submit(prepared_id=...)`，结果直接读 `report`。不要手拼 benchmark 命令：低于任务预算的 `--max-steps` 会被提交层拒绝，因为那样得到的是预算上限而不是策略表现。
+
+一格的多个 report 用 `benchmark_summary(reports=[{job_id,path},...])` 汇总：它按每回合的任务上限截断、把入盒数和原生通过分开算，并指出各段之间协议不一致（预算、动作块、prompt 风格、checkpoint、重复 seed）。不要手工加总 report 的分数——入盒数可能超过任务上限，跨预算的分段也不能直接相加。
 
 已有结果通过 `evaluation_compare(candidate_job_id,baseline_job_id,candidate_manifest,baseline_manifest)` 配对；manifest 路径相对各自 outputs。比较固定条件时使用 `conditions_compare`。缺失、重复或条件不匹配先查证，保留实际评测覆盖。
 

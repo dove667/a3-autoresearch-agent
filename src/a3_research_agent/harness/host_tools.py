@@ -47,6 +47,20 @@ FIELDS = {
         "candidate_manifest": STRING,
     },
     "conditions_compare": {"baseline": {"type": "object"}, "candidate": {"type": "object"}},
+    "benchmark_summary": {
+        "reports": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 16,
+            "items": {
+                "type": "object",
+                "properties": {"job_id": JOB_ID, "path": STRING},
+                "required": ["job_id", "path"],
+                "additionalProperties": False,
+            },
+        },
+        "task": {"type": "string", "enum": ["2x5", "2x10"]},
+    },
     "gpu_status": {},
     "runtime_status": {"scope": {"type": "string", "enum": ["self", "run"]}},
     "export_create": {"job_id": JOB_ID, "path": STRING, "area": AREA},
@@ -72,6 +86,7 @@ DESCRIPTIONS = {
     "vision_inspect": "Inspect 1–6 authorized PNG/JPEG frames for a specific research question. Supply real episode, step, simulation time and camera metadata. Group each episode contiguously in time order. area defaults outputs. Returns observations and source hashes.",
     "evaluation_compare": "Compare existing baseline/candidate episode results by job IDs and outputs-relative JSON manifests. Returns paired results and a ready-to-use visual inspection request when available.",
     "conditions_compare": "Compare declared baseline/candidate conditions. Each object includes status, report_present, and protocol(task,seeds,workers,step_budget,randomization,success_rule). Read actual results before judging improvement.",
+    "benchmark_summary": "Combine the benchmark reports of one evaluation cell. Caps each episode at its own maximum, reports in-box counts and native passes separately, and names every protocol difference between segments (task, profile, step budget, action horizon, prompt style, checkpoint, duplicate seeds). Use it instead of adding report totals by hand.",
     "gpu_status": "Read aggregate available GPU capacity and utilization; the Controller selects actual devices.",
     "runtime_status": "Read model usage and runtime telemetry for self (default) or the current run.",
     "export_create": "Seal job files into a reusable read-only export. area defaults outputs. Creation is asynchronous; check export_status, then export_manifest.",
@@ -99,6 +114,7 @@ REQUIRED = {
     "export_create": ["job_id", "path"],
     **{name: ["export_id"] for name in ("export_status", "export_manifest", "export_delete")},
     **{name: ["export_id", "session_id"] for name in ("export_share", "export_revoke")},
+    "benchmark_summary": ["reports"],
     "session_artifact": ["session_id", "path"],
     "session_stop": ["reason"],
     "session_cancel": ["session_id"],
@@ -223,6 +239,11 @@ def dispatch(name, args, request):
                     for key in ("baseline_job_id", "baseline_manifest", "candidate_manifest")
                 },
             )
+        if name == "benchmark_summary":
+            from . import benchmark_report
+
+            arguments(args, {"reports", "task"})
+            return benchmark_report.summary(request, args)
         if name == "export_create":
             job = identifier(args.get("job_id"), "job_id")
             path = relative_name(args.get("path"))

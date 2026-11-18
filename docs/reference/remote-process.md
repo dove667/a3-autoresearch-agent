@@ -48,7 +48,7 @@ Agent 使用 `job_submit` 附加当前共享工作区 `scripts/` 中的 UTF-8 �
 
 A3 的闭环评测统一由 `benchmark` 工具提交，不接受手拼的评测命令。工具固定任务预算——2×5 为 500 步、2×10 为 3200 步——并生成作业命令、输出目录与附带的 `benchmark_runner.py`。部署的 `examples/benchmark_cookie_batch.py` 只接受一个 `--max-steps` 且默认 1000，各任务专用包装脚本才分别使用 500 与 3200；把短预算用在 2×10 上会让回合在搬完第一排时耗尽步数，通过率与入盒数都不再反映策略表现。
 
-`job_prepare` 与 `job_submit` 在提交前解析命令中的 `--task` 与 `--max-steps`：低于任务预算或省略而依赖入口默认值的评测命令会被拒绝，并在提示中给出该任务的正确数值。确实要做更长预算实验时显式提高 `max_steps`。工具返回 `report`，即结果 JSON 的 outputs 相对路径，可直接用 `job_artifact` 读取，不必猜测文件名。
+`job_prepare` 与 `job_submit` 在提交前解析命令中的 `--task` 与 `--max-steps`：低于任务预算或省略而依赖入口默认值的评测命令会被拒绝，并在提示中给出该任务的正确数值。确实要做更长预算实验时显式提高 `max_steps`。工具返回 `report`，即结果 JSON 的 outputs 相对路径，可直接用 `job_artifact` 读取，不必猜测文件名。一格的多个 report 用 `benchmark_summary` 合并：它按每回合的任务上限截断入盒数、把原生通过单独计数，并在预算、动作块、prompt 风格、checkpoint 或 seed 不一致时点名——手工求和会把超过上限的回合和不同协议的分段算进同一个数。
 
 ## 资源调度
 
