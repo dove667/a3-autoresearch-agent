@@ -49,7 +49,7 @@ def test_uncertain_submission_is_returned_once_without_retry(tmp_path):
         return response
 
     result = job_tools.dispatch(
-        "job_submit", {"command": ["python", "train.py"]}, request, workspace=tmp_path
+        "job_submit", {"command": ["python", "-c", "print(1)"]}, request, workspace=tmp_path
     )
     assert len(calls) == 1
     assert result["job_id"] == "b" * 32
