@@ -201,6 +201,9 @@ class Gateway(
         self.app.add_api_route("/jobs/{job_id}", self.status, methods=["GET"])
         self.app.add_api_route("/jobs/{job_id}", self.cancel, methods=["DELETE"])
         self.app.add_api_route("/jobs/{job_id}/artifacts", self.artifact, methods=["GET"])
+        self.app.add_api_route(
+            "/jobs/{job_id}/artifacts/list", self.list_artifacts, methods=["GET"]
+        )
 
 
 def create_app(

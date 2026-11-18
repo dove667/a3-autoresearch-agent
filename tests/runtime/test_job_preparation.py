@@ -135,15 +135,18 @@ def test_submission_rejects_old_fields_and_prepares_a_direct_gpu_submit(tmp_path
         return {"status": "queued", "exit_code": None}
 
     for args in (
-        {"command": ["python", "run.py"], "files": {"run.py": "print(1)"}},
-        {"command": ["python", "run.py"], "workspace_files": []},
+        {"command": ["python", "-c", "print(1)"], "files": {"run.py": "print(1)"}},
+        {"command": ["python", "-c", "print(1)"], "workspace_files": []},
         {"prepared_id": "prepared-" + "a" * 32, "command": ["python"]},
     ):
         result = job_tools.dispatch("job_submit", args, request, workspace=tmp_path)
         assert result.get("error"), result
     # A GPU request is prepared in code rather than bounced back to the model.
     gpu = job_tools.dispatch(
-        "job_submit", {"command": ["python", "run.py"], "gpu": True}, request, workspace=tmp_path
+        "job_submit",
+        {"command": ["python", "-c", "print(1)"], "gpu": True},
+        request,
+        workspace=tmp_path,
     )
     assert gpu["status"] == "prepared_pending_preflight"
     assert gpu["prepared_id"].startswith("prepared-")
@@ -156,7 +159,7 @@ def test_cpu_attachment_hashes_are_computed_for_root_or_experiment_files(tmp_pat
     calls = []
     result = job_tools.dispatch(
         "job_submit",
-        {"command": ["python", "run.py"], "attachments": [{"path": str(source)}]},
+        {"command": ["python", "-m", "run"], "attachments": [{"path": str(source)}]},
         lambda *args: calls.append(args) or {"job_id": CPU_ID},
         workspace=tmp_path,
     )

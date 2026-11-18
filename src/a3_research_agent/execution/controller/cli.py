@@ -11,7 +11,7 @@ from pathlib import Path
 from a3_research_agent.execution.exports.operations import export_operation
 from a3_research_agent.execution.exports.readonly import ReadonlyExports
 
-from .artifacts import read_artifact
+from .artifacts import list_artifacts, read_artifact
 from .docker import docker
 from .files import MAX_INPUT_BYTES
 from .lifecycle import cancel, status, watch
@@ -61,6 +61,7 @@ def main() -> None:
             "status",
             "cancel",
             "artifact",
+            "artifacts-list",
             "health",
             "usage",
             "export-create",
@@ -206,7 +207,12 @@ def main() -> None:
                 )
             )
             return
-        handlers = {"status": status, "cancel": cancel, "artifact": read_artifact}
+        handlers = {
+            "status": status,
+            "cancel": cancel,
+            "artifact": read_artifact,
+            "artifacts-list": list_artifacts,
+        }
         if args.operation == "submit" and args.managed_jobs:
             from .managed_queue import enqueue
 

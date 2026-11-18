@@ -2,11 +2,14 @@
 
 import hashlib
 import json
+import os
+import posixpath
 import re
 from pathlib import Path, PurePosixPath
 from urllib.parse import urlencode
 
-from . import tool_results
+from . import benchmark_policy, tool_results
+from .job_outputs import ARTIFACT_FIELDS, read_batch
 from .tool_contracts import (
     ToolInputError,
     arguments,
@@ -55,15 +58,18 @@ REQUEST_FIELDS = {
         "additionalProperties": False,
     },
 }
-ARTIFACT_FIELDS = {
-    "job_id": JOB_ID,
-    "path": STRING,
-    "area": {"type": "string", "enum": ["workspace", "outputs"]},
-    "offset": {"type": "integer", "minimum": 0},
-    "limit": {"type": "integer", "minimum": 1, "maximum": 8000},
-}
 MAX_BATCH = 16
 PREPARED_ID = {"type": "string", "pattern": "^prepared-[a-f0-9]{32}$"}
+BENCHMARK_FIELDS = {
+    "checkpoint",
+    "task",
+    "profile",
+    "episodes",
+    "seed_start",
+    "policy",
+    "max_steps",
+    "name",
+}
 BATCH_FIELDS = {
     "jobs": {
         "type": "array",
@@ -106,6 +112,37 @@ TOOLS = [
         {**REQUEST_FIELDS, **BATCH_FIELDS},
     ),
     definition(
+        "benchmark",
+        "Run one A3 evaluation cell through the fixed benchmark launcher. The tool writes "
+        "benchmarks/a3_benchmark_runner.py, attaches it as benchmark_runner.py, chooses the "
+        "task budget (2x5=500, 2x10=3200), and returns prepared_id, preflight_job_id, report "
+        "and max_steps. Do not hand-build benchmark commands. Pass max_steps only to raise "
+        "the budget above the task standard; a lower value is rejected. The report path is "
+        "relative to the job outputs area, for example 2x10-medium-5ep-seed10000-<hash>/seed-10000.json.",
+        {
+            "checkpoint": {
+                "type": "string",
+                "description": "Remote absolute checkpoint directory; the value after act:/smolvla:.",
+            },
+            "task": {"type": "string", "enum": ["2x5", "2x10"]},
+            "profile": {
+                "type": "string",
+                "enum": ["basic", "medium", "advanced"],
+            },
+            "episodes": {"type": "integer", "minimum": 1, "maximum": 20},
+            "seed_start": {"type": "integer", "minimum": 0, "maximum": 2147483647},
+            "policy": {"type": "string", "enum": ["act", "smolvla"]},
+            "max_steps": {"type": "integer", "minimum": 1, "maximum": 2147483647},
+            "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 120,
+                "description": "Optional job label; defaults to <task>-<profile>-<episodes>ep.",
+            },
+        },
+        ["checkpoint", "task"],
+    ),
+    definition(
         "job_status",
         "Read a job's real status and bounded log tail by ID.",
         {"job_id": JOB_ID},
@@ -122,11 +159,12 @@ TOOLS = [
     ),
     definition(
         "job_artifact",
-        "Read a bounded UTF-8 page from a job artifact, with source hash. "
-        "Use area=outputs for persistent results and workspace for submitted source. "
-        "Binary artifacts return type and hash metadata. offset/limit count characters.",
+        "Read bounded UTF-8 pages from job artifacts, with source hashes. "
+        "Use path for one file or paths (up to 16) for several in one call; area=outputs "
+        "for persistent results and workspace for submitted source. Binary artifacts "
+        "return type and hash metadata. offset/limit count characters per file.",
         ARTIFACT_FIELDS,
-        ["job_id", "path", "area"],
+        ["job_id", "area"],
     ),
     definition(
         "job_cancel",
@@ -216,6 +254,204 @@ def attachment_references(references, workspace):
     return result
 
 
+A3_SOURCE_ROOT = posixpath.normpath(
+    os.environ.get("A3_REMOTE_A3_ROOT") or "/data1/zsh/a3_dual_arm_sim"
+)
+WRITE_FLAGS = ("--output", "--output-dir", "--diagnostic-dir", "--root")
+
+
+def remote_destinations(references):
+    result = set()
+    for reference in references:
+        destination = reference.get("destination") or reference["path"]
+        result.add(posixpath.normpath(destination))
+    return result
+
+
+def check_scripts(command, references):
+    """A relative script must actually land in the job workspace.
+
+    The real failure is `cd "$OUT"; python run_bench.py`: attachments are copied to
+    the job workspace, not to an outputs directory the command changes into.
+    """
+    values = benchmark_policy.tokens(command)
+    if "-m" in values:
+        return
+    destinations = remote_destinations(references)
+    changed_directory = False
+    for value in values:
+        if value in {"cd", "pushd"}:
+            changed_directory = True
+            continue
+        candidate = value.split("=", 1)[1] if value.startswith("--") and "=" in value else value
+        candidate = candidate.rstrip(";|&()")
+        if candidate.startswith("-") or not candidate.endswith(".py"):
+            continue
+        if candidate.startswith(("/", "$", "~")):
+            continue
+        script = posixpath.normpath(candidate)
+        if changed_directory:
+            fail(
+                "script_path_outside_job_workspace",
+                f"{script!r} is relative, but the command changes directory first. "
+                "Attachments are copied to the job workspace, so this resolves elsewhere "
+                "(the real failure: can't open file .../outputs/run_bench.py). Run it as "
+                '"$A3_WORKSPACE/<name>" from inside a shell, or run it before changing directory.',
+            )
+        if script not in destinations:
+            available = ", ".join(sorted(destinations)) or "none"
+            fail(
+                "script_not_attached",
+                f"{script!r} is a relative script path, but no attachment places it in the "
+                "job workspace (attached destinations: " + available + "). Attach the file "
+                "with this destination, or run an installed module with python -m. Otherwise "
+                "the job fails with can't open file.",
+            )
+
+
+def check_output_paths(command):
+    """Keep evaluation outputs out of the shared A3 source checkout.
+
+    The A3 benchmark CLI resolves a relative --diagnostic-dir against the source
+    checkout, not the job cwd (the fixed dc0c5ee4 diagnostic directory), and an
+    absolute path under the checkout writes into shared, non-job state.
+    """
+    values = benchmark_policy.tokens(command)
+    for index, value in enumerate(values):
+        if value in WRITE_FLAGS:
+            flag = value
+            target = values[index + 1] if index + 1 < len(values) else None
+        elif value.startswith(tuple(flag + "=" for flag in WRITE_FLAGS)):
+            flag, target = value.split("=", 1)
+        else:
+            continue
+        if not target or target.startswith("-"):
+            continue
+        if flag == "--diagnostic-dir" and not target.startswith(("/", "$", "~")):
+            fail(
+                "output_outside_job_area",
+                f"--diagnostic-dir {target!r} is relative. The A3 benchmark CLI resolves it "
+                f"against {A3_SOURCE_ROOT}, not the job workspace, so it writes into the shared "
+                "source checkout and a second run collides. Pass an absolute path under "
+                "$A3_OUTPUTS (inside a shell command), for example "
+                '"$A3_OUTPUTS/diagnostics-<seed>".',
+            )
+        if not target.startswith("/"):
+            continue
+        path = posixpath.normpath(target)
+        if path == A3_SOURCE_ROOT or path.startswith(A3_SOURCE_ROOT + "/"):
+            fail(
+                "output_outside_job_area",
+                f"{flag} writes to {target} under the shared A3 source checkout. Evaluation "
+                "outputs must land in this job's outputs area: pass an absolute path under "
+                "$A3_OUTPUTS (inside a shell command) or let the benchmark tool choose it.",
+            )
+
+
+def install_runner(workspace):
+    """Write the maintained launcher into the workspace; every call overwrites it."""
+    root = Path(workspace).resolve()
+    directory = root / "benchmarks"
+    target = directory / "a3_benchmark_runner.py"
+    if directory.is_symlink() or target.is_symlink():
+        fail(
+            "invalid_benchmark_path",
+            "Replace the benchmarks entry with a regular directory and file.",
+        )
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        if not target.parent.resolve().is_relative_to(root):
+            fail("invalid_benchmark_path", "Keep benchmarks/a3_benchmark_runner.py in workspace.")
+        source = Path(__file__).with_name("benchmark_runner.py")
+        target.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+    except OSError:
+        fail(
+            "invalid_benchmark_path",
+            "Replace any file named benchmarks with a regular directory and retry.",
+        )
+    return "benchmarks/a3_benchmark_runner.py"
+
+
+def benchmark(args, request, workspace):
+    """Prepare one task/profile/seed cell with the fixed runner and its budget."""
+    arguments(args, BENCHMARK_FIELDS)
+    checkpoint = text(args.get("checkpoint"), "checkpoint", 2048).strip()
+    if not checkpoint.startswith("/") or "\n" in checkpoint or "\r" in checkpoint:
+        fail(
+            "invalid_checkpoint",
+            "Pass the remote absolute checkpoint directory (the value after act: or smolvla:), "
+            "for example /data/.../checkpoints/020000/pretrained_model.",
+        )
+    task = args.get("task")
+    if task not in benchmark_policy.TASK_STEPS:
+        fail("invalid_task", "Use task 2x5 or 2x10; each has its own step budget.")
+    profile = args.get("profile", "basic")
+    if profile not in {"basic", "medium", "advanced"}:
+        fail("invalid_profile", "Use basic, medium or advanced.")
+    episodes = integer(args.get("episodes", 5), "episodes", 1, 20)
+    seed_start = integer(args.get("seed_start", 10000), "seed_start", 0, 2**31 - 1)
+    policy = args.get("policy", "act")
+    if policy not in {"act", "smolvla"}:
+        fail("invalid_policy", "Use act or smolvla; the checkpoint is passed after the colon.")
+    max_steps = args.get("max_steps")
+    if max_steps is not None:
+        max_steps = integer(max_steps, "max_steps", 1, 2**31 - 1)
+    steps = benchmark_policy.budget(task, max_steps)
+    name = args.get("name")
+    if name is not None:
+        name = text(name, "name", 120).strip()
+    name = name or f"{task}-{profile}-{episodes}ep"
+    install_runner(workspace)
+    digest = hashlib.sha256(
+        json.dumps(
+            [task, profile, episodes, seed_start, policy, checkpoint, steps],
+            sort_keys=True,
+        ).encode()
+    ).hexdigest()[:8]
+    output_dir = f"{task}-{profile}-{episodes}ep-seed{seed_start}-{digest}"
+    command = [
+        "python",
+        "benchmark_runner.py",
+        "--task",
+        task,
+        "--policy",
+        f"{policy}:{checkpoint}",
+        "--profile",
+        profile,
+        "--episodes",
+        str(episodes),
+        "--seed-start",
+        str(seed_start),
+        "--max-steps",
+        str(steps),
+        "--output-dir",
+        output_dir,
+    ]
+    job = submit_request(
+        {
+            "command": command,
+            "attachments": [
+                {
+                    "path": "benchmarks/a3_benchmark_runner.py",
+                    "destination": "benchmark_runner.py",
+                }
+            ],
+            "gpu": True,
+            "name": name,
+        },
+        Path(workspace).resolve(),
+        default_gpu=True,
+    )
+    from . import job_preparation
+
+    prepared = job_preparation.prepare(job, request)
+    return {
+        **prepared,
+        "report": f"{output_dir}/seed-{seed_start}.json",
+        "max_steps": steps,
+    }
+
+
 def submit_request(args, workspace, *, default_gpu=False):
     arguments(args, REQUEST_FIELDS)
     command = args.get("command")
@@ -236,6 +472,9 @@ def submit_request(args, workspace, *, default_gpu=False):
         body["name"] = name.strip()
     body["gpu"] = boolean(args.get("gpu", default_gpu), "gpu")
     references = attachment_references(args.get("attachments", []), workspace)
+    check_scripts(command, references)
+    check_output_paths(command)
+    benchmark_policy.check_command(command)
     if references:
         body["workspace_files"] = references
     if "gpu_memory_mb" in body:
@@ -297,65 +536,7 @@ def submission_result(result):
 
 
 def artifact(args, request):
-    arguments(args, ARTIFACT_FIELDS)
-    job_id = identifier(args.get("job_id"))
-    path = relative_name(args.get("path"))
-    area = args.get("area", "workspace")
-    if area not in {"workspace", "outputs"}:
-        fail(
-            "invalid_area", "Use workspace for submitted source or outputs for persistent results."
-        )
-    offset = integer(args.get("offset", 0), "offset", 0, 2**63 - 1)
-    limit = integer(args.get("limit", 4000), "limit", 1, 8000)
-    result = request(
-        "GET",
-        f"/jobs/{job_id}/artifacts?"
-        + urlencode(
-            {
-                "path": path,
-                "area": area,
-                "offset": offset,
-                "limit": limit,
-            }
-        ),
-    )
-    if not isinstance(result, dict) or result.get("http_error"):
-        return result
-    source = {"job_id": job_id, "area": area, "path": path}
-    encoding = result.get("encoding")
-    if encoding == "base64":
-        return {
-            **source,
-            "error": "artifact_pagination_unavailable",
-            "hint": "The Host or Controller deployment lacks artifact paging; report the version mismatch.",
-        }
-    valid = (
-        isinstance(result.get("sha256"), str)
-        and re.fullmatch(r"[a-f0-9]{64}", result["sha256"])
-        and type(result.get("bytes")) is int
-        and result["bytes"] >= 0
-    )
-    if encoding == "utf-8":
-        valid = valid and (
-            result.get("unit") == "characters"
-            and all(type(result.get(key)) is int for key in ("offset", "end", "total"))
-            and isinstance(result.get("content"), str)
-            and 0 <= result["offset"] <= result["end"] <= result["total"]
-            and result["offset"] == min(offset, result["total"])
-            and len(result["content"]) == result["end"] - result["offset"] <= limit
-            and type(result.get("eof")) is bool
-            and result["eof"] == (result["end"] == result["total"])
-        )
-    elif encoding != "binary":
-        valid = False
-    if not valid:
-        return {
-            **source,
-            "error": "invalid_artifact_page",
-            "hint": "The artifact page is malformed; preserve this response and report the deployment fault.",
-        }
-    return {**result, **source}
-
+    return read_batch(args, request)
 
 def collection(results):
     """Report every item of a batch, never hiding partial success."""
@@ -434,6 +615,8 @@ def batch(name, args, request, root):
 
 def dispatch(name, args, request, *, workspace=None):
     try:
+        if name == "benchmark":
+            return benchmark(args, request, workspace or Path.cwd())
         if name in {"job_prepare", "job_submit"}:
             from . import job_preparation
 

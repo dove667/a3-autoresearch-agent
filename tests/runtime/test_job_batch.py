@@ -43,12 +43,16 @@ def test_cpu_batch_submits_each_job_and_reports_every_item(tmp_path):
                 {
                     "name": "审计数据",
                     "command": ["python", "audit.py"],
-                    "attachments": [{"path": "scripts/audit.py"}],
+                    "attachments": [
+                        {"path": "scripts/audit.py", "destination": "audit.py"}
+                    ],
                 },
                 {
                     "name": "配对评测",
                     "command": ["python", "eval.py"],
-                    "attachments": [{"path": "scripts/eval.py"}],
+                    "attachments": [
+                        {"path": "scripts/eval.py", "destination": "eval.py"}
+                    ],
                 },
             ]
         },
@@ -68,8 +72,15 @@ def test_batch_reports_partial_failure_without_hiding_success(tmp_path):
         "job_submit",
         {
             "jobs": [
-                {"command": ["python", "audit.py"]},
-                {"command": ["python", "train.py"], "gpu": True},
+                {
+                    "command": ["python", "audit.py"],
+                    "attachments": [{"path": "scripts/audit.py", "destination": "audit.py"}],
+                },
+                {
+                    "command": ["python", "train.py"],
+                    "attachments": [{"path": "scripts/train.py", "destination": "train.py"}],
+                    "gpu": True,
+                },
             ]
         },
         request,
@@ -99,8 +110,16 @@ def test_gpu_batch_prepares_each_request_with_its_own_preflight(tmp_path):
         "job_prepare",
         {
             "jobs": [
-                {"command": ["python", "train.py"], "gpu_memory_mb": 6000},
-                {"command": ["python", "eval.py"], "gpu_memory_mb": 4000},
+                {
+                    "command": ["python", "train.py"],
+                    "attachments": [{"path": "scripts/train.py", "destination": "train.py"}],
+                    "gpu_memory_mb": 6000,
+                },
+                {
+                    "command": ["python", "eval.py"],
+                    "attachments": [{"path": "scripts/eval.py", "destination": "eval.py"}],
+                    "gpu_memory_mb": 4000,
+                },
             ]
         },
         request,

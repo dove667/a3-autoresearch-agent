@@ -116,30 +116,81 @@ def preparation_view(record, identifier):
     }
 
 
-def report_passed(response):
+REPORT_LIMIT = 16384
+# Keep roughly the same base64/UTF-8 ratio as the old 5500/4096 pair.
+REPORT_BASE64_LIMIT = 4 * ((REPORT_LIMIT + 2) // 3)
+
+
+def report_verdict(response):
+    """Return (accepted, problem) so the hint can separate oversize from absent.
+
+    The old 4096-character ceiling rejected a real 6449-character report while
+    the JSON was already valid. Do not relax the schema/status check below.
+    """
     if not isinstance(response, dict):
-        return False
-    try:
-        if response.get("encoding") == "base64":
-            encoded = response.get("data")
-            if not isinstance(encoded, str) or len(encoded) > 5500:
-                return False
+        return False, "missing"
+    if response.get("encoding") == "base64":
+        encoded = response.get("data")
+        if not isinstance(encoded, str) or not encoded:
+            return False, "missing"
+        if len(encoded) > REPORT_BASE64_LIMIT:
+            return False, "too_large"
+        try:
             raw = base64.b64decode(encoded, validate=True)
-        elif response.get("encoding") == "utf-8":
-            raw = response.get("content", "")
-            if not isinstance(raw, str) or len(raw) > 4096 or not response.get("eof", True):
-                return False
-        else:
-            return False
+        except (ValueError, TypeError):
+            return False, "malformed"
+    elif response.get("encoding") == "utf-8":
+        raw = response.get("content")
+        if not isinstance(raw, str) or not raw:
+            return False, "missing"
+        if len(raw) > REPORT_LIMIT:
+            return False, "too_large"
+        if not response.get("eof", True):
+            return False, "truncated"
+    else:
+        return False, "missing"
+    try:
         report = json.loads(raw)
     except (ValueError, UnicodeError, TypeError):
-        return False
-    return (
+        return False, "malformed"
+    if (
         isinstance(report, dict)
         and type(report.get("schema")) is int
         and report["schema"] == 1
         and report.get("status") == "passed"
-    )
+    ):
+        return True, None
+    return False, "invalid"
+
+
+def report_passed(response):
+    return report_verdict(response)[0]
+
+
+REPORT_HINTS = {
+    "too_large": (
+        f"a3-preflight.json is larger than the {REPORT_LIMIT}-character report limit "
+        f"(or its base64 page exceeds {REPORT_BASE64_LIMIT} encoded characters), so it was "
+        "not accepted. Write a compact report; schema=1 and status=\"passed\" are still required."
+    ),
+    "truncated": (
+        "The a3-preflight.json page ended before EOF, so it may be larger than the "
+        f"{REPORT_LIMIT}-character report limit. Write a compact report instead of paging a "
+        "large one; schema=1 and status=\"passed\" are still required."
+    ),
+    "malformed": (
+        "The CPU entry returned a3-preflight.json, but it is not valid JSON. Write a JSON "
+        "object with schema=1 and status=\"passed\"; do not weaken those fields."
+    ),
+    "invalid": (
+        "a3-preflight.json was read, but it does not contain integer schema=1 and "
+        "status=\"passed\". Keep those required fields; validation has not been relaxed."
+    ),
+    "missing": (
+        "No a3-preflight.json page was returned. The CPU entry must write it in the job "
+        "workspace with schema=1 and status=\"passed\" before exiting."
+    ),
+}
 
 
 def submit(identifier, request, workspace):
@@ -187,11 +238,13 @@ def submit(identifier, request, workspace):
                 "hint": "Check the preflight job status and logs before submitting.",
             }
         report = request("GET", f"/jobs/{preflight_id}/artifacts?area=workspace&path={REPORT}")
-        if not report_passed(report):
+        passed, problem = report_verdict(report)
+        if not passed:
             return {
                 "error": "preflight_report_missing",
                 "preflight_job_id": preflight_id,
-                "hint": "The CPU entry must load actual inputs and write a3-preflight.json with schema=1,status=passed.",
+                "report_problem": problem,
+                "hint": REPORT_HINTS[problem],
             }
         unknown = {
             "error": "production_submission_unknown",

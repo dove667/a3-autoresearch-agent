@@ -210,14 +210,14 @@ def test_execution_is_separate_from_result_publication(tmp_path, monkeypatch):
         {
             "call_id": "c",
             "name": "job_submit",
-            "arguments": json.dumps({"command": ["python", "scripts/check.py"]}),
+            "arguments": json.dumps({"command": ["python", "-c", "print(1)"]}),
         }
     )
     assert result["ok"] is True and result["data"] == raw["data"]
     assert len(calls) == 1 and calls[0] == (
         "POST",
         "/jobs",
-        {"command": ["python", "scripts/check.py"], "gpu": False},
+        {"command": ["python", "-c", "print(1)"], "gpu": False},
     )
 
 

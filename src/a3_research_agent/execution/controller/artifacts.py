@@ -98,3 +98,24 @@ def read_artifact(store: JobStore, request: dict) -> dict:
     if area == "outputs":
         result["area"] = area
     return result
+
+
+def list_artifacts(store: JobStore, request: dict) -> dict:
+    """List top-level names in an owner-scoped area without reading file contents."""
+    job = store.load(request.get("job_id"), request.get("experiment_id"))
+    area = request.get("area", "workspace")
+    if area not in {"workspace", "outputs"}:
+        raise ValueError("Unknown artifact area")
+    if area == "outputs" and not job.get("run_id"):
+        raise ValueError("outputs area is unavailable for legacy jobs")
+    root = store.outputs(job) if area == "outputs" else store.workspace(job)
+    try:
+        names = sorted(os.listdir(root))
+    except FileNotFoundError:
+        names = []
+    return {
+        "area": area,
+        "entries": names[:200],
+        "count": min(len(names), 200),
+        "truncated": len(names) > 200,
+    }

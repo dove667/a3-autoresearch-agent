@@ -415,6 +415,39 @@ class JobRoutes:
             enriched.append(row)
         return enriched
 
+    def list_artifacts(
+        self,
+        job_id: str,
+        authorization: Annotated[str | None, Header()] = None,
+        area: Literal["workspace", "outputs"] = "outputs",
+    ):
+        """List top-level names only; the file read route keeps its existing contract."""
+        actor = self.owner(authorization)
+        payload = {
+            "experiment_id": self.job_owner(actor, job_id, shared_read=True),
+            "job_id": job_id,
+            "area": area,
+        }
+        try:
+            result = self.remote("artifacts-list", payload)
+        except HTTPException as error:
+            if error.status_code == 400 and error.detail == "FileNotFoundError":
+                raise HTTPException(
+                    400,
+                    {
+                        "code": "artifact_not_found",
+                        "area": area,
+                        "hint": "This job has no outputs area yet; check job status before reading.",
+                    },
+                ) from None
+            raise
+        if result.get("area") != area or not isinstance(result.get("entries"), list):
+            raise HTTPException(
+                502,
+                "Controller did not return an artifact listing; verify matching deployment versions",
+            )
+        return result
+
     def wait_jobs(
         self, body: JobWaitRequest, authorization: Annotated[str | None, Header()] = None
     ):
