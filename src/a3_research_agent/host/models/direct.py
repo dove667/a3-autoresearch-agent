@@ -23,6 +23,7 @@ class DirectTransportError(RuntimeError):
 class DirectHTTPError(RuntimeError):
     status_code: int
     body: str
+    response_headers: dict[str, str] | None = None
 
     def __str__(self):
         return f"direct upstream HTTP {self.status_code}"
@@ -83,6 +84,8 @@ def post_json(url: str, headers: dict[str, str], body: dict, timeout: int) -> di
     port = parsed.port or 443
     output_fd, output_name = tempfile.mkstemp(prefix=".direct-upstream-")
     os.close(output_fd)
+    headers_fd, headers_name = tempfile.mkstemp(prefix=".direct-headers-")
+    os.close(headers_fd)
     config_fd, config_name = tempfile.mkstemp(prefix=".direct-curl-", text=True)
     try:
         os.chmod(config_name, 0o600)
@@ -97,6 +100,7 @@ def post_json(url: str, headers: dict[str, str], body: dict, timeout: int) -> di
             'silent',
             'show-error',
             f'output = "{output_name}"',
+            f'dump-header = "{headers_name}"',
             'write-out = "%{http_code}"',
         ]
         for name, value in headers.items():
@@ -122,9 +126,16 @@ def post_json(url: str, headers: dict[str, str], body: dict, timeout: int) -> di
             status = int(completed.stdout.decode().strip() or "0")
         except ValueError as error:
             raise DirectTransportError("Direct upstream returned no HTTP status") from error
-        raw = Path(output_name).read_text(encoding="utf-8")
+        raw = Path(output_name).read_text(encoding="utf-8", errors="replace")
         if status >= 400:
-            raise DirectHTTPError(status, raw[:1000])
+            response_headers = {}
+            for line in Path(headers_name).read_text(encoding="iso-8859-1").splitlines():
+                if line.startswith("HTTP/"):
+                    response_headers.clear()
+                elif ":" in line:
+                    name, value = line.split(":", 1)
+                    response_headers[name.lower()] = value.strip()
+            raise DirectHTTPError(status, raw[:16384], response_headers)
         try:
             data = json.loads(raw)
         except ValueError as error:
@@ -135,3 +146,4 @@ def post_json(url: str, headers: dict[str, str], body: dict, timeout: int) -> di
     finally:
         Path(config_name).unlink(missing_ok=True)
         Path(output_name).unlink(missing_ok=True)
+        Path(headers_name).unlink(missing_ok=True)

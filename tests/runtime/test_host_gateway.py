@@ -90,6 +90,58 @@ def test_gateway_records_upstream_http_status_without_provider_details(tmp_path,
     assert "private provider detail" not in records + response.text
 
 
+@pytest.mark.parametrize("direct", [False, True])
+def test_upstream_bad_request_records_only_safe_validation_details(tmp_path, direct):
+    from a3_research_agent.host.models.direct import DirectHTTPError
+
+    provider_id = "b9b397f0-f522-45b2-a4dd-5a8927316f2f"
+    proxy_id = "fbc79f50-1378-49ad-a08c-2a670cfda134"
+    headers = {
+        "llm_provider-x-request-id": provider_id,
+        "x-litellm-call-id": proxy_id,
+        "x-trace-id": "sk-private-trace-credential",
+    }
+    payload = {
+        "error": {
+            "type": "invalid_request_error",
+            "code": "unknown_parameter",
+            "param": "tools[4].parameters",
+            "message": "Unsupported parameter tools[4].parameters. Echo: sk-secret-message",
+            "extra": "private payload",
+        }
+    }
+
+    def forward(**_):
+        if direct:
+            raise DirectHTTPError(400, json.dumps(payload), headers)
+        request = httpx.Request("POST", "https://provider.example/responses")
+        httpx.Response(400, request=request, json=payload, headers=headers).raise_for_status()
+
+    response = client_for(tmp_path, forward=forward).post(
+        "/v1/responses",
+        headers={"Authorization": "Bearer token-a"},
+        json={"input": "private input"},
+    )
+    assert response.status_code == 400
+    assert response.headers["X-A3-Model-Error"] == "upstream_bad_request"
+    records = (tmp_path / "logs/gateway-events.jsonl").read_text()
+    event = json.loads(records.splitlines()[-1])
+    assert event["request_id"] == response.headers["X-Request-ID"]
+    (detail,) = event["upstream_validation_errors"]
+    assert detail.pop("request_shape")["input_items"] == 1
+    assert detail == {
+        "request_id": provider_id,
+        "proxy_call_id": proxy_id,
+        "type": "invalid_request_error",
+        "code": "unknown_parameter",
+        "param": "tools[4].parameters",
+        "reasons": ["unsupported_parameter"],
+    }
+    for private in ("sk-secret-message", "private payload", "private input", "sk-private-trace"):
+        assert private not in records + response.text
+    assert provider_id not in response.text
+
+
 def test_model_request_cannot_override_upstream_or_use_hosted_tools(tmp_path):
     client = client_for(tmp_path)
     for extra in (

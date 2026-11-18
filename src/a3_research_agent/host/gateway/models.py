@@ -63,6 +63,20 @@ def provider_rejected_images(error):
     )
 
 
+def validation_request_shape(
+    arguments: dict, image_count: int, estimated_tokens: int | None
+) -> dict:
+    inputs = arguments.get("input")
+    return {
+        "input_items": len(inputs) if isinstance(inputs, list) else None,
+        "estimated_input_tokens": estimated_tokens,
+        "tools": len(arguments.get("tools") or []),
+        "forced_tool_choice": arguments.get("tool_choice") == "required",
+        "max_output_tokens": arguments.get("max_output_tokens"),
+        "images": image_count,
+    }
+
+
 class ModelRoutes:
     def forward_response(
         self,
@@ -220,6 +234,9 @@ class ModelRoutes:
             except Exception as error:
                 if not (selections and vision_frames and provider_rejected_images(error)):
                     raise
+                self.diagnostics.model_validation_error(
+                    error, validation_request_shape(arguments, len(vision_frames), estimated_tokens)
+                )
                 # The provider rejected the request before inference. Keep the completed
                 # tool batch and tell the next decision to retry with smaller selections.
                 arguments = text_arguments
@@ -256,8 +273,16 @@ class ModelRoutes:
                 }
             self.diagnostics.error("model_provider", error)
             status = upstream_status(error)
+            if status == 400:
+                self.diagnostics.model_validation_error(
+                    error,
+                    validation_request_shape(arguments, len(vision_frames or []), estimated_tokens),
+                )
             if status is not None and 400 <= status < 500:
-                raise HTTPException(status, "Model upstream request failed") from None
+                headers = {"X-A3-Model-Error": "upstream_bad_request"} if status == 400 else None
+                raise HTTPException(
+                    status, "Model upstream request failed", headers=headers
+                ) from None
             raise HTTPException(502, "Model forwarding failed") from None
         if self.human_feedback is not None:
             self.human_feedback.forwarded(feedback_ids)

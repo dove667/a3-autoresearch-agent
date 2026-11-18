@@ -16,6 +16,11 @@ from a3_research_agent.harness import agent
         urllib.error.URLError("offline"),
         {"http_error": 502},
         {"http_error": 429},
+        {
+            "http_error": 400,
+            "model_error": "upstream_bad_request",
+            "gateway_request_id": "first-request",
+        },
     ],
 )
 def test_model_request_recovers_with_same_input(monkeypatch, failure):
@@ -64,6 +69,37 @@ def test_model_retry_wait_can_be_interrupted(monkeypatch):
     with pytest.raises(KeyboardInterrupt):
         agent.request_model({})
     assert transport.call_count == 1
+
+
+def test_upstream_bad_request_retries_twice_and_preserves_final_request_id(monkeypatch):
+    request = {"input": [{"role": "user", "content": "continue"}]}
+    transport = Mock(
+        side_effect=[
+            {"http_error": 400, "model_error": "upstream_bad_request", "gateway_request_id": str(n)}
+            for n in range(3)
+        ]
+    )
+    sleep, log = Mock(), Mock()
+    monkeypatch.setattr(agent, "req", transport)
+    monkeypatch.setattr(agent.time, "sleep", sleep)
+    monkeypatch.setattr(agent, "log", log)
+
+    with pytest.raises(agent.ModelRequestRejected, match="HTTP 400") as rejected:
+        agent.request_model(request)
+
+    assert rejected.value.gateway_request_id == "2"
+    assert transport.call_count == 3
+    assert all(call.args[2] is request for call in transport.call_args_list)
+    assert [call.args[0] for call in sleep.call_args_list] == [5, 10]
+    assert [call.args[0]["gateway_request_id"] for call in log.call_args_list] == ["0", "1"]
+
+
+def test_forced_tool_choice_rejection_falls_back_without_same_request_retry(monkeypatch):
+    transport = Mock(return_value={"http_error": 400, "model_error": "upstream_bad_request"})
+    monkeypatch.setattr(agent, "req", transport)
+    with pytest.raises(agent.ModelRequestRejected, match="HTTP 400"):
+        agent.request_model({"tool_choice": "required"})
+    transport.assert_called_once()
 
 
 def test_job_submission_timeout_is_not_retried(monkeypatch):

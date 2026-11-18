@@ -11,6 +11,8 @@ from pathlib import Path
 import httpx
 from fastapi import FastAPI
 
+from .model_errors import validation_details
+
 CURRENT_REQUEST = contextvars.ContextVar("gateway_request", default=None)
 
 
@@ -42,6 +44,13 @@ class GatewayDiagnostics:
                 request["upstream_status"] = status
             if layer == "remote_transport" and isinstance(error, subprocess.CalledProcessError):
                 request["transport_exit_code"] = error.returncode
+
+    def model_validation_error(self, error: Exception, shape: dict) -> None:
+        request = CURRENT_REQUEST.get()
+        if request is not None and upstream_status(error) == 400:
+            request.setdefault("upstream_validation_errors", []).append(
+                {**validation_details(error), "request_shape": shape}
+            )
 
     def attach(self, app: FastAPI) -> None:
         @app.middleware("http")

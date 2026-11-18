@@ -57,6 +57,14 @@ PLAN_PROGRESS_NOTICE = (
 # Never let a macOS system proxy (for example Shadowrocket) intercept the
 # loopback Host gateway. Only the model upstream needs its own direct route.
 _OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+UPSTREAM_BAD_REQUEST_DELAYS = (5, 10)
+
+
+class ModelRequestRejected(RuntimeError):
+    def __init__(self, status: int, gateway_request_id: str | None):
+        super().__init__(f"Model request rejected: HTTP {status}")
+        self.status = status
+        self.gateway_request_id = gateway_request_id
 
 
 def req(method, path, data=None, *, timeout=300):
@@ -73,13 +81,18 @@ def req(method, path, data=None, *, timeout=300):
         with _OPENER.open(r, timeout=timeout) as x:
             return json.loads(x.read())
     except urllib.error.HTTPError as e:
-        return {"http_error": e.code, "body": e.read().decode()[:10000]}
+        failure = {"http_error": e.code, "body": e.read().decode(errors="replace")[:10000]}
+        if path == "/v1/responses" and e.headers is not None:
+            failure["gateway_request_id"] = e.headers.get("X-Request-ID")
+            failure["model_error"] = e.headers.get("X-A3-Model-Error")
+        return failure
 
 
 def request_model(request):
-    """Retry transient model transport failures before publishing tool calls."""
+    """Retry model requests before publishing any tool calls."""
     retryable_statuses = {408, 429, 500, 502, 503, 504}
     attempt, delay = 0, 5
+    bad_request_retries = iter(UPSTREAM_BAD_REQUEST_DELAYS)
     while True:
         try:
             # Allow the Host's upstream request to finish before the client times out.
@@ -95,8 +108,26 @@ def request_model(request):
             status = response.get("http_error")
             if status is None:
                 return response
+            gateway_request_id = response.get("gateway_request_id")
+            if (
+                status == 400
+                and response.get("model_error") == "upstream_bad_request"
+                and "tool_choice" not in request
+                and (retry_delay := next(bad_request_retries, None)) is not None
+            ):
+                attempt += 1
+                log(
+                    {
+                        "model_retry": attempt,
+                        "delay_seconds": retry_delay,
+                        "http_status": status,
+                        "gateway_request_id": gateway_request_id,
+                    }
+                )
+                time.sleep(retry_delay)
+                continue
             if status not in retryable_statuses:
-                raise RuntimeError(f"Model request rejected: HTTP {status}")
+                raise ModelRequestRejected(status, gateway_request_id)
             failure = {"http_status": status}
         attempt += 1
         log({"model_retry": attempt, "delay_seconds": delay, **failure})
@@ -566,6 +597,8 @@ def main() -> None:
             }
             if isinstance(e, context_manager.ContextError):
                 failure["context_error"] = str(e)[:500]
+            if isinstance(e, ModelRequestRejected):
+                failure.update(http_status=e.status, gateway_request_id=e.gateway_request_id)
             log(failure)
             try:
                 context_manager.atomic(
