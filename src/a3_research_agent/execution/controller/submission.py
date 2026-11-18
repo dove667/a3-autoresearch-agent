@@ -6,6 +6,7 @@ import time
 from pathlib import Path
 
 from a3_research_agent.execution.exports.readonly import ReadonlyExports
+from a3_research_agent.execution.scheduling import host_resources
 from a3_research_agent.execution.scheduling.gpu import (
     acquire_gpu,
     active_jobs,
@@ -13,9 +14,9 @@ from a3_research_agent.execution.scheduling.gpu import (
     select_shared_gpu,
 )
 
-from .docker import cleanup_temporary_directory, container_state, create_container, docker
+from . import processes
 from .entry import controller_command
-from .files import ACTIVE_STATES, atomic_json, validate_submit
+from .files import atomic_json, validate_submit
 from .store import JobStore
 
 
@@ -25,13 +26,13 @@ def submit(store: JobStore, request: dict, args, *, queued_job: dict | None = No
     for identifier in request.get("input_exports", []):
         exports.data_path(request["experiment_id"], identifier)
     lease = None
-    container_id = None
+    job = None
     with (store.root / "locks" / "scheduler.lock").open("a") as scheduler:
         fcntl.flock(scheduler, fcntl.LOCK_EX)
         limit = getattr(args, "run_storage_bytes", 0)
         run_id = request.get("run_id")
-        if limit and not run_id:
-            raise ValueError("A storage-limited deployment requires a Host-provided run_id")
+        if not run_id:
+            raise ValueError("Process jobs require a Host-provided run_id")
         if limit:
             used = store.run_storage_bytes(run_id)
             contents = request.get("files", {}).values()
@@ -45,20 +46,13 @@ def submit(store: JobStore, request: dict, args, *, queued_job: dict | None = No
                     "used_bytes": used,
                     "limit_bytes": limit,
                 }
-        native = getattr(args, "backend", "docker") == "process"
-        if native:
-            from a3_research_agent.execution.scheduling import host_resources
-
-            from .processes import validate_data_paths
-
-            validate_data_paths(
-                Path(args.data_root), [store.root, Path(args.tmp_root or store.root / "temporary")]
-            )
+        processes.validate_data_paths(
+            Path(args.data_root), [store.root, Path(args.tmp_root or store.root / "temporary")]
+        )
         jobs = active_jobs(store)
-        if native:
-            busy = host_resources.admission(host_resources.sample(Path(args.data_root)), args, jobs)
-            if busy:
-                return busy
+        busy = host_resources.admission(host_resources.sample(Path(args.data_root)), args, jobs)
+        if busy:
+            return busy
         if args.max_jobs and len(jobs) >= args.max_jobs:
             result = {
                 "job_id": None,
@@ -143,22 +137,13 @@ def submit(store: JobStore, request: dict, args, *, queued_job: dict | None = No
             job["gpu_memory_mb"] = memory_mb if request["gpu"] else 0
             if allocation:
                 job["gpu_allocation"] = allocation
-            if native:
-                from .processes import command as process_command
-                from .processes import prepare
-
-                prepare(store, job, args)
-                process_command(job)  # Reject obsolete interpreter paths before starting a watcher.
-            else:
-                container_id = create_container(store, job, args)
-                job["container_id"] = container_id
+            processes.prepare(store, job, args)
             store.save(job)
             if lease:
                 atomic_json(
                     lease.path.with_suffix(".json"),
                     {
                         "job_id": job["job_id"],
-                        "container_id": container_id,
                         "experiment_id": job["experiment_id"],
                     },
                 )
@@ -182,28 +167,24 @@ def submit(store: JobStore, request: dict, args, *, queued_job: dict | None = No
                     start_new_session=True,
                     pass_fds=(lease.descriptor,) if lease else (),
                 )
-            result = {
+            return {
                 "job_id": job["job_id"],
                 "status": "created",
+                "backend": "process",
+                "paths": job["paths"],
+                "input_paths": job["input_paths"],
                 "gpu_uuid": gpu_uuid,
                 **({"gpu_allocation": allocation} if allocation else {}),
             }
-            if native:
-                result.update(backend="process", paths=job["paths"], input_paths=job["input_paths"])
-            return result
         except Exception:
-            if native and "job" in locals():
+            if job is not None:
                 job.update(
                     status="failed", error="Process job preparation or watcher launch failed"
                 )
                 store.save(job)
-            if container_id:
-                docker(["rm", "-f", container_id], check=False)
-            stopped = (
-                not container_id or container_state(container_id)["Status"] not in ACTIVE_STATES
-            )
-            if stopped and "job" in locals() and job.get("temporary_directory"):
-                cleanup_temporary_directory(job)
+                processes.cleanup_temporary_directory(job)
+            if lease:
+                lease.path.with_suffix(".json").unlink(missing_ok=True)
             raise
         finally:
             if lease:

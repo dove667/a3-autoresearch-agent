@@ -10,7 +10,7 @@ uv sync --python 3.11
 cp .env.example .env
 ```
 
-在 `.env` 配置模型服务、各模型的实际上下文窗口、A3 源码、SSH 目标、远程 Controller、资产和资源预算。凭据由 Host 保管。远程受信任进程后端的准备方式见[进程后端](../reference/remote-process.md)；模型与依赖见[环境配置](setup.md)。常规本地运行无需 Docker。
+在 `.env` 配置模型服务、各模型的实际上下文窗口、A3 源码、SSH 目标、远程 Controller、资产和资源预算。凭据由 Host 保管。远程受信任进程后端的准备方式见[远程进程作业](../reference/remote-process.md)；模型与依赖见[环境配置](setup.md)。
 
 ```bash
 bash start-autoresearch.sh --check

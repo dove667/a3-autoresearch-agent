@@ -24,7 +24,7 @@ Version: 0.3.2
 
 ### 为下一轮选择新版 Harness
 
-白天完成修改、回归和审查后，将源码推送到 `origin/main`，选择完整 Git 提交 SHA。下一轮从该版本创建新 run：
+白天完成修改、回归和审查后，将源码推送到 `origin/main`，选择完整 Git 提交 SHA。Controller 接口有变更时，等上一轮作业结束后按[发布与恢复](../reference/remote-process.md#发布与恢复)同步两端。下一轮从该版本创建新 run：
 
 ```bash
 bash start-autoresearch.sh --harness-commit <已发布提交SHA>
@@ -66,7 +66,7 @@ uv run python -m a3_research_agent.cli.reload_inputs "trajectories/<开始时间
 
 更新内容来自当前仓库的三个 prompt。Host 检查输入清单、UTF-8、符号链接、版本和内容摘要，旧 revision 继续保留。根技能库通过 `skills` 独立修改，变更使用当前哈希并自动保存完整旧包，不进入 prompt revision。
 
-确认绑定具体文件内容，预览后源文件变化会使旧摘要失效。操作者认证保存在 Host 私有状态，Agent 令牌不能更新输入。已发出的模型请求按旧版本返回，下次请求使用新版本；原对话与 Agent 代码不重写。热加载不会重建已有 Python 对象、切换模型或镜像；运行参数和固定基础设施代码变更通过停止/恢复应用，相关中断也须事先获批。
+确认绑定具体文件内容，预览后源文件变化会使旧摘要失效。操作者认证保存在 Host 私有状态，Agent 令牌不能更新输入。已发出的模型请求按旧版本返回，下次请求使用新版本；原对话与 Agent 代码不重写。热加载不会重建已有 Python 对象、切换模型；运行参数和固定基础设施代码变更通过停止/恢复应用，相关中断也须事先获批。
 
 发布后检查 input manifest 的 active、revision/generation 和 input-events；按对应模型用量的 input_revision 核对实际采用版本。失败或回滚如实记录，不声称已生效。更多快照与历史记录见 [输入管理](../reference/agent-inputs.md#发布-harness-与恢复)。
 

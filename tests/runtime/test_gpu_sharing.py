@@ -3,6 +3,7 @@
 import json
 import subprocess
 from argparse import Namespace
+from sys import executable
 
 import pytest
 from remote_test_support import patch_controller
@@ -10,10 +11,31 @@ from remote_test_support import patch_controller
 from a3_research_agent.execution.controller import store as job_store
 from a3_research_agent.execution.controller import submission as job_submission
 from a3_research_agent.execution.scheduling import gpu as job_gpu
+from a3_research_agent.execution.scheduling import host_resources
 
 
 def settings(**kwargs):
     return Namespace(max_gpus=4, gpu_memory_mb=512, gpu_headroom_mb=1024, gpu_ids="", **kwargs)
+
+
+@pytest.fixture
+def process_options(tmp_path, monkeypatch):
+    patch_controller(monkeypatch, "validate_data_paths", lambda *args: None)
+    monkeypatch.setattr(
+        host_resources,
+        "sample",
+        lambda _: {"disk_free_bytes": 100, "memory_available_mb": 100, "cpus": 8, "load": 0},
+    )
+    return {
+        "data_root": tmp_path,
+        "tmp_root": tmp_path / "temporary",
+        "process_python": executable,
+        "host_memory_reserve_mb": 0,
+        "host_job_memory_mb": 1,
+        "host_cpu_reserve": 0,
+        "host_job_cpus": 1,
+        "disk_reserve_bytes": 0,
+    }
 
 
 def device(index, used=0, total=24000):
@@ -29,7 +51,6 @@ def device(index, used=0, total=24000):
 def job(index, reservation=512):
     return {
         "job_id": f"job-{index}",
-        "container_id": f"container-{index}",
         "gpu_uuid": f"GPU-{index}",
         "gpu_memory_mb": reservation,
         "gpu_shared": True,
@@ -40,7 +61,7 @@ def test_busy_project_device_can_receive_another_job(tmp_path, monkeypatch):
     store = job_store.JobStore(tmp_path)
     patch_controller(monkeypatch, "gpu_devices", lambda: [device(0, used=2000)])
     patch_controller(monkeypatch, "gpu_process_memory", dict)
-    patch_controller(monkeypatch, "container_gpu_memory", lambda *a: 0)
+    patch_controller(monkeypatch, "job_gpu_memory", lambda *a: 0)
     assert job_gpu.select_shared_gpu(store, settings(), [job(0)], 512) == "GPU-0"
 
 
@@ -48,7 +69,7 @@ def test_pending_reservations_prevent_startup_overbooking(tmp_path, monkeypatch)
     store = job_store.JobStore(tmp_path)
     patch_controller(monkeypatch, "gpu_devices", lambda: [device(0, used=0, total=4096)])
     patch_controller(monkeypatch, "gpu_process_memory", dict)
-    patch_controller(monkeypatch, "container_gpu_memory", lambda *a: 0)
+    patch_controller(monkeypatch, "job_gpu_memory", lambda *a: 0)
     assert job_gpu.select_shared_gpu(store, settings(), [job(0, 3072)], 512) is None
 
 
@@ -56,7 +77,7 @@ def test_loaded_memory_is_not_counted_twice(tmp_path, monkeypatch):
     store = job_store.JobStore(tmp_path)
     patch_controller(monkeypatch, "gpu_devices", lambda: [device(0, used=17000)])
     patch_controller(monkeypatch, "gpu_process_memory", dict)
-    patch_controller(monkeypatch, "container_gpu_memory", lambda *a: 16000)
+    patch_controller(monkeypatch, "job_gpu_memory", lambda *a: 16000)
     assert job_gpu.select_shared_gpu(store, settings(), [job(0, 16000)], 5000) == "GPU-0"
 
 
@@ -68,7 +89,7 @@ def test_fifth_device_is_not_added_when_four_are_active(tmp_path, monkeypatch):
         lambda: [device(i, used=23500 if i < 4 else 0) for i in range(5)],
     )
     patch_controller(monkeypatch, "gpu_process_memory", dict)
-    patch_controller(monkeypatch, "container_gpu_memory", lambda *a: 0)
+    patch_controller(monkeypatch, "job_gpu_memory", lambda *a: 0)
     assert job_gpu.select_shared_gpu(store, settings(), [job(i) for i in range(4)], 512) is None
 
 
@@ -83,7 +104,7 @@ def test_twenty_gib_reservation_cap_and_four_gib_buffer(tmp_path, monkeypatch):
     store = job_store.JobStore(tmp_path)
     patch_controller(monkeypatch, "gpu_devices", lambda: [device(0, used=1000, total=24576)])
     patch_controller(monkeypatch, "gpu_process_memory", dict)
-    patch_controller(monkeypatch, "container_gpu_memory", lambda *a: 1000)
+    patch_controller(monkeypatch, "job_gpu_memory", lambda *a: 1000)
     limits = settings()
     limits.gpu_capacity_mb = 20480
     limits.gpu_headroom_mb = 4096
@@ -108,10 +129,8 @@ def test_more_than_four_jobs_can_share_one_device(tmp_path, monkeypatch):
     store = job_store.JobStore(tmp_path)
     patch_controller(monkeypatch, "gpu_devices", lambda: [device(0, used=2000)])
     patch_controller(monkeypatch, "gpu_process_memory", dict)
-    patch_controller(monkeypatch, "container_gpu_memory", lambda *a: 100)
-    existing = [
-        {**job(0), "job_id": f"job-{i}", "container_id": f"container-{i}"} for i in range(6)
-    ]
+    patch_controller(monkeypatch, "job_gpu_memory", lambda *a: 100)
+    existing = [{**job(0), "job_id": f"job-{i}"} for i in range(6)]
     assert job_gpu.select_shared_gpu(store, settings(), existing, 512) == "GPU-0"
 
 
@@ -119,22 +138,23 @@ def test_observed_memory_accounts_for_external_load(tmp_path, monkeypatch):
     store = job_store.JobStore(tmp_path)
     patch_controller(monkeypatch, "gpu_devices", lambda: [device(0, used=22000)])
     patch_controller(monkeypatch, "gpu_process_memory", dict)
-    patch_controller(monkeypatch, "container_gpu_memory", lambda *a: 512)
+    patch_controller(monkeypatch, "job_gpu_memory", lambda *a: 512)
     assert job_gpu.select_shared_gpu(store, settings(), [job(0)], 2048) is None
 
 
-def test_unlimited_job_count_does_not_reject_small_jobs(tmp_path, monkeypatch):
+def test_unlimited_job_count_does_not_reject_small_jobs(tmp_path, monkeypatch, process_options):
     store = job_store.JobStore(tmp_path)
 
     def reject_count(*args):
         raise AssertionError("job-count cap reached")
 
     patch_controller(monkeypatch, "count_active_jobs", reject_count)
-    patch_controller(monkeypatch, "create_container", lambda *a: "new-container")
     monkeypatch.setattr(subprocess, "Popen", lambda *a, **kw: None)
-    args = settings(max_jobs=0, timeout=0, share_gpus=True, run_storage_bytes=0)
+    args = settings(max_jobs=0, timeout=0, share_gpus=True, run_storage_bytes=0, **process_options)
     result = job_submission.submit(
-        store, {"experiment_id": "small", "command": ["true"], "gpu": False}, args
+        store,
+        {"experiment_id": "small", "run_id": "test-run", "command": ["true"], "gpu": False},
+        args,
     )
     assert result["status"] == "created"
 
@@ -174,7 +194,7 @@ def test_memory_shortage_report_includes_pending_reservations(tmp_path, monkeypa
     store = job_store.JobStore(tmp_path)
     patch_controller(monkeypatch, "gpu_devices", lambda: [device(0, total=4096)])
     patch_controller(monkeypatch, "gpu_process_memory", dict)
-    patch_controller(monkeypatch, "container_gpu_memory", lambda *args: 0)
+    patch_controller(monkeypatch, "job_gpu_memory", lambda *args: 0)
     report = {}
 
     selected = job_gpu.select_shared_gpu(store, settings(), [job(0, 3072)], 512, diagnostics=report)
@@ -185,15 +205,17 @@ def test_memory_shortage_report_includes_pending_reservations(tmp_path, monkeypa
     assert report["devices"][0]["available_mb"] == 0
 
 
-def test_busy_submission_returns_and_preserves_gpu_report(tmp_path, monkeypatch):
+def test_busy_submission_returns_and_preserves_gpu_report(tmp_path, monkeypatch, process_options):
     store = job_store.JobStore(tmp_path)
     patch_controller(monkeypatch, "gpu_devices", lambda: [device(0, used=22500)])
     patch_controller(monkeypatch, "gpu_process_memory", dict)
-    limits = settings(max_jobs=0, timeout=0, share_gpus=True, run_storage_bytes=0)
+    limits = settings(
+        max_jobs=0, timeout=0, share_gpus=True, run_storage_bytes=0, **process_options
+    )
 
     result = job_submission.submit(
         store,
-        {"experiment_id": "debug-owner", "command": ["true"], "gpu": True},
+        {"experiment_id": "debug-owner", "run_id": "test-run", "command": ["true"], "gpu": True},
         limits,
     )
 
@@ -208,15 +230,19 @@ def test_busy_submission_returns_and_preserves_gpu_report(tmp_path, monkeypatch)
     assert not list((tmp_path / "jobs").iterdir())
 
 
-def test_selected_gpu_report_is_saved_without_uploaded_content(tmp_path, monkeypatch):
+def test_selected_gpu_report_is_saved_without_uploaded_content(
+    tmp_path, monkeypatch, process_options
+):
     store = job_store.JobStore(tmp_path)
     patch_controller(monkeypatch, "gpu_devices", lambda: [device(1, used=1)])
     patch_controller(monkeypatch, "gpu_process_memory", dict)
-    patch_controller(monkeypatch, "create_container", lambda *args: "test-container")
     monkeypatch.setattr(subprocess, "Popen", lambda *args, **kwargs: None)
-    limits = settings(max_jobs=0, timeout=0, share_gpus=True, run_storage_bytes=0)
+    limits = settings(
+        max_jobs=0, timeout=0, share_gpus=True, run_storage_bytes=0, **process_options
+    )
     request = {
         "experiment_id": "debug-owner",
+        "run_id": "test-run",
         "command": ["python", "private.py"],
         "files": {"private.py": "private uploaded content"},
         "gpu": True,
@@ -234,7 +260,9 @@ def test_selected_gpu_report_is_saved_without_uploaded_content(tmp_path, monkeyp
 
 
 @pytest.mark.parametrize("shared", [False, True])
-def test_diagnostic_write_failure_prevents_launch_and_releases_lease(tmp_path, monkeypatch, shared):
+def test_diagnostic_write_failure_prevents_launch_and_releases_lease(
+    tmp_path, monkeypatch, process_options, shared
+):
     store = job_store.JobStore(tmp_path)
     patch_controller(monkeypatch, "gpu_devices", lambda: [device(1)])
     patch_controller(monkeypatch, "gpu_process_memory", dict)
@@ -251,17 +279,24 @@ def test_diagnostic_write_failure_prevents_launch_and_releases_lease(tmp_path, m
         raise OSError("diagnostic storage unavailable")
 
     def forbidden_launch(*args, **kwargs):
-        pytest.fail("diagnostic failure must prevent container and watcher creation")
+        pytest.fail("diagnostic failure must prevent process preparation and watcher launch")
 
     patch_controller(monkeypatch, "record_scheduler_event", fail_log)
-    patch_controller(monkeypatch, "create_container", forbidden_launch)
+    patch_controller(monkeypatch, "prepare", forbidden_launch)
     monkeypatch.setattr(subprocess, "Popen", forbidden_launch)
-    limits = settings(max_jobs=0, timeout=0, share_gpus=shared, run_storage_bytes=0)
+    limits = settings(
+        max_jobs=0, timeout=0, share_gpus=shared, run_storage_bytes=0, **process_options
+    )
 
     with pytest.raises(OSError, match="diagnostic storage unavailable"):
         job_submission.submit(
             store,
-            {"experiment_id": "debug-owner", "command": ["true"], "gpu": True},
+            {
+                "experiment_id": "debug-owner",
+                "run_id": "test-run",
+                "command": ["true"],
+                "gpu": True,
+            },
             limits,
         )
 
@@ -269,3 +304,19 @@ def test_diagnostic_write_failure_prevents_launch_and_releases_lease(tmp_path, m
     lease = job_gpu.GpuLease.try_acquire(tmp_path / "locks", "GPU-1")
     assert lease is not None
     lease.close()
+
+
+def test_admission_fails_if_job_metadata_cannot_be_read(tmp_path, monkeypatch):
+    store = job_store.JobStore(tmp_path)
+    job = store.create("owner", ["true"], True, {}, run_id="run")
+    metadata = store.metadata_path(job["job_id"])
+    original = type(metadata).read_text
+
+    def read_text(path, *args, **kwargs):
+        if path == metadata:
+            raise PermissionError("job metadata unreadable")
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(type(metadata), "read_text", read_text)
+    with pytest.raises(PermissionError, match="job metadata unreadable"):
+        job_gpu.active_jobs(store)

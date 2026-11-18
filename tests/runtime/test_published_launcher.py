@@ -1,7 +1,6 @@
-"""The public launcher uses published native source without touching Docker."""
+"""The public launcher loads published native source."""
 
 import json
-import subprocess
 import sys
 from pathlib import Path
 
@@ -20,28 +19,21 @@ def runtime_for(root, calls, monkeypatch):
     monkeypatch.setattr(launch, "resolve_project_root", lambda value: Path(value))
     monkeypatch.setattr(launch, "load_dotenv", lambda *args, **kwargs: calls.append("config"))
     monkeypatch.setattr(
-        launch, "remote_call", lambda *args: {"status": "ok", "protocol_version": 1}
+        launch,
+        "remote_call",
+        lambda *args: {"status": "ok", "protocol_version": 2, "backend": "process"},
     )
     monkeypatch.setattr(launch, "reference_commit", lambda *args: "source-commit")
     monkeypatch.setattr(launch, "launch_run", lambda *args: calls.append(args))
 
 
 def configure(monkeypatch, root):
-    original_run = subprocess.run
-
-    def without_docker(command, **options):
-        if command[0] == "docker":
-            pytest.fail("Published launcher accessed Docker")
-        return original_run(command, **options)
-
-    monkeypatch.setattr(subprocess, "run", without_docker)
     values = {
         "MODEL_NAME": "fixture/model",
         "A3_PROJECT_ROOT": str(root),
         "A3_REMOTE_HOST": "fixture-host",
         "A3_REMOTE_CONTROLLER": "/data/controller",
         "A3_REMOTE_RUN_ROOT": "/data/jobs",
-        "A3_REMOTE_BACKEND": "process",
         "A3_REMOTE_DATA_ROOT": "/data",
         "A3_REMOTE_PROCESS_PYTHON": "/data/python",
     }
@@ -51,7 +43,7 @@ def configure(monkeypatch, root):
     monkeypatch.delenv("A3_NIGHT_WINDOW_TARGET", raising=False)
 
 
-def test_fresh_published_commit_launches_research_without_docker(published_run, monkeypatch):
+def test_fresh_published_commit_launches_native_research(published_run, monkeypatch):
     root, _, _, _, commit, *_ = published_run
     calls = []
     configure(monkeypatch, root)

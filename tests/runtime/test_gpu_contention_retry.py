@@ -8,6 +8,7 @@ from unittest.mock import Mock
 import pytest
 
 from a3_research_agent.execution.controller import files, store
+from a3_research_agent.execution.scheduling import host_resources
 from a3_research_agent.host.gateway.schemas import JobRequest
 
 OOM = (
@@ -32,13 +33,13 @@ def make_job(tmp_path):
     job = database.create("owner", ["python", "train.py"], True, {}, run_id="run-test")
     job.update(
         status="failed",
-        container_id="old",
+        process={"pid": 99},
         gpu_uuid="GPU-old",
         gpu_shared=True,
         gpu_memory_mb=20480,
         retry_on_gpu_contention=True,
         exit_code=1,
-        controller_options={"max_jobs": 4, "timeout": 100, "image": "fixed"},
+        controller_options={"max_jobs": 4, "timeout": 100, "data_root": str(tmp_path)},
     )
     database.save(job)
     directory = database.metadata_path(job["job_id"]).parent
@@ -88,12 +89,14 @@ def test_retry_reselects_gpu_keeps_identity_and_archives_attempt(tmp_path, monke
     retry = retry_module()
     database, job = make_job(tmp_path)
     monkeypatch.setattr(retry, "active_jobs", lambda *_: [])
+    monkeypatch.setattr(host_resources, "sample", lambda _: {})
+    monkeypatch.setattr(host_resources, "admission", lambda *args: None)
     monkeypatch.setattr(retry, "select_shared_gpu", lambda *a, **k: "GPU-new")
-    monkeypatch.setattr(retry, "create_container", lambda *a: "new")
+    monkeypatch.setattr(retry, "prepare", lambda *a: None)
     assert retry.prepare_retry(database, job) is True
     saved = database.load(job["job_id"], "owner")
     assert saved["gpu_uuid"] == "GPU-new"
-    assert saved["container_id"] == "new"
+    assert "process" not in saved
     assert saved["status"] == "created"
     assert saved["retry_count"] == 1
     assert saved["command"] == job["command"]
@@ -104,7 +107,7 @@ def test_retry_reselects_gpu_keeps_identity_and_archives_attempt(tmp_path, monke
 
 
 @pytest.mark.parametrize("block", ["busy", "limit", "cancel", "retained", "unsafe", "self_oom"])
-def test_retry_stops_without_new_container_when_not_safe(tmp_path, monkeypatch, block):
+def test_retry_stops_without_preparing_next_attempt_when_not_safe(tmp_path, monkeypatch, block):
     retry = retry_module()
     database, job = make_job(tmp_path)
     directory = database.metadata_path(job["job_id"]).parent
@@ -123,9 +126,11 @@ def test_retry_stops_without_new_container_when_not_safe(tmp_path, monkeypatch, 
         ).decode()
         (directory / "terminal-archive.json").write_text(json.dumps(archive))
     database.save(job)
-    create = Mock(side_effect=AssertionError("must not create a container"))
-    monkeypatch.setattr(retry, "create_container", create)
+    create = Mock(side_effect=AssertionError("must not prepare another process"))
+    monkeypatch.setattr(retry, "prepare", create)
     monkeypatch.setattr(retry, "active_jobs", lambda *_: [])
+    monkeypatch.setattr(host_resources, "sample", lambda _: {})
+    monkeypatch.setattr(host_resources, "admission", lambda *args: None)
     monkeypatch.setattr(retry, "select_shared_gpu", lambda *a, **k: None)
     assert retry.prepare_retry(database, job) is False
     assert not create.called
@@ -163,8 +168,10 @@ def test_retry_does_not_bypass_run_storage_limit(tmp_path, monkeypatch):
     job["storage_limit_bytes"] = database.run_storage_bytes("run-test") + 1
     database.save(job)
     monkeypatch.setattr(retry, "active_jobs", lambda *_: [])
+    monkeypatch.setattr(host_resources, "sample", lambda _: {})
+    monkeypatch.setattr(host_resources, "admission", lambda *args: None)
     monkeypatch.setattr(retry, "select_shared_gpu", lambda *a, **k: "GPU-new")
-    monkeypatch.setattr(retry, "create_container", Mock(side_effect=AssertionError("storage full")))
+    monkeypatch.setattr(retry, "prepare", Mock(side_effect=AssertionError("storage full")))
     assert not retry.prepare_retry(database, job)
     assert database.load(job["job_id"], "owner")["retry"]["status"] == "storage_limit"
 
@@ -190,51 +197,3 @@ def test_restart_does_not_reset_total_timeout(tmp_path, monkeypatch):
         lambda args: seen.append(args.timeout),
     )
     assert seen == [10, 7]
-
-
-def test_removed_container_detection_accepts_docker_desktop_error_case(monkeypatch):
-    import subprocess
-
-    from a3_research_agent.execution.controller import docker
-
-    monkeypatch.setattr(
-        docker,
-        "docker",
-        lambda *a, **k: subprocess.CompletedProcess([], 1, "", "error: no such object: old"),
-    )
-    assert docker.container_state("old")["Status"] == "removed"
-
-
-def test_cancel_reloads_container_after_waiting_for_retry_lock(tmp_path, monkeypatch):
-    import subprocess
-    from contextlib import contextmanager
-
-    from a3_research_agent.execution.controller import lifecycle
-
-    database, job = make_job(tmp_path)
-    job.update(status="running", retry_pending=True)
-    database.save(job)
-
-    @contextmanager
-    def swapped_container(*args):
-        current = database.load(job["job_id"], "owner")
-        current["container_id"] = "new-container"
-        database.save(current)
-        yield
-
-    states = {"old": {"Status": "running"}, "new-container": {"Status": "running"}}
-    stopped = []
-
-    def docker(command, **kwargs):
-        if command[0] == "stop":
-            stopped.append(command[-1])
-            states[command[-1]] = {"Status": "exited", "ExitCode": 143}
-        return subprocess.CompletedProcess(command, 0, "", "")
-
-    monkeypatch.setattr(lifecycle, "lifecycle_lock", swapped_container)
-    monkeypatch.setattr(lifecycle, "owned_container", lambda *args: {})
-    monkeypatch.setattr(lifecycle, "container_state", lambda identifier: states[identifier])
-    monkeypatch.setattr(lifecycle, "docker", docker)
-    monkeypatch.setattr(lifecycle, "reclaim_terminal", lambda *args: {"status": "retained"})
-    lifecycle.cancel(database, {"experiment_id": "owner", "job_id": job["job_id"]})
-    assert stopped == ["new-container"]

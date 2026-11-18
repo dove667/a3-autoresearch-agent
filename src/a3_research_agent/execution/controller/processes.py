@@ -7,6 +7,7 @@ It is not a security sandbox. Agent credentials remain on the local Host.
 import base64
 import json
 import os
+import shutil
 import signal
 import subprocess
 import time
@@ -123,6 +124,15 @@ def stop(job: dict, grace: float = 5) -> None:
         raise RuntimeError("Owned job processes did not exit")
 
 
+def cleanup_temporary_directory(job: dict) -> None:
+    directory = job.get("temporary_directory")
+    if directory:
+        try:
+            shutil.rmtree(directory)
+        except FileNotFoundError:
+            pass
+
+
 def prepare(store, job: dict, args) -> None:
     job.setdefault(
         "controller_options",
@@ -165,7 +175,6 @@ def prepare(store, job: dict, args) -> None:
     temporary.mkdir(parents=True, exist_ok=True, mode=0o700)
     Path(paths["shared_cache"]).mkdir(parents=True, exist_ok=True, mode=0o700)
     job.update(
-        backend="process",
         paths=paths,
         input_paths=inputs,
         temporary_directory=str(temporary),
@@ -195,7 +204,6 @@ def environment(job: dict) -> dict:
         "PYTHONDONTWRITEBYTECODE": "1",
         "PYTHONUNBUFFERED": "1",
         "A3_JOB_ID": job["job_id"],
-        "A3_JOB_RESOURCE_BACKEND": "process",
         "A3_JOB_MANAGED": "1" if job.get("managed") else "0",
         "A3_JOB_GPU_MEMORY_MB": str(job.get("gpu_memory_mb", 0)),
         "A3_JOB_GPU_UUID": job.get("gpu_uuid") or "",
@@ -244,8 +252,6 @@ def command(job: dict) -> list[str]:
     result = list(job["command"])
     if result[0] in {"python", "python3"}:
         result[0] = job["paths"]["python"]
-    elif result[0].startswith("/opt/a3/"):
-        raise ValueError("Process jobs use A3_PYTHON or python, not container interpreter paths")
     return result
 
 
@@ -298,7 +304,7 @@ def watch_attempt(args) -> None:
     from .store import JobStore
 
     store = JobStore(args.root)
-    job = json.loads(store.metadata_path(args.job_id).read_text())
+    job = store.load_process_job(args.job_id)
     directory = store.metadata_path(job["job_id"]).parent
     process, telemetry = None, None
     try:

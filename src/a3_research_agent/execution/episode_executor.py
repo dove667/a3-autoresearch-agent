@@ -1,6 +1,6 @@
 """Run independent episode commands with durable results and quota-aware concurrency.
 
-This stdlib-only module is also mounted as a standalone script in remote jobs.
+This stdlib-only module also runs as a standalone script in remote jobs.
 """
 
 import argparse
@@ -29,40 +29,20 @@ def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def read_number(path):
-    value = path.read_text().strip()
-    return None if value == "max" else int(value)
-
-
 class ResourceMonitor:
-    """Measure the whole cgroup using counters, including all episode descendants."""
+    """Measure host CPU and memory pressure for episode admission."""
 
-    def __init__(self, root=Path("/sys/fs/cgroup")):
-        self.native = os.environ.get("A3_JOB_RESOURCE_BACKEND") == "process"
-        if self.native:
-            self.root = Path("/proc") if root == Path("/sys/fs/cgroup") else root
-            self.cpus = float(
-                len(os.sched_getaffinity(0))
-                if hasattr(os, "sched_getaffinity")
-                else os.cpu_count() or 1
-            )
-            self.previous = None
-            self.gpu_limit_mb = int(os.environ.get("A3_JOB_GPU_MEMORY_MB", "0"))
-            self.gpu_uuid = os.environ.get("A3_JOB_GPU_UUID", "")
-            return
+    def __init__(self, root=Path("/proc")):
         self.root = root
-        quota, period = (root / "cpu.max").read_text().split()
-        self.cpus = float(os.cpu_count() or 1) if quota == "max" else int(quota) / int(period)
-        self.memory_limit = read_number(root / "memory.max")
-        if self.memory_limit is None:
-            raise ValueError("A finite cgroup memory limit is required")
-        self.pids_limit = read_number(root / "pids.max")
-        self.gpu_limit_mb = int(os.environ.get("A3_JOB_GPU_MEMORY_MB", "0"))
-        self.gpu_uuid = os.environ.get("A3_JOB_GPU_UUID", "")
+        self.cpus = float(
+            len(os.sched_getaffinity(0))
+            if hasattr(os, "sched_getaffinity")
+            else os.cpu_count() or 1
+        )
         self.previous = None
-        self.last_oom = None
+        self.gpu_limit_mb = int(os.environ.get("A3_JOB_GPU_MEMORY_MB", "0"))
 
-    def sample_host(self):
+    def sample(self):
         memory = {
             line.split(":")[0]: int(line.split()[1]) * 1024
             for line in (self.root / "meminfo").read_text().splitlines()
@@ -80,51 +60,14 @@ class ResourceMonitor:
             "cpu_limit": self.cpus,
             "memory_bytes": memory["MemTotal"] - memory["MemAvailable"],
             "memory_limit": max(1, memory["MemTotal"] - reserve),
-            "pids": 0,
-            "pids_limit": None,
-            "oom_kills": 0,
-            "new_oom": False,
             "gpu_available": not bool(self.gpu_limit_mb),
         }
-        return self.with_gpu_sample(result)
-
-    def sample(self):
-        if self.native:
-            return self.sample_host()
-        now = time.monotonic()
-        stats = dict(line.split() for line in (self.root / "cpu.stat").read_text().splitlines())
-        usage = int(stats["usage_usec"]) / 1e6
-        cpu = None
-        if self.previous:
-            cpu = max(0, (usage - self.previous[1]) / (now - self.previous[0]))
-        self.previous = (now, usage)
-        events = dict(
-            line.split() for line in (self.root / "memory.events").read_text().splitlines()
-        )
-        oom = int(events.get("oom_kill", 0))
-        result = {
-            "time": now,
-            "cpu_cores": cpu,
-            "cpu_limit": self.cpus,
-            "memory_bytes": read_number(self.root / "memory.current"),
-            "memory_limit": self.memory_limit,
-            "pids": read_number(self.root / "pids.current"),
-            "pids_limit": self.pids_limit,
-            "oom_kills": oom,
-            "new_oom": self.last_oom is not None and oom > self.last_oom,
-            "gpu_available": not bool(self.gpu_limit_mb),
-        }
-        self.last_oom = oom
         return self.with_gpu_sample(result)
 
     def with_gpu_sample(self, result):
         if self.gpu_limit_mb:
             try:
-                telemetry = json.loads(
-                    Path(
-                        os.environ.get("A3_JOB_TELEMETRY", "/run/a3/telemetry/resources.json")
-                    ).read_text()
-                )
+                telemetry = json.loads(Path(os.environ["A3_JOB_TELEMETRY"]).read_text())
                 if telemetry.get("error") or not 0 <= time.time() - telemetry["sampled_at"] <= 10:
                     raise ValueError("Host GPU telemetry unavailable or stale")
                 for name in (
@@ -160,10 +103,7 @@ def choose_parallelism(
     memory = sample["memory_bytes"]
     memory_limit = sample["memory_limit"]
     cpu = sample["cpu_cores"]
-    pids_full = sample["pids_limit"] is not None and sample["pids"] >= sample["pids_limit"] * 0.85
-    pressure = (
-        memory >= memory_limit * 0.85 or sample["new_oom"] or pids_full or throughput_regressed
-    )
+    pressure = memory >= memory_limit * 0.85 or throughput_regressed
     if sample.get("gpu_limit_mb") and sample["gpu_available"]:
         pressure |= (
             sample["gpu_budget_used_mb"] >= sample["gpu_limit_mb"] * 0.85
@@ -193,11 +133,9 @@ def choose_parallelism(
 
 def admission_allowed(sample, active, peak_memory_per_episode, peak_gpu_per_episode):
     """Stop filling slots immediately when current observations cannot justify admission."""
-    if not sample["gpu_available"] or sample["new_oom"]:
+    if not sample["gpu_available"]:
         return False
     if sample["memory_bytes"] + peak_memory_per_episode >= sample["memory_limit"] * 0.85:
-        return False
-    if sample["pids_limit"] and sample["pids"] >= sample["pids_limit"] * 0.85:
         return False
     if sample.get("gpu_limit_mb") and (
         sample["gpu_budget_used_mb"] + peak_gpu_per_episode >= sample["gpu_limit_mb"] * 0.85

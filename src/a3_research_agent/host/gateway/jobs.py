@@ -54,7 +54,7 @@ class JobRoutes:
         return scope or actor
 
     def accessible_export(self, actor, export_id):
-        """Prepare read-only mounts from research identities in this project."""
+        """Authorize a sealed input export for the requesting research identity."""
         for scope in self.project_read_scopes(actor):
             try:
                 record = self.remote(

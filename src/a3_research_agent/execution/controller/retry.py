@@ -11,7 +11,7 @@ from pathlib import Path
 
 from a3_research_agent.execution.scheduling.gpu import active_jobs, select_shared_gpu
 
-from .docker import create_container
+from .processes import prepare
 from .store import JobStore
 
 MAX_CONTENTION_RETRIES = 2
@@ -96,7 +96,7 @@ def prepare_retry(store: JobStore, previous: dict) -> bool:
                     store, args, jobs, job["gpu_memory_mb"], diagnostics=allocation
                 )
                 reason = "no_eligible_gpu"
-            if gpu and job.get("backend") == "process":
+            if gpu:
                 from a3_research_agent.execution.scheduling import host_resources
 
                 busy = host_resources.admission(
@@ -134,12 +134,11 @@ def prepare_retry(store: JobStore, previous: dict) -> bool:
             # Move the committed archive: it remains within the same storage budget.
             archive_path.replace(attempt_directory / "terminal-archive.json")
             cleanup_path.replace(attempt_directory / "cleanup.json")
-            if job.get("backend") == "process":
-                for name in ("stdout.log", "stderr.log"):
-                    path = directory / name
-                    if path.exists():
-                        path.replace(attempt_directory / name)
-                job.pop("process", None)
+            for name in ("stdout.log", "stderr.log"):
+                path = directory / name
+                if path.exists():
+                    path.replace(attempt_directory / name)
+            job.pop("process", None)
             durable_json(attempt_directory / "retry.json", retry_record)
             job.setdefault("attempts", []).append(
                 {
@@ -152,7 +151,6 @@ def prepare_retry(store: JobStore, previous: dict) -> bool:
             )
             job.update(
                 gpu_uuid=gpu,
-                container_id=None,
                 status="restarting",
                 retry_count=attempt,
                 retry={"status": "retrying", "reason": "gpu_contention_during_loading"},
@@ -164,18 +162,11 @@ def prepare_retry(store: JobStore, previous: dict) -> bool:
             telemetry = directory / "episode-telemetry/resources.json"
             telemetry.unlink(missing_ok=True)
             try:
-                if job.get("backend") == "process":
-                    from .processes import prepare
-
-                    prepare(store, job, args)
-                else:
-                    job["container_id"] = create_container(store, job, args)
+                prepare(store, job, args)
                 job["status"] = "created"
                 store.save(job)
             except Exception:
-                job.update(
-                    status="failed", error="container recreation failed; inspect before retry"
-                )
+                job.update(status="failed", error="Process job preparation failed during retry")
                 store.save(job)
                 raise
             return True
@@ -184,7 +175,7 @@ def prepare_retry(store: JobStore, previous: dict) -> bool:
 def watch_with_retries(args, watch_attempt) -> None:
     """Run bounded attempts without resubmitting or extending the original time budget."""
     store = JobStore(args.root)
-    job = json.loads(store.metadata_path(args.job_id).read_text())
+    job = store.load_process_job(args.job_id)
     directory = store.metadata_path(args.job_id).parent
     started = time.monotonic()
     with (directory / "retry-supervisor.lock").open("a") as lock:

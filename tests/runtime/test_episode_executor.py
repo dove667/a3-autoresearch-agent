@@ -114,29 +114,6 @@ def test_quota_pressure_and_missing_measurement():
     assert executor.choose_parallelism(4, 8, sample, 4, 10, 0)[0] == 3
 
 
-def test_cgroup_cpu_uses_counter_delta_and_entire_memory(tmp_path, monkeypatch):
-    for name, content in {
-        "cpu.max": "400000 100000",
-        "memory.max": "10000000",
-        "memory.current": "123456",
-        "pids.max": "128",
-        "pids.current": "5",
-        "memory.events": "oom_kill 0",
-        "cpu.stat": "usage_usec 1000000",
-    }.items():
-        (tmp_path / name).write_text(content)
-    monkeypatch.delenv("A3_JOB_GPU_MEMORY_MB", raising=False)
-    times = iter([10, 12])
-    monkeypatch.setattr(executor.time, "monotonic", lambda: next(times))
-    monitor = executor.ResourceMonitor(tmp_path)
-    assert monitor.sample()["cpu_cores"] is None
-    (tmp_path / "cpu.stat").write_text("usage_usec 7000000")
-    sample = monitor.sample()
-    assert sample["cpu_cores"] == 3
-    assert sample["memory_bytes"] == 123456
-    assert monitor.cpus == 4
-
-
 def test_failed_process_or_invalid_report_is_not_counted_complete(tmp_path):
     path = manifest(tmp_path, 1)
     data = json.loads(path.read_text())
@@ -290,16 +267,9 @@ def test_measurement_loss_stops_new_admission_until_recovery(tmp_path):
 
 @pytest.mark.parametrize("fault", [None, "stale", "error", "nonfinite", "missing"])
 def test_host_gpu_telemetry_is_validated_before_admission(tmp_path, monkeypatch, fault):
-    for name, content in {
-        "cpu.max": "400000 100000",
-        "memory.max": "10000000",
-        "memory.current": "123456",
-        "pids.max": "128",
-        "pids.current": "5",
-        "memory.events": "oom_kill 0",
-        "cpu.stat": "usage_usec 1000000",
-    }.items():
-        (tmp_path / name).write_text(content)
+    (tmp_path / "meminfo").write_text("MemTotal: 10000 kB\nMemAvailable: 8000 kB\n")
+    (tmp_path / "stat").write_text("cpu 10 0 0 90 0 0 0 0\n")
+    monkeypatch.setenv("A3_HOST_MEMORY_RESERVE_MB", "1")
     telemetry = {
         "sampled_at": time.time(),
         "gpu_used_mb": 1000,
@@ -315,14 +285,9 @@ def test_host_gpu_telemetry_is_validated_before_admission(tmp_path, monkeypatch,
         telemetry["gpu_budget_used_mb"] = float("nan")
     elif fault == "missing":
         del telemetry["gpu_total_mb"]
-    original_read_text = executor.Path.read_text
-
-    def read_text(path, *args, **kwargs):
-        if str(path) == "/run/a3/telemetry/resources.json":
-            return json.dumps(telemetry)
-        return original_read_text(path, *args, **kwargs)
-
-    monkeypatch.setattr(executor.Path, "read_text", read_text)
+    path = tmp_path / "telemetry.json"
+    path.write_text(json.dumps(telemetry))
+    monkeypatch.setenv("A3_JOB_TELEMETRY", str(path))
     monkeypatch.setenv("A3_JOB_GPU_MEMORY_MB", "512")
     sample = executor.ResourceMonitor(tmp_path).sample()
     assert sample["gpu_available"] is (fault is None)

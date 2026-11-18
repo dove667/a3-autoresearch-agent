@@ -117,9 +117,7 @@ def launch_main() -> None:
 
         end = end_hour()
         if not window_boundary(datetime.now(BEIJING), end)[0]:
-            parser.error(
-                f"This run can only start from 21:00 to {end:02d}:00 Beijing time"
-            )
+            parser.error(f"This run can only start from 21:00 to {end:02d}:00 Beijing time")
     if args.night_window:
         if args.resume_from or args.check or not args.harness_commit:
             parser.error("--night-window requires --harness-commit for a fresh daily run")
@@ -147,20 +145,16 @@ def launch_main() -> None:
             flush=True,
         )
         with RunLease(root / ".runtime/night-window/launcher"):
-            raise SystemExit(
-                run_nightly(command, None, schedule=schedule, window_end=window_end)
-            )
+            raise SystemExit(run_nightly(command, None, schedule=schedule, window_end=window_end))
     required = (
         "MODEL_NAME",
         "A3_PROJECT_ROOT",
         "A3_REMOTE_HOST",
         "A3_REMOTE_CONTROLLER",
         "A3_REMOTE_RUN_ROOT",
+        "A3_REMOTE_DATA_ROOT",
+        "A3_REMOTE_PROCESS_PYTHON",
     )
-    if os.environ.get("A3_REMOTE_BACKEND", "docker") == "process":
-        required += ("A3_REMOTE_DATA_ROOT", "A3_REMOTE_PROCESS_PYTHON")
-    else:
-        required += ("A3_REMOTE_IMAGE",)
     for key in required:
         if not os.environ.get(key):
             raise SystemExit(f"Missing deployment setting: {key}")

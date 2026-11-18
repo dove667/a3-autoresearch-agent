@@ -12,9 +12,9 @@ from a3_research_agent.execution.exports.operations import export_operation
 from a3_research_agent.execution.exports.readonly import ReadonlyExports
 
 from .artifacts import list_artifacts, read_artifact
-from .docker import docker
 from .files import MAX_INPUT_BYTES
-from .lifecycle import cancel, status, watch
+from .lifecycle import watch
+from .processes import cancel, status, validate_data_paths
 from .store import JobStore
 from .submission import submit
 
@@ -22,20 +22,15 @@ from .submission import submit
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", required=True, type=Path)
-    parser.add_argument("--image", default="")
-    parser.add_argument("--backend", choices=["docker", "process"], default="docker")
     parser.add_argument("--managed-jobs", action="store_true")
-    parser.add_argument("--data-root", type=Path)
-    parser.add_argument("--process-python", type=Path)
+    parser.add_argument("--data-root", type=Path, required=True)
+    parser.add_argument("--job-python", dest="process_python", type=Path, required=True)
     parser.add_argument("--a3-root", type=Path)
     parser.add_argument("--host-memory-reserve-mb", type=int, default=32768)
     parser.add_argument("--host-job-memory-mb", type=int, default=8192)
     parser.add_argument("--host-cpu-reserve", type=float, default=2)
     parser.add_argument("--host-job-cpus", type=float, default=2)
     parser.add_argument("--disk-reserve-bytes", type=int, default=68719476736)
-    parser.add_argument("--cpus", type=float, default=16)
-    parser.add_argument("--memory", default="64g")
-    parser.add_argument("--pids-limit", type=int, default=1024)
     parser.add_argument("--tmp-root", type=Path)
     parser.add_argument("--max-jobs", type=int, default=2)
     parser.add_argument("--timeout", type=int, default=900)
@@ -48,7 +43,6 @@ def main() -> None:
     parser.add_argument("--gpu-capacity-mb", type=int, default=0)
     parser.add_argument("--run-storage-bytes", type=int, default=0)
     parser.add_argument("--models-root", type=Path)
-    parser.add_argument("--preserve-models-path", action="store_true")
     parser.add_argument("--model-cache-root", type=Path)
     parser.add_argument("--datasets-root", type=Path)
     parser.add_argument(
@@ -75,8 +69,6 @@ def main() -> None:
         ],
     )
     args = parser.parse_args()
-    if args.managed_jobs and args.backend != "process":
-        parser.error("Managed jobs require the process backend")
     if args.max_jobs < 0 or args.run_storage_bytes < 0 or args.timeout < 0:
         parser.error("max-jobs, storage bytes and timeout must be nonnegative")
     if (
@@ -87,8 +79,6 @@ def main() -> None:
         or args.gpu_capacity_mb < 0
     ):
         parser.error("GPU count/reservation must be positive; headroom/capacity nonnegative")
-    if args.backend == "process" and (not args.data_root or not args.process_python):
-        parser.error("Process backend requires data-root and process-python")
     if (
         min(args.host_memory_reserve_mb, args.disk_reserve_bytes, args.host_cpu_reserve) < 0
         or min(args.host_job_memory_mb, args.host_job_cpus) <= 0
@@ -124,12 +114,7 @@ def main() -> None:
                 )
             )
             return
-        if args.backend == "process":
-            from .processes import validate_data_paths
-
-            validate_data_paths(
-                args.data_root, [args.root, args.tmp_root or args.root / "temporary"]
-            )
+        validate_data_paths(args.data_root, [args.root, args.tmp_root or args.root / "temporary"])
         store = JobStore(args.root)
         if args.operation == "jobs-list":
             print(json.dumps(store.list_jobs(request)))
@@ -144,64 +129,31 @@ def main() -> None:
             print(json.dumps(store.update_host_storage(request)))
             return
         if args.operation == "health":
-            if args.backend == "process":
-                from a3_research_agent.execution.scheduling import host_resources
+            from a3_research_agent.execution.scheduling import host_resources
 
-                from .processes import validate_data_paths
-
-                validate_data_paths(
-                    args.data_root,
-                    [
-                        store.root,
-                        args.process_python.resolve(strict=True),
-                        args.tmp_root or store.root / "temporary",
-                    ],
-                )
-                print(
-                    json.dumps(
-                        {
-                            "status": "ok",
-                            "protocol_version": 1,
-                            "backend": "process",
-                            "python": str(args.process_python),
-                            "data_root": str(args.data_root),
-                            "host_resources": host_resources.sample(args.data_root),
-                            "limits": {
-                                "cpus": None,
-                                "memory": None,
-                                "host_memory_reserve_mb": args.host_memory_reserve_mb,
-                                "disk_reserve_bytes": args.disk_reserve_bytes,
-                                "run_storage_bytes": args.run_storage_bytes,
-                            },
-                        }
-                    )
-                )
-                return
-            image = docker(["image", "inspect", "--format", "{{.Id}}", args.image]).stdout.strip()
+            validate_data_paths(
+                args.data_root,
+                [
+                    store.root,
+                    args.process_python.resolve(strict=True),
+                    args.tmp_root or store.root / "temporary",
+                ],
+            )
             print(
                 json.dumps(
                     {
                         "status": "ok",
-                        "protocol_version": 1,
-                        "image": args.image,
-                        "image_id": image,
+                        "protocol_version": 2,
+                        "backend": "process",
+                        "python": str(args.process_python),
+                        "data_root": str(args.data_root),
+                        "host_resources": host_resources.sample(args.data_root),
                         "limits": {
-                            "cpus": args.cpus,
-                            "memory": args.memory,
-                            "pids_limit": args.pids_limit,
-                            "max_jobs": args.max_jobs,
-                            "timeout_seconds": args.timeout,
+                            "cpus": None,
+                            "memory": None,
+                            "host_memory_reserve_mb": args.host_memory_reserve_mb,
+                            "disk_reserve_bytes": args.disk_reserve_bytes,
                             "run_storage_bytes": args.run_storage_bytes,
-                            "gpu_mode": "memory_shared" if args.share_gpus else "exclusive",
-                            "max_gpus": args.max_gpus,
-                            "gpu_memory_mb": args.gpu_memory_mb,
-                            "gpu_headroom_mb": args.gpu_headroom_mb,
-                            "gpu_capacity_mb": args.gpu_capacity_mb,
-                        },
-                        "assets": {
-                            "models": "/models" if args.models_root else None,
-                            "datasets": "/datasets" if args.datasets_root else None,
-                            "model_cache": "/model-cache" if args.model_cache_root else None,
                         },
                     }
                 )

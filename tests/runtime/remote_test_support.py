@@ -5,7 +5,7 @@ import importlib
 COMPONENTS = (
     "controller.files",
     "controller.store",
-    "controller.docker",
+    "controller.processes",
     "controller.lifecycle",
     "controller.artifacts",
     "controller.submission",
@@ -16,7 +16,7 @@ COMPONENTS = (
 
 
 def patch_controller(monkeypatch, name, replacement):
-    """Preserve each test's fake backend across component import bindings."""
+    """Patch each component that directly imports the dependency."""
     patched = []
     for component in COMPONENTS:
         module = importlib.import_module(f"a3_research_agent.execution.{component}")

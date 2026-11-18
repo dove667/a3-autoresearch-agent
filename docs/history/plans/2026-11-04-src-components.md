@@ -69,7 +69,7 @@ Follow every constraint in the spec. No production mutation, push, deployment, m
 - Artifact tests build wheel/sdist, install the wheel into a temporary target, exercise the Controller under `-I -S`, validate Host CLI outside a checkout, export complete Harness sources, and rebuild identical package bytes from the sdist.
 - Independent whole-branch review found no substantive issues; reviewer independently ran 12 scoped tests.
 - Existing runtime dependency versions are unchanged. The declared setuptools build backend is also a locked dev dependency so artifact tests run in the development environment.
-- Branch is preserved for later integration. No production merge, push, deployment, live Agent changes, real provider calls, SSH, GPU or real Docker validation was performed. Offline regression is not experimental acceptance.
+- Branch is preserved for later integration. No production merge, push, deployment, live Agent changes, real provider calls, SSH access, or GPU work occurred. Offline regression is not experimental acceptance.
 
 ## Local follow-up acceptance: 2026-11-05
 
@@ -114,8 +114,7 @@ restart is included.
   Controller standalone standard-library entry for SSH and watcher/sealer processes.
 - [x] Export package-only Harness payloads, launch through `python -m`, and remove
   flat wrappers and `_compat.py`; verify worker delivery and recovery commands.
-- [x] Move bootstrap Dockerfile and deployment documentation to their component
-  owners, remove duplicate resources and the complete `runtime/` tree.
+- [x] Remove duplicate resources and the complete `runtime/` tree.
 - [x] Update public configuration, current documentation and versioned Agent input
   references, incrementing modified Agent input versions.
 - [x] Verify wheel/sdist contents, isolated subprocess entry points, complete offline
@@ -127,7 +126,6 @@ review reran 101 Controller/package checks; no unresolved findings remain.
 Wheel/sdist builds, clean installation, package-only worker execution and child
 payload re-export pass. Ruff, 191-file formatting, shell syntax, changed-document
 local links and diff checks pass. Removed 47 tracked runtime entries, `_compat.py`,
-and the test-only Controller aggregation facade. Bootstrap container resources
-are included in the package. No injected Agent input changed; its README navigation
+and the test-only Controller aggregation facade. No injected Agent input changed; its README navigation
 was updated. Historical fixtures, run archives, personal deployment configuration
 and live processes remain unchanged. No commit, push or remote deployment performed.

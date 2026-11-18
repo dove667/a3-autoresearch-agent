@@ -21,11 +21,11 @@ flowchart LR
     Agent --> Gateway[Host Gateway：认证与转发]
     Gateway --> Model[模型服务]
     Gateway -->|SSH / JSON| Controller[Controller：作业与资源]
-    Controller --> Job[远程进程或容器]
+    Controller --> Job[远程进程]
     Job -->|状态与产物| Controller
 ```
 
-本地 Harness 作为原生进程运行，Host 保管模型认证和 SSH 配置。模型通过文件工具读写唯一的 `workspace/`，只读当前输入、A3 参考和当前会话状态；技能和长期经验通过专用工具访问。工具集不暴露本地 Bash 或 Python 执行，研究命令交给远程作业。远程可选择 `process` 或 Docker，详细资源契约见[进程后端](remote-process.md)。
+本地 Harness 作为原生进程运行，Host 保管模型认证和 SSH 配置。模型通过文件工具读写唯一的 `workspace/`，只读当前输入、A3 参考和当前会话状态；技能和长期经验通过专用工具访问。工具集不暴露本地 Bash 或 Python 执行，研究命令交给远程作业。Controller 直接启动 Linux 进程，资源契约见[远程进程作业](remote-process.md)。
 
 ## 发布、每日运行与恢复
 
@@ -35,7 +35,7 @@ Host 的 `knowledge_service/` 为 memory 和 skills 共用一个本地 embedding
 
 Host 的 `launch.py` 负责启动装配；`sessions/processes.py` 负责创建、观察、停止及恢复原生进程；`sessions/workspace.py` 负责工作区定位、受限文件读取和持久写入。进程以 PID、启动标识和实际命令核对身份，避免停止其他进程。
 
-`--resume-from` 恢复同一 run、身份、工作区、checkpoint、工具 journal 与在途作业。普通恢复要求原发布版本和完整模型配置一致。Host 私有状态和会话记录使用明确的原生 schema；不支持旧 builder 或本地容器记录。
+`--resume-from` 恢复同一 run、身份、工作区、checkpoint、工具 journal 与在途作业。普通恢复要求原发布版本和完整模型配置一致。Host 私有状态和会话记录使用明确的原生 schema。
 
 同一天意外中断的 run 可由维护者通过离线发布事务升级后恢复。升级保留研究目录、模型上下文、计划、长期记忆、技能库与作业归属，同时归档旧版本、输入和 checkpoint 边界。事务可以在中断后继续；具体入口见[操作者监督](../guides/maintenance.md)。
 
@@ -55,7 +55,7 @@ Agent 核对模型与数据版本、评测设置、逐回合结果与异常，�
 
 Controller 实例共用资源根目录和调度锁。独占模式持有整卡租约；共享模式记录每作业显存预算，限制活动卡数、每卡预算和实际显存压力。未声明预算的托管作业使用部署配置的单作业默认值，显式预算按请求保留。
 
-超过设备或部署上限的请求直接拒绝；暂时没有资源的请求保留同一队列编号。一次准入复用活动作业扫描与 GPU 观测，可靠回收记录不再反复查询容器状态。其他使用者的负载会影响可用资源，共享账本只协调本项目的 Controller。
+超过设备或部署上限的请求直接拒绝；暂时没有资源的请求保留同一队列编号。一次准入复用活动作业扫描与 GPU 观测。其他使用者的负载会影响可用资源，共享账本只协调本项目的 Controller。
 
 可识别的初始化 CUDA 显存竞争支持有限重试，保留逻辑作业编号和每次日志；普通脚本失败和自身预算不足不会触发该重试。完成、取消或超时后释放自有租约。完整配置见[环境配置](../guides/setup.md)。
 

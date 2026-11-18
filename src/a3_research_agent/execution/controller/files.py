@@ -9,7 +9,6 @@ from pathlib import Path, PurePosixPath
 ACTIVE_STATES = {"created", "running", "restarting", "paused"}
 MAX_FILE_BYTES = 32 * 1024 * 1024
 MAX_INPUT_BYTES = 20 * 1024 * 1024
-MAX_ARCHIVE_LOG_BYTES = 8 * 1024 * 1024
 
 
 def atomic_json(path: Path, value: dict) -> None:
@@ -97,12 +96,6 @@ def validate_submit(request: dict) -> None:
         or len(set(inputs)) != len(inputs)
     ):
         raise ValueError("input_exports must contain at most 64 export IDs")
-
-
-def job_timeout(seconds: int) -> int | None:
-    if seconds < 0:
-        raise ValueError("timeout must be nonnegative; zero means unlimited")
-    return seconds or None
 
 
 def directory_storage_bytes(root: Path) -> int:

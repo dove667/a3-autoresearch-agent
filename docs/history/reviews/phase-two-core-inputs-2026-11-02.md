@@ -6,7 +6,7 @@ Maintainer review record; not an injected input. Based on `6bde3b5` and the user
 
 - SOUL remains the concise cross-stage principles. RSI skill retains detailed allocation methods.
 - Phase 2 contains only goal and acceptance. Goal absorbs the already-approved pretrained-first/random-small-network reference policy, maintenance scope and no arbitrary step/generation cap within the real budget. No new experimental authority or evaluation condition is added.
-- `shared/protocol.md` is physically shared but **selected only by phase two**. It is not in `SHARED_INPUT_SOURCES`; Phase 1 and G do not receive it. Its canonical mounted name remains `/run/input/protocol.md`.
+- `shared/protocol.md` is physically shared but **selected only by phase two**. It is not in `SHARED_INPUT_SOURCES`; Phase 1 and G do not receive it. Its canonical input name remains `/run/input/protocol.md`.
 - execution retains generic actual-state/API/recovery instructions. Specific source-run, task transition, human intervention and old terminal notices belong in that run's approved human feedback, not a repeated global calibration paragraph. No future Phase 2 feedback was fabricated.
 - New Phase 2 preset requests contain SOUL, goal, acceptance and protocol; execution remains readable. No empty instructions placeholder or substitute stage file exists.
 
@@ -14,7 +14,7 @@ Maintainer review record; not an injected input. Based on `6bde3b5` and the user
 
 The loader's required-file set is phase-aware. Phase 1/G still require phase-instructions. Custom Phase 2 may omit it; an explicitly supplied legacy layer remains versioned, injected and frozen. Resume of a custom snapshot preserves its original files and hashes.
 
-Old preset resume retains the existing semantics: explicit activation takes current repository templates and preserves original history. Retired stage text is archived, then removed from active mounts and subsequent model prefixes. Merely preparing input changes does not mutate an old run. Removal participates in existing rollback backups; there is no fallback that resurrects old preset instructions alongside new principles. Existing worker/main/candidate routing is unchanged.
+Old preset resume retains the existing semantics: explicit activation takes current repository templates and preserves original history. Retired stage text is archived, then removed from active inputs and subsequent model prefixes. Merely preparing input changes does not mutate an old run. Removal participates in existing rollback backups; there is no fallback that resurrects old preset instructions alongside new principles. Existing worker/main/candidate routing is unchanged.
 
 The active G run and Mac are not accessed or changed by this work. Its frozen Phase 1 inputs are independent of template changes. Source edits do not hot-load any run.
 
