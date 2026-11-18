@@ -26,9 +26,10 @@ def test_both_checks_are_submitted_as_cpu_jobs(tmp_path):
     assert posted[0][1]["command"][:2] == ["python", "a3_api_reader.py"]
     assert posted[1][1]["command"][:2] == ["python", "a3_dataset_audit_runner.py"]
     assert posted[1][1]["command"][3] == "/data1/zsh/a3_dual_arm_sim/ds-merged"
-    reference = posted[0][1]["workspace_files"][0]
-    assert (tmp_path / "benchmarks" / "a3_api_reader.py").is_file()
-    assert len(reference["sha256"]) == 64
+    # The script rides inside the request: no session record exists yet.
+    assert "workspace_files" not in posted[0][1]
+    script = posted[0][1]["files"]["a3_api_reader.py"]
+    assert "a3_dual_arm_sim" in script or "def main" in script
 
 
 def test_a_dataset_check_is_optional(tmp_path):

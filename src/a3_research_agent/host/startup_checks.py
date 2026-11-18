@@ -9,7 +9,6 @@ Every failure here is reported, never raised: a window must start even when the
 Controller is unhappy.
 """
 
-import hashlib
 import json
 from pathlib import Path
 
@@ -19,18 +18,14 @@ API_SCRIPT = "benchmarks/a3_api_reader.py"
 DATASET_SCRIPT = "benchmarks/a3_dataset_audit_runner.py"
 
 
-def _install(workspace, module, name):
-    """Write a maintained launcher into the workspace and return its reference."""
-    directory = Path(workspace) / "benchmarks"
-    directory.mkdir(parents=True, exist_ok=True)
-    source = Path(module.__file__).resolve().read_text(encoding="utf-8")
-    target = directory / Path(name).name
-    target.write_text(source, encoding="utf-8")
-    return {
-        "path": str(Path(name)),
-        "sha256": hashlib.sha256(source.encode()).hexdigest(),
-        "destination": Path(name).name,
-    }
+def _script(module):
+    """Return the maintained launcher source; it travels inside the job request.
+
+    The job carries the script as inline job input rather than a workspace
+    attachment: attachments require a live research session record, and these
+    checks are submitted before the Agent has one.
+    """
+    return Path(module.__file__).resolve().read_text(encoding="utf-8")
 
 
 def _post(client, body):
@@ -56,12 +51,11 @@ def submit(client, workspace, dataset_root=None):
         )
     for kind, module, name, arguments in checks:
         try:
-            reference = _install(workspace, module, name)
             body = {
                 "name": "startup-" + kind,
                 "command": ["python", Path(name).name, *arguments],
                 "gpu": False,
-                "workspace_files": [reference],
+                "files": {Path(name).name: _script(module)},
             }
             result = _post(client, body)
             job_id = result.get("job_id") if isinstance(result, dict) else None
