@@ -138,6 +138,13 @@ reasoning items are removed before a request and are excluded from the estimate 
 Previously they inflated the estimate by roughly 29%, which triggered compaction far
 before the window was full.
 
+## Repeated reads
+
+A read page that is still visible in the current history is not carried twice: the
+second read returns the same path, offset and hash with `repeated: true` and no
+content. Delivered pages are tracked per page range, and compaction clears that
+tracking, so a read after a rewrite of the history returns the text again.
+
 ## Token budgets and full-transcript summaries
 
 Before each decision, the Harness reads authenticated `GET /context/config` and

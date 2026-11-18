@@ -8,6 +8,7 @@ from typing import Annotated
 
 from fastapi import Header, HTTPException
 
+from a3_research_agent.host.models import pricing
 from a3_research_agent.host.models.settings import (
     validate_model_request_options,
 )
@@ -210,6 +211,10 @@ class ModelRoutes:
             reasoning.get("effort") if isinstance(reasoning, dict) else None
         )
         entry["response_service_tier"] = data.get("service_tier")
+        priced = pricing.cost(data.get("usage"))
+        if priced is not None:
+            entry["cost"] = priced
+            entry["cost_currency"] = pricing.currency()
         if purpose == "summary":
             entry["summary_feedback_refs"] = summary_refs or []
         if purpose == "vision":

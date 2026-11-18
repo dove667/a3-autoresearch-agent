@@ -226,6 +226,18 @@ def dispatch(name, args, *, workspace=None, readonly_roots=None):
         result = operational_state.read_page(path, offset, limit)
         if isinstance(result, dict) and result.get("end") is not None:
             result["next_offset"] = None if result.get("eof") else result["end"]
+            if operational_state.delivered_before(result):
+                # The same page is still visible in this context; carrying it again
+                # spends tokens on text the model already has.
+                return {
+                    **result,
+                    "content": "",
+                    "repeated": True,
+                    "hint": (
+                        "This page is unchanged since your earlier read and is still in context. "
+                        "Use recall(keywords) to quote it, or read a different offset."
+                    ),
+                }
         return result
     except ToolInputError as error:
         return {"error": error.code, "hint": error.hint}

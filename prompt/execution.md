@@ -1,6 +1,6 @@
 # 研究工具与执行约定
 
-Version: 0.43.0
+Version: 0.44.0
 
 工具定义给出参数、默认值和限制；本文件说明常用流程。所有工具返回 `ok`：成功时直接读取同层结果；失败时读取 `error`、`hint` 和相关编号，修正后再调用。作业的 `status="failed"` 是执行结果，先读日志与证据再判断原因。
 
@@ -29,6 +29,8 @@ Version: 0.43.0
 ## 文件读取与修改
 
 `runtime_paths` 给出 workspace、state、inputs、reference 等实际位置。workspace 内可写，其他可读输入和会话状态只读；plan、memory、skills 使用各自工具。
+
+同一个页面在上下文里还没被压缩掉时，重复 `read` 会返回 `repeated=true` 和空正文——正文你已经有了，需要引用就用 `recall`，要看别处就换 offset。压缩后重新读会照常给正文。
 
 `list` 返回名称、路径和类型，按 `next_offset` 继续；`search_files` 可先定位关键词。`read`、`job_artifact`、`session_artifact` 按字符分页，使用返回的游标、哈希和 eof 判断覆盖；JSON 文件可用 `read(fields=[...])` 选顶层字段。二进制只返回元数据，原文件留在执行端。
 

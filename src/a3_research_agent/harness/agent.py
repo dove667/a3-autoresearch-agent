@@ -422,6 +422,9 @@ def main() -> None:
                 ledger.from_compaction(compaction_record)
             if prepared_messages is not messages:
                 messages = prepared_messages
+                # Delivered read pages are only "already in context" until the
+                # history that carried them is rewritten.
+                operational_state.reset_delivered()
                 checkpoint(messages)
             context_recovery.clear(log=log)
             request = {

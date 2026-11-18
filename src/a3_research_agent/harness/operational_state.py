@@ -199,6 +199,7 @@ def record_page(call_id, page):
 
 
 def mark_delivered(messages):
+    """Mark the read pages the model has now actually received."""
     state = load()
     changed = False
     for message in messages:
@@ -326,3 +327,28 @@ def update_job(state, job, status):
     for key in terminal[: max(0, len(terminal) - 64)]:
         del jobs[key]
     return True
+
+
+def delivered_before(page):
+    """Report whether this exact page is already visible in the current context."""
+    if not isinstance(page, dict) or not {"path", "sha256", "offset", "end"} <= page.keys():
+        return False
+    key = hashlib.sha256((page["path"] + "\0" + page["sha256"]).encode()).hexdigest()
+    entry = load()["reads"].get(key)
+    if not entry:
+        return False
+    return any(
+        start <= page["offset"] and end >= page["end"] for start, end in entry.get("delivered", [])
+    )
+
+
+def reset_delivered():
+    """Forget delivered pages after a compaction rewrote the visible history."""
+    state = load()
+    if not state["reads"]:
+        return
+    for entry in state["reads"].values():
+        entry["delivered"] = []
+        for receipt in entry["receipts"].values():
+            receipt["delivered"] = False
+    save(state)
