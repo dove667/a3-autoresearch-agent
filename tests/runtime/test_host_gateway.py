@@ -142,6 +142,17 @@ def test_upstream_bad_request_records_only_safe_validation_details(tmp_path, dir
     assert provider_id not in response.text
 
 
+def test_upstream_missing_parameter_can_be_extracted_without_logging_the_message():
+    from a3_research_agent.host.models.direct import DirectHTTPError
+    from a3_research_agent.host.telemetry.model_errors import validation_details
+
+    body = {"error": {"message": "Missing required parameter: 'input[4].call_id'; private content"}}
+    assert validation_details(DirectHTTPError(400, json.dumps(body))) == {
+        "param": "input[4].call_id",
+        "reasons": ["missing_parameter"],
+    }
+
+
 def test_model_request_cannot_override_upstream_or_use_hosted_tools(tmp_path):
     client = client_for(tmp_path)
     for extra in (
@@ -248,9 +259,29 @@ def test_job_list_recovers_owned_history_without_new_submissions(tmp_path):
 
     client = client_for(tmp_path, remote=remote)
     headers = {"Authorization": "Bearer token-a"}
-    result = client.get("/jobs?limit=10", headers=headers)
+    result = client.get("/jobs?scope=self&limit=10", headers=headers)
     assert result.status_code == 200
     assert result.json()["status_source"] == "controller_metadata"
     assert calls == [("jobs-list", {"experiment_id": "experiment-a", "after": "", "limit": 10})]
     assert client.get("/jobs?scope=outsider", headers=headers).status_code == 403
     assert len(calls) == 1
+
+
+def test_gateway_records_rejected_gpu_admission_without_registering_a_job(tmp_path):
+    rejected = {
+        "status": "resource_unavailable",
+        "job_id": None,
+        "gpu_memory_mb": 24000,
+        "gpu_capacity_mb": 20480,
+    }
+    api = client_for(tmp_path, remote=lambda *_: rejected)
+    response = api.post(
+        "/jobs",
+        headers={"Authorization": "Bearer token-a"},
+        json={"command": ["true"], "gpu": True, "gpu_memory_mb": 24000},
+    )
+    assert response.json() == rejected
+    logs = tmp_path / "logs/gateway-events.jsonl"
+    event = json.loads(logs.read_text().splitlines()[-1])
+    assert event["admission"] == {k: v for k, v in rejected.items() if k != "job_id"}
+    assert not (tmp_path / "job-inputs.jsonl").exists()

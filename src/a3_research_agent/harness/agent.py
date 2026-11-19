@@ -48,11 +48,9 @@ BASE = None
 TOKEN = None
 PLAN_STALE_TURNS = 6
 PLAN_PROGRESS_NOTICE = (
-    "Plan revision has not advanced for several decisions. Stop adding inspection jobs. "
-    "Write the observed facts and the single next action into plan (update or review), "
-    'or call research_status(status="blocked", reason=..., required_action=...) if a '
-    "missing permission or resource prevents progress. A job that is not bound to a plan "
-    "step is not research progress."
+    "Check research_plan.next_action for the current focus. Record a meaningful result or "
+    "decision using plan update or review. If the current batch is running, wait for its "
+    "result. If a permission or resource prevents progress, record the blocker."
 )
 # Never let a macOS system proxy (for example Shadowrocket) intercept the
 # loopback Host gateway. Only the model upstream needs its own direct route.
@@ -547,10 +545,9 @@ def main() -> None:
                         plan_stale = 0
                     else:
                         plan_stale += 1
-                        if plan_stale >= PLAN_STALE_TURNS:
+                        if plan_stale == PLAN_STALE_TURNS:
                             messages.append({"role": "user", "content": PLAN_PROGRESS_NOTICE})
                             log({"plan_progress_required": plan_stale})
-                            plan_stale = 0
             if not calls:
                 if (
                     state_paths.path(state_paths.OUTCOME).exists()

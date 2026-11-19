@@ -41,13 +41,21 @@ PARAMETER = re.compile(
     r"(?:\[\d{1,6}\]|\.(?:type|role|content|arguments|call_id|name|parameters|"
     r"output|image_url|effort|format|strict|description|\d{1,6}))*"
 )
+MISSING_PARAMETER = re.compile(
+    r"\bmissing (?:required )?(?:field|parameter|argument)\s*:?\s*"
+    r"['\"`]([A-Za-z0-9_.\[\]]{1,160})['\"`]",
+    re.IGNORECASE,
+)
 REASONS = {
     "context_limit": r"context (?:length|window|limit)|too many input tokens",
     "output_token_parameter": r"max_output_tokens|maximum output (?:length|tokens)",
     "tool_history_mismatch": r"no tool (?:call|output)|tool call.{0,40}(?:match|missing|without)",
     "invalid_tool_choice": r"tool_choice|tool choice",
     "unsupported_parameter": r"(?:unknown|unrecognized|unsupported) (?:field|parameter)",
-    "missing_parameter": r"(?:required|missing) (?:field|parameter)|(?:field|parameter).{0,30} is required",
+    "missing_parameter": (
+        r"(?:required|missing) (?:field|parameter|argument)"
+        r"|(?:field|parameter|argument).{0,30} is required"
+    ),
     "invalid_json": r"(?:invalid|malformed) json|json (?:parse|decode)",
     "invalid_image": r"input_image|image_url|invalid image|unsupported image",
 }
@@ -104,4 +112,8 @@ def validation_details(error: Exception) -> dict:
         ]
         if reasons:
             details["reasons"] = reasons
+        if "param" not in details and (missing := MISSING_PARAMETER.search(message)):
+            parameter = missing.group(1)
+            if PARAMETER.fullmatch(parameter):
+                details["param"] = parameter
     return details

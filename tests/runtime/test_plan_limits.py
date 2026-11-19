@@ -1,5 +1,7 @@
 """Long research notes must be kept, not rejected, and the step cap must fit batches."""
 
+import pytest
+
 from a3_research_agent.harness.plan import model
 
 
@@ -35,6 +37,32 @@ def test_a_batch_plan_can_hold_more_than_twenty_steps():
     revised = model.revise(plan_with({}), {"steps": steps})
     assert len(revised["steps"]) == 25
     assert model.ordered_steps(revised["steps"])[:3] == ["s0", "s1", "s2"]
+
+
+def test_closed_steps_do_not_use_execution_capacity():
+    completed = {
+        f"old{index}": model.merge_step({}, {"status": "done", "evidence": [f"report {index}"]})
+        for index in range(32)
+    }
+    revised = model.revise(
+        plan_with(completed), {"steps": [{"id": "next", "depends_on": ["old0"]}]}
+    )
+    assert revised["steps"]["old0"]["status"] == "done"
+    assert revised["steps"]["next"]["depends_on"] == ["old0"]
+
+
+def test_rewriting_a_completed_criterion_requires_new_evidence_or_reopening():
+    step = model.merge_step(
+        {}, {"status": "done", "criterion": "Dataset ready", "evidence": ["merge-report.json"]}
+    )
+    plan = plan_with({"s1": step})
+    update = {"id": "s1", "criterion": "Mixed policy trained and evaluated"}
+    with pytest.raises(ValueError, match="Reopen"):
+        model.revise(plan, {"reason": "extend task", "steps": [update]})
+    reopened = model.revise(
+        plan, {"reason": "extend task", "steps": [{**update, "status": "pending"}]}
+    )
+    assert reopened["steps"]["s1"]["status"] == "pending"
 
 
 def test_a_review_citing_a_beaten_baseline_is_flagged():

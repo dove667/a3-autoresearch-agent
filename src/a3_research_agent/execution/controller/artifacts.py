@@ -5,7 +5,7 @@ import codecs
 import hashlib
 import os
 
-from a3_research_agent.execution.exports.readonly import open_source
+from a3_research_agent.execution.exports.readonly import open_directory, open_source
 
 from .files import MAX_FILE_BYTES, safe_path
 from .store import JobStore
@@ -101,7 +101,7 @@ def read_artifact(store: JobStore, request: dict) -> dict:
 
 
 def list_artifacts(store: JobStore, request: dict) -> dict:
-    """List top-level names in an owner-scoped area without reading file contents."""
+    """List names in an owner-scoped directory without reading file contents."""
     job = store.load(request.get("job_id"), request.get("experiment_id"))
     area = request.get("area", "workspace")
     if area not in {"workspace", "outputs"}:
@@ -109,12 +109,18 @@ def list_artifacts(store: JobStore, request: dict) -> dict:
     if area == "outputs" and not job.get("run_id"):
         raise ValueError("outputs area is unavailable for legacy jobs")
     root = store.outputs(job) if area == "outputs" else store.workspace(job)
+    directory = request.get("directory")
+    target = root if directory is None else safe_path(root, directory)
     try:
-        names = sorted(os.listdir(root))
+        with open_directory(target) as descriptor:
+            names = sorted(os.listdir(descriptor))
     except FileNotFoundError:
+        if directory is not None:
+            raise
         names = []
     return {
         "area": area,
+        **({"directory": directory} if directory is not None else {}),
         "entries": names[:200],
         "count": min(len(names), 200),
         "truncated": len(names) > 200,

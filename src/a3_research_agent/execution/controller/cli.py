@@ -100,6 +100,7 @@ def main() -> None:
                     {
                         "status": "ok",
                         "observed_at": time.time(),
+                        "gpu_capacity_mb": args.gpu_capacity_mb if args.share_gpus else None,
                         "gpus": [
                             {
                                 "index": device["index"],

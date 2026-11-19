@@ -18,6 +18,7 @@ ARTIFACT_FIELDS = {
     "job_id": {"type": "string", "pattern": "^[a-f0-9]{32}$"},
     "path": STRING,
     "paths": {"type": "array", "items": STRING, "minItems": 1, "maxItems": 16},
+    "directory": STRING,
     "area": {"type": "string", "enum": ["workspace", "outputs"]},
     "offset": {"type": "integer", "minimum": 0},
     "limit": {"type": "integer", "minimum": 1, "maximum": 8000},
@@ -40,16 +41,17 @@ def _names(values):
     return result
 
 
-def listing(request, job_id, area="outputs"):
-    """Return top-level artifact names, or an unavailable reason; never raise."""
+def listing(request, job_id, area="outputs", directory=None):
+    """Return artifact names, or an unavailable reason; never raise."""
     if not isinstance(job_id, str) or not JOB_ID.fullmatch(job_id):
         return {"unavailable": "invalid_job_id"}
     if area not in {"workspace", "outputs"}:
         return {"unavailable": "invalid_area"}
+    fields = {"area": area}
+    if directory is not None:
+        fields["directory"] = directory
     try:
-        result = request(
-            "GET", f"/jobs/{job_id}/artifacts/list?" + urlencode({"area": area})
-        )
+        result = request("GET", f"/jobs/{job_id}/artifacts/list?" + urlencode(fields))
     except Exception:  # noqa: BLE001 - listing is optional evidence, not a decision
         return {"unavailable": "transport_error"}
     if not isinstance(result, dict):
@@ -60,9 +62,22 @@ def listing(request, job_id, area="outputs"):
     if result.get("status") == "error":
         return {"unavailable": "controller_error"}
     entries = result.get("entries")
-    if not isinstance(entries, list):
+    if not isinstance(entries, list) or result.get("directory") != directory:
         return {"unavailable": "listing_unsupported"}
-    return {"entries": _names(entries)}
+    return {"entries": _names(entries), **({"truncated": True} if result.get("truncated") else {})}
+
+
+def directory_result(request, job_id, area, directory):
+    result = listing(request, job_id, area, directory or None)
+    source = {"job_id": job_id, "area": area, "directory": directory}
+    if result.get("unavailable"):
+        return {
+            **source,
+            **result,
+            "error": "artifact_listing_unavailable",
+            "hint": "Check that directory exists in this area and that the Controller supports directory listings.",
+        }
+    return {**source, **result}
 
 
 def _detail(response):
@@ -94,9 +109,9 @@ def _not_found(job_id, area, path, response, request, *, include_listing=False):
         available = listing(request, job_id, area)
         names = available.get("entries", [])
     hint = (
-        f"No {area} file at {path!r}. Call job_list to confirm the job ID and state, then "
-        f"read job_artifact(area=\"{area}\", path=...) with a top-level name from this job's "
-        "outputs. A missing file is not a reason to rerun the job."
+        f"No {area} file at {path!r}. Call job_list to confirm the job ID, then use "
+        f'job_artifact(area="{area}", directory="") for top-level names or directory=<relative path> '
+        "for a subfolder. A missing file is not a reason to rerun the job."
     )
     if names:
         shown = ", ".join(names[:40])
@@ -139,6 +154,8 @@ def _page(job_id, path, area, offset, limit, request, *, list_when_missing=False
             return _not_found(
                 job_id, area, path, result, request, include_listing=list_when_missing
             )
+        if code == "artifact_is_directory":
+            return directory_result(request, job_id, area, path)
         return result
     encoding = result.get("encoding")
     if encoding == "base64":
@@ -180,7 +197,7 @@ def _page(job_id, path, area, offset, limit, request, *, list_when_missing=False
 
 def read_batch(args, request):
     """Read one artifact page, or up to 16 named files from the same job and area."""
-    arguments(args, {"job_id", "path", "paths", "area", "offset", "limit"})
+    arguments(args, {"job_id", "path", "paths", "directory", "area", "offset", "limit"})
     job_id = args.get("job_id")
     if not isinstance(job_id, str) or not JOB_ID.fullmatch(job_id):
         fail(
@@ -192,6 +209,16 @@ def read_batch(args, request):
         fail(
             "invalid_area", "Use workspace for submitted source or outputs for persistent results."
         )
+    if "directory" in args:
+        if args.keys() & {"path", "paths", "offset", "limit"}:
+            fail(
+                "invalid_artifact_paths",
+                "Use directory for a listing without file or page arguments.",
+            )
+        directory = args["directory"]
+        if directory != "":
+            directory = relative_name(directory, "directory")
+        return directory_result(request, job_id, area, directory)
     offset = integer(args.get("offset", 0), "offset", 0, 2**63 - 1)
     limit = integer(args.get("limit", 4000), "limit", 1, 8000)
     if "path" in args and "paths" in args:
@@ -234,14 +261,12 @@ def read_batch(args, request):
             if len(failed) == len(items):
                 result["error"] = "artifact_batch_failed"
                 result["hint"] = (
-                    "No path in this batch could be read. Use job_list or "
-                    "job_artifact(area=...) with a top-level output name before retrying."
+                    "No path in this batch could be read. Use job_list to check the job or "
+                    'job_artifact(directory="") to discover the output filenames.'
                 )
     elif "path" not in args:
         fail("missing_artifact_path", "Pass path for one artifact or paths for several.")
     else:
         path = relative_name(args.get("path"))
-        result = _page(
-            job_id, path, area, offset, limit, request, list_when_missing=True
-        )
+        result = _page(job_id, path, area, offset, limit, request, list_when_missing=True)
     return result

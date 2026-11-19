@@ -10,7 +10,7 @@ from urllib.parse import urlencode
 
 from . import benchmark_policy, benchmark_runner, tool_results
 from .job_outputs import ARTIFACT_FIELDS, read_batch
-from .job_preparation import PREFLIGHT_SCHEMA, normalize_preflight
+from .job_preparation import PREFLIGHT_SCHEMA, admission_rejection, normalize_preflight
 from .tool_contracts import (
     ToolInputError,
     arguments,
@@ -249,7 +249,7 @@ TOOLS = [
         "job_list",
         "List current or authorized historical jobs; after is a pagination cursor.",
         {
-            "scope": STRING,
+            "scope": {"type": "string", "description": "Use self or an authorized history scope."},
             "after": STRING,
             "limit": {"type": "integer", "minimum": 1, "maximum": 200},
         },
@@ -257,7 +257,8 @@ TOOLS = [
     definition(
         "job_artifact",
         "Read bounded UTF-8 pages from job artifacts, with source hashes. "
-        "Use path for one file or paths (up to 16) for several in one call; area=outputs "
+        "Use path for one file, paths (up to 16) for a batch, or directory for a folder listing "
+        "(empty string lists the area root). Use area=outputs "
         "for persistent results and workspace for submitted source. Binary artifacts "
         "return type and hash metadata. offset/limit count characters per file.",
         ARTIFACT_FIELDS,
@@ -767,6 +768,7 @@ BATCH_HINT = (
 
 
 def submission_result(result):
+    result = admission_rejection(result)
     if isinstance(result, dict) and result.get("ok") and isinstance(result.get("job_id"), str):
         # One call per independent command multiplies latency; say the cheaper route once.
         return {**result, "batch_hint": BATCH_HINT}

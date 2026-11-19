@@ -60,6 +60,28 @@ def test_a_finished_job_asks_for_a_review_first(seeded):
     assert "复盘" in text and "metrics" in text
 
 
+def test_compact_plan_keeps_one_focus_and_does_not_promote_backlog(seeded):
+    plan = planning.load()
+    current = "a" * 32
+    planning.dispatch(
+        {
+            "action": "update",
+            "revision": plan["revision"],
+            "steps": [
+                {"id": "s1", "status": "active", "jobs": [current]},
+                {"id": "unrelated", "priority": 100, "task": "Other route"},
+            ],
+        }
+    )
+    plan = planning.load()
+    jobs = {current: {"status": "running"}}
+    compact = planning.view(plan, jobs=jobs, compact=True)
+    assert compact["focus"] == ["s1"]
+    assert list(compact["steps"]) == ["s1"]
+    assert "不要重复提交" in compact["next_action"]
+    assert "unrelated" in planning.view(plan, jobs=jobs)["steps"]
+
+
 def test_a_running_job_is_waited_on_rather_than_resubmitted(seeded):
     jobs = {"b" * 32: {"status": "running"}}
     plan = planning.load()

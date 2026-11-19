@@ -256,6 +256,41 @@ def test_cuda_preflight_uses_frozen_request_and_fences_production(tmp_path):
     assert all("preflight" not in body for body in posts)
 
 
+def test_cuda_capacity_rejection_keeps_numbers_and_does_not_fence_retry(tmp_path):
+    from a3_research_agent.harness import job_preparation, tool_results
+
+    args = gpu_request(tmp_path)
+    _, _, _, base_request = request_fixture()
+    job = job_tools.submit_request(args, tmp_path, default_gpu=True)
+    job["preflight"] = {"cuda": True}
+    prepared = job_preparation.prepare(job, base_request)
+    probe_id = "d" * 32
+    admissions = iter(
+        [
+            {
+                "job_id": None,
+                "status": "resource_unavailable",
+                "gpu_memory_mb": 24000,
+                "gpu_capacity_mb": 20480,
+            },
+            {"job_id": probe_id, "status": "queued"},
+        ]
+    )
+
+    def request(method, path, body=None):
+        return next(admissions) if method == "POST" else base_request(method, path, body)
+
+    rejected = tool_results.normalize(
+        job_preparation.submit(prepared["prepared_id"], request, tmp_path)
+    )
+    assert rejected["error"] == "resource_unavailable"
+    assert rejected["ok"] is False
+    assert rejected["gpu_memory_mb"] == 24000
+    assert rejected["gpu_capacity_mb"] == 20480
+    pending = job_preparation.submit(prepared["prepared_id"], request, tmp_path)
+    assert pending["gpu_preflight_job_id"] == probe_id
+
+
 def test_cpu_submit_cannot_forward_a_preflight_contract(tmp_path):
     calls = []
     result = job_tools.dispatch(

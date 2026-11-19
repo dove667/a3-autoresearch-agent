@@ -157,13 +157,24 @@ def revise(plan, arguments):
         previous = steps.get(key, {})
         step = merge_step(previous, patch)
         if previous:
+            if (
+                previous["status"] == step["status"] == "done"
+                and step["criterion"] != previous["criterion"]
+                and not set(step["evidence"]).difference(previous["evidence"])
+            ):
+                raise ValueError(
+                    f"Reopen {key}, create a new step, or supply new evidence for the changed criterion"
+                )
             route_changed |= any(
                 step[field] != previous[field] for field in ("task", "criterion", "depends_on")
             )
             route_changed |= previous["status"] in ("done", "skipped") and step != previous
         steps[key] = step
-    if not 1 <= len(steps) <= MAX_STEPS:
-        raise ValueError(f"A plan must contain 1–{MAX_STEPS} steps")
+    if not steps:
+        raise ValueError("A plan must contain at least one step")
+    open_steps = sum(step["status"] not in ("done", "skipped") for step in steps.values())
+    if open_steps > MAX_STEPS:
+        raise ValueError(f"A plan can hold at most {MAX_STEPS} unfinished steps")
     if route_changed and not reason:
         raise ValueError("Give a reason when revising direction, route or a closed step")
     validate_dependencies(steps)

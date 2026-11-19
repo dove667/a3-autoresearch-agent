@@ -7,7 +7,8 @@ KNOWLEDGE_TOOLS = [
         "type": "function",
         "name": "plan",
         "description": "Keep the shared research direction, routes and execution steps. show reads the "
-        "current revision; update patches changed fields using that revision. Every new "
+        'current revision with view="focus" for the immediate action or a step id for detail; '
+        "update patches changed fields using that revision. Every new "
         "route needs question, hypothesis, experiment and decision_rule. Steps link to a "
         "route and need task and criterion. After results, review the route with "
         "conclusion, evidence and decision continue/pause/complete; continuing also needs "
@@ -20,6 +21,7 @@ KNOWLEDGE_TOOLS = [
                 "revision": {"type": "integer", "minimum": 0},
                 "reason": {"type": "string"},
                 "id": {"type": "string"},
+                "view": {"type": "string", "enum": ["all", "focus"]},
                 "direction": {
                     "type": "object",
                     "properties": {

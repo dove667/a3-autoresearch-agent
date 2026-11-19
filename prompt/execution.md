@@ -1,6 +1,6 @@
 # 研究工具与执行约定
 
-Version: 0.49.0
+Version: 0.50.0
 
 工具定义给出参数、默认值和限制；本文件说明常用流程。所有工具返回 `ok`：成功时直接读取同层结果；失败时读取 `error`、`hint` 和相关编号，修正后再调用。作业的 `status="failed"` 是执行结果，先读日志与证据再判断原因。
 
@@ -60,7 +60,7 @@ GPU 作业先调用 `job_prepare`，同样填写 name、command、attachments、
 
 独立作业批量提交可以省掉多次决策：`job_prepare(jobs=[...])` 一次准备并预检最多 16 个 GPU 请求，`job_submit(prepared_ids=[...])` 或 `job_submit(jobs=[...])` 一次提交多个，返回逐项结果；部分失败只补做失败项。
 
-提交回执记录实际源码与作业编号，使用 plan 关联当前步骤。`submission_unknown`、`production_submission_unknown` 或预检提交未知时，按返回编号查询状态及近期作业，确认之前不要重复提交。普通资源排队保留同一 job ID。
+提交回执记录实际源码与作业编号，使用 plan 关联当前步骤。`submission_unknown`、`production_submission_unknown` 或预检提交未知时，按返回编号查询状态及近期作业，确认之前不要重复提交。普通资源排队保留同一 job ID。若返回 `resource_unavailable` 且无 job ID，Controller 已拒绝申请，比较 `gpu_memory_mb` 和 `gpu_capacity_mb`，调整实际显存需求并重新准备。 `gpu_status` 可查询单卡准入上限。
 
 ## 等待和检查结果
 
@@ -68,7 +68,7 @@ GPU 作业先调用 `job_prepare`，同样填写 name、command、attachments、
 
 `job_wait` 默认持续等终态或通知，内部续接不唤醒模型；需要限时才填 timeout_seconds，0表示单次观察。没有目标会立即返回。终态回执已带该作业的 `outputs`（顶层产物清单，可直接读）和 `metrics`（已观测到的指标预览），因此通常不需要紧跟一次 `job_status` 或 `job_artifact`；只有需要完整正文时才读文件。`idle_wait(seconds=30)` 只暂停并响应通知，不轮询作业。有依赖的作业先处理上游结果。
 
-`job_status` 读状态和日志尾。作业失败时返回 `diagnosis`：`failure_class`（依赖缺失、显存不足、输入缺失、被系统终止等）、`error_line` 和建议动作；先读它再改脚本。`job_list` 分页查找有权访问的历史作业。`job_artifact(job_id,path,area="outputs")` 读持久结果；area="workspace" 读作业源码与工作文件。日志、输入和输出路径以当前作业实际环境为准，使用部署提供的 `A3_OUTPUTS` 等路径，不复制其他后端的绝对路径。
+`job_status` 读状态和日志尾。作业失败时返回 `diagnosis`：`failure_class`（依赖缺失、显存不足、输入缺失、被系统终止等）、`error_line` 和建议动作；先读它再改脚本。`job_list(scope="self")` 分页查看本身份的作业，也可传有权访问的历史 scope。`job_artifact(job_id,path,area="outputs")` 读持久结果；area="workspace" 读作业源码与工作文件。查找文件名时用 `directory=""` 列顶层，或传相对子目录。日志、输入和输出路径以当前作业实际环境为准，使用部署提供的 `A3_OUTPUTS` 等路径，不复制其他后端的绝对路径。
 
 长批次可使用部署的 episode executor。每个 episode 的 id 唯一，command 是参数数组，report 指向命令实际写出的 JSON。保存 manifest、ledger 和逐回合结果；恢复前核对原编号与已完成记录。执行成功且报告有效时，科学结果 success=false 仍是有效观察。
 
@@ -111,7 +111,7 @@ ACT 只读三路相机和 16 维状态，没有语言输入：用 `act:` 时传 
 
 ## 计划、经验和技能
 
-新 run 先 `plan(action="show")`，核对旧作业与阻塞是否仍有效，再选择当前研究问题。direction 记录长期目标、指标和能力缺口；routes 记录假设、实验和决策条件；steps 记录当前执行、依赖、作业和证据。用当前 revision 更新改变的字段。
+新 run 先 `plan(action="show",view="focus")`，核对当前作业与阻塞。direction 记录长期目标、指标和能力缺口；routes 记录假设、实验和决策条件；steps 记录当前执行、依赖、作业和证据。用当前 revision 更新改变的字段。需要完整计划时用 `view="all"`，需要某一步正文时传 `id`。
 
 新路线至少提供 id、question、hypothesis、experiment、decision_rule；步骤至少提供 id、route、task、criterion。关键结果读完后用 review 保存结论与继续、暂停或结束决定：
 
@@ -121,9 +121,9 @@ ACT 只读三路相机和 16 维状态，没有语言输入：用 `act:` 时传 
 
 `decision="continue"` 必须给出至少一条含数值的 `metrics`，`step` 可选地标明本次结论对应的步骤；暂停或结束路线可以不带 metrics。
 
-`research_plan.next_action` 每轮给出一句“下一步该做什么”：有作业结束时先复盘该路线，有可开工步骤时点名步骤与完成判据，都停着时提示改条件或新增步骤。按它推进，比重新浏览整份计划省轮次。
+`research_plan` 每轮给出一个焦点步骤和 `next_action`。优先复盘当前路线的新结果，其次推进或等待已启动的实验。把并行主要放在同一批次的 seeds、对照组或采集分片上。新证据改变优先级时，主动用 plan 更新路线和步骤。未完成步骤最多 32 个，已完成或跳过的步骤继续保留依赖和证据。
 
-所有待办和进展都在 plan 中维护。**一个 step 是一批工作**（例如“2×5 六格 × 三难度全量评测”），不是一个作业；批次内多个作业并行推进。一批结束后再 `plan update` 写 `status="done"`、`evidence` 和实际 `progress`，不要每提交一个作业就重写整份计划，也不要在结果文件或文字里单方面宣布完成。已学到的发现写 memory，稳定可复用的操作方法写 skills。
+所有待办和进展都在 plan 中维护。**一个 step 是一批工作**（例如一组同种子配对评测）。批次内多个作业并行推进。达到 criterion 后用 `plan update` 写 `status="done"`、`evidence` 和实际 `progress`。训练步骤需核对实际 checkpoint，评测步骤需核对对应回执。若要改动已完成步骤的 criterion，另建步骤、重新打开原步骤，或提供满足新判据的证据。已学到的发现写 memory，稳定可复用的操作方法写 skills。
 
 memory 使用 `search(query="当前研究问题")` 检索摘要，`read(id)` 读正文与 revision；`sources(id)` 列证据，再用 sources(id,ref) 读取来源。当前上下文会提供少量相关经验摘要，先确认 scope。用 write(content,scope,refs,kind) 保存值得跨实验复用的结论；临时观察用 lifetime="run"。update(id,revision,reason,content) 修正，archive／restore(id,revision,reason) 管理有效性。相似写入提示出现时先读原条目；同一发现更新原 ID，独立发现写明区别后 force=true、reason=... 保存。历史条目不授予当前权限。
 

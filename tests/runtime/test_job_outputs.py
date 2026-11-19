@@ -38,10 +38,46 @@ def test_listing_returns_top_level_names_and_filters_traversal():
             "entries": ["seed-10000.json", {"name": "diag"}, "../escape", "a/b"],
         }
 
-    assert job_outputs.listing(request, JOB) == {
-        "entries": ["seed-10000.json", "diag"]
-    }
+    assert job_outputs.listing(request, JOB) == {"entries": ["seed-10000.json", "diag"]}
     assert requests == [("GET", f"/jobs/{JOB}/artifacts/list?area=outputs")]
+
+
+def test_directory_can_be_listed_directly_or_discovered_from_a_file_read():
+    calls = []
+
+    def request(method, path):
+        calls.append(path)
+        if "/artifacts/list?" in path:
+            return {"area": "outputs", "directory": "diag/seed1", "entries": ["events.json"]}
+        return {
+            "http_error": 400,
+            "body": json.dumps({"detail": {"code": "artifact_is_directory"}}),
+        }
+
+    for field in ("directory", "path"):
+        result = job_outputs.read_batch(
+            {"job_id": JOB, "area": "outputs", field: "diag/seed1"}, request
+        )
+        assert result["directory"] == "diag/seed1"
+        assert result["entries"] == ["events.json"]
+    assert calls[0].endswith("area=outputs&directory=diag%2Fseed1")
+
+
+def test_controller_lists_nested_artifact_directory_without_following_symlinks(tmp_path):
+    store = job_store.JobStore(tmp_path)
+    job = store.create("owner", ["true"], False, {}, run_id="run-one")
+    root = store.outputs(job)
+    (root / "diag" / "seed1").mkdir(parents=True)
+    (root / "diag" / "seed1" / "events.json").write_text("{}")
+    (root / "link").symlink_to(root / "diag", target_is_directory=True)
+    request = {"experiment_id": "owner", "job_id": job["job_id"], "area": "outputs"}
+    result = job_artifacts.list_artifacts(store, request | {"directory": "diag/seed1"})
+    assert result["directory"] == "diag/seed1"
+    assert result["entries"] == ["events.json"]
+    with pytest.raises(IsADirectoryError):
+        job_artifacts.read_artifact(store, request | {"path": "diag/seed1"})
+    with pytest.raises(ValueError):
+        job_artifacts.list_artifacts(store, request | {"directory": "link/seed1"})
 
 
 @pytest.mark.parametrize(

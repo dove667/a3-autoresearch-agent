@@ -167,24 +167,55 @@ def view(plan=None, *, jobs=None, compact=False):
     if not compact:
         result["reviews"] = plan.get("reviews", [])
     if compact:
-        ordered = ready + [
-            key for key, step in steps.items() if key not in ready and step["status"] == "active"
-        ]
-        ordered += [
-            key
+        open_steps = {
+            key: step
             for key, step in steps.items()
-            if key not in ordered and step["status"] in ("pending", "blocked")
+            if step["status"] not in ("done", "skipped")
+            and routes.get(step.get("route"), {}).get("status") not in ("paused", "completed")
+        }
+        running_states = operational.JOB_STATES - operational.TERMINAL_JOB_STATES
+        running = [
+            key
+            for key, step in open_steps.items()
+            if any(status in running_states for status in step["observed_jobs"].values())
         ]
-        # One line per step keeps the whole plan visible; detail goes to the focus work.
+        foreground_reviews = [item for item in review_due if item["step"] in open_steps]
+        active_ready = [key for key in ready if steps[key]["status"] == "active"]
+        running_route = steps[running[0]].get("route") if running else None
+        same_route_ready = [
+            key
+            for key in active_ready
+            if running_route and steps[key].get("route") == running_route
+        ]
+        candidates = (
+            [item["step"] for item in foreground_reviews]
+            + same_route_ready
+            + running
+            + active_ready
+            + ready
+            + list(open_steps)
+        )
+        ordered = list(dict.fromkeys(candidates))
+        focus = ordered[:1]
+        actionable = [key for key in focus if key in ready]
+        result["focus"] = focus
+        result["order"] = focus
+        result["unlinked_steps"] = [key for key in focus if not steps[key].get("route")]
+        result["next_action"] = next_action(
+            {key: steps[key] for key in [*focus, *running]},
+            actionable,
+            foreground_reviews,
+            routes,
+        )
+        # Keep backlog visible as one-line suggestions without sending its task detail.
         result["overview"] = [
             {
                 "id": key,
                 "status": steps[key]["status"],
                 "route": steps[key].get("route", ""),
                 "task": steps[key].get("task", "")[:80],
-                "jobs": steps[key].get("observed_jobs", {}),
             }
-            for key in ordered[:8]
+            for key in ordered[:3]
         ]
         result["parallelism"] = {
             "ready_steps": len(ready),
@@ -197,7 +228,7 @@ def view(plan=None, *, jobs=None, compact=False):
                 }
             ),
         }
-        visible = {key: steps[key] for key in ordered[:5]}
+        visible = {key: steps[key] for key in focus}
         selected_routes = {step.get("route") for step in visible.values()}
         result["direction"] = {
             "objective": result["direction"]["objective"][:500],
@@ -223,15 +254,8 @@ def view(plan=None, *, jobs=None, compact=False):
             if key in selected_routes
         }
         result["omitted_routes"] = len(routes) - len(result["routes"])
-        result["review_due"] = review_due[:5]
+        result["review_due"] = foreground_reviews[:1]
         result["omitted_reviews_due"] = len(review_due) - len(result["review_due"])
-        while len(visible) > 1 and manager.size({**result, "steps": visible}) > 5500:
-            del visible[next(reversed(visible))]
-            selected_routes = {step.get("route") for step in visible.values()}
-            result["routes"] = {
-                key: route for key, route in result["routes"].items() if key in selected_routes
-            }
-            result["omitted_routes"] = len(routes) - len(result["routes"])
         result["omitted_steps"] = len(steps) - len(visible)
         steps = visible
     return {**result, "steps": steps}
@@ -245,7 +269,7 @@ def dispatch(arguments):
 def dispatch_locked(arguments):
     action = arguments.get("action")
     allowed = {
-        "show": {"action", "id"},
+        "show": {"action", "id", "view"},
         "update": {"action", "revision", "direction", "routes", "steps", "archive", "reason"},
         "review": {
             "action",
@@ -267,13 +291,21 @@ def dispatch_locked(arguments):
     plan = load()
     plan_store.snapshot(plan_file(), paths.plan_snapshots_root())
     if action == "show":
-        result = view(plan)
         key = arguments.get("id")
+        style = arguments.get("view", "all")
+        if style not in ("all", "focus") or (style == "focus" and key is not None):
+            return {"error": "plan_validation", "hint": 'Use view="focus" or a step id.'}
+        result = view(plan, compact=style == "focus")
         if key is not None:
             if not isinstance(key, str) or key not in result["steps"]:
                 return {"error": "unknown_plan_step"}
             result["steps"] = {key: result["steps"][key]}
             result["order"] = [key]
+            route = result["steps"][key].get("route")
+            result["routes"] = {
+                name: item for name, item in result["routes"].items() if name == route
+            }
+            result["reviews"] = [item for item in result["reviews"] if item["route"] == route]
         return result
     if action not in ("update", "review"):
         return {"error": "plan_validation", "hint": "Use show, update or review"}

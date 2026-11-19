@@ -212,7 +212,7 @@ def prepare(job, request):
             record.update(preflight_job_id=preflight_id, preflight_submission_unknown=False)
         elif rejected_send(result):
             path.unlink()
-            return result
+            return admission_rejection(result)
         else:
             record["response"] = result
         atomic(path, json.dumps(record))
@@ -369,8 +369,24 @@ def rejected_send(result):
         return False
     http_error = result.get("http_error")
     return (type(http_error) is int and 400 <= http_error < 500) or (
-        result.get("status") == "resource_busy" and not result.get("job_id")
+        result.get("status") in {"resource_busy", "resource_unavailable", "storage_limit"}
+        and not result.get("job_id")
     )
+
+
+def admission_rejection(result):
+    """Expose Controller refusals separately from sends that may have created a job."""
+    if not isinstance(result, dict) or result.get("job_id"):
+        return result
+    status = result.get("status")
+    hints = {
+        "resource_unavailable": (
+            "This job was not created. Prepare a new request with a feasible GPU memory "
+            "requirement and adjust the workload if needed."
+        ),
+        "storage_limit": "This job was not created. Check the run storage limit with the operator.",
+    }
+    return {**result, "error": status, "hint": hints[status]} if status in hints else result
 
 
 def check_cuda(record, path, identifier, request):
@@ -402,7 +418,7 @@ def check_cuda(record, path, identifier, request):
             "status": "gpu_preflight_pending",
             "hint": "Wait for gpu_preflight_job_id, then call job_submit with the same prepared_id.",
         }
-    return result if rejected_send(result) else unknown
+    return admission_rejection(result) if rejected_send(result) else unknown
 
 
 def submit(identifier, request, workspace):

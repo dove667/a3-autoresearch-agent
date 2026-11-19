@@ -38,23 +38,34 @@ def sync_directory(path: Path) -> None:
 
 
 @contextmanager
-def open_source(path: Path):
-    """Keep directory descriptors fixed and refuse links during every open."""
+def open_directory(path: Path):
+    """Open a directory without following links in any path component."""
     descriptor = os.open(path.anchor, os.O_RDONLY | os.O_DIRECTORY)
     try:
-        for component in path.parts[1:-1]:
+        for component in path.parts[1:]:
             next_descriptor = os.open(
                 component, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=descriptor
             )
             os.close(descriptor)
             descriptor = next_descriptor
-        source = os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=descriptor)
-        with os.fdopen(source, "rb") as stream:
-            if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
-                raise ValueError("Export source is no longer a regular file")
-            yield stream
+        yield descriptor
     finally:
         os.close(descriptor)
+
+
+@contextmanager
+def open_source(path: Path):
+    """Keep directory descriptors fixed and refuse links during every open."""
+    with open_directory(path.parent) as descriptor:
+        source = os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=descriptor)
+        mode = os.fstat(source).st_mode
+        if not stat.S_ISREG(mode):
+            os.close(source)
+            if stat.S_ISDIR(mode):
+                raise IsADirectoryError("Artifact source is a directory")
+            raise ValueError("Export source is no longer a regular file")
+        with os.fdopen(source, "rb") as stream:
+            yield stream
 
 
 class ReadonlyExports:

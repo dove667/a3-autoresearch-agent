@@ -11,6 +11,7 @@ from typing import Annotated, Literal
 from fastapi import Header, HTTPException, Query
 
 from a3_research_agent.execution.controller.files import MAX_FILE_BYTES
+from a3_research_agent.host.telemetry.diagnostics import CURRENT_REQUEST
 
 from .evaluation import EvaluationComparison, evaluation_diagnostics
 from .job_observation import TERMINAL_STATES, ControllerObservationUnavailable, compact_status
@@ -174,6 +175,13 @@ class JobRoutes:
             if not result.get("job_id"):
                 self.jobs[experiment].discard(job_id)
                 self.save_checkpoint()
+                event = CURRENT_REQUEST.get()
+                if event is not None:
+                    event["admission"] = {
+                        key: result[key]
+                        for key in ("status", "gpu_memory_mb", "gpu_capacity_mb")
+                        if key in result
+                    }
             if result.get("job_id"):
                 self.jobs[experiment].discard(job_id)
                 self.jobs.setdefault(experiment, set()).add(result["job_id"])
@@ -206,7 +214,7 @@ class JobRoutes:
         limit: int = 200,
     ):
         actor = self.owner(authorization)
-        scope = scope or actor
+        scope = actor if not scope or scope == "self" else scope
         if scope not in self.project_read_scopes(actor):
             raise HTTPException(403, "Research scope is not accessible")
         historical_run = self.project_scope_runs.get(scope)
@@ -499,14 +507,17 @@ class JobRoutes:
         job_id: str,
         authorization: Annotated[str | None, Header()] = None,
         area: Literal["workspace", "outputs"] = "outputs",
+        directory: Annotated[str | None, Query(min_length=1, max_length=4096)] = None,
     ):
-        """List top-level names only; the file read route keeps its existing contract."""
+        """List an authorized directory; the file read route keeps its existing contract."""
         actor = self.owner(authorization)
         payload = {
             "experiment_id": self.job_owner(actor, job_id, shared_read=True),
             "job_id": job_id,
             "area": area,
         }
+        if directory is not None:
+            payload["directory"] = directory
         try:
             result = self.remote("artifacts-list", payload)
         except HTTPException as error:
@@ -520,7 +531,11 @@ class JobRoutes:
                     },
                 ) from None
             raise
-        if result.get("area") != area or not isinstance(result.get("entries"), list):
+        if (
+            result.get("area") != area
+            or result.get("directory") != directory
+            or not isinstance(result.get("entries"), list)
+        ):
             raise HTTPException(
                 502,
                 "Controller did not return an artifact listing; verify matching deployment versions",
@@ -634,6 +649,8 @@ class JobRoutes:
                 )
             return result
         except HTTPException as error:
+            if error.status_code == 400 and error.detail == "IsADirectoryError":
+                raise HTTPException(400, {"code": "artifact_is_directory"}) from None
             if error.status_code == 400 and error.detail == "FileNotFoundError":
                 raise HTTPException(
                     400,

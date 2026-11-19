@@ -102,7 +102,7 @@ CPU作业使用 `job_submit(name="训练ACT", command=[...], attachments=[{"path
 等待程序已观察到的活动作业。`idle_wait(seconds=30)` 只等操作者或输入通知，不轮询作业。
 Controller负责排队、GPU分配与生命周期。提交结果未知时先按编号查询，避免重复启动。
 
-`job_status`、`job_list` 查询带时间和权限的状态，`job_artifact` 按字符分页读取结果和哈希。显式 seed 组用 `benchmark(seeds=[...])` 创建，通过 `benchmark_group` 推进并汇总。闭环终态附逐 seed 回执，启用录像时附轨迹事件摘要。
+`job_status`、`job_list` 查询带时间和权限的状态。用 `job_list(scope="self")` 查看当前身份的作业。用 `job_artifact(directory="")` 列出选定区域的顶层文件名，或传相对子目录，再用 `path` 按字符分页读取结果和哈希。显式 seed 组用 `benchmark(seeds=[...])` 创建，通过 `benchmark_group` 推进并汇总。闭环终态附逐 seed 回执，启用录像时附轨迹事件摘要。
 资产通过 `export_create`、`export_status`、`export_manifest`、`export_list` 管理；
 `evaluation_compare` 比较已有配对结果。`vision_inspect` 用视觉助手扫看指定帧，`vision_view` 把关键帧直接送入主 Agent 的下一次决策。
 `search_files` 查找源码与记录，`edit` 精确修改工作区文件；覆盖现有文件的write需要当前哈希。
@@ -116,6 +116,8 @@ Controller负责排队、GPU分配与生命周期。提交结果未知时先按�
 研究计划按长期方向、研究路线与假设、执行步骤三层组织，由 Agent 编写，通过 `plan(action="show")` 查看、`plan(action="update", revision=..., ...)` 修改，统一保存到项目顶层 `plan/current.json`，路径由 `runtime_paths.plan` 提供。关键结果返回后，Agent 读取原始产物，通过 `plan(action="review", revision=..., id=<路线ID>, conclusion=..., evidence=[...], decision="continue"|"pause"|"complete")` 保存复盘和路线决策。每轮上下文包含计划摘要与待复盘作业，新运行、恢复和发布升级共用最新计划，先核对计划中的既有 job 并重新检查阻塞；各次运行的开始、修订和停止快照保存在对应 trajectory 的 `plan-snapshots/`。任务和研究进展只在plan维护；程序自动记录读取和作业观察，整轮状态由 `research_status` 保存到当前 `conversation/`。恢复和接续清单由程序生成，`files` 只列出工作区研究文件。
 
 长期经验由 `memory` 保存，search使用query，read使用id，修订/归档/恢复使用当前revision；`recall`只检索当前run的原始观测。根 `skills/` 是唯一技能库，通过 `skills` 先看目录摘要，再读正文和所需附件；同一工具也负责更新正文、附件和归档。工作上下文达到压缩门槛后必须生成完整摘要，32k 等目标预算覆盖整个下一轮输入；机制见[上下文与记忆](../reference/context-and-memory.md)。
+
+Agent 每轮接收一个焦点步骤的详情和下一步建议。优先消化当前路线的新结果，正在执行的步骤先于未启动的待办。独立种子、对照组和分片仍可在同一批次并行。通过 `plan(action="show", view="focus")` 读当前焦点，`view="all"` 读完整计划。32 个名额适用于未完成步骤，历史步骤保留依赖与证据。
 
 ## 持续研究与暂停
 
