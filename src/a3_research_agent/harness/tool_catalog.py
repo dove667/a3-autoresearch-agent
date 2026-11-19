@@ -15,15 +15,18 @@ KNOWLEDGE_TOOLS = [
         "type": "function",
         "name": "plan",
         "description": "Keep the shared research direction, routes and execution steps. show reads the "
-        'current revision with view="focus" for the immediate action or a step id for detail; '
+        'current revision with view="focus" for the immediate action or id for milestone detail; '
         "update patches changed fields using that revision. Every new "
-        "route needs question, hypothesis, experiment and decision_rule. When web is enabled, "
+        "route addresses a substantial research question and needs question, hypothesis, "
+        "experiment and decision_rule. When web is enabled, "
         "starting a route or changing its active design requires research: cite implementation "
-        "and papers read through web_fetch and explain how they inform the design. Steps link to a "
-        "route and need task and criterion. After results, review the route with "
+        "and papers read through web_fetch or verified by deep_research, and explain how they "
+        "inform the design. Steps are route milestones with a task and criterion. Keep "
+        "diagnostic hypotheses and routine checks in the current context or experiment notes. "
+        "Review the route when results change its direction, with "
         "conclusion, evidence and decision continue/pause/complete; continuing also needs "
-        "measured metrics, and step optionally names the step the decision closes. All "
-        "tasks and job progress belong here. Up to four routes may be active; keep new ideas proposed.",
+        "measured metrics, and step optionally names the related milestone. Up to four routes "
+        "may be active; substantial candidates can be kept as proposed.",
         "parameters": {
             "type": "object",
             "properties": {

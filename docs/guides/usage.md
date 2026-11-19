@@ -121,7 +121,9 @@ Controller负责排队、GPU分配与生命周期。提交结果未知时先按�
 
 采集与评估通过[episode 执行器](../reference/episode-executor.md)管理完成台账和并发。作业脚本从环境读取 `A3_OUTPUTS`、`A3_EPISODE_EXECUTOR` 及资产路径，避免沿用另一后端的路径。
 
-研究计划按长期方向、研究路线与假设、执行步骤三层组织，由 Agent 编写，通过 `plan(action="show")` 查看、`plan(action="update", revision=..., ...)` 修改，统一保存到项目顶层 `plan/current.json`，路径由 `runtime_paths.plan` 提供。关键结果返回后，Agent 读取原始产物，通过 `plan(action="review", revision=..., id=<路线ID>, conclusion=..., evidence=[...], decision="continue"|"pause"|"complete")` 保存复盘和路线决策。每轮上下文包含计划摘要与待复盘作业，新运行、恢复和发布升级共用最新计划，先核对计划中的既有 job 并重新检查阻塞；各次运行的开始、修订和停止快照保存在对应 trajectory 的 `plan-snapshots/`。任务和研究进展只在plan维护；程序自动记录读取和作业观察，整轮状态由 `research_status` 保存到当前 `conversation/`。恢复和接续清单由程序生成，`files` 只列出工作区研究文件。
+研究计划按长期目标、研究路线、里程碑三层组织。一条路线回答一个值得跨运行推进的问题，例如评估 π₀.₅ 迁移到 A3 后在两项任务上的表现。步骤可以是数据就绪、适配验证、完成微调、配对评估。动作失败定位、小假设验证和常规排错由 Agent 在当前上下文处理，值得保留的诊断证据写入实验记录。
+
+Agent 用 `plan(action="show")` 查看，用 `plan(action="update", revision=..., ...)` 修改。达到里程碑时更新对应步骤和证据。结果影响路线决策时，用 `plan(action="review", revision=..., id=<路线ID>, conclusion=..., evidence=[...], decision="continue"|"pause"|"complete")` 记录判断。共享计划保存在项目顶层 `plan/current.json`，路径由 `runtime_paths.plan` 提供。新运行、恢复和发布升级共用最新计划。各次运行的开始、修订和停止快照保存在对应 trajectory 的 `plan-snapshots/`。程序自动记录作业状态，整轮状态由 `research_status` 保存到当前 `conversation/`。
 
 长期经验由 `memory` 保存，search使用query，read使用id，修订/归档/恢复使用当前revision；`recall`只检索当前run的原始观测。根 `skills/` 是唯一技能库，通过 `skills` 先看目录摘要，再读正文和所需附件；同一工具也负责更新正文、附件和归档。工作上下文达到压缩门槛后必须生成完整摘要，32k 等目标预算覆盖整个下一轮输入；机制见[上下文与记忆](../reference/context-and-memory.md)。
 

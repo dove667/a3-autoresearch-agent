@@ -226,6 +226,36 @@ def test_overview_preserves_full_task_progress_and_next_hint(tmp_path):
     assert snapshot["plan"]["next_hint"] == f"下一步：{task}"
 
 
+def test_snapshot_hides_completed_routes_and_preserves_completed_dependencies(tmp_path):
+    _run, observer = build_project(tmp_path)
+    plan_path = tmp_path / "plan/current.json"
+    plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    plan["routes"]["closed"] = {"status": "completed", "question": "已结束的路线"}
+    plan["steps"]["old"] = {
+        **plan["steps"]["s1"],
+        "route": "closed",
+        "status": "done",
+        "jobs": [JOB_DONE],
+    }
+    plan["steps"]["s1"]["depends_on"] = ["old"]
+    plan["reviews"] = [
+        {"route": "closed", "step": "old", "decision": "complete", "observed_jobs": {}},
+        {"route": "r1", "step": "s1", "decision": "continue", "observed_jobs": {}},
+    ]
+    write(plan_path, plan)
+
+    snapshot = build_snapshot(tmp_path, process_observer=observer)
+    visible = snapshot["plan"]
+    assert [route["id"] for route in visible["routes"]] == ["r1"]
+    assert visible["order"] == ["s1", "s2"]
+    assert visible["focus"]["id"] == "s1"
+    assert visible["focus"]["unmet_dependencies"] == []
+    assert [review["route"] for review in visible["reviews"]] == ["r1"]
+    assert all(review["route"] != "closed" for review in visible["review_due"])
+    assert visible["progress"] == {"done": 0, "total": 2, "percent": 0}
+    assert any(job["id"] == JOB_DONE for job in snapshot["jobs"]["items"])
+
+
 def test_snapshot_reads_live_run_plan_memory_and_skills(tmp_path):
     _run, observer = build_project(tmp_path)
     snapshot = build_snapshot(tmp_path, "latest", now=1_800_000_300, process_observer=observer)

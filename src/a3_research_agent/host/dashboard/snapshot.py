@@ -30,7 +30,6 @@ ROUTE_LABELS = {
     "proposed": "待验证",
     "active": "进行中",
     "paused": "已暂停",
-    "completed": "已完成",
 }
 
 DECISION_LABELS = {"continue": "继续", "pause": "暂停", "complete": "完成"}
@@ -100,12 +99,17 @@ def plan_payload(plan_file, jobs):
             "counts": {},
             "next_action": "",
         }
+    raw_routes = plan.get("routes") if isinstance(plan.get("routes"), dict) else {}
+    completed_routes = {
+        key
+        for key, route in raw_routes.items()
+        if isinstance(route, dict) and route.get("status") == "completed"
+    }
     raw_steps = {
         key: step
         for key, step in (plan.get("steps") or {}).items()
-        if isinstance(step, dict)
+        if isinstance(step, dict) and step.get("route") not in completed_routes
     }
-    raw_routes = plan.get("routes") if isinstance(plan.get("routes"), dict) else {}
     views = view.get("steps") if isinstance(view.get("steps"), dict) else raw_steps
     ordered = view.get("order") if isinstance(view.get("order"), list) else []
     order = [key for key in ordered if key in raw_steps]
@@ -113,7 +117,7 @@ def plan_payload(plan_file, jobs):
 
     routes = []
     for key, route in raw_routes.items():
-        if not isinstance(route, dict):
+        if not isinstance(route, dict) or key in completed_routes:
             continue
         route_pairs = [
             (step_id, raw_steps[step_id])
@@ -149,7 +153,7 @@ def plan_payload(plan_file, jobs):
         )
     routes.sort(
         key=lambda route: (
-            {"active": 0, "proposed": 1, "paused": 2, "completed": 3}.get(route["status"], 4),
+            {"active": 0, "proposed": 1, "paused": 2}.get(route["status"], 3),
             -route["priority"],
         )
     )
@@ -207,6 +211,8 @@ def plan_payload(plan_file, jobs):
         if not isinstance(item, dict):
             continue
         step_id = item.get("step")
+        if step_id not in raw_steps or raw_steps[step_id].get("status") in ("done", "skipped"):
+            continue
         jobs_due = item.get("jobs") if isinstance(item.get("jobs"), dict) else {}
         for job, status in jobs_due.items():
             step = raw_steps.get(step_id) or {}
@@ -229,6 +235,8 @@ def plan_payload(plan_file, jobs):
         if not isinstance(review, dict):
             continue
         route_id = review.get("route")
+        if route_id in completed_routes:
+            continue
         route = raw_routes.get(route_id) or {}
         step_id = review.get("step")
         step = raw_steps.get(step_id) or {}
@@ -256,7 +264,7 @@ def plan_payload(plan_file, jobs):
     ]
     focus_step = next((step for step in steps if step["is_focus"]), None)
     if review_due:
-        next_hint = f"有 {len(review_due)} 个作业已经结束，等待写入复盘。"
+        next_hint = f"有 {len(review_due)} 个作业已经结束，待核对结果。"
     elif focus_step:
         next_hint = f"下一步：{focus_step['task']}"
     elif active_jobs:
@@ -288,7 +296,7 @@ def plan_payload(plan_file, jobs):
             "percent": round(done / total * 100) if total else 0,
         },
         "focus": focus_step,
-        "ready": [key for key in view.get("ready") or [] if isinstance(key, str)],
+        "ready": [key for key in view.get("ready") or [] if key in raw_steps],
         "review_due": review_due[:8],
         "next_hint": next_hint,
         "unlinked_steps": [

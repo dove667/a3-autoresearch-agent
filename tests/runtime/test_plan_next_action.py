@@ -46,7 +46,7 @@ def test_ready_step_is_named_with_its_criterion(seeded):
     assert text.endswith("。")
 
 
-def test_a_finished_job_asks_for_a_review_first(seeded):
+def test_a_finished_job_prompts_for_results_and_conditional_route_review(seeded):
     jobs = {"a" * 32: {"status": "completed"}}
     plan = planning.load()
     planning.dispatch(
@@ -58,7 +58,8 @@ def test_a_finished_job_asks_for_a_review_first(seeded):
         }
     )
     text = planning.view(planning.load(), jobs=jobs, compact=True)["next_action"]
-    assert "复盘" in text and "metrics" in text
+    assert "核对是否达到里程碑" in text
+    assert "结果影响路线决策时再用 plan review" in text
 
 
 def test_compact_plan_keeps_one_focus_and_does_not_promote_backlog(seeded):
@@ -119,7 +120,7 @@ def test_an_empty_plan_still_tells_the_model_what_to_do(tmp_path, monkeypatch):
     monkeypatch.setenv("A3_PLAN_FILE", str(tmp_path / "empty.json"))
     monkeypatch.setenv("A3_STATE_ROOT", str(tmp_path / "state"))
     text = planning.view(planning.load(), jobs={}, compact=True)["next_action"]
-    assert "plan update" in text
+    assert "长期目标" in text and "plan update" in text and "里程碑" in text
 
 
 def test_an_operator_permission_block_asks_for_research_status(seeded):

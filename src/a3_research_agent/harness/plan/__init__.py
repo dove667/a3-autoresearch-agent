@@ -68,8 +68,8 @@ def next_action(steps, ready, review_due, routes):
         job, status = next(iter(item["jobs"].items()))
         route = item.get("route") or "未挂路线"
         return (
-            f"先复盘 {route}：步骤 {item['step']} 的作业 {job} 已 {status}，"
-            "用实测数值写 plan review（带 metrics），再决定继续还是暂停。"
+            f"先处理 {route} 的结果：步骤 {item['step']} 的作业 {job} 已 {status}。"
+            "核对是否达到里程碑，结果影响路线决策时再用 plan review。"
         )
     if ready:
         key = ready[0]
@@ -117,7 +117,7 @@ def next_action(steps, ready, review_due, routes):
                 "required_action=..., evidence=[...]) 上报，不要自行绕过或重复检查。"
             )
         return f"所有步骤都停着（{key} 等）：改变条件或新增可执行步骤，别只重复检查。"
-    return "计划里没有可执行步骤：先 plan update 新增步骤或调整路线，再动手。"
+    return "计划里没有可执行步骤：用 plan update 调整路线或登记下一阶段的里程碑。"
 
 
 def view(plan=None, *, jobs=None, compact=False):
@@ -199,7 +199,7 @@ def view(plan=None, *, jobs=None, compact=False):
     foreground_reviews = [
         item
         for item in review_due
-        if steps[item["step"]]["status"] != "skipped"
+        if steps[item["step"]]["status"] not in ("done", "skipped")
         and (item["route"] in active or (not item["route"] and item["step"] in open_steps))
     ]
     running_routes = {steps[key].get("route") for key in running}
@@ -224,6 +224,8 @@ def view(plan=None, *, jobs=None, compact=False):
     )
     if not foreground_reviews and not focus_ready and startable:
         action = f"当前有路线名额，可核对独立待办 {startable[0]} 的调研记录，再激活并推进。"
+    if not routes and not steps:
+        action = "从长期目标选一个值得推进的研究方向，用 plan update 登记路线和阶段性里程碑。"
     result = {
         "direction": plan.get("direction", {"objective": "", "metrics": [], "gaps": []}),
         "routes": routes,

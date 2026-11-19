@@ -12,7 +12,8 @@ def test_published_research_contract(tmp_path):
     versions.activate(versions.prepare(), "start")
     instructions = versions.model_instructions()[1]
     for requirement in (
-        "分析结果 → 提出假设 → 规划路线 → 执行 → 记录结果 → 反思分析结果",
+        "在路线内根据结果提出小假设，直接用工具验证",
+        "一条路线回答一个能影响策略选择的大问题",
         "整批尝试上限",
         "人类和 Codex 在运行暂停期间维护",
         "夜间只使用部署方提供的 Harness",

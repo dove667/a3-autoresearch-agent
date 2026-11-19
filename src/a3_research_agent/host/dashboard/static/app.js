@@ -388,7 +388,6 @@ function renderStats(data) {
 function routeTone(status) {
   return {
     active: "active",
-    completed: "done",
     paused: "paused",
     proposed: "idle",
   }[status] || "idle";
@@ -399,9 +398,6 @@ function routeSteps(plan, route) {
 }
 
 function routeStage(route, steps) {
-  if (route.status === "completed") {
-    return { label: "路线已完成", detail: route.conclusion || "结论已记录。" };
-  }
   if (route.status === "paused") {
     return { label: "路线已暂停", detail: route.conclusion || "等待重新评估后再开始。" };
   }
@@ -509,9 +505,7 @@ function renderRouteDetail(plan, route) {
       <div class="route-steps">${stepRows}</div>
     </section>
     <section class="route-section">
-      <div class="route-section-head"><h4>${route.status === "completed" ? "最终结论" : "当前结论"}</h4><span>${
-        route.status === "completed" ? "路线已完成" : "路线尚未结束，这是目前结论"
-      }</span></div>
+      <div class="route-section-head"><h4>当前结论</h4></div>
       <p class="route-conclusion-text">${esc(route.conclusion || "还没有结论。")}</p>
     </section>
     <section class="route-section">
@@ -775,7 +769,7 @@ function detailMarkup(type, id) {
     return {
       kicker: "研究路线",
       title: route.question || route.id,
-      meta: `${pill(route.status_label, route.status === "active" ? "active" : route.status === "completed" ? "done" : route.status === "paused" ? "paused" : "idle")}<span>${route.progress.done}/${route.progress.total} 步</span>`,
+      meta: `${pill(route.status_label, routeTone(route.status))}<span>${route.progress.done}/${route.progress.total} 步</span>`,
       body: `<dl class="detail-fields">${fields
         .map(
           ([label, value]) =>

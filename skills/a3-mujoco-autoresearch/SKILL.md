@@ -3,7 +3,7 @@ name: a3-mujoco-autoresearch
 description: A3机器人策略实验：选择ACT、扩散/流、VLA方法，诊断数据与训练，做配对闭环评测。Policy methods, training diagnostics
   and paired evaluation.
 metadata:
-  version: 0.2.4
+  version: 0.2.5
 ---
 
 # A3 Policy 实验入口
@@ -13,11 +13,11 @@ metadata:
 ## 完成一次有用的实验
 
 1. 用 `plan` 查看当前路线和已有作业，用 `memory` 搜索同模型、同症状的结果。确认权重、数据和现成评测是否可复用。
-2. 写清要区分的解释、改动变量、固定条件和如何根据结果决定下一步。记录到计划；需要完整实验记录时使用 [实验模板](assets/experiment-spec.json)。
+2. 写清要区分的解释、改动变量、固定条件和如何根据结果决定下一步。小实验直接在当前上下文设计和执行，必要时使用 [实验模板](assets/experiment-spec.json) 留证。共享计划跟踪研究路线和跨运行里程碑。
 3. 确认真实数据和模型接口：动作维度、归一化、任务条件、相机与时间对齐。具体检查见 [A3接口](references/project-contract.md)，适配器改动使用 `a3-policy-integration`。
 4. 修改源码后先用 `job_prepare` 保存GPU请求并做CPU预检，完成后用 `job_submit(prepared_id=...)` 提交保存的请求。独立且输入就绪的作业可以并行；已有作业未确认结束时先查询，避免重复训练或评估。
 5. 按保存的条件配对比较新旧模型，分别记录入盒准确率和原生成功率；有希望的候选扩大到 [全量评测](references/benchmark-evaluation.md)。分析抓取、运输、放置或稳定性时，按需读取原视频和同步轨迹。
-6. 用 `plan review` 记录继续、暂停或结束路线的决定。具体结论写入 `memory`；可复用的方法再更新 skill。保留模型、配置、作业和结果引用。
+6. 结果改变路线决策时，用 `plan review` 记录继续、暂停或结束。可迁移的发现写入 `memory`，可复用的方法再更新 skill。保留模型、配置、作业和结果引用。
 
 ## 按问题读取
 

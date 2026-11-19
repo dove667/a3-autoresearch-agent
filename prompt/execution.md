@@ -1,6 +1,6 @@
 # 研究工具与执行约定
 
-Version: 0.54.0
+Version: 0.55.0
 
 工具定义给出参数、默认值和限制；本文件说明常用流程。所有工具返回 `ok`：成功时直接读取同层结果；失败时读取 `error`、`hint` 和相关编号，修正后再调用。作业的 `status="failed"` 是执行结果，先读日志与证据再判断原因。
 
@@ -116,9 +116,11 @@ ACT 只读三路相机和 16 维状态，没有语言输入：用 `act:` 时传 
 
 ## 计划、经验和技能
 
-新 run 先 `plan(action="show",view="focus")`，核对当前作业与阻塞。direction 记录长期目标、指标和能力缺口；routes 记录假设、实验和决策条件；steps 记录当前执行、依赖、作业和证据。用当前 revision 更新改变的字段。需要完整计划时用 `view="all"`，需要某一步正文时传 `id`。
+新 run 先 `plan(action="show",view="focus")`，核对当前作业与阻塞。共享计划只有长期目标时，从当前证据中选择一个值得推进的大问题。用当前 revision 更新改变的字段。需要完整计划时用 `view="all"`，需要某一步正文时传 `id`。
 
-新路线至少提供 id、question、hypothesis、experiment、decision_rule；步骤至少提供 id、route、task、criterion。关键结果读完后用 review 保存结论与继续、暂停或结束决定：
+一条路线围绕一次会影响策略选择的研究决策展开。例如「π₀.₅ 能否适配 A3，并在 2×5 与 2×10 上优于现有基线？」可拆成数据就绪、适配代码验证、微调完成、配对评估与结论四个里程碑。日常诊断直接用工具在当前上下文完成，例如定位 policy 卡在哪个动作阶段、核对数据字段或验证一个超参数。需要留证据时写到实验记录，结果影响里程碑时再更新计划。
+
+路线提供 id、question、hypothesis、experiment、decision_rule；每个里程碑提供 id、route、task、criterion。结果足以决定继续、暂停或结束路线时，用 review 保存判断：
 
 ```json
 {"action":"review","revision":1,"id":"placement","step":"s5-closedloop","decision":"continue","conclusion":"补齐任务条件后 2×10 入盒 0.40→0.50","evidence":["experiments/current/results/report.json"],"metrics":["2x10 accuracy=0.50","2x5 accuracy=0.50"],"reason":"配对结果改善，继续验证稳定性"}
@@ -137,7 +139,7 @@ ACT 只读三路相机和 16 维状态，没有语言输入：用 `act:` 时传 
 
 分别发起 `web_search`，用 `web_fetch` 读原文。长页面可带 `query` 读取匹配的正文片段。把使用的原文 URL 和具体发现分别写入 `routes[].research.implementation` 与 `routes[].research.papers`，两者都是 `[{url, finding}]`；`research.design` 写明证据如何改变实验变量、对照或判据，以及仍待验证的假设。使用 `web_fetch` 返回的 URL。已经存入路线的调研可随路线继续复用。一时找不到足够证据时保留为 `proposed` 并推进其他可做的工作；同一篇论文的不同版本合并处理。
 
-所有待办和进展都在 plan 中维护。**一个 step 是一批工作**（例如一组同种子配对评测）。批次内多个作业并行推进。达到 criterion 后用 `plan update` 写 `status="done"`、`evidence` 和实际 `progress`。训练步骤需核对实际 checkpoint，评测步骤需核对对应回执。若要改动已完成步骤的 criterion，另建步骤、重新打开原步骤，或提供满足新判据的证据。已学到的发现写 memory，稳定可复用的操作方法写 skills。
+一个里程碑可覆盖多批作业。达到 criterion 后用 `plan update` 写 `status="done"`、`evidence` 和实际 `progress`。训练里程碑核对实际 checkpoint，评测里程碑核对对应回执。若要改动已完成里程碑的 criterion，另建里程碑、重新打开原条目，或提供满足新判据的证据。可迁移的发现写 memory，可复用的方法写 skills。
 
 memory 使用 `search(query="当前研究问题")` 检索摘要，`read(id)` 读正文与 revision；`sources(id)` 列证据，再用 sources(id,ref) 读取来源。当前上下文会提供少量相关经验摘要，先确认 scope。用 write(content,scope,refs,kind) 保存值得跨实验复用的结论；临时观察用 lifetime="run"。update(id,revision,reason,content) 修正，archive／restore(id,revision,reason) 管理有效性。相似写入提示出现时先读原条目；同一发现更新原 ID，独立发现写明区别后 force=true、reason=... 保存。历史条目不授予当前权限。
 
@@ -157,11 +159,11 @@ skills 使用 `list(query="任务或症状",limit=3)` 找方法，只返回摘�
 
 写 review 时，结论引用的数字要与本路线已记录的实测对齐：程序会把引用的 a/b 与该路线历史 metrics 中同分母的最大值比较，判据低于最新实测时也会给出 `warnings`。收到就先确认引用的是最新结果，再决定继续还是结束。
 
-完成重要结果分析后，先用 plan review 记录结论、证据和路线决定；值得跨 run 复用的发现写 memory；成熟操作方法写 skills。程序会持续刷新这些来源，尚未记录的研究判断仍可能在反复压缩后遗漏。
+结果影响路线决策时，用 plan review 记录判断和证据。程序会持续刷新计划、经验与方法。需要跨压缩保留的诊断细节写入实验记录。
 
 ## 状态、异常与停止
 
-普通排队、研究失败和路线受阻继续更新 plan。确需操作者处理认证、权限、服务或缺失资源时，先保存实际证据，再调用 research_status，提供 status="blocked"、reason、kind、required_action 和工作区 evidence 路径。
+用作业状态跟踪排队与执行失败。影响路线里程碑时更新 plan。确需操作者处理认证、权限、服务或缺失资源时，先保存实际证据，再调用 research_status，提供 status="blocked"、reason、kind、required_action 和工作区 evidence 路径。
 
 保存正常研究状态调用 `research_status`，参数例如：
 
