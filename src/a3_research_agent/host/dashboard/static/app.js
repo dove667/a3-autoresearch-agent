@@ -322,6 +322,8 @@ function renderStatus(data) {
   $("run-duration").textContent =
     agent.elapsed_seconds == null ? "运行时长 —" : `已运行 ${duration(agent.elapsed_seconds)}`;
   $("run-cost").textContent = spend(usage);
+  $("run-cost").title = Object.entries(usage.agent_calls || {})
+    .map(([name, count]) => `${name} · ${count} 次调用`).join("\n");
 
   const activeJobs = agent.active_jobs || [];
   const liveStates = ["running", "waiting_jobs", "waiting_event", "context_waiting"];

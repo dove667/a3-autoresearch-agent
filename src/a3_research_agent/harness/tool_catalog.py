@@ -1,6 +1,14 @@
 """Declare the complete high-level interface shown to the research model."""
 
-from . import control_tools, file_tools, host_tools, job_tools, research_web, skill_registry
+from . import (
+    control_tools,
+    deep_research,
+    file_tools,
+    host_tools,
+    job_tools,
+    research_web,
+    skill_registry,
+)
 
 KNOWLEDGE_TOOLS = [
     {
@@ -221,13 +229,14 @@ TOOL_FAMILIES = (
     ("runtime", "运行与评估", host_tools.TOOLS),
     ("control", "等待与状态", control_tools.TOOLS),
     ("knowledge", "计划与记忆", KNOWLEDGE_TOOLS),
-    ("web", "网络", research_web.TOOLS),
+    ("web", "网络与调研", [*research_web.TOOLS, *deep_research.TOOLS]),
     ("skills", "技能", skill_registry.TOOLS),
 )
 TOOLS = tuple(entry for _, _, entries in TOOL_FAMILIES for entry in entries)
 BY_NAME = {entry["name"]: entry for entry in TOOLS}
 OPTIONAL = {
     "web": frozenset({"web_search", "web_fetch", "web_status"}),
+    "deep_research": frozenset({"deep_research"}),
 }
 
 

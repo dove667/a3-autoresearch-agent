@@ -8,6 +8,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from a3_research_agent.host.models import pricing
+from a3_research_agent.host.models.roles import AGENT_NAMES, agent_role
 
 
 def totals(path):
@@ -23,7 +24,7 @@ def totals(path):
                 rows.append(entry)
     summary = {}
     for entry in rows:
-        role = entry.get("model_role") or "main"
+        role = agent_role(entry)
         item = summary.setdefault(
             role,
             {"calls": 0, "input_tokens": 0, "cached_tokens": 0, "output_tokens": 0, "cost": 0.0},
@@ -65,7 +66,7 @@ def main() -> None:
     for role, item in sorted(result["roles"].items()):
         cost = f"{item['cost']:.4f} {currency.upper()}" if currency else "-"
         print(
-            f"{role:8} calls={item['calls']:5} "
+            f"{AGENT_NAMES.get(role, role):22} calls={item['calls']:5} "
             f"input={item['input_tokens']:>10} cached={item['cached_tokens']:>10} "
             f"output={item['output_tokens']:>8} cost={cost}"
         )

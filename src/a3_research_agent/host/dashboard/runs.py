@@ -5,10 +5,12 @@ import os
 import re
 import subprocess
 import time
+from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
 from a3_research_agent.host.models import pricing
+from a3_research_agent.host.models.roles import AGENT_NAMES, agent_role
 
 from .readers import mtime, newest_mtime, read_json, read_json_lines
 
@@ -218,7 +220,11 @@ def _usage(run, startup):
         if isinstance(cost, (int, float)):
             totals["cost"] += cost
             currency = (row.get("cost_currency") if isinstance(row, dict) else None) or currency
-    last = rows[-1] if rows else None
+    role_counts = Counter(agent_role(row) for row in rows if isinstance(row, dict))
+    last = next(
+        (row for row in reversed(rows) if isinstance(row, dict) and agent_role(row) == "main"),
+        None,
+    )
     used = None
     if isinstance(last, dict):
         used = last.get("estimated_input_tokens")
@@ -232,6 +238,7 @@ def _usage(run, startup):
         percent = round(min(100, used / limit * 100))
     return {
         "calls": len(rows),
+        "agent_calls": {AGENT_NAMES.get(role, role): count for role, count in role_counts.items()},
         "used_tokens": int(used) if isinstance(used, (int, float)) else None,
         "limit_tokens": int(limit) if isinstance(limit, (int, float)) else None,
         "percent": percent,

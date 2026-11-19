@@ -62,6 +62,7 @@ class GatewayState:
             yield
         finally:
             stopped.set()
+            self.research_tasks.close()
             self.evaluation_workers.shutdown(wait=False, cancel_futures=True)
             if reaper is not None:
                 reaper.join()

@@ -110,7 +110,7 @@ Controller负责排队、GPU分配与生命周期。提交结果未知时先按�
 
 `job_status`、`job_list` 查询带时间和权限的状态。用 `job_list(scope="self")` 查看当前身份的作业。用 `job_artifact(directory="")` 列出选定区域的顶层文件名，或传相对子目录，再用 `path` 按字符分页读取结果和哈希。显式 seed 组用 `benchmark(seeds=[...])` 创建，通过 `benchmark_group` 推进并汇总。闭环终态附逐 seed 回执，启用录像时附轨迹事件摘要。
 资产通过 `export_create`、`export_status`、`export_manifest`、`export_list` 管理；
-`evaluation_compare` 比较已有配对结果。`vision_inspect` 用视觉助手扫看指定帧，`vision_view` 把关键帧直接送入主 Agent 的下一次决策。
+`evaluation_compare` 比较已有配对结果。`vision_inspect` 由 Visual Assistant Agent 扫看指定帧，`vision_view` 把关键帧直接送入 Main Agent 的下一次决策。
 `search_files` 查找源码与记录，`edit` 精确修改工作区文件；覆盖现有文件的write需要当前哈希。
 高层工具返回统一ok标志、失败提示和分页游标，模型无需构造HTTP方法、URL或原始body。
 详细参数见[执行接口](../../prompt/execution.md)。
@@ -125,7 +125,9 @@ Controller负责排队、GPU分配与生命周期。提交结果未知时先按�
 
 Agent 每轮接收一个焦点步骤的详情和下一步建议，其余最多三条活跃路线显示作业、依赖和待复盘摘要。计划同时容纳最多四条 `active` 路线；待办可以随时登记为 `proposed`，暂停或结束后，已观察到的在途作业仍保留该路线名额，直到作业结束。等待作业时可推进独立路线，批次内的种子、对照组、分片仍可并行。通过 `plan(action="show", view="focus")` 读当前焦点，`view="all"` 读完整计划。步骤数量不设上限，历史步骤继续保留依赖与证据。
 
-启用网页服务后，激活新路线或改变活跃路线的研究设计前，先检索官方代码与训练配置、阅读相关论文。路线的 `research` 保存 `implementation`、`papers` 各自的来源与发现，以及 `design` 对实验变量和对照的影响。Harness 核对新增引用是否经本 run 的 `web_fetch` 成功读取；已保存的路线调研跨运行保留。证据还在收集时，可以保留候选路线为 `proposed`。新架构、大规模训练或仍有关键取舍的路线，使用 [a3-route-research](../../skills/a3-route-research/SKILL.md) 做多轮调研，直到有足够证据选择下一项实验。
+启用网页服务后，激活新路线或改变活跃路线的研究设计前，先检索官方代码与训练配置、阅读相关论文。针对新架构、大规模训练或仍有关键取舍的路线，Main Agent 用 `deep_research(action="submit", question=..., context=...)` 派发给 Deep Research Agent。提交立即返回 `task_id`，可先推进其他工作。用 `deep_research(action="status", task_id=..., wait_seconds=25)` 收取报告。同一问题和背景复用原任务，中断后可显式使用原输入加 `retry=true` 重试。
+
+路线的 `research` 保存 `implementation`、`papers` 的来源与发现，以及 `design` 对对照实验的影响。Harness 接受本 run 经 `web_fetch` 读取的 URL，或已完成的 Deep Research Agent 报告中经原文核对的 URL。Main Agent 评估报告并自行选择路线。证据还在收集时可保留为 `proposed`。
 
 ## 持续研究与暂停
 

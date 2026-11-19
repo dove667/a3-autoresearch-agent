@@ -338,8 +338,8 @@ def missing_route_research(previous_routes, routes, fetched_sources):
             return {
                 "error": "route_research_required",
                 "route": key,
-                "hint": "Search and read implementation and paper sources. Patch route.research "
-                "with implementation and papers [{url, finding}] and design before starting.",
+                "hint": "Use deep_research or search and read implementation and paper sources. "
+                "Patch route.research with implementation and papers [{url, finding}] and design.",
             }
         if research and research != previous_research:
             missing = sorted(
@@ -355,7 +355,7 @@ def missing_route_research(previous_routes, routes, fetched_sources):
                     "error": "unread_research_sources",
                     "route": key,
                     "sources": missing,
-                    "hint": "Read each cited source using web_fetch and use the returned URL.",
+                    "hint": "Use URLs verified by a completed deep_research report or web_fetch.",
                 }
     return None
 

@@ -102,7 +102,7 @@ DESCRIPTIONS = {
     "startup_checks": "Read this run's A3 and dataset startup job IDs, status, report paths, "
     "and available audit results. Use it before repeating these checks.",
     "vision_status": "Check visual inspection availability and frame limits.",
-    "vision_inspect": "Use the visual helper first when locating a failure or screening several "
+    "vision_inspect": "Ask the Visual Assistant Agent to locate a failure or screen several "
     "action windows or cameras. Returns observations and source hashes for authorized PNG/JPEG "
     "frames. Group each episode in time order and supply real step, simulation time and camera "
     "labels. Area defaults to outputs. Batch size depends on bytes, context and provider limits.",

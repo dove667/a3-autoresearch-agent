@@ -27,7 +27,7 @@ A3_UPSTREAM_RESPONSES_READ_TIMEOUT_SECONDS='300'
 
 Host 在基础地址后追加 `/responses`。自定义上游覆盖主模型、视觉辅助与摘要的实际模型，各角色仍可以指定提供商支持的推理参数。密钥只保存在 Git 忽略的 `.env` 或 Host 认证环境中。
 
-`A3_WORKER_MODEL_NAME` 和 `A3_SUMMARY_MODEL_NAME` 配置固定辅助与摘要路由，省略时使用主模型。实际上下文窗口必须按所用服务填写：
+`MODEL_NAME` 配置 Main Agent。`A3_WORKER_MODEL_NAME` 配置 Visual Assistant Agent 和 Deep Research Agent，`A3_SUMMARY_MODEL_NAME` 配置 Compressor Agent，省略时使用主模型。实际上下文窗口必须按所用服务填写：
 
 ```dotenv
 A3_MODEL_CONTEXT_TOKENS='262144'
@@ -76,6 +76,8 @@ bash start-autoresearch.sh --check
 需要联网研究时设置 `A3_WEB_ENABLED=1` 和 `TAVILY_API_KEY`。Host 提供搜索、提取、缓存和请求计数；凭据不交给研究进程。网页代理使用独立的 `A3_TAVILY_HTTP_PROXY` 配置，完整字段见 `.env.example`。
 
 Agent 用 `web_search` 分别检索官方源码与论文，用 `web_fetch` 读公开原文。`web_fetch(url=..., query=...)` 返回与问题相关的正文片段，适用于很长的训练文档或论文 HTML。论文优先使用 arXiv HTML、OpenReview 或会议出版社的公开页面。当前网关接受文本网页，PDF 文件不经过此入口。
+
+Deep Research Agent 使用 Tavily 查公开代码和网页。启用 alphaXiv 可检索论文并读取 PDF 原文页。可在本机 Host 设置 `A3_ALPHAXIV_TOKEN`，或将 `A3_ALPHAXIV_CC_SWITCH_DB` 指向装有 `alphaxiv` 条目的本机 CC Switch 数据库。Host 以只读方式核对官方地址并使用该条目的 Bearer 凭据。部署未配置 alphaXiv 时，论文可经 Tavily 的公开 HTML 获取。
 
 首次启动、同一 run 恢复、原地发布与夜间窗口见[使用教程](usage.md)。长期研究目标和行为原则由 `prompt/SOUL.md` 提供，Host 按版本装载三个 prompt，根技能库独立管理版本和修改历史。
 

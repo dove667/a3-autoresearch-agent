@@ -11,6 +11,7 @@ import time
 
 from a3_research_agent.harness import state_paths
 from a3_research_agent.harness.context import manager as context_manager
+from a3_research_agent.harness.deep_research import TASK_ID
 
 
 def state_file():
@@ -281,6 +282,19 @@ def record_gateway(method, path, result):
     if not isinstance(result, dict):
         return
     path = path.partition("?")[0]
+    task_id = result.get("task_id")
+    if (
+        isinstance(task_id, str)
+        and TASK_ID.fullmatch(task_id)
+        and (method, path)
+        in {
+            ("POST", "/deep-research"),
+            ("GET", f"/deep-research/{task_id}"),
+        }
+    ):
+        if result.get("status") == "completed" and isinstance(result.get("sources"), list):
+            record_web_sources({url: task_id for url in result["sources"] if isinstance(url, str)})
+        return
     if method == "POST" and path == "/web/fetch":
         if isinstance(result.get("request_id"), str) and isinstance(result.get("sources"), list):
             fetched = {
@@ -291,10 +305,7 @@ def record_gateway(method, path, result):
                 and isinstance(source.get("text"), str)
                 and source["text"].strip()
             }
-            if fetched:
-                state = load()
-                state.setdefault("web_sources", {}).update(fetched)
-                save(state)
+            record_web_sources(fetched)
         return
     if (method, path) in {("GET", "/jobs"), ("POST", "/jobs/wait")}:
         rows = result.get("jobs", [])
@@ -318,6 +329,15 @@ def record_gateway(method, path, result):
     state = load()
     if record_jobs(state, rows, source):
         save(state)
+
+
+def record_web_sources(fetched):
+    if fetched:
+        state = load()
+        sources = state.setdefault("web_sources", {})
+        if any(sources.get(url) != receipt for url, receipt in fetched.items()):
+            sources.update(fetched)
+            save(state)
 
 
 def record_wait(result):

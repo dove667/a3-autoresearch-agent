@@ -26,6 +26,7 @@ OBSERVATION_TOOLS = frozenset(
         "evaluation_compare",
         "conditions_compare",
         "vision_inspect",
+        "deep_research",
         "export_create",
         "export_status",
         "session_stop",

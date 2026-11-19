@@ -36,6 +36,7 @@ from a3_research_agent.host.published_harness import (
 )
 from a3_research_agent.host.reference_sources import link_reference_source
 from a3_research_agent.host.remote_client import remote_call, remote_limits, remote_path_hints
+from a3_research_agent.host.research.papers import AlphaXiv
 from a3_research_agent.host.runs.continuation import import_retained_exports, publish_run_result
 from a3_research_agent.host.runs.directories import debug_directory, local_storage_bytes
 from a3_research_agent.host.runs.resume import (
@@ -202,6 +203,7 @@ def _launch_run(args, run: Path, a3: Path, start, services) -> None:
     )
     app = create_app(
         web_gateway=web_gateway,
+        paper_gateway=AlphaXiv.from_env() if web_gateway.config.enabled else None,
         model_name=settings["model"],
         sessions={token: run_id},
         forward_model=forward_model,

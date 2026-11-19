@@ -50,7 +50,7 @@ uv run a3-research-dashboard --port 8788  # 更换本地端口
 
 `bash start-dashboard.sh` 检查 `A3_DASHBOARD_PORT`（默认 8787）上的 `/api/health`：已经有看板就只打印地址，没有就启动一个新的并在终端打印 URL。加 `--open` 会同时打开浏览器。研究 Host 启动时仍会自动拉起看板；若看板已经由这个脚本启动，Host 只打印 “Research dashboard already running”。
 
-总览页显示本次运行的 token 与开销：输入、缓存命中、输出，以及按 `.env` 中 `A3_PRICE_*_PER_MTOK` 折算的金额（币种由 `A3_PRICE_CURRENCY` 标明）。旧的运行记录没有写入价格时，看板用当前单价按它们的用量补算。
+总览页显示本次运行的 token 与开销，以及按 `.env` 中 `A3_PRICE_*_PER_MTOK` 折算的金额。悬停在开销上可看 Main Agent、Visual Assistant Agent、Compressor Agent 和 Deep Research Agent 的调用次数。上下文百分比取自 Main Agent 的最近一次调用。旧的运行记录没有写入价格时，看板用当前单价按它们的用量补算。
 
 ## 作业状态是实时的
 

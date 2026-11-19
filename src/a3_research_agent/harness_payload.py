@@ -42,6 +42,7 @@ HARNESS_MODULES = (
     "job_tools.py",
     "workspace_tools.py",
     "research_web.py",
+    "deep_research.py",
     "tool_contracts.py",
     "context/__init__.py",
     "context/compaction.py",

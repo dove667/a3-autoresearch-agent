@@ -1,6 +1,6 @@
 # 系统架构
 
-夜间由单个研究 Agent 持续推进 Policy、采集、训练、评估与分析，提高 A3 2×5、2×10 全量评测的入盒准确率与通过率。白天由维护者依据原始轨迹改进 Harness，验证后发布源码版本。启动与升级步骤见[使用教程](../guides/usage.md)，文件归属见[目录职责](storage-layout.md)。
+夜间由 Main Agent 持续推进 Policy、采集、训练、评估与分析，提高 A3 2×5、2×10 全量评测的入盒准确率与通过率。Visual Assistant Agent 筛查录像和多视角帧，Compressor Agent 提供带来源的上下文交接，Deep Research Agent 研读公开资料并提供实验设计证据。Main Agent 负责研究计划和作业。启动与升级见[使用教程](../guides/usage.md)，文件归属见[目录职责](storage-layout.md)。
 
 ## 三个组件的职责
 
@@ -29,7 +29,9 @@ flowchart LR
 
 ## 发布、每日运行与恢复
 
-操作者从明确的 Git commit 发布 Harness。固定源码缓存在 `.runtime/published-harness/v2/<commit>/`，研究文件保存于根目录唯一的 `workspace/`；机器对话状态保存在 `trajectories/<开始时间>/conversation/`；根 `skills/`、`memory/entries.jsonl` 与 `plan/current.json` 分别保存技能、主动长期经验和跨运行研究计划。私有 workspace 映射固定资源身份与研究目录。每天创建新的 run 和模型上下文，每轮只运行一个研究 Agent。A3 参考源码按内容保存于共享 `.runtime/reference-sources/`，各次运行的 `public/a3` 链接到对应只读版本，避免重复仓库副本。
+操作者从明确的 Git commit 发布 Harness。固定源码缓存在 `.runtime/published-harness/v2/<commit>/`，研究文件保存于根目录唯一的 `workspace/`；机器对话状态保存在 `trajectories/<开始时间>/conversation/`；根 `skills/`、`memory/entries.jsonl` 与 `plan/current.json` 分别保存技能、主动长期经验和跨运行研究计划。每天创建新的 run 和模型上下文，每轮由一个 Main Agent 持有共享工作区。A3 参考源码按内容保存在共享 `.runtime/reference-sources/`，各次运行的 `public/a3` 链接到对应只读版本。
+
+Deep Research Agent 由本地 Host 运行，接受 Main Agent 的问题与公开背景。每个 Host 同时运行一个调研任务，有独立模型上下文与来源日志，只能检索、读取公开来源并交付报告。经过检索阶段后切换到报告生成，遇到证据缺口可返回部分报告。已完成的任务可在同一 run 中取回，Host 停止时未完成任务标记为中断。任务状态和资料保存在 trajectory 的 `.host/deep-research/`。
 
 Host 的 `knowledge_service/` 为 memory 和 skills 共用一个本地 embedding 进程及认证服务；两套索引独立保存。技能检索只交付摘要，正文和附件通过 skills 工具按需读取。
 

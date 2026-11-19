@@ -13,6 +13,7 @@ from a3_research_agent.host.models.settings import (
     validate_model_request_options,
     validate_role_models,
 )
+from a3_research_agent.host.research.tasks import ResearchTasks
 from a3_research_agent.host.runs.state import RunStateStore
 from a3_research_agent.host.telemetry.diagnostics import GatewayDiagnostics
 from a3_research_agent.host.telemetry.trajectory import TrajectoryTelemetry
@@ -23,6 +24,7 @@ from .job_observation import JobStatusCache
 from .jobs import JobRoutes
 from .models import ModelRoutes
 from .project_history import project_job_index
+from .research import ResearchRoutes
 from .schemas import ObservationRequest
 from .sessions import SessionRoutes
 from .state import GatewayState
@@ -31,7 +33,14 @@ from .web import WebRoutes
 
 
 class Gateway(
-    GatewayState, SessionRoutes, TelemetryRoutes, WebRoutes, ControlRoutes, ModelRoutes, JobRoutes
+    GatewayState,
+    SessionRoutes,
+    TelemetryRoutes,
+    WebRoutes,
+    ControlRoutes,
+    ModelRoutes,
+    JobRoutes,
+    ResearchRoutes,
 ):
     def __init__(
         self,
@@ -54,6 +63,7 @@ class Gateway(
         resource_monitor: Callable | None = None,
         human_feedback=None,
         web_gateway=None,
+        paper_gateway=None,
         model_request_options: dict | None = None,
         role_models: dict | None = None,
         context_budget: dict | None = None,
@@ -78,6 +88,9 @@ class Gateway(
         self.resource_monitor = resource_monitor
         self.human_feedback = human_feedback
         self.web_gateway = web_gateway
+        self.research_tasks = ResearchTasks(
+            usage_log.parent / ".host/deep-research", web_gateway, paper_gateway
+        )
         self.model_request_options = model_request_options
         self.role_models = role_models
         self.context_budget = context_budget
@@ -153,6 +166,8 @@ class Gateway(
         self.app.add_api_route("/web/status", self.web_status, methods=["GET"])
         self.app.add_api_route("/web/search", self.web_search, methods=["POST"])
         self.app.add_api_route("/web/fetch", self.web_fetch, methods=["POST"])
+        self.app.add_api_route("/deep-research", self.submit_research, methods=["POST"])
+        self.app.add_api_route("/deep-research/{task_id}", self.research_status, methods=["GET"])
         self.app.add_api_route("/sessions", self.list_sessions, methods=["GET"])
         self.app.add_api_route("/checks/comparison", self.comparison, methods=["POST"])
         self.app.add_api_route("/sessions/self", self.self_status, methods=["GET"])
@@ -228,6 +243,7 @@ def create_app(
     resource_monitor: Callable | None = None,
     human_feedback=None,
     web_gateway=None,
+    paper_gateway=None,
     model_request_options: dict | None = None,
     role_models: dict | None = None,
     context_budget: dict | None = None,
@@ -252,6 +268,7 @@ def create_app(
         resource_monitor=resource_monitor,
         human_feedback=human_feedback,
         web_gateway=web_gateway,
+        paper_gateway=paper_gateway,
         model_request_options=model_request_options,
         role_models=role_models,
         context_budget=context_budget,

@@ -14,6 +14,7 @@ os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
 
 from a3_research_agent.harness import (
     control_tools,
+    deep_research,
     drift,
     file_tools,
     host_tools,
@@ -163,6 +164,8 @@ def tool(name, arguments):
         return control_tools.dispatch(name, arguments, request_host, cursor=WAIT_CURSOR)
     if name in research_web.NAMES:
         return research_web.dispatch(name, arguments, request_host)
+    if name == "deep_research":
+        return deep_research.dispatch(arguments, request_host)
     if name == "skills":
         return skill_registry.dispatch(arguments)
     if name == "memory":

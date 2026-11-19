@@ -62,6 +62,7 @@ class GatewayDiagnostics:
                 "v1": "model",
                 "context": "model_context",
                 "web": "research_web",
+                "deep-research": "deep_research",
                 "jobs": "remote_job",
                 "sessions": "session",
                 "checks": "comparison",

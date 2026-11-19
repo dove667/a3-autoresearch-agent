@@ -27,7 +27,9 @@ def validate_route_admission(previous, routes, previous_in_flight=(), in_flight=
 
 
 def bounded_text(value, limit, name, *, required=False):
-    if not isinstance(value, str) or len(value) > limit or (required and not value.strip()):
+    if not isinstance(value, str) or (required and not value.strip()):
+        raise ValueError(f"{name} must be valid text")
+    if limit is not None and len(value) > limit:
         raise ValueError(f"{name} must be text of at most {limit} characters")
     return value.strip()
 
@@ -146,13 +148,13 @@ RESEARCH_LANES = ("implementation", "papers")
 ROUTE_DESIGN_FIELDS = ("question", "hypothesis", "experiment", "decision_rule")
 
 
-def validate_research(research):
+def validate_research(research, *, allow_missing=False, text_limit=1200):
     if not isinstance(research, dict) or research.keys() != {*RESEARCH_LANES, "design"}:
         raise ValueError("Route research requires implementation, papers and design")
-    bounded_text(research["design"], 1200, "research design", required=True)
+    bounded_text(research["design"], text_limit, "research design", required=True)
     for lane in RESEARCH_LANES:
         sources = research[lane]
-        if not isinstance(sources, list) or not 1 <= len(sources) <= 10:
+        if not isinstance(sources, list) or not (0 if allow_missing else 1) <= len(sources) <= 10:
             raise ValueError(f"research.{lane} requires one to ten source findings")
         for source in sources:
             if not isinstance(source, dict) or source.keys() != {"url", "finding"}:
@@ -160,7 +162,7 @@ def validate_research(research):
             url = bounded_text(source["url"], 4096, "research source URL", required=True)
             if not url.startswith(("https://", "http://")) or any(c.isspace() for c in url):
                 raise ValueError("Use an HTTP(S) source URL returned by web_fetch")
-            bounded_text(source["finding"], 1200, "research source finding", required=True)
+            bounded_text(source["finding"], text_limit, "research source finding", required=True)
     if {s["url"] for s in research["implementation"]} & {s["url"] for s in research["papers"]}:
         raise ValueError("Cite distinct implementation and paper sources")
 

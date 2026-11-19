@@ -11,6 +11,7 @@ from fastapi import Header, HTTPException
 
 from a3_research_agent.harness import tool_json
 from a3_research_agent.host.models import pricing
+from a3_research_agent.host.models.roles import AGENT_NAMES, agent_role
 from a3_research_agent.host.models.settings import (
     validate_model_request_options,
 )
@@ -114,7 +115,7 @@ class ModelRoutes:
             "summary"
             if purpose == "summary"
             else "worker"
-            if purpose == "vision"
+            if purpose in {"vision", "research"}
             or (
                 self.main_owner is not None
                 and experiment != self.main_owner
@@ -312,6 +313,8 @@ class ModelRoutes:
             entry["cost_currency"] = pricing.currency()
         if purpose == "summary":
             entry["summary_feedback_refs"] = summary_refs or []
+        if purpose == "research":
+            entry["model_purpose"] = "research"
         if purpose == "vision" or vision_frames:
             entry.update(
                 model_purpose="vision" if purpose == "vision" else "decision",
@@ -319,6 +322,8 @@ class ModelRoutes:
                 vision_frames=vision_frames or [],
                 image_admission_reserve_tokens=vision_image_reserve,
             )
+        display_role = agent_role(entry)
+        entry["agent_name"] = AGENT_NAMES.get(display_role, display_role)
         if frames_rejected:
             entry["vision_provider_rejected"] = True
         if feedback_ids:
@@ -380,6 +385,7 @@ class ModelRoutes:
             "capabilities": {
                 # Only advertise optional tool families the deployment can actually serve.
                 "web": _web_enabled(self.web_service),
+                "deep_research": self.research_tasks.available and experiment == self.main_owner,
                 "vision": True,
             },
             "unit": "estimated_tokens",
@@ -463,6 +469,7 @@ class ModelRoutes:
             "max_total_bytes": 3 * 1024 * 1024,
             "max_side_pixels": 1024,
             "model_role": "worker",
+            "agent_name": AGENT_NAMES["vision"],
             "source": "authorized job workspace or outputs PNG/JPEG artifacts",
             "note": "Batch size depends on image bytes, context budget and provider limits",
         }

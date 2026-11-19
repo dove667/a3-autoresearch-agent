@@ -7,6 +7,7 @@ from itertools import chain
 RECEIPT_FIELDS = (
     "ok",
     "job_id",
+    "task_id",
     "prepared_id",
     "preflight_job_id",
     "gpu_preflight_job_id",
