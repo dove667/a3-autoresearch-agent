@@ -630,8 +630,7 @@ def dataset_audit(args, request, workspace):
     if not root.startswith("/") or any(char in root for char in "\n\r"):
         fail(
             "invalid_dataset_root",
-            "Pass the remote absolute dataset directory, for example "
-            "/data1/zsh/a3_dual_arm_sim/mixed-2x10-v1/ds-merged.",
+            "Pass an absolute dataset directory under runtime_paths.remote_datasets.",
         )
     repo = args.get("repo_id")
     if repo is not None:

@@ -1,6 +1,6 @@
 # 研究工作区
 
-Version: 0.11.0
+Version: 0.12.0
 
 本地原生进程只提供文件与研究工具，没有本地 bash 或 Python 执行入口。仿真、训练、评估及脚本执行通过远程作业完成。运行状态 `runtime_paths` 给出实际路径：
 
@@ -20,6 +20,12 @@ Version: 0.11.0
 - `experiments/<日期-实验名>/` 保存该实验的 `config.json`、作业与源码引用、`results/`、`figures/`、`videos/` 和 `analysis/`。配置记录模型版本、数据、超参数、seed 与评测设置；每次独立实验单独建目录。按实际产物创建子目录，源脚本统一留在 `scripts/`。
 
 用 `attachments` 将工作区中的源码和实验配置附加到远程作业。需要多个依赖时一并附加；通过 `destination` 明确远程文件位置，并让命令、导入及相对路径与目标位置一致。大文件留在执行端，用 job/export ID 和哈希关联本地实验记录。每天的新 run 共用这个工作区、根计划、记忆和技能，使用新的模型上下文；启动后先读取共享计划，核对既有作业与产物。
+
+数据与模型跨 run 共用。通过 `runtime_paths.remote_datasets`、`runtime_paths.remote_models` 获取远程根目录，远程代码从 `A3_DATASETS`、`A3_MODELS` 读取同一配置。按研究方向和来源组织，例如 `act/autoresearch/`、`moe-act/codex/`、`smolvla/autoresearch/`。通用基准和资源放在根目录下的 `shared/`。
+
+- 原始采集、合并集、可复用的预处理结果都放在数据根目录。用来源清单记录原始数据版本、采集作业与处理参数。
+- 可复用的训练 checkpoint 放在模型根目录，附训练配方、来源数据和作业编号。
+- 在所属方向的 `autoresearch/` 下用唯一版本目录暂存并校验，完成后在同一文件系统内发布到正式目录。已有版本和其他来源的资产只作输入。单次作业的日志、评测录像和诊断写入 `A3_OUTPUTS`，可重建的作业缓存使用 `A3_SHARED_CACHE`。
 
 项目顶层 `plan/current.json` 是跨运行共用的研究计划，`runtime_paths.plan` 给出文件路径。Agent 通过 `plan(action="show")` 查看、`plan(action="update", revision=..., ...)` 修改长期方向、研究路线和执行步骤，用 `plan(action="review", ...)` 保存结果复盘与路线决策，普通文件工具不直接修改它。新运行、恢复和 Harness 升级都读取这份最新计划；先核对计划中的既有 job，再决定后续操作。Harness 在当前 trajectory 的 `plan-snapshots/` 保存开始、修订和停止时的历史快照。
 

@@ -179,8 +179,12 @@ def test_process_deployment_advertises_real_paths(monkeypatch):
     from a3_research_agent.host import remote_client as transport
 
     monkeypatch.setenv("A3_REMOTE_A3_ROOT", "/data/project/a3")
+    monkeypatch.setenv("A3_REMOTE_DATASETS_ROOT", "/data/project/DATASETS")
+    monkeypatch.setenv("A3_REMOTE_MODELS_ROOT", "/data/project/MODELS")
     hints = transport.remote_path_hints()
     assert hints["remote_a3"] == "/data/project/a3"
+    assert hints["remote_datasets"] == "/data/project/DATASETS"
+    assert hints["remote_models"] == "/data/project/MODELS"
     assert hints["remote_workspace"] == "paths.workspace / A3_WORKSPACE"
     assert "/outputs" not in hints["remote_outputs"]
 

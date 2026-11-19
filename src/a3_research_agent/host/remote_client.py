@@ -119,7 +119,7 @@ def remote_path_hints() -> dict:
         "remote_a3": os.environ.get("A3_REMOTE_A3_ROOT"),
         "remote_workspace": "paths.workspace / A3_WORKSPACE",
         "remote_outputs": "paths.outputs / A3_OUTPUTS (persistent within a research identity)",
-        "remote_models": "paths.models / A3_MODELS (when configured; treat as read-only)",
+        "remote_models": os.environ.get("A3_REMOTE_MODELS_ROOT"),
         "remote_model_cache": "paths.model_cache / A3_MODEL_CACHE (when configured)",
-        "remote_datasets": "paths.datasets / A3_DATASETS (when configured; treat as read-only)",
+        "remote_datasets": os.environ.get("A3_REMOTE_DATASETS_ROOT"),
     }

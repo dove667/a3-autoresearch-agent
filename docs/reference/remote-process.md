@@ -95,13 +95,15 @@ Host 启动新窗口时提交 CPU 作业 `startup-a3_api` 生成 A3 接口快照
 | `A3_WORKSPACE`、`A3_OUTPUTS` | 本作业源码与本身份持久输出 |
 | `A3_SHARED_CACHE` | 同 run 共享预处理缓存，计入额度 |
 | `A3_TEMPORARY` | 本作业数据盘临时目录 |
-| `A3_MODELS`、`A3_DATASETS` | 部署者配置的公共资产 |
+| `A3_MODELS`、`A3_DATASETS` | 部署者配置的跨 run 模型和数据根目录 |
 | `A3_INPUT_EXPORTS_JSON` | export ID 到已授权封存目录的 JSON 映射 |
 | `A3_EPISODE_EXECUTOR`、`A3_JOB_TELEMETRY` | 固定 episode 执行器与 GPU 遥测路径 |
 
 `python`／`python3` 命令使用部署解释器。作业从真实 workspace 启动，命令数组不展开 shell 变量；程序需用 `os.environ` 读取路径。工作区与输出路径分别由 `A3_WORKSPACE` 和 `A3_OUTPUTS` 提供。
 
 HOME、TMPDIR、XDG、模型、编译等常见缓存全部指向数据盘。程序显式写入 `/tmp` 或系统盘仍可能成功，因此必须遵守数据盘写入约定。研究进程继承执行账号的文件系统和网络权限，因此只运行受信任的研究代码。不得给远程作业传入 Host 模型、Gateway 或 SSH 凭据，也不得修改公共资产、封存快照或其他任务。
+
+需要跨 run 使用的 checkpoint、原始数据和预处理产物按[目录约定](storage-layout.md#调试发布与远程数据)发布。通过 `A3_REMOTE_MODELS_ROOT` 和 `A3_REMOTE_DATASETS_ROOT` 配置根目录。
 
 ## 发布与恢复
 
