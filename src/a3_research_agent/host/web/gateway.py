@@ -60,6 +60,7 @@ class FetchRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     refresh: StrictBool = False
     url: str = Field(min_length=1, max_length=4096)
+    query: str | None = Field(default=None, min_length=1, max_length=1000, pattern=r"\S")
     max_chars: int = Field(default=16000, ge=1, le=16000, strict=True)
 
 
@@ -644,7 +645,7 @@ class WebGateway:
             connection.finish()
         return data
 
-    def extract(self, url, max_chars):
+    def extract(self, url, max_chars, *, query=None):
         url = validate_extract_url(url)
         data = self._vendor_post(
             "/extract",
@@ -654,6 +655,7 @@ class WebGateway:
                 "include_images": False,
                 "include_favicon": False,
                 "format": "markdown",
+                **({"query": query} if query is not None else {}),
             },
             20,
         )
@@ -704,8 +706,10 @@ class WebGateway:
             material = {
                 "version": "tavily-basic-v1",
                 "operation": operation,
-                "options": body.model_dump(exclude={"refresh"}),
+                "options": body.model_dump(exclude={"refresh"}, exclude_none=True),
             }
+            if operation == "search" and body.domains is None:
+                material["options"]["domains"] = None  # preserve existing search cache keys
             key = hashlib.sha256(json.dumps(material, sort_keys=True).encode()).hexdigest()
             ttl = (
                 self.config.search_ttl_seconds
@@ -718,11 +722,11 @@ class WebGateway:
                 if payload is None:
                     # Conservative miss attempts, including provider/network failures.
                     budget_state = self.budget(provider=operation)
-                    sources = (
-                        self.search(body)
-                        if operation == "search"
-                        else [self.fetcher(body.url, body.max_chars)]
-                    )
+                    if operation == "search":
+                        sources = self.search(body)
+                    else:
+                        options = {"query": body.query} if body.query is not None else {}
+                        sources = [self.fetcher(body.url, body.max_chars, **options)]
                     payload = {
                         "provider": "tavily",
                         "retrieved_at": datetime.now(UTC).isoformat(),

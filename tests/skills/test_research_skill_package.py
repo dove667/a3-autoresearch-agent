@@ -18,6 +18,7 @@ PACKAGES = (
     "a3-frame-cache",
     "a3-training-progress",
     "a3-model-provenance",
+    "a3-route-research",
 )
 
 
@@ -69,7 +70,7 @@ def test_every_existing_project_package_is_discoverable_and_editable(tmp_path, m
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     monkeypatch.chdir(workspace)
-    assert skill_registry.dispatch({"action": "list"})["total"] == 6
+    assert skill_registry.dispatch({"action": "list"})["total"] == len(PACKAGES)
     assert not (workspace / "skills").exists()
 
 

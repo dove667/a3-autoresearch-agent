@@ -142,6 +142,33 @@ def validate_dependencies(steps):
             raise ValueError("A done step requires all its dependencies to be done")
 
 
+RESEARCH_LANES = ("implementation", "papers")
+ROUTE_DESIGN_FIELDS = ("question", "hypothesis", "experiment", "decision_rule")
+
+
+def validate_research(research):
+    if not isinstance(research, dict) or research.keys() != {*RESEARCH_LANES, "design"}:
+        raise ValueError("Route research requires implementation, papers and design")
+    bounded_text(research["design"], 1200, "research design", required=True)
+    for lane in RESEARCH_LANES:
+        sources = research[lane]
+        if not isinstance(sources, list) or not 1 <= len(sources) <= 10:
+            raise ValueError(f"research.{lane} requires one to ten source findings")
+        for source in sources:
+            if not isinstance(source, dict) or source.keys() != {"url", "finding"}:
+                raise ValueError(f"Each research.{lane} source requires url and finding")
+            url = bounded_text(source["url"], 4096, "research source URL", required=True)
+            if not url.startswith(("https://", "http://")) or any(c.isspace() for c in url):
+                raise ValueError("Use an HTTP(S) source URL returned by web_fetch")
+            bounded_text(source["finding"], 1200, "research source finding", required=True)
+    if {s["url"] for s in research["implementation"]} & {s["url"] for s in research["papers"]}:
+        raise ValueError("Cite distinct implementation and paper sources")
+
+
+def route_design_changed(previous, route):
+    return any(route[field] != previous.get(field) for field in ROUTE_DESIGN_FIELDS)
+
+
 def revise(plan, arguments):
     changes = arguments.get("steps", [])
     if not isinstance(changes, list):
@@ -220,7 +247,7 @@ def revise(plan, arguments):
             "evidence": [],
             **previous,
         }
-        if patch.keys() - route.keys() - {"id"}:
+        if patch.keys() - route.keys() - {"id", "research"}:
             raise ValueError("Unknown route field")
         route.update({k: v for k, v in patch.items() if k != "id"})
         for field in ("question", "hypothesis", "experiment", "decision_rule", "conclusion"):
@@ -234,12 +261,14 @@ def revise(plan, arguments):
         )
         if route["status"] == "completed" and not (route["conclusion"] and route["evidence"]):
             raise ValueError("Completed routes require conclusion and evidence")
-        if (
-            previous
-            and any(route[f] != previous[f] for f in ("hypothesis", "experiment", "decision_rule"))
-            and not reason
-        ):
-            raise ValueError("Give reason when changing a research route")
+        changed_design = previous and route_design_changed(previous, route)
+        if changed_design:
+            if not reason:
+                raise ValueError("Give reason when changing a research route")
+            if "research" not in patch:
+                route.pop("research", None)
+        if "research" in patch:
+            validate_research(route["research"])
         routes[key] = route
     validate_route_admission(plan.get("routes", {}), routes)
     if any(step.get("route") and step["route"] not in routes for step in steps.values()):

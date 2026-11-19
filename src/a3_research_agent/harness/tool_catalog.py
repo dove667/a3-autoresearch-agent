@@ -9,7 +9,9 @@ KNOWLEDGE_TOOLS = [
         "description": "Keep the shared research direction, routes and execution steps. show reads the "
         'current revision with view="focus" for the immediate action or a step id for detail; '
         "update patches changed fields using that revision. Every new "
-        "route needs question, hypothesis, experiment and decision_rule. Steps link to a "
+        "route needs question, hypothesis, experiment and decision_rule. When web is enabled, "
+        "starting a route or changing its active design requires research: cite implementation "
+        "and papers read through web_fetch and explain how they inform the design. Steps link to a "
         "route and need task and criterion. After results, review the route with "
         "conclusion, evidence and decision continue/pause/complete; continuing also needs "
         "measured metrics, and step optionally names the step the decision closes. All "
@@ -41,6 +43,31 @@ KNOWLEDGE_TOOLS = [
                             "hypothesis": {"type": "string"},
                             "experiment": {"type": "string"},
                             "decision_rule": {"type": "string"},
+                            "research": {
+                                "type": "object",
+                                "properties": {
+                                    **{
+                                        lane: {
+                                            "type": "array",
+                                            "items": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "url": {"type": "string"},
+                                                    "finding": {"type": "string"},
+                                                },
+                                                "required": ["url", "finding"],
+                                                "additionalProperties": False,
+                                            },
+                                            "minItems": 1,
+                                            "maxItems": 10,
+                                        }
+                                        for lane in ("implementation", "papers")
+                                    },
+                                    "design": {"type": "string"},
+                                },
+                                "required": ["implementation", "papers", "design"],
+                                "additionalProperties": False,
+                            },
                             "status": {
                                 "type": "string",
                                 "enum": ["proposed", "active", "paused", "completed"],

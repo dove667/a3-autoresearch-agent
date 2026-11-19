@@ -10,6 +10,7 @@ SEARCH_FIELDS = {
 }
 FETCH_FIELDS = {
     "url": {"type": "string", "minLength": 1, "maxLength": 4096},
+    "query": {"type": "string", "minLength": 1, "maxLength": 1000},
     "max_chars": {"type": "integer", "minimum": 1, "maximum": 16000},
     "refresh": {"type": "boolean"},
 }
@@ -24,7 +25,8 @@ TOOLS = [
     definition(
         "web_fetch",
         "Fetch bounded readable text from a public URL through the Host web service. "
-        "Use after search to inspect the actual source; default max_chars=6000.",
+        "Use after search to inspect the actual source. Set query to retrieve relevant excerpts "
+        "from long pages, such as a paper's training recipe. Default max_chars=6000.",
         FETCH_FIELDS,
         ["url"],
     ),
@@ -60,6 +62,8 @@ def dispatch(name, args, request):
                 fail("invalid_domains", "Use at most 20 public DNS names without URL paths.")
         else:
             text(body.get("url"), "url", 4096)
+            if "query" in body:
+                text(body["query"], "query", 1000)
             body["max_chars"] = integer(body.get("max_chars", 6000), "max_chars", 1, 16000)
         if "refresh" in body:
             boolean(body["refresh"], "refresh")

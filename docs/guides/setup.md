@@ -75,6 +75,8 @@ bash start-autoresearch.sh --check
 
 需要联网研究时设置 `A3_WEB_ENABLED=1` 和 `TAVILY_API_KEY`。Host 提供搜索、提取、缓存和请求计数；凭据不交给研究进程。网页代理使用独立的 `A3_TAVILY_HTTP_PROXY` 配置，完整字段见 `.env.example`。
 
+Agent 用 `web_search` 分别检索官方源码与论文，用 `web_fetch` 读公开原文。`web_fetch(url=..., query=...)` 返回与问题相关的正文片段，适用于很长的训练文档或论文 HTML。论文优先使用 arXiv HTML、OpenReview 或会议出版社的公开页面。当前网关接受文本网页，PDF 文件不经过此入口。
+
 首次启动、同一 run 恢复、原地发布与夜间窗口见[使用教程](usage.md)。长期研究目标和行为原则由 `prompt/SOUL.md` 提供，Host 按版本装载三个 prompt，根技能库独立管理版本和修改历史。
 
 

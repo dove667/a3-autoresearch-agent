@@ -170,7 +170,8 @@ def tool(name, arguments):
     if name == "recall":
         return history_tools.recall_tool(arguments)
     if name == "plan":
-        return planning.dispatch(arguments)
+        capabilities = (context_manager.TOKEN_CONFIG or {}).get("capabilities") or {}
+        return planning.dispatch(arguments, require_research=capabilities.get("web") is True)
     tool_contracts.fail("unknown_tool", "Select a registered high-level research tool.")
 
 

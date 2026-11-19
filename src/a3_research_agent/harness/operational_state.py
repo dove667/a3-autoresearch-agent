@@ -281,6 +281,21 @@ def record_gateway(method, path, result):
     if not isinstance(result, dict):
         return
     path = path.partition("?")[0]
+    if method == "POST" and path == "/web/fetch":
+        if isinstance(result.get("request_id"), str) and isinstance(result.get("sources"), list):
+            fetched = {
+                source["url"]: result["request_id"]
+                for source in result["sources"]
+                if isinstance(source, dict)
+                and isinstance(source.get("url"), str)
+                and isinstance(source.get("text"), str)
+                and source["text"].strip()
+            }
+            if fetched:
+                state = load()
+                state.setdefault("web_sources", {}).update(fetched)
+                save(state)
+        return
     if (method, path) in {("GET", "/jobs"), ("POST", "/jobs/wait")}:
         rows = result.get("jobs", [])
         source = result.get("status_source") or "controller_metadata"

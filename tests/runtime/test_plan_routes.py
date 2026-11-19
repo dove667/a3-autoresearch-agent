@@ -106,3 +106,48 @@ def test_plan_rejects_obsolete_goal_and_wrong_action_fields():
         plan.dispatch({"action": "update", "revision": 1, "direction": "wrong"})["error"]
         == "plan_validation"
     )
+
+
+def test_web_research_gates_new_routes_and_changed_designs():
+    create()
+    route = {
+        "id": "mixed-act",
+        "question": "Does task conditioning help?",
+        "hypothesis": "A shared policy benefits from task labels",
+        "experiment": "Compare conditioned and unconditioned ACT",
+        "decision_rule": "Use paired rollouts",
+        "status": "active",
+    }
+    patch = {"action": "update", "revision": 1, "routes": [route]}
+    assert plan.dispatch(patch, require_research=True)["error"] == "route_research_required"
+
+    implementation = "https://github.com/huggingface/lerobot/blob/main/config.py"
+    paper = "https://arxiv.org/html/2304.13705"
+    research = {
+        "implementation": [{"url": implementation, "finding": "ACT predicts action chunks"}],
+        "papers": [{"url": paper, "finding": "Action chunking changes error accumulation"}],
+        "design": "Hold chunk length fixed and ablate only task labels.",
+    }
+    route["research"] = research
+    assert plan.dispatch(patch, require_research=True)["error"] == "unread_research_sources"
+    operational_state.record_gateway(
+        "POST",
+        "/web/fetch",
+        {"request_id": "source-code", "sources": [{"url": implementation, "text": "config"}]},
+    )
+    operational_state.record_gateway(
+        "POST",
+        "/web/fetch",
+        {"request_id": "source-paper", "sources": [{"url": paper, "text": "methods"}]},
+    )
+    assert plan.dispatch(patch, require_research=True)["revision"] == 2
+    assert plan.load()["routes"]["mixed-act"]["research"] == research
+
+    patch = {
+        "action": "update",
+        "revision": 2,
+        "reason": "Change research hypothesis",
+        "routes": [{"id": "mixed-act", "hypothesis": "A separate action head is needed"}],
+    }
+    assert plan.dispatch(patch, require_research=True)["error"] == "route_research_required"
+    assert plan.load()["revision"] == 2

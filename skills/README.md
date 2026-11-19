@@ -10,6 +10,7 @@ This is the project's single skill library. These methods support SOUL's long-te
 | [a3-frame-cache](a3-frame-cache/SKILL.md) | Diagnosing repeated decode cost or designing a shared frame cache |
 | [a3-training-progress](a3-training-progress/SKILL.md) | Inspecting large, growing or malformed training logs |
 | [a3-model-provenance](a3-model-provenance/SKILL.md) | Recording model identity, lineage, checkpoints and evaluation coverage |
+| [a3-route-research](a3-route-research/SKILL.md) | Resolving research design choices about a new training recipe, architecture or adaptation method |
 
 The Agent manages every skill through the same controlled `skills` tool. Start with semantic `list(query=...)` summaries, read a selected body with `read`, and use `list_resources` / `read_resource` for relevant attachments. Ordinary file tools do not access this directory. Skills are text and resources; execution uses remote jobs.
 

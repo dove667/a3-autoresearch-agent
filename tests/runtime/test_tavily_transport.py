@@ -510,3 +510,19 @@ def test_cache_lock_busy_never_calls_provider(tmp_path, monkeypatch):
         svc.execute("search", web.SearchRequest(query="q"), "alice")
     assert caught.value.status == 429
     assert svc.budget()["provider_requests"]["search"] == 0
+
+
+def test_focused_extract_queries_source_content(tmp_path, monkeypatch):
+    svc = service(tmp_path)
+    url = "https://arxiv.org/html/2304.13705"
+    calls = mock_vendor(
+        svc,
+        monkeypatch,
+        {"results": [{"url": url, "raw_content": "<chunk 1> methods"}]},
+    )
+    result = svc.execute(
+        "fetch", web.FetchRequest(url=url, query="training hyperparameters"), "alice"
+    )
+    payload = json.loads(calls[0][2].requests[0][1]["body"])
+    assert payload["query"] == "training hyperparameters"
+    assert result["sources"][0]["text"] == "<chunk 1> methods"

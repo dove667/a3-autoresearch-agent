@@ -1,0 +1,20 @@
+{
+  "id": "a3-route-research",
+  "version": "0.1.0",
+  "status": "active",
+  "description": "在拟定新的训练、微调或架构路线，或现有证据不足以决定下一项实验时使用。Use when choosing a policy research direction whose recipe, alternatives, or transfer assumptions are uncertain.",
+  "keywords": [
+    "deep research",
+    "literature",
+    "hyperparameters",
+    "training recipe",
+    "multi-task learning",
+    "先导调研",
+    "论文",
+    "超参数",
+    "多任务",
+    "实验设计"
+  ],
+  "provenance": "Research Harness method",
+  "local_source": "skills/a3-route-research/SKILL.md"
+}

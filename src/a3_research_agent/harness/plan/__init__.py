@@ -9,8 +9,10 @@ from a3_research_agent.harness.plan import inconsistency
 from a3_research_agent.harness.plan import store as plan_store
 from a3_research_agent.harness.plan.model import (
     MAX_ACTIVE_ROUTES,
+    RESEARCH_LANES,
     ActiveRouteLimit,
     active_route_ids,
+    route_design_changed,
     validate_route_admission,
 )
 from a3_research_agent.harness.plan.model import STATUSES as STATUSES
@@ -221,7 +223,7 @@ def view(plan=None, *, jobs=None, compact=False):
         routes,
     )
     if not foreground_reviews and not focus_ready and startable:
-        action = f"当前有路线名额，可激活独立待办 {startable[0]} 并推进其已就绪步骤。"
+        action = f"当前有路线名额，可核对独立待办 {startable[0]} 的调研记录，再激活并推进。"
     result = {
         "direction": plan.get("direction", {"objective": "", "metrics": [], "gaps": []}),
         "routes": routes,
@@ -291,18 +293,21 @@ def view(plan=None, *, jobs=None, compact=False):
         }
         result["routes"] = {
             key: {
-                field: value[:300] if isinstance(value, str) else value
-                for field, value in route.items()
-                if field
-                in (
-                    "question",
-                    "hypothesis",
-                    "experiment",
-                    "decision_rule",
-                    "status",
-                    "priority",
-                    "conclusion",
-                )
+                **{
+                    field: value[:300] if isinstance(value, str) else value
+                    for field, value in route.items()
+                    if field
+                    in (
+                        "question",
+                        "hypothesis",
+                        "experiment",
+                        "decision_rule",
+                        "status",
+                        "priority",
+                        "conclusion",
+                    )
+                },
+                "research_design": route.get("research", {}).get("design", "")[:300],
             }
             for key, route in routes.items()
             if key in selected_routes
@@ -315,12 +320,47 @@ def view(plan=None, *, jobs=None, compact=False):
     return {**result, "steps": steps}
 
 
-def dispatch(arguments):
+def dispatch(arguments, *, require_research=False):
     with plan_store.locked(plan_file()):
-        return dispatch_locked(arguments)
+        return dispatch_locked(arguments, require_research=require_research)
 
 
-def dispatch_locked(arguments):
+def missing_route_research(previous_routes, routes, fetched_sources):
+    for key, route in routes.items():
+        previous = previous_routes.get(key, {})
+        changed_design = route_design_changed(previous, route)
+        research = route.get("research")
+        previous_research = previous.get("research")
+        needs_research = route["status"] == "active" and (
+            previous.get("status") != "active" or changed_design
+        )
+        if needs_research and (not research or (changed_design and research == previous_research)):
+            return {
+                "error": "route_research_required",
+                "route": key,
+                "hint": "Search and read implementation and paper sources. Patch route.research "
+                "with implementation and papers [{url, finding}] and design before starting.",
+            }
+        if research and research != previous_research:
+            missing = sorted(
+                {
+                    reference["url"]
+                    for lane in RESEARCH_LANES
+                    for reference in research[lane]
+                    if reference["url"] not in fetched_sources
+                }
+            )
+            if missing:
+                return {
+                    "error": "unread_research_sources",
+                    "route": key,
+                    "sources": missing,
+                    "hint": "Read each cited source using web_fetch and use the returned URL.",
+                }
+    return None
+
+
+def dispatch_locked(arguments, *, require_research=False):
     action = arguments.get("action")
     allowed = {
         "show": {"action", "id", "view"},
@@ -371,7 +411,8 @@ def dispatch_locked(arguments):
             "hint": "Show the plan first",
         }
     review_warnings = []
-    observed = operational.load().get("jobs", {})
+    state = operational.load()
+    observed = state.get("jobs", {})
     previous_running = in_flight_routes(plan["steps"], observed)
     try:
         if action == "review":
@@ -468,6 +509,12 @@ def dispatch_locked(arguments):
         }
     except ValueError as error:
         return {"error": "plan_validation", "hint": str(error)}
+    if require_research and (
+        missing := missing_route_research(
+            plan["routes"], proposed["routes"], state.get("web_sources", {})
+        )
+    ):
+        return missing
     if proposed != plan:
         if plan["revision"]:
             manager.archive(plan, "plan-revision")
