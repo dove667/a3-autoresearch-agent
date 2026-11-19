@@ -4,6 +4,7 @@ import socket
 import pytest
 from fastapi.testclient import TestClient
 
+from a3_research_agent.harness import research_web
 from a3_research_agent.host.gateway.app import create_app
 from a3_research_agent.host.web import gateway as web
 
@@ -48,6 +49,20 @@ def test_auth_disabled_and_missing_key(tmp_path):
         ]["code"]
         == "unconfigured"
     )
+
+
+def test_fetch_failure_suggests_an_alternate_source_without_provider_content():
+    body = {"detail": {"code": "extraction_failed", "message": "private provider details"}}
+
+    def request(*args):
+        return {"http_error": 502, "body": json.dumps(body)}
+
+    result = research_web.dispatch(
+        "web_fetch", {"url": "https://arxiv.org/html/2304.13705"}, request
+    )
+    assert result["error"] == "extraction_failed"
+    assert "arXiv HTML" in result["hint"]
+    assert "private provider details" not in str(result)
 
 
 def test_search_fixed_config_normalization_and_restart_accounting(tmp_path, monkeypatch):

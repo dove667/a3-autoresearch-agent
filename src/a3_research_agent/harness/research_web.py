@@ -1,5 +1,6 @@
 """Built-in schemas for the Host's configured research web gateway."""
 
+from . import tool_results
 from .tool_contracts import ToolInputError, arguments, boolean, definition, fail, integer, text
 
 SEARCH_FIELDS = {
@@ -67,6 +68,16 @@ def dispatch(name, args, request):
             body["max_chars"] = integer(body.get("max_chars", 6000), "max_chars", 1, 16000)
         if "refresh" in body:
             boolean(body["refresh"], "refresh")
-        return request("POST", "/web/" + ("search" if name == "web_search" else "fetch"), body)
+        result = request("POST", "/web/" + ("search" if name == "web_search" else "fetch"), body)
+        if name == "web_fetch" and result.get("http_error") in (422, 502):
+            code, _ = tool_results.rejected(result["http_error"], result.get("body"), "", "")
+            if code in {"extraction_failed", "unsupported_content"}:
+                return tool_results.failure(
+                    code,
+                    "Try a different version of the source: arXiv HTML, a publisher's "
+                    "full-text page or the raw repository file.",
+                    http_status=result["http_error"],
+                )
+        return result
     except ToolInputError as error:
         return {"error": error.code, "hint": error.hint}
