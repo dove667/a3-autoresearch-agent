@@ -5,7 +5,25 @@ import re
 STATUSES = ("pending", "active", "blocked", "done", "skipped")
 ID = re.compile(r"[A-Za-z0-9_-]{1,48}")
 JOB_ID = re.compile(r"[0-9a-f]{32}")
-MAX_STEPS = 32
+MAX_ACTIVE_ROUTES = 4
+
+
+class ActiveRouteLimit(ValueError):
+    """A plan update tried to start another route without a free slot."""
+
+
+def active_route_ids(routes):
+    return [key for key, route in routes.items() if route.get("status") == "active"]
+
+
+def validate_route_admission(previous, routes, previous_in_flight=(), in_flight=()):
+    active = set(active_route_ids(routes)).union(previous_in_flight, in_flight)
+    previously_occupied = set(active_route_ids(previous)).union(previous_in_flight)
+    if len(active) > MAX_ACTIVE_ROUTES and active.difference(previously_occupied):
+        raise ActiveRouteLimit(
+            f"At most {MAX_ACTIVE_ROUTES} routes may occupy slots. Finish or pause a route "
+            "with no jobs in flight, or keep the candidate proposed."
+        )
 
 
 def bounded_text(value, limit, name, *, required=False):
@@ -27,10 +45,11 @@ def truncated_text(value, limit, name, *, required=False):
 def bounded_list(value, limit, valid, name):
     if (
         not isinstance(value, list)
-        or len(value) > limit
+        or (limit is not None and len(value) > limit)
         or any(not isinstance(item, str) or not valid(item) for item in value)
     ):
-        raise ValueError(f"Invalid {name}; use at most {limit} valid entries")
+        suffix = f"; use at most {limit} valid entries" if limit is not None else ""
+        raise ValueError(f"Invalid {name}{suffix}")
     return list(dict.fromkeys(value))
 
 
@@ -125,8 +144,8 @@ def validate_dependencies(steps):
 
 def revise(plan, arguments):
     changes = arguments.get("steps", [])
-    if not isinstance(changes, list) or len(changes) > MAX_STEPS:
-        raise ValueError(f"Supply at most {MAX_STEPS} step updates")
+    if not isinstance(changes, list):
+        raise ValueError("Supply step updates as a list")  # noqa: TRY004
     direction_patch = arguments.get("direction", {})
     if not isinstance(direction_patch, dict) or direction_patch.keys() - {
         "objective",
@@ -136,7 +155,7 @@ def revise(plan, arguments):
         raise ValueError("direction accepts objective, metrics and gaps")
     reason = bounded_text(arguments.get("reason", ""), 240, "reason")
     steps = plan["steps"].copy()
-    archived = bounded_list(arguments.get("archive", []), MAX_STEPS, ID.fullmatch, "archive IDs")
+    archived = bounded_list(arguments.get("archive", []), None, ID.fullmatch, "archive IDs")
     if archived and not reason:
         raise ValueError("Give a reason when archiving closed steps")
     for key in archived:
@@ -170,11 +189,6 @@ def revise(plan, arguments):
             )
             route_changed |= previous["status"] in ("done", "skipped") and step != previous
         steps[key] = step
-    if not steps:
-        raise ValueError("A plan must contain at least one step")
-    open_steps = sum(step["status"] not in ("done", "skipped") for step in steps.values())
-    if open_steps > MAX_STEPS:
-        raise ValueError(f"A plan can hold at most {MAX_STEPS} unfinished steps")
     if route_changed and not reason:
         raise ValueError("Give a reason when revising direction, route or a closed step")
     validate_dependencies(steps)
@@ -227,6 +241,7 @@ def revise(plan, arguments):
         ):
             raise ValueError("Give reason when changing a research route")
         routes[key] = route
+    validate_route_admission(plan.get("routes", {}), routes)
     if any(step.get("route") and step["route"] not in routes for step in steps.values()):
         raise ValueError("Step route must identify an existing research route")
     return {

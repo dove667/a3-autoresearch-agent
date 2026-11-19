@@ -31,11 +31,10 @@ def test_short_progress_is_unchanged():
     assert step["progress"] == "done"
 
 
-def test_a_batch_plan_can_hold_more_than_twenty_steps():
-    assert model.MAX_STEPS >= 32
-    steps = [{"id": f"s{index}", "task": "Batch", "criterion": "Measured"} for index in range(25)]
+def test_a_plan_can_hold_more_than_32_unfinished_steps():
+    steps = [{"id": f"s{index}", "task": "Batch", "criterion": "Measured"} for index in range(70)]
     revised = model.revise(plan_with({}), {"steps": steps})
-    assert len(revised["steps"]) == 25
+    assert len(revised["steps"]) == 70
     assert model.ordered_steps(revised["steps"])[:3] == ["s0", "s1", "s2"]
 
 

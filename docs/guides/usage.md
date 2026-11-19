@@ -94,6 +94,12 @@ CPU作业使用 `job_submit(name="训练ACT", command=[...], attachments=[{"path
 `A3_RESEARCH_PREFLIGHT_DEVICE=cuda` 分支。两项共用 120 秒预算。探针写入同样的通过报告后，再次提交原
 `prepared_id` 启动正式作业。
 
+显存需求未知时，先用 `gpu_status` 查看 Controller 的单卡准入上限，再准备独立的短训练作业。
+保持正式配置的 batch、精度、输入形状和优化器，实际跑几步并完成一次优化器更新。在训练进程内
+记录 PyTorch 的 `max_memory_allocated` 和 `max_memory_reserved`，通过 `job_artifact` 读取回执，
+留出框架外开销和波动余量后重新准备正式作业。短作业需要自己的初始显存申请量，通用 CUDA 预检不会
+自动预测完整训练的峰值。
+
 在同一 `preflight` 对象中可声明 `output_paths` 和 `checkpoint_paths`。路径相对共享的 `A3_OUTPUTS`，checkpoint
 须在已声明的输出路径内。检查和正式执行前都会拒绝已存在的输出目标。正式运行期间会锁住声明的顶层输出目录名，
 并在脚本成功退出后核对 checkpoint 是否生成。并行作业使用各自的顶层输出目录。
@@ -117,7 +123,7 @@ Controller负责排队、GPU分配与生命周期。提交结果未知时先按�
 
 长期经验由 `memory` 保存，search使用query，read使用id，修订/归档/恢复使用当前revision；`recall`只检索当前run的原始观测。根 `skills/` 是唯一技能库，通过 `skills` 先看目录摘要，再读正文和所需附件；同一工具也负责更新正文、附件和归档。工作上下文达到压缩门槛后必须生成完整摘要，32k 等目标预算覆盖整个下一轮输入；机制见[上下文与记忆](../reference/context-and-memory.md)。
 
-Agent 每轮接收一个焦点步骤的详情和下一步建议。优先消化当前路线的新结果，正在执行的步骤先于未启动的待办。独立种子、对照组和分片仍可在同一批次并行。通过 `plan(action="show", view="focus")` 读当前焦点，`view="all"` 读完整计划。32 个名额适用于未完成步骤，历史步骤保留依赖与证据。
+Agent 每轮接收一个焦点步骤的详情和下一步建议，其余最多三条活跃路线显示作业、依赖和待复盘摘要。计划同时容纳最多四条 `active` 路线；待办可以随时登记为 `proposed`，暂停或结束后，已观察到的在途作业仍保留该路线名额，直到作业结束。等待作业时可推进独立路线，批次内的种子、对照组、分片仍可并行。通过 `plan(action="show", view="focus")` 读当前焦点，`view="all"` 读完整计划。步骤数量不设上限，历史步骤继续保留依赖与证据。
 
 ## 持续研究与暂停
 

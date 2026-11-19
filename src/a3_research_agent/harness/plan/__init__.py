@@ -1,11 +1,18 @@
 """Persistent research planning and its view of observed remote work."""
 
+from collections import Counter
+
 from a3_research_agent.harness import operational_state as operational
 from a3_research_agent.harness import paths
 from a3_research_agent.harness.context import manager
 from a3_research_agent.harness.plan import inconsistency
 from a3_research_agent.harness.plan import store as plan_store
-from a3_research_agent.harness.plan.model import MAX_STEPS as MAX_STEPS
+from a3_research_agent.harness.plan.model import (
+    MAX_ACTIVE_ROUTES,
+    ActiveRouteLimit,
+    active_route_ids,
+    validate_route_admission,
+)
 from a3_research_agent.harness.plan.model import STATUSES as STATUSES
 from a3_research_agent.harness.plan.model import (
     bounded_list as bounded_list,
@@ -30,6 +37,16 @@ def plan_file():
 
 def load():
     return plan_store.load(plan_file())
+
+
+def in_flight_routes(steps, jobs):
+    running = operational.JOB_STATES - operational.TERMINAL_JOB_STATES
+    return {
+        step["route"]
+        for step in steps.values()
+        if step.get("route")
+        and any(jobs.get(job, {}).get("status") in running for job in step["jobs"])
+    }
 
 
 def next_action(steps, ready, review_due, routes):
@@ -139,6 +156,13 @@ def view(plan=None, *, jobs=None, compact=False):
         reverse=True,
     )
     routes = plan.get("routes", {})
+    active_routes = active_route_ids(routes)
+    occupied_routes = list(dict.fromkeys([*active_routes, *sorted(in_flight_routes(steps, jobs))]))
+    slots = {
+        "limit": MAX_ACTIVE_ROUTES,
+        "occupied": len(occupied_routes),
+        "available": max(0, MAX_ACTIVE_ROUTES - len(occupied_routes)),
+    }
     review_due = []
     for key, step in steps.items():
         terminal = {
@@ -148,18 +172,70 @@ def view(plan=None, *, jobs=None, compact=False):
         }
         if terminal:
             review_due.append({"step": key, "route": step.get("route", ""), "jobs": terminal})
+    active = set(active_routes[:MAX_ACTIVE_ROUTES])
+    open_steps = {
+        key: step
+        for key, step in steps.items()
+        if step["status"] not in ("done", "skipped")
+        and (not step.get("route") or step["route"] in active)
+    }
+    startable = list(
+        dict.fromkeys(
+            steps[key]["route"]
+            for key in ready
+            if routes.get(steps[key].get("route"), {}).get("status") == "proposed"
+        )
+    )[: slots["available"]]
+    ready_now = [key for key in ready if key in open_steps]
+    running_states = operational.JOB_STATES - operational.TERMINAL_JOB_STATES
+    running = [
+        key
+        for key, step in steps.items()
+        if any(status in running_states for status in step["observed_jobs"].values())
+        and (key in open_steps or step.get("route") in occupied_routes[:MAX_ACTIVE_ROUTES])
+    ]
+    foreground_reviews = [
+        item
+        for item in review_due
+        if steps[item["step"]]["status"] != "skipped"
+        and (item["route"] in active or (not item["route"] and item["step"] in open_steps))
+    ]
+    running_routes = {steps[key].get("route") for key in running}
+    # Unlinked backlog from a legacy plan should not interrupt admitted work.
+    actionable = [
+        key
+        for key in ready_now
+        if steps[key]["status"] == "active"
+        or (steps[key].get("route") and steps[key]["route"] not in running_routes)
+        or not running
+    ]
+    candidates = (
+        [item["step"] for item in foreground_reviews] + actionable + running + list(open_steps)
+    )
+    focus = candidates[:1]
+    focus_ready = [key for key in focus if key in actionable]
+    action = next_action(
+        {key: steps[key] for key in [*focus, *running]},
+        focus_ready,
+        foreground_reviews,
+        routes,
+    )
+    if not foreground_reviews and not focus_ready and startable:
+        action = f"当前有路线名额，可激活独立待办 {startable[0]} 并推进其已就绪步骤。"
     result = {
         "direction": plan.get("direction", {"objective": "", "metrics": [], "gaps": []}),
         "routes": routes,
+        "route_slots": slots,
         "review_due": review_due,
-        "focus": ready[:1],
+        "focus": focus,
+        "startable_routes": startable,
         "unlinked_steps": [key for key, step in steps.items() if not step.get("route")],
         "notice": "Agent-authored plan. Job status is last observed. Verify evidence before closing.",
         "revision": plan["revision"],
         "reason": plan["reason"],
         "order": order,
         "ready": ready,
-        "next_action": next_action(steps, ready, review_due, routes),
+        "next_action": action,
         "counts": {
             status: sum(step["status"] == status for step in steps.values()) for status in STATUSES
         },
@@ -167,58 +243,36 @@ def view(plan=None, *, jobs=None, compact=False):
     if not compact:
         result["reviews"] = plan.get("reviews", [])
     if compact:
-        open_steps = {
-            key: step
-            for key, step in steps.items()
-            if step["status"] not in ("done", "skipped")
-            and routes.get(step.get("route"), {}).get("status") not in ("paused", "completed")
-        }
-        running_states = operational.JOB_STATES - operational.TERMINAL_JOB_STATES
-        running = [
-            key
-            for key, step in open_steps.items()
-            if any(status in running_states for status in step["observed_jobs"].values())
-        ]
-        foreground_reviews = [item for item in review_due if item["step"] in open_steps]
-        active_ready = [key for key in ready if steps[key]["status"] == "active"]
-        running_route = steps[running[0]].get("route") if running else None
-        same_route_ready = [
-            key
-            for key in active_ready
-            if running_route and steps[key].get("route") == running_route
-        ]
-        candidates = (
-            [item["step"] for item in foreground_reviews]
-            + same_route_ready
-            + running
-            + active_ready
-            + ready
-            + list(open_steps)
-        )
-        ordered = list(dict.fromkeys(candidates))
-        focus = ordered[:1]
-        actionable = [key for key in focus if key in ready]
-        result["focus"] = focus
         result["order"] = focus
         result["unlinked_steps"] = [key for key in focus if not steps[key].get("route")]
-        result["next_action"] = next_action(
-            {key: steps[key] for key in [*focus, *running]},
-            actionable,
-            foreground_reviews,
-            routes,
-        )
-        # Keep backlog visible as one-line suggestions without sending its task detail.
+        # Include job/dependency signals for up to three other admitted routes.
+        focus_route = steps[focus[0]].get("route") if focus else None
         result["overview"] = [
             {
-                "id": key,
-                "status": steps[key]["status"],
-                "route": steps[key].get("route", ""),
-                "task": steps[key].get("task", "")[:80],
+                "route": route,
+                "jobs": dict(
+                    Counter(
+                        {
+                            job: status
+                            for step in steps.values()
+                            if step.get("route") == route
+                            for job, status in step["observed_jobs"].items()
+                        }.values()
+                    )
+                ),
+                "waiting_on_dependencies": sum(
+                    bool(step["unmet_dependencies"])
+                    for step in open_steps.values()
+                    if step.get("route") == route
+                ),
+                "review_due": sum(item["route"] == route for item in foreground_reviews),
             }
-            for key in ordered[:3]
-        ]
+            for route in occupied_routes[:MAX_ACTIVE_ROUTES]
+            if route != focus_route
+        ][: MAX_ACTIVE_ROUTES - 1]
+        result["ready"] = ready_now[: MAX_ACTIVE_ROUTES * 2]
         result["parallelism"] = {
-            "ready_steps": len(ready),
+            "ready_steps": len(ready_now),
             "active_jobs": len(
                 {
                     job
@@ -317,6 +371,8 @@ def dispatch_locked(arguments):
             "hint": "Show the plan first",
         }
     review_warnings = []
+    observed = operational.load().get("jobs", {})
+    previous_running = in_flight_routes(plan["steps"], observed)
     try:
         if action == "review":
             key = arguments.get("id")
@@ -359,7 +415,6 @@ def dispatch_locked(arguments):
                 )
             if any(not any(char.isdigit() for char in item) for item in metrics):
                 raise ValueError("Each metric must contain the observed value")
-            observed = operational.load().get("jobs", {})
             jobs = {
                 job: observed.get(job, {}).get("status", "unobserved")
                 for step_id, item in plan["steps"].items()
@@ -397,6 +452,20 @@ def dispatch_locked(arguments):
             )
         else:
             proposed = revise(plan, arguments)
+        validate_route_admission(
+            plan["routes"],
+            proposed["routes"],
+            previous_running,
+            in_flight_routes(proposed["steps"], observed),
+        )
+    except ActiveRouteLimit as error:
+        return {
+            "error": "active_route_limit",
+            "hint": str(error),
+            "occupied_routes": list(
+                dict.fromkeys([*active_route_ids(plan["routes"]), *sorted(previous_running)])
+            ),
+        }
     except ValueError as error:
         return {"error": "plan_validation", "hint": str(error)}
     if proposed != plan:

@@ -1,6 +1,6 @@
 # 研究工具与执行约定
 
-Version: 0.50.0
+Version: 0.51.0
 
 工具定义给出参数、默认值和限制；本文件说明常用流程。所有工具返回 `ok`：成功时直接读取同层结果；失败时读取 `error`、`hint` 和相关编号，修正后再调用。作业的 `status="failed"` 是执行结果，先读日志与证据再判断原因。
 
@@ -55,6 +55,8 @@ GPU 作业先调用 `job_prepare`，同样填写 name、command、attachments、
 ```
 
 检查分支随后退出，不写正式训练产物。用 `job_wait(job_ids=[<preflight_job_id>])` 等检查完成，再调用 `job_submit(prepared_id=<返回编号>)`。不重填 command 或附件。输入或源码变化后重新 prepare。预检涉及设备放置、混合 batch 或 CUDA 前向时，传 `preflight={"cuda":true}`，并在脚本检查分支按 `A3_RESEARCH_PREFLIGHT_DEVICE=cpu|cuda` 选择设备。CPU 通过后的第一次 submit 会返回 `gpu_preflight_job_id`，等 CUDA 检查通过，再提交原 `prepared_id`。CUDA 检查分支只做最小可验证计算。
+
+首次训练配方的显存需求未知时，先用 `gpu_status` 查准入上限，在可用额度内准备独立的短作业，使用同样的模型、输入形状、batch、精度和优化器。跑几步真实前向、反向和 optimizer step，在实际训练进程内记录 PyTorch 的 `max_memory_allocated` 与 `max_memory_reserved`（字节），用 `job_wait` 等结束、`job_artifact` 读峰值回执。为框架外显存和波动留余量后，再用实测申请量重新 `job_prepare` 正式训练。通用 CUDA 预检只检查脚本声明的路径，显存测量由探针脚本实现。
 
 需要保护输出目录时，传 `preflight={"output_paths":["runs/my-run"],"checkpoint_paths":["runs/my-run/checkpoint.pt"]}`，路径相对 `A3_OUTPUTS`，脚本也使用该目录。已有输出或缺失预期 checkpoint 会给出明确错误。训练脚本同时记录 checkpoint 类型、实际 loader、归一化来源及评测 adapter，裸权重要使用对应的训练和评测入口。
 
@@ -121,7 +123,7 @@ ACT 只读三路相机和 16 维状态，没有语言输入：用 `act:` 时传 
 
 `decision="continue"` 必须给出至少一条含数值的 `metrics`，`step` 可选地标明本次结论对应的步骤；暂停或结束路线可以不带 metrics。
 
-`research_plan` 每轮给出一个焦点步骤和 `next_action`。优先复盘当前路线的新结果，其次推进或等待已启动的实验。把并行主要放在同一批次的 seeds、对照组或采集分片上。新证据改变优先级时，主动用 plan 更新路线和步骤。未完成步骤最多 32 个，已完成或跳过的步骤继续保留依赖和证据。
+`research_plan` 每轮给出一个焦点步骤和 `next_action`，另显示最多三条推进中路线的作业、依赖和待复盘状态。最多四条路线可设为 `active`。新想法先记为 `proposed`，有空位再激活并提交绑定该路线步骤的作业；暂停或结束路线后，等已观察到的在途作业结束才释放名额。优先处理新结果；一条路线等作业时，可以推进另一条有独立就绪步骤的路线。批次内可以并行 seeds、对照组或分片。步骤数量不设上限，已完成或跳过的步骤保留依赖和证据。
 
 所有待办和进展都在 plan 中维护。**一个 step 是一批工作**（例如一组同种子配对评测）。批次内多个作业并行推进。达到 criterion 后用 `plan update` 写 `status="done"`、`evidence` 和实际 `progress`。训练步骤需核对实际 checkpoint，评测步骤需核对对应回执。若要改动已完成步骤的 criterion，另建步骤、重新打开原步骤，或提供满足新判据的证据。已学到的发现写 memory，稳定可复用的操作方法写 skills。
 

@@ -25,6 +25,86 @@ def step(step_id="evaluate", **changes):
     }
 
 
+def test_activation_cap_applies_to_updates_and_reviews():
+    initial = plan.dispatch(
+        {
+            "action": "update",
+            "revision": 0,
+            "direction": {"objective": "Compare policies"},
+            "routes": [route(f"r{i}", status="active" if i < 4 else "proposed") for i in range(6)],
+            "steps": [step("one", route="r0")],
+        }
+    )
+    assert initial["route_slots"] == {"limit": 4, "occupied": 4, "available": 0}
+    update = {"action": "update", "revision": 1, "routes": [{"id": "r4", "status": "active"}]}
+    assert plan.dispatch(update)["error"] == "active_route_limit"
+    review = {
+        "action": "review",
+        "revision": 1,
+        "id": "r4",
+        "decision": "continue",
+        "conclusion": "Candidate ready",
+        "metrics": ["Accuracy 5/20"],
+        "evidence": ["report.json"],
+    }
+    assert plan.dispatch(review)["error"] == "active_route_limit"
+    assert plan.load()["revision"] == 1
+    assert (
+        plan.dispatch(
+            update
+            | {"routes": [{"id": "r0", "status": "paused"}, {"id": "r4", "status": "active"}]}
+        )["revision"]
+        == 2
+    )
+    assert plan.load()["routes"]["r5"]["status"] == "proposed"
+
+
+def test_focus_keeps_independent_work_actionable_and_reports_other_routes():
+    job = "a" * 32
+    plan.dispatch(
+        {
+            "action": "update",
+            "revision": 0,
+            "direction": {"objective": "Compare policies"},
+            "routes": [route("training"), route("evaluation"), route("next", status="proposed")],
+            "steps": [
+                step("train", route="training", jobs=[job], status="active"),
+                step("evaluate", route="evaluation"),
+                step("new", route="next"),
+            ],
+        }
+    )
+    value = plan.view(plan.load(), jobs={job: {"status": "running"}}, compact=True)
+    assert value["focus"] == ["evaluate"]
+    assert list(value["steps"]) == ["evaluate"]
+    assert value["overview"][0]["route"] == "training"
+    assert value["overview"][0]["jobs"] == {"running": 1}
+    assert value["startable_routes"] == ["next"]
+    assert "evaluate" in value["next_action"]
+
+
+def test_paused_route_releases_slot_after_its_last_job_finishes():
+    job = "a" * 32
+    plan.dispatch(
+        {
+            "action": "update",
+            "revision": 0,
+            "direction": {"objective": "Compare policies"},
+            "routes": [route(f"r{i}", status="active" if i < 4 else "proposed") for i in range(5)],
+            "steps": [step("one", route="r0", jobs=[job])],
+        }
+    )
+    operational_state.record_gateway("POST", "/jobs", {"job_id": job, "status": "running"})
+    paused = plan.dispatch(
+        {"action": "update", "revision": 1, "routes": [{"id": "r0", "status": "paused"}]}
+    )
+    assert paused["route_slots"]["available"] == 0
+    activate = {"action": "update", "revision": 2, "routes": [{"id": "r4", "status": "active"}]}
+    assert plan.dispatch(activate)["error"] == "active_route_limit"
+    operational_state.record_gateway("GET", "/jobs/" + job, {"job_id": job, "status": "completed"})
+    assert plan.dispatch(activate)["revision"] == 3
+
+
 def test_long_legal_research_guidance_keeps_the_only_ready_step_visible():
     text = "研究" * 600
     result = plan.dispatch(
@@ -154,6 +234,7 @@ def test_context_trimming_removes_routes_of_omitted_steps():
             "routes": [
                 route(
                     f"r{i}",
+                    status="active" if i < 4 else "proposed",
                     question=text,
                     hypothesis=text,
                     experiment=text,

@@ -178,10 +178,14 @@ def test_optional_tool_families_follow_deployment_capabilities():
 @pytest.mark.parametrize("section", ["plan", "facts"])
 def test_compact_views_stay_inside_their_budget(section):
     seed_plan()
+    planning.dispatch(
+        {"action": "update", "revision": 1, "routes": [{"id": "r1", "status": "active"}]}
+    )
     view = planning.view(planning.load(), jobs={}, compact=True)
     assert cm.size(view) <= 6000
     if section == "plan":
-        assert view["overview"] and view["overview"][0]["id"] == "s1"
+        assert view["focus"] == ["s1"]
+        assert view["overview"] == []
         assert view["parallelism"] == {"ready_steps": 1, "active_jobs": 0}
 
 

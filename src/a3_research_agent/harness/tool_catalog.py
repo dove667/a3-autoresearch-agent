@@ -13,7 +13,7 @@ KNOWLEDGE_TOOLS = [
         "route and need task and criterion. After results, review the route with "
         "conclusion, evidence and decision continue/pause/complete; continuing also needs "
         "measured metrics, and step optionally names the step the decision closes. All "
-        "tasks and job progress belong here.",
+        "tasks and job progress belong here. Up to four routes may be active; keep new ideas proposed.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -66,10 +66,9 @@ KNOWLEDGE_TOOLS = [
                     "items": {"type": "string", "maxLength": 160},
                     "maxItems": 8,
                 },
-                "archive": {"type": "array", "items": {"type": "string"}, "maxItems": 20},
+                "archive": {"type": "array", "items": {"type": "string"}},
                 "steps": {
                     "type": "array",
-                    "maxItems": 20,
                     "items": {
                         "type": "object",
                         "properties": {

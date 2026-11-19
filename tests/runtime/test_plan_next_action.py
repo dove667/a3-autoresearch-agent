@@ -22,6 +22,7 @@ def seeded(tmp_path, monkeypatch):
                     "hypothesis": "更多合格数据提高入盒数",
                     "experiment": "同种子配对评测",
                     "decision_rule": "配对改善则保留",
+                    "status": "active",
                 }
             ],
             "steps": [
