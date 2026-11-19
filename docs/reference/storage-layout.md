@@ -125,7 +125,7 @@ retained 记录引用共享 workspace 中的研究文件：`retained-files.json`
 
 数据与模型存储按研究方向和来源组织。项目通用基准和资产使用 `shared/`，其余使用 `<方向>/<来源>/<资产版本>/`，例如 `act/autoresearch/` 和 `moe-act/codex/`。同一数据根保存原始采集、合并集和可复用预处理。模型根保存训练 checkpoint 及其加载所需文件。数据与模型用清单记录各自来源和版本，已发布版本保持稳定。自动研究作业通过 `A3_DATASETS`、`A3_MODELS` 读取根目录，手动实验使用相同配置。单次作业的评测和诊断仍通过原作业编号读取。
 
-归属待核的迁移资产放在 `historical/autoresearch/`。若资产根有 `a3-migration.json`，其 `assets` 条目用 `path` 记录相对根目录的位置，有旧路径的条目还记录 `source`。Agent 通过只读 CPU Python 作业筛选这份清单，用 `job_artifact` 的 `area="outputs"` 查看匹配结果。清单覆盖迁移时的资产，后续发布的版本从对应方向目录查找。
+归属待核的迁移资产放在 `historical/autoresearch/`。若资产根有 `a3-migration.json`，其 `assets` 条目用 `path` 记录相对根目录的位置，有旧路径的条目还记录 `source`。Agent 用 `remote_assets(action="search", ...)` 直接筛选这份清单。清单覆盖迁移时的资产，后续发布的版本通过 `list` 查看对应方向目录。
 
 A3 参考源码按实际文件内容生成共享缓存；各次运行的 `public/a3` 只保存链接，缓存不携带 Git 数据库、输出或浏览器临时文件。同一内容只保存一份，源码变化产生独立版本。
 

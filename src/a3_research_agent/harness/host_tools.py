@@ -35,6 +35,20 @@ FRAME = {
     "additionalProperties": False,
 }
 FIELDS = {
+    "remote_assets": {
+        "action": {"type": "string", "enum": ["list", "stat", "search", "read"]},
+        "root": {"type": "string", "enum": ["datasets", "models"]},
+        "path": {
+            "type": "string",
+            "description": "Path relative to the root. Omit for root listing.",
+        },
+        "query": {
+            "type": "string",
+            "description": "Search a migration catalog by name or old path.",
+        },
+        "offset": {"type": "integer", "minimum": 0},
+        "limit": {"type": "integer", "minimum": 1, "maximum": 8000},
+    },
     "startup_checks": {},
     "vision_status": {},
     "vision_inspect": {
@@ -99,6 +113,9 @@ FIELDS = {
     "session_cancel": {"session_id": SESSION_ID},
 }
 DESCRIPTIONS = {
+    "remote_assets": "Inspect the configured DATASETS or MODELS on the execution server. "
+    "List a directory, stat a path, search a migration catalog for a historical asset, or read "
+    "a UTF-8 text page. Use root-relative paths. Follow next_offset for more results. No job is submitted.",
     "startup_checks": "Read this run's A3 and dataset startup job IDs, status, report paths, "
     "and available audit results. Use it before repeating these checks.",
     "vision_status": "Check visual inspection availability and frame limits.",
@@ -132,6 +149,7 @@ DESCRIPTIONS = {
     "session_cancel": "Stop an owned session by ID, subject to the existing Host management permissions.",
 }
 REQUIRED = {
+    "remote_assets": ["action", "root"],
     "vision_inspect": ["question", "frames"],
     "vision_view": ["question", "frames"],
     "evaluation_compare": [
@@ -240,6 +258,8 @@ def dispatch(name, args, request):
                 "session_list": "/sessions?include_status=true",
             }[name]
             return request("GET", route)
+        if name == "remote_assets":
+            return request("POST", "/remote-assets", args)
         if name == "vision_inspect":
             return request("POST", "/vision/inspect", vision(args))
         if name == "vision_view":

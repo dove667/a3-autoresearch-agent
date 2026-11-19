@@ -15,6 +15,7 @@ from .artifacts import list_artifacts, read_artifact
 from .files import MAX_INPUT_BYTES
 from .lifecycle import watch
 from .processes import cancel, status, validate_data_paths
+from .remote_assets import inspect_assets
 from .store import JobStore
 from .submission import submit
 
@@ -56,6 +57,7 @@ def main() -> None:
             "cancel",
             "artifact",
             "artifacts-list",
+            "remote-assets",
             "health",
             "usage",
             "export-create",
@@ -114,6 +116,9 @@ def main() -> None:
                     }
                 )
             )
+            return
+        if args.operation == "remote-assets":
+            print(json.dumps(inspect_assets(request, args)))
             return
         validate_data_paths(args.data_root, [args.root, args.tmp_root or args.root / "temporary"])
         store = JobStore(args.root)

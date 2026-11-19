@@ -1,6 +1,6 @@
 # 研究工作区
 
-Version: 0.13.1
+Version: 0.14.0
 
 本地原生进程只提供文件与研究工具，没有本地 bash 或 Python 执行入口。仿真、训练、评估及脚本执行通过远程作业完成。运行状态 `runtime_paths` 给出实际路径：
 
@@ -25,7 +25,7 @@ Version: 0.13.1
 
 复用历史资产时，先查相应研究方向的 `autoresearch/` 或 `codex/`，以及根目录的 `shared/`。常用数据集是 `shared/full-v1`、`shared/merged-2x5-2x10-v2` 和 `act/autoresearch/mixed-2x10-v1`。旧 ACT 权重可查模型根下的 `act/autoresearch/`。归属待核的历史资产在 `historical/autoresearch/`。
 
-两个根目录下的 `a3-migration.json` 如存在，记录迁移资产的相对 `path` 及已有的旧 `source`。查具体数据集、checkpoint 或预处理产物时，通过 `job_submit` 提交只读 CPU Python 作业，按历史路径、资产名称或方向筛选清单，并将少量匹配结果写到 `A3_OUTPUTS`，再用 `job_artifact(job_id=..., path=..., area="outputs")` 读取。清单只覆盖迁移时的资产，后续发布的版本用 Python 查看相应方向目录即可。
+两个根目录下的 `a3-migration.json` 如存在，记录迁移资产的相对 `path` 及已有的旧 `source`。用 `remote_assets(action="search", root="datasets"|"models", query=...)` 按资产名或旧路径查找，再用 `stat` 核对当前路径，或用 `read` 查看配置与元数据。清单只覆盖迁移时的资产，后续发布的版本用 `remote_assets(action="list", ...)` 查看相应方向目录。查询直接返回结果。
 
 - 原始采集、合并集、可复用的预处理结果都放在数据根目录。用来源清单记录原始数据版本、采集作业与处理参数。
 - 可复用的训练 checkpoint 放在模型根目录，附训练配方、来源数据和作业编号。

@@ -32,6 +32,7 @@ READ_ONLY_TOOLS = frozenset(
         "job_list",
         "job_wait",
         "job_artifact",
+        "remote_assets",
         "gpu_status",
         "export_list",
         "idle_wait",

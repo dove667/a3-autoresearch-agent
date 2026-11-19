@@ -105,6 +105,8 @@ HOME、TMPDIR、XDG、模型、编译等常见缓存全部指向数据盘。程�
 
 需要跨 run 使用的 checkpoint、原始数据和预处理产物按[目录约定](storage-layout.md#调试发布与远程数据)发布。通过 `A3_REMOTE_MODELS_ROOT` 和 `A3_REMOTE_DATASETS_ROOT` 配置根目录。
 
+`remote_assets` 由 Controller 直接查询这两个根目录，支持 `list`、`stat`、`search` 和 UTF-8 `read`，无需提交作业。路径相对于所选根目录。Controller 只列出可见条目，符号链接显示为链接，目录遍历和文件读取都拒绝跟随链接。列表和清单查询每页最多 100 条，文本最多读取 2 MiB 的文件，每页最多 8000 字符。使用 `next_offset` 分页。
+
 ## 发布与恢复
 
 Host 与远程 Controller 使用配套的 Harness 发布版本。Controller 的健康检查响应使用协议版本 2，作业解释器由 `A3_REMOTE_PROCESS_PYTHON` 指定。升级前先暂停研究并等待在途作业完成，再切换两端源码。继续使用原执行数据目录以保留进程作业、输出和 GPU 资源账本。

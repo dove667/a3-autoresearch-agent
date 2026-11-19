@@ -197,6 +197,7 @@ class Gateway(
         self.app.add_api_route("/jobs", self.submit, methods=["POST"])
         self.app.add_api_route("/jobs", self.list_jobs, methods=["GET"])
         self.app.add_api_route("/resources/gpus", self.gpu_snapshot, methods=["GET"])
+        self.app.add_api_route("/remote-assets", self.remote_assets, methods=["POST"])
         self.app.add_api_route("/jobs/wait", self.wait_jobs, methods=["POST"])
         self.app.add_api_route("/jobs/observe", self.reconcile_jobs, methods=["POST"])
         self.app.add_api_route("/jobs/exports", self.list_exports, methods=["GET"])

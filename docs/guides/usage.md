@@ -81,6 +81,8 @@ nohup bash start-autoresearch.sh --night-window --harness-commit <已发布提�
 
 ## 常用工具和作业流程
 
+用 `remote_assets(root="datasets"|"models", action=...)` 直接查看执行端共享资产。已知旧名称时用 `search` 查迁移清单，浏览目录用 `list`，确认路径用 `stat`，读取文本配置用 `read`。
+
 CPU作业使用 `job_submit(name="训练ACT", command=[...], attachments=[{"path":"scripts/train.py"}])`；每次提交给作业一个简短的人类可读名称；
 源码和实验文本配置都可附加，工具自动计算哈希。GPU作业先用
 `job_prepare(command=[...], gpu=true, attachments=[...], input_exports=[...])` 保存正式请求并执行CPU检查。

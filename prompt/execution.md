@@ -1,6 +1,6 @@
 # 研究工具与执行约定
 
-Version: 0.53.0
+Version: 0.54.0
 
 工具定义给出参数、默认值和限制；本文件说明常用流程。所有工具返回 `ok`：成功时直接读取同层结果；失败时读取 `error`、`hint` 和相关编号，修正后再调用。作业的 `status="failed"` 是执行结果，先读日志与证据再判断原因。
 
@@ -15,6 +15,7 @@ Version: 0.53.0
 | 当前 run 原始对话 | `recall` |
 | 运行状态或需人工处理的阻塞 | `research_status` |
 | 远程执行与结果 | `job_prepare`、`job_submit`、`job_status`、`job_list`、`job_artifact`、`job_cancel` |
+| 执行端数据集与模型 | `remote_assets` |
 | A3 闭环评测 | `benchmark`、`benchmark_group`、`benchmark_summary` |
 | 数据集体检 | `startup_checks`、`dataset_audit` |
 | A3 接口查询 | `a3_api` |
@@ -38,7 +39,9 @@ Version: 0.53.0
 
 ## 提交作业
 
-研究源码保存在 `scripts/`，实验配置和结果保存在 `experiments/`。所有工作区文本文件统一使用 `attachments`，只填 `path` 和可选远程 `destination`，工具计算哈希。导入依赖一并附加；数据、权重和视频通过 `input_exports` 引用已有只读资产。
+研究源码保存在 `scripts/`，实验配置和结果保存在 `experiments/`。所有工作区文本文件统一使用 `attachments`，只填 `path` 和可选远程 `destination`，工具计算哈希。导入依赖一并附加；封存的作业产物通过 `input_exports` 引用。
+
+查看跨 run 共用数据或模型时，直接调用 `remote_assets`，`root` 选 `datasets` 或 `models`。用 `list` 查看根目录或相对子目录，用 `search` 按关键词检索迁移清单，用 `stat` 核对文件和目录，用 `read` 分页读取 UTF-8 文本。返回的 `root_path` 与相对 `path` 可用来构造实际输入路径。用 `next_offset` 继续翻页。需要执行数据体检、解码或计算时，再走远程作业。
 
 CPU 作业直接调用 `job_submit`，每个作业填写简短、人类可读的 `name`，看板只显示这个名称；参数例如：
 

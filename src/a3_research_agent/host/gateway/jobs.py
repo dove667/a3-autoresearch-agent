@@ -240,6 +240,10 @@ class JobRoutes:
             **provenance,
         }
 
+    def remote_assets(self, body: dict, authorization: Annotated[str | None, Header()] = None):
+        self.owner(authorization)
+        return self.remote("remote-assets", body)
+
     def gpu_snapshot(self, authorization: Annotated[str | None, Header()] = None):
         self.owner(authorization)
         key = "gpu-snapshot"
