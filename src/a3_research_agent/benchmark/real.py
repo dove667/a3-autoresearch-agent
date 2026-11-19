@@ -1,6 +1,6 @@
 """Run benchmark tasks through the real Host, real tools and real remote execution.
 
-A task gets a thin project root: its own ``workspace`` and ``plan``, while the
+A task gets a thin project root: its own workspace and research plan, while the
 project's memory, skills, prompts, embedding model and published source are shared
 read-only. One real Host process runs per root, so tasks can run in parallel without
 inventing a fake tool server.
@@ -23,6 +23,7 @@ from pathlib import Path
 
 import httpx
 
+from a3_research_agent.harness.plan.store import project_plan_file
 from a3_research_agent.host.knowledge_service.lifecycle import KnowledgeService
 from a3_research_agent.host.published_harness import published_source
 from a3_research_agent.project import checkout_root
@@ -123,9 +124,10 @@ def materialize(task: RealTask, root: Path, model: str | None = None) -> Path:
         shutil.rmtree(root)
     root.mkdir(parents=True)
     (root / "workspace").mkdir()
-    (root / "plan").mkdir()
     (root / "trajectories").mkdir()
     (root / ".runtime").mkdir()
+    plan_file = project_plan_file(root.resolve())
+    plan_file.parent.mkdir()
     (root / ".git").symlink_to(REPO / ".git")
     (root / "prompt").symlink_to(REPO / "prompt")
     (root / ".runtime/reference-sources").symlink_to(REPO / ".runtime/reference-sources")
@@ -136,7 +138,7 @@ def materialize(task: RealTask, root: Path, model: str | None = None) -> Path:
         + task.instructions,
         encoding="utf-8",
     )
-    (root / "plan/current.json").write_text(
+    plan_file.write_text(
         json.dumps(_plan_for(task), ensure_ascii=False, indent=2), encoding="utf-8"
     )
     shutil.copy2(REPO / ".env", root / ".env")
@@ -321,7 +323,7 @@ def _wait(root: Path, process: subprocess.Popen, task: RealTask, deadline: float
     while time.monotonic() < deadline:
         if process.poll() is not None:
             return done, False, "host exited"
-        plan = _read_json(root / "plan/current.json")
+        plan = _read_json(project_plan_file(root.resolve()))
         if task.done(root, plan):
             done = True
             # Give the Agent a short turn to record its review or stop itself.
@@ -377,7 +379,7 @@ def run_task(task: RealTask, output: Path, commit: str, model: str | None) -> di
                 except subprocess.TimeoutExpired:
                     process.kill()
         _cleanup_processes(root, run or None)
-        plan = _read_json(root / "plan/current.json")
+        plan = _read_json(project_plan_file(root.resolve()))
         passed, detail = task.score(root, plan, run)
         calls = _calls(run)
         if task.require_review and not plan.get("reviews"):

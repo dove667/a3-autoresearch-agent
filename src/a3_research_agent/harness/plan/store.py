@@ -9,6 +9,15 @@ from contextlib import contextmanager
 from pathlib import Path
 
 
+def project_plan_file(project: Path) -> Path:
+    """Locate the shared plan, including checkouts awaiting the directory move."""
+    current = checked_path(project / ".runtime/research-plan/current.json")
+    if current.exists():
+        return current
+    legacy = checked_path(project / "plan/current.json")
+    return legacy if legacy.exists() else current
+
+
 def checked_path(path: Path) -> Path:
     path = Path(path)
     if not path.is_absolute():

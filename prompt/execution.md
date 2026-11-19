@@ -1,6 +1,6 @@
 # 研究工具与执行约定
 
-Version: 0.55.0
+Version: 0.56.0
 
 工具定义给出参数、默认值和限制；本文件说明常用流程。所有工具返回 `ok`：成功时直接读取同层结果；失败时读取 `error`、`hint` 和相关编号，修正后再调用。作业的 `status="failed"` 是执行结果，先读日志与证据再判断原因。
 
@@ -8,7 +8,7 @@ Version: 0.55.0
 
 | 当前需要 | 工具 |
 | --- | --- |
-| 工作区文件 | `list`、`read`、`search_files`、`write`、`edit` |
+| 工作区文件 | `list`、`read`、`search_files`、`write`、`edit`、`delete_scratch` |
 | 研究路线与待办 | `plan` |
 | 已学到的结论、失败教训 | `memory` |
 | 可复用的方法 | `skills` |
@@ -39,7 +39,7 @@ Version: 0.55.0
 
 ## 提交作业
 
-研究源码保存在 `scripts/`，实验配置和结果保存在 `experiments/`。所有工作区文本文件统一使用 `attachments`，只填 `path` 和可选远程 `destination`，工具计算哈希。导入依赖一并附加；封存的作业产物通过 `input_exports` 引用。
+先复用高层工具或现有脚本。研究源码保存在 `scripts/`，一次性脚本放在 `scratch/`，实验配置和结果保存在 `experiments/`。工作区文本文件通过 `attachments` 附加，只填 `path` 和可选远程 `destination`，工具计算哈希。导入依赖一并附加；封存的作业产物通过 `input_exports` 引用。临时脚本用完后，从 `read` 回执取当前 `sha256`，调用 `delete_scratch` 清理。
 
 查看跨 run 共用数据或模型时，直接调用 `remote_assets`，`root` 选 `datasets` 或 `models`。用 `list` 查看根目录或相对子目录，用 `search` 按关键词检索迁移清单，用 `stat` 核对文件和目录，用 `read` 分页读取 UTF-8 文本。返回的 `root_path` 与相对 `path` 可用来构造实际输入路径。用 `next_offset` 继续翻页。需要执行数据体检、解码或计算时，再走远程作业。
 

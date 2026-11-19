@@ -68,6 +68,7 @@ def build_harness_payload() -> dict[str, str]:
     package = Path(__file__).resolve().parent
     sources = {
         "__init__.py": package / "__init__.py",
+        "path_safety.py": package / "path_safety.py",
         "token_count.py": package / "token_count.py",
         "harness_payload.py": Path(__file__).resolve(),
     }

@@ -53,7 +53,7 @@ and marking it done. The plan tracks Agent claims and observed job states.
 
 The Agent authors the plan through `plan(action="show")` and
 `plan(action="update", revision=..., ...)`. The Harness persists it in
-the project-root `plan/current.json`, exposed as `runtime_paths.plan`. New runs, resume
+the project’s `.runtime/research-plan/current.json`, exposed as `runtime_paths.plan`. New runs, resume
 and maintenance releases read this shared latest plan. At start, revision and stop,
 the runtime preserves an immutable revision/hash snapshot under the trajectory's
 `plan-snapshots/`. Each night starts a new run and empty model context; shared workspace, plan, memory and skills carry research progress. Same-day interruption recovery remains an explicit option. The Agent updates its route from new evidence while retaining prior
@@ -420,7 +420,7 @@ Experiment configurations, results, figures, videos and analysis stay in
 `workspace/experiments/<date-name>/`, with job/export IDs and source hashes. Skills use the single root
 `skills/` library.
 
-The Host sets `A3_PLAN_FILE` to the project-root `plan/current.json`. Storage uses version2
+The Host sets `A3_PLAN_FILE` to the project’s `.runtime/research-plan/current.json`. Storage uses version2
 and `direction.objective` is its sole objective field. The `plan`
 tool maintains three levels: `direction` contains the long-term objective, metric
 list and capability gaps; stable-ID `routes` contain research questions,

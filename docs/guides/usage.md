@@ -45,7 +45,7 @@ uv run mini
 bash start-autoresearch.sh --resume-from "trajectories/<开始时间>"
 ```
 
-恢复使用同一个 run 和主身份，接续 `trajectories/<开始时间>/conversation/` 中的运行状态、对话、checkpoint 和调用 journal，继续 `workspace/` 的研究文件、根 `skills/` 和长期经验，并读取项目顶层 `plan/current.json` 的最新研究计划。原生进程中断时保留工具 journal；已保存的结果在恢复时重新交付，结果未知的调用先检查实际状态。
+恢复使用同一个 run 和主身份，接续 `trajectories/<开始时间>/conversation/` 中的运行状态、对话、checkpoint 和调用 journal，继续 `workspace/` 的研究文件、根 `skills/` 和长期经验，并读取 `.runtime/research-plan/current.json` 的最新研究计划。原生进程中断时保留工具 journal；已保存的结果在恢复时重新交付，结果未知的调用先检查实际状态。
 
 远程作业在本地 Agent 暂停期间可以继续运行。恢复后通过原 job ID 接回状态与产物，按既有结果推进研究。普通恢复沿用原模型与适配器；明确维护发布时可更新部署配置并记录前值。
 
@@ -59,7 +59,7 @@ bash start-autoresearch.sh --resume-from "trajectories/<开始时间>"
 bash start-autoresearch.sh --harness-commit <新发布提交SHA>
 ```
 
-新运行从空模型上下文开始，继续使用原 `workspace/`、`plan/current.json`、`skills/` 和 `memory/`。无需把旧代码、技能和实验材料重新复制进 trajectory。需要接续原对话时，明确指定旧运行使用手动恢复；每日研究默认新建运行。
+新运行从空模型上下文开始，继续使用原 `workspace/`、`.runtime/research-plan/current.json`、`skills/` 和 `memory/`。无需把旧代码、技能和实验材料重新复制进 trajectory。需要接续原对话时，明确指定旧运行使用手动恢复；每日研究默认新建运行。
 
 ## 夜间窗口与防休眠
 
@@ -123,7 +123,7 @@ Controller负责排队、GPU分配与生命周期。提交结果未知时先按�
 
 研究计划按长期目标、研究路线、里程碑三层组织。一条路线回答一个值得跨运行推进的问题，例如评估 π₀.₅ 迁移到 A3 后在两项任务上的表现。步骤可以是数据就绪、适配验证、完成微调、配对评估。动作失败定位、小假设验证和常规排错由 Agent 在当前上下文处理，值得保留的诊断证据写入实验记录。
 
-Agent 用 `plan(action="show")` 查看，用 `plan(action="update", revision=..., ...)` 修改。达到里程碑时更新对应步骤和证据。结果影响路线决策时，用 `plan(action="review", revision=..., id=<路线ID>, conclusion=..., evidence=[...], decision="continue"|"pause"|"complete")` 记录判断。共享计划保存在项目顶层 `plan/current.json`，路径由 `runtime_paths.plan` 提供。新运行、恢复和发布升级共用最新计划。各次运行的开始、修订和停止快照保存在对应 trajectory 的 `plan-snapshots/`。程序自动记录作业状态，整轮状态由 `research_status` 保存到当前 `conversation/`。
+Agent 用 `plan(action="show")` 查看，用 `plan(action="update", revision=..., ...)` 修改。达到里程碑时更新对应步骤和证据。结果影响路线决策时，用 `plan(action="review", revision=..., id=<路线ID>, conclusion=..., evidence=[...], decision="continue"|"pause"|"complete")` 记录判断。共享计划保存在 `.runtime/research-plan/current.json`，路径由 `runtime_paths.plan` 提供。新运行、恢复和发布升级共用最新计划。各次运行的开始、修订和停止快照保存在对应 trajectory 的 `plan-snapshots/`。程序自动记录作业状态，整轮状态由 `research_status` 保存到当前 `conversation/`。
 
 长期经验由 `memory` 保存，search使用query，read使用id，修订/归档/恢复使用当前revision；`recall`只检索当前run的原始观测。根 `skills/` 是唯一技能库，通过 `skills` 先看目录摘要，再读正文和所需附件；同一工具也负责更新正文、附件和归档。工作上下文达到压缩门槛后必须生成完整摘要，32k 等目标预算覆盖整个下一轮输入；机制见[上下文与记忆](../reference/context-and-memory.md)。
 
@@ -156,7 +156,7 @@ uv run a3-research-dashboard --open
 - `trajectories/<开始时间>/`：输入版本、Host 事件、模型用量与会话登记。
 - `workspace/scripts/<模型或方法>/<可选研究系列>/<用途>/`：采集、训练、评估与审计源码。
 - `workspace/experiments/<日期-实验名>/`：实验配置、结果、图表、录像与分析，关联 job/export 和源码哈希。
-- `plan/current.json`：跨运行共用的最新研究计划，通过 `plan` 工具管理。
+- `.runtime/research-plan/current.json`：跨运行共用的最新研究计划，通过 `plan` 工具管理。
 - `trajectories/<开始时间>/plan-snapshots/`：该次运行期间的计划历史快照。
 - `trajectories/<开始时间>/conversation/`：接续清单、研究状态、checkpoint、journal、原始消息和压缩状态。
 - `skills/`：由 `skills` 工具管理的唯一方法库。

@@ -69,6 +69,7 @@ print(json.dumps({"files": build_harness_payload(), "tools": [x["name"] for x in
         "job_artifact",
         "search_files",
         "edit",
+        "delete_scratch",
         "web_search",
         "web_fetch",
         "web_status",

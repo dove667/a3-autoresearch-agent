@@ -172,6 +172,37 @@ def test_builtin_web_tools_use_fixed_host_routes():
     assert calls == [("POST", "/web/search", {"query": "ACT policy", "max_results": 3})]
 
 
+def test_delete_scratch_requires_matching_hash_and_stays_in_scratch(tmp_path):
+    from a3_research_agent.harness import file_tools
+
+    source = tmp_path / "train.py"
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    script = scratch / "probe.py"
+    raw = b"print('probe')\n"
+    source.write_bytes(raw)
+    script.write_bytes(raw)
+    (scratch / "alias.py").symlink_to(source)
+    digest = hashlib.sha256(raw).hexdigest()
+
+    def delete(path, expected_sha256=digest):
+        return file_tools.dispatch(
+            "delete_scratch",
+            {"path": path, "expected_sha256": expected_sha256},
+            workspace=tmp_path,
+            readonly_roots=(),
+        )
+
+    assert delete("train.py")["error"] == "not_a_scratch_file"
+    assert delete("scratch")["error"] == "not_a_scratch_file"
+    assert delete("scratch/alias.py")["error"] == "not_a_scratch_file"
+    assert delete("scratch/probe.py", "0" * 64)["error"] == "revision_conflict"
+    assert script.read_bytes() == raw
+    assert delete("scratch/probe.py")["status"] == "deleted"
+    assert not script.exists()
+    assert source.read_bytes() == raw
+
+
 def test_agent_exposes_builtin_tools_without_optional_extensions():
     from a3_research_agent.harness import agent
 

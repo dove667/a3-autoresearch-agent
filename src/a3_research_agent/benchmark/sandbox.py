@@ -10,6 +10,7 @@ import re
 from pathlib import Path
 
 from a3_research_agent.harness import job_failure, tool_catalog
+from a3_research_agent.harness.plan.store import project_plan_file
 
 JOB_A = "a" * 32
 JOB_B = "b" * 32
@@ -67,8 +68,8 @@ ARTIFACTS = {
 
 def _workspace_plan():
     """The real plan, so a review is written against the research the Agent runs."""
-    path = Path(__file__).resolve().parents[3] / "plan" / "current.json"
     try:
+        path = project_plan_file(Path(__file__).resolve().parents[3])
         data = json.loads(path.read_text())
     except (OSError, ValueError):
         return None

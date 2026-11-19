@@ -35,11 +35,10 @@ def check() -> dict:
         for name in ("SOUL.md", "execution.md", "workspace.md")
     }
     names = {tool["name"] for tool in tool_catalog.TOOLS}
-    plan_path = REPO / "plan/current.json"
     plan_revision = None
     plan_error = None
     try:
-        plan_revision = plan_store.load(plan_path)["revision"]
+        plan_revision = plan_store.load(plan_store.project_plan_file(REPO))["revision"]
     except (OSError, ValueError) as error:
         plan_error = type(error).__name__
     interface = os.environ.get("A3_UPSTREAM_DIRECT_INTERFACE", "")

@@ -10,6 +10,20 @@ from a3_research_agent.harness import plan as planning
 from a3_research_agent.harness.plan import store as plan_store
 
 
+def test_shared_plan_path_supports_legacy_checkout_until_move(tmp_path):
+    current = tmp_path / ".runtime/research-plan/current.json"
+    legacy = tmp_path / "plan/current.json"
+    assert plan_store.project_plan_file(tmp_path) == current
+
+    legacy.parent.mkdir()
+    legacy.write_text("legacy")
+    assert plan_store.project_plan_file(tmp_path) == legacy
+
+    current.parent.mkdir(parents=True)
+    legacy.rename(current)
+    assert plan_store.project_plan_file(tmp_path).read_text() == "legacy"
+
+
 def first_plan():
     return planning.dispatch(
         {

@@ -25,7 +25,7 @@ def test_materialize_is_a_thin_shared_root(tmp_path, monkeypatch):
     task = next(item for item in real.TASKS if item.id == "read_config")
     root = real.materialize(task, tmp_path / "task", model="test-model")
     assert (root / "workspace/experiments/2026-11-03-act-baseline/config.json").is_file()
-    assert (root / "plan/current.json").is_file()
+    assert (root / ".runtime/research-plan/current.json").is_file()
     assert not (root / "memory").exists()
     assert not (root / "skills").exists()
     assert (root / ".git").is_symlink()

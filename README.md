@@ -24,7 +24,7 @@ bash start-autoresearch.sh --harness-commit <已发布提交SHA>
 
 看板可以单独打开：`bash start-dashboard.sh` 会在没有实例时启动并打印地址，已经在运行时只打印地址；`start-autoresearch.sh` 仍会自己拉起看板并输出 URL。
 
-新 run 共用根目录 `workspace/`、`plan/current.json`、`memory/` 和 `skills/`。
+新 run 共用 `workspace/`、`.runtime/research-plan/current.json`、`memory/` 和 `skills/`。
 
 研究 Host 启动时会自动在 <http://127.0.0.1:8787> 启动看板，研究停止时一起关闭。看板每 5 秒读取本机最新状态，只监听回环地址，详见[研究看板](docs/guides/dashboard.md)。
 

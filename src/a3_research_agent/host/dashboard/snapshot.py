@@ -5,6 +5,7 @@ from datetime import datetime
 from pathlib import Path
 
 from a3_research_agent.harness import plan as planning
+from a3_research_agent.harness.plan.store import project_plan_file
 
 from . import catalog, knowledge
 from .readers import read_json, tail_lines
@@ -505,7 +506,7 @@ def build_snapshot(
                 row["live"] = True
                 if live.get("exit_code") is not None:
                     row["exit_code"] = live["exit_code"]
-    plan = plan_payload(root / "plan/current.json", jobs)
+    plan = plan_payload(project_plan_file(root.resolve()), jobs)
     memory = knowledge.load_memory(root / "memory")
     skills = knowledge.load_skills(root / "skills")
     tools = catalog.load_tools()

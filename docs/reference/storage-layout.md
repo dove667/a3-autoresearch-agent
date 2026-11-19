@@ -15,10 +15,9 @@
 ├── skills/                全项目唯一技能库
 ├── workspace/             Agent 自由读写的研究区，Git 忽略
 ├── memory/                由 memory 工具管理的经验修订与语义索引，Git 忽略
-├── plan/                  跨运行研究计划与复盘，Git 忽略
 ├── trajectories/          模型执行与恢复记录，Git 忽略
 ├── runs/                  Host 调试与维护测试原始输出，Git 忽略
-├── .runtime/              Host 状态、技能修改历史和源码缓存，Git 忽略
+├── .runtime/              Host 状态、共享研究计划、技能修改历史和源码缓存，Git 忽略
 ├── web-cache/             共享网页缓存，Git 忽略
 ├── reports/               用于展示的网页工程，Git 忽略
 ├── legacy_prompt/         停用的历史提示词原文
@@ -44,6 +43,7 @@
 
 ```text
 workspace/
+├── scratch/               用完后由 Agent 清理的一次性脚本
 ├── scripts/               按模型或方法、研究系列和用途组织的源码
 │   ├── act/
 │   │   ├── baseline/      独立基线系列
@@ -91,17 +91,19 @@ trajectories/<开始时间>/
 └── …                      输入事件、可选知识快照与恢复记录
 ```
 
-每天的新 run 共用根目录 `workspace/`、`plan/current.json`、`memory/` 和 `skills/`，以空模型上下文读取最新研究进展。一次只有一个研究进程使用它。普通文件工具在这里自由读写研究材料；输入目录、A3 参考源码和当前 run 的 `conversation/` 只读。根 `skills/` 与 `memory/` 通过专用工具访问。
+每天的新 run 共用 `workspace/`、`.runtime/research-plan/current.json`、`memory/` 和 `skills/`，以空模型上下文读取最新研究进展。一次只有一个研究进程使用它。普通文件工具在这里自由读写研究材料；输入目录、A3 参考源码和当前 run 的 `conversation/` 只读。根 `skills/` 与 `memory/` 通过专用工具访问。
 
 Host 用 `A3_STATE_ROOT` 指定当前 run 的 `conversation/`，并在 `runtime_paths.state` 提供实际路径。`harness/state_paths.py` 统一定位 checkpoint、journal、压缩事务和操作台账；恢复继续读取原状态。`context-history/...` 来源引用以该路径为基准，原文与内容哈希保持稳定，可通过普通文件工具只读核对，也可用 recall 检索当前 run 原文。`research-receipts.json` 保存有界的近期工具观察，用于每轮刷新编号、状态和指标；旧观察保留在原始历史和输出归档中。
 
-项目顶层 `plan/current.json` 保存跨运行共用的最新研究计划，记录长期方向、研究路线与假设、执行步骤和结果复盘，关联依赖、优先级、作业与证据。Agent 通过 `plan(action="show")` 查看、`plan(action="update", revision=..., ...)` 修改；Host 通过 `A3_PLAN_FILE` 配置绝对路径，并在 `runtime_paths.plan` 中提供该路径。普通文件工具不直接修改计划。每次运行在 `plan-snapshots/` 按 revision 与内容哈希保留开始、修订和停止时的历史快照；新运行和恢复始终读取根计划。旧 `conversation/research-plan.json` 保留为历史资料。
+`.runtime/research-plan/current.json` 保存跨运行共用的最新研究计划，记录长期方向、研究路线与假设、执行步骤和结果复盘，关联依赖、优先级、作业与证据。Agent 通过 `plan(action="show")` 查看、`plan(action="update", revision=..., ...)` 修改；Host 通过 `A3_PLAN_FILE` 配置绝对路径，并在 `runtime_paths.plan` 中提供该路径。普通文件工具不直接修改计划。每次运行在 `plan-snapshots/` 按 revision 与内容哈希保留开始、修订和停止时的历史快照；新运行和恢复始终读取最新共享计划。旧 `conversation/research-plan.json` 保留为历史资料。
+
+备份研究进展时包含 `.runtime/research-plan/`。旧部署仍可读取 `plan/current.json`，可在暂停研究时将整个 `plan/` 目录移到 `.runtime/research-plan/`，随后重启独立看板以加载新代码。
 
 plan 是 Agent 维护任务与进展的唯一位置；`conversation/operational-state.json` 自动记录读取和作业状态。`research_status(status="continue"|"blocked", reason=..., kind=..., required_action=..., evidence=[...])` 保存整轮研究状态，外部阻塞使用后三项，普通继续状态只需 status 和 reason。恢复与接续清单由程序生成，`files` 只列出工作区研究文件。
 
 `memory` 保存 Agent 主动提炼的跨会话经验；`recall` 检索当前 run 的原始消息和工具观测；`skills` 管理可复用方法及附件。普通 `read`、`write`、`edit` 不直接接触根技能库和长期记忆；当前会话状态允许 `read`、`list`、`search_files` 只读访问。
 
-源码放在 `workspace/scripts/<模型或方法>/<可选研究系列>/<用途>/`，例如 `act/p142/training/`、`act/baseline/evaluation/`、`dagger/validation/`。研究系列层按需设置，按 data、training、evaluation、validation 等实际用途分类；参数变化通过配置或命令传入，复用同一入口。
+可复用或复现实验所需的源码放在 `workspace/scripts/<模型或方法>/<可选研究系列>/<用途>/`，例如 `act/p142/training/`、`act/baseline/evaluation/`、`dagger/validation/`。参数变化通过配置或命令传入，复用同一入口。一次性诊断脚本放在 `workspace/scratch/`，确认结果已记录且作业和重试都不再需要时，用 `delete_scratch` 按相对路径和当前 SHA256 删除单个文本文件。
 
 实验配置与产物集中到 `workspace/experiments/<日期-实验名>/`，需要时创建 results、figures、videos、analysis 子目录。配置记录模型与数据版本、超参数、seed、评测条件，结果关联原始 job/export ID、源码路径与哈希。大文件留在执行端，本地保存引用。trajectory 保留模型原始行为、工具调用与返回、输入版本和计划历史；研究脚本继续由 workspace 管理，技能统一由根技能库管理。
 

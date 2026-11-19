@@ -1,9 +1,11 @@
-"""Bounded source search and exact edits inside the existing workspace boundary."""
+"""Search, edit and delete temporary files within the workspace boundary."""
 
 import hashlib
 import os
 import tempfile
 from pathlib import Path
+
+from a3_research_agent.path_safety import workspace_path
 
 from . import paths, state_paths
 from .tool_contracts import ToolInputError, arguments, boolean, definition, fail, integer, text
@@ -26,6 +28,7 @@ EDIT_FIELDS = {
     "replace_all": {"type": "boolean"},
     "expected_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
 }
+DELETE_FIELDS = {"path": STRING, "expected_sha256": EDIT_FIELDS["expected_sha256"]}
 TOOLS = [
     definition(
         "search_files",
@@ -42,6 +45,14 @@ TOOLS = [
         "stale edits. Returns new SHA256; use write for a new file.",
         EDIT_FIELDS,
         ["path", "old_text", "new_text"],
+    ),
+    definition(
+        "delete_scratch",
+        "Delete one temporary text file under workspace-relative scratch/. "
+        "Confirm it is no longer needed and supply its current SHA256 from read. "
+        "No directory or symlink deletion.",
+        DELETE_FIELDS,
+        ["path", "expected_sha256"],
     ),
 ]
 NAMES = frozenset(tool["name"] for tool in TOOLS)
@@ -223,6 +234,31 @@ def edit(args, workspace, readonly_roots, protected):
     }
 
 
+def delete_scratch(args, workspace):
+    arguments(args, DELETE_FIELDS)
+    name = text(args.get("path"), "path")
+    expected = text(args.get("expected_sha256"), "expected_sha256", 64)
+    try:
+        path = workspace_path(workspace, name)
+    except ValueError:
+        fail("not_a_scratch_file", "Select a regular file under scratch/ without symlinks.")
+    if not path.is_relative_to(workspace / "scratch") or not path.is_file():
+        fail("not_a_scratch_file", "Select an existing regular file under scratch/.")
+    with path.open("rb") as stream:
+        raw = stream.read(MAX_FILE_BYTES + 1)
+    if len(raw) > MAX_FILE_BYTES or b"\0" in raw:
+        fail("not_a_scratch_text_file", "Select a temporary UTF-8 file up to 1 MiB.")
+    try:
+        raw.decode("utf-8")
+    except UnicodeError:
+        fail("not_a_scratch_text_file", "Select a temporary UTF-8 file up to 1 MiB.")
+    digest = hashlib.sha256(raw).hexdigest()
+    if digest != expected:
+        fail("revision_conflict", "Read the current file before deleting it.")
+    path.unlink()
+    return {"path": label(path, workspace), "status": "deleted", "sha256": digest}
+
+
 def dispatch(name, args, *, workspace=None, readonly_roots=None, protected=()):
     root = Path(workspace or Path.cwd()).resolve()
     readonly = [
@@ -242,6 +278,8 @@ def dispatch(name, args, *, workspace=None, readonly_roots=None, protected=()):
             return search(args, root, readonly)
         if name == "edit":
             return edit(args, root, readonly, [Path(p).resolve() for p in protected])
-        fail("unknown_workspace_tool", "Use search_files or edit.")
+        if name == "delete_scratch":
+            return delete_scratch(args, root)
+        fail("unknown_workspace_tool", "Use search_files, edit or delete_scratch.")
     except ToolInputError as error:
         return {"error": error.code, "hint": error.hint}

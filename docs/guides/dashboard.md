@@ -39,7 +39,7 @@ uv run a3-research-dashboard --port 8788  # 更换本地端口
 看板只读以下运行资料和工具声明：
 
 - `trajectories/latest-run.txt` 与 `trajectories/<run>/` 下的启动、Host、会话、监督、结果与作业记录；
-- 项目根 `plan/current.json`；
+- `.runtime/research-plan/current.json`；
 - 根 `memory/entries.jsonl`；
 - 根 `skills/<id>/SKILL.md` 与 `assets/catalog-entry.json`；
 - 当前发布代码中的 `harness/tool_catalog.py` 高层工具声明。

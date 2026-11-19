@@ -101,7 +101,7 @@ def build_project(root, *, alive=True):
         },
     )
     write(
-        root / "plan/current.json",
+        root / ".runtime/research-plan/current.json",
         {
             "version": 2,
             "revision": 3,
@@ -212,7 +212,7 @@ def build_project(root, *, alive=True):
 def test_overview_preserves_full_task_progress_and_next_hint(tmp_path):
     run, observer = build_project(tmp_path)
     (run / "conversation/pending-calls.json").unlink()
-    plan_path = tmp_path / "plan/current.json"
+    plan_path = tmp_path / ".runtime/research-plan/current.json"
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
     task = "按种子对比全量评测的入盒准确率和通过率，" * 4 + "汇总失败类型。"
     progress = "对照组已完成，正在核对每个回合的评测记录和指标口径。\n" * 9
@@ -228,7 +228,7 @@ def test_overview_preserves_full_task_progress_and_next_hint(tmp_path):
 
 def test_snapshot_hides_completed_routes_and_preserves_completed_dependencies(tmp_path):
     _run, observer = build_project(tmp_path)
-    plan_path = tmp_path / "plan/current.json"
+    plan_path = tmp_path / ".runtime/research-plan/current.json"
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
     plan["routes"]["closed"] = {"status": "completed", "question": "已结束的路线"}
     plan["steps"]["old"] = {
@@ -294,9 +294,9 @@ def test_snapshot_reads_live_run_plan_memory_and_skills(tmp_path):
     assert "secret" not in json.dumps(snapshot)
 
     # A later request sees changed source files; no dashboard-side cache is involved.
-    plan = json.loads((tmp_path / "plan/current.json").read_text(encoding="utf-8"))
+    plan = json.loads((tmp_path / ".runtime/research-plan/current.json").read_text(encoding="utf-8"))
     plan["steps"]["s1"]["task"] = "新的分析任务"
-    write(tmp_path / "plan/current.json", plan)
+    write(tmp_path / ".runtime/research-plan/current.json", plan)
     (tmp_path / "memory/entries.jsonl").write_text(
         json.dumps(
             {

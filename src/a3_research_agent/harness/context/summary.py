@@ -218,7 +218,7 @@ def _tool_sections(messages, names):
             section = "results"
         elif name in {"job_status", "job_wait", "job_list", "job_submit", "job_prepare"}:
             section = "active_jobs"
-        elif name in {"read", "list", "search_files", "write", "edit"}:
+        elif name in {"read", "list", "search_files", "write", "edit", "delete_scratch"}:
             section = "sources"
         else:
             section = "results"

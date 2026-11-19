@@ -1,6 +1,6 @@
 # 研究工作区
 
-Version: 0.14.0
+Version: 0.15.0
 
 本地原生进程只提供文件与研究工具，没有本地 bash 或 Python 执行入口。仿真、训练、评估及脚本执行通过远程作业完成。运行状态 `runtime_paths` 给出实际路径：
 
@@ -10,16 +10,17 @@ Version: 0.14.0
 | `inputs` | 只读提示词与 `input-manifest.json` |
 | `reference` | 只读 A3 参考源码、接口文档与 examples |
 | `state` | 当前运行的程序档案，普通文件工具只读 |
-| `plan` | 项目顶层 `plan/current.json`，使用 `plan` 工具管理 |
+| `plan` | `.runtime/research-plan/current.json`，使用 `plan` 工具管理 |
 | `skills` | 统一技能库，使用 `skills` 工具管理 |
 | `memory` | 跨会话经验库，使用 `memory` 工具管理 |
 
 按以下约定组织研究文件：
 
-- `scripts/<模型或方法>/<可选研究系列>/<用途>/` 保存源码，例如 `scripts/act/p142/training/`、`scripts/act/baseline/evaluation/`、`scripts/dagger/validation/`。研究系列仅在需要时增加一层；用途按实际内容命名，如 `data`、`training`、`evaluation`、`validation`；相关依赖放在一起，共用脚本复用，参数通过配置或命令传入。
-- `experiments/<日期-实验名>/` 保存该实验的 `config.json`、作业与源码引用、`results/`、`figures/`、`videos/` 和 `analysis/`。配置记录模型版本、数据、超参数、seed 与评测设置；每次独立实验单独建目录。按实际产物创建子目录，源脚本统一留在 `scripts/`。
+- `scripts/<模型或方法>/<可选研究系列>/<用途>/` 保存后续会复用、或复现实验所需的源码。写代码前先用 `list`、`search_files` 查现有入口和参考实现。数据、checkpoint、seed、场景和超参数变更优先通过配置或命令行传给同一个入口。需要改变行为时，优先给现有入口补齐通用能力，保留原有默认行为。
+- 一次性探针、诊断和转换脚本放在 `scratch/<主题>/`，只写当前工作所需的最小代码。确认相关作业已结束、无需继续提交或重试，且结果与来源已记录，再用 `delete_scratch(path, expected_sha256)` 删除本地副本。如果它成为复现实验所需源码，先整理到 `scripts/`，更新依赖和引用，再清理临时副本。
+- `experiments/<日期-实验名>/` 保存该实验的 `config.json`、作业与源码引用、`results/`、`figures/`、`videos/` 和 `analysis/`。配置记录模型版本、数据、超参数、seed 与评测设置；每次独立实验单独建目录。按实际产物创建子目录。
 
-用 `attachments` 将工作区中的源码和实验配置附加到远程作业。需要多个依赖时一并附加；通过 `destination` 明确远程文件位置，并让命令、导入及相对路径与目标位置一致。大文件留在执行端，用 job/export ID 和哈希关联本地实验记录。每天的新 run 共用这个工作区、根计划、记忆和技能，使用新的模型上下文；启动后先读取共享计划，核对既有作业与产物。
+用 `attachments` 将工作区中的源码和实验配置附加到远程作业。需要多个依赖时一并附加；通过 `destination` 明确远程文件位置，并让命令、导入及相对路径与目标位置一致。大文件留在执行端，用 job/export ID 和哈希关联本地实验记录。每天的新 run 共用这个工作区、共享计划、记忆和技能，使用新的模型上下文；启动后先读取共享计划，核对既有作业与产物。
 
 数据与模型跨 run 共用。通过 `runtime_paths.remote_datasets`、`runtime_paths.remote_models` 获取远程根目录，远程代码从 `A3_DATASETS`、`A3_MODELS` 读取同一配置。按研究方向和来源组织，例如 `act/autoresearch/`、`moe-act/codex/`、`smolvla/autoresearch/`。通用基准和资源放在根目录下的 `shared/`。
 
@@ -31,7 +32,7 @@ Version: 0.14.0
 - 可复用的训练 checkpoint 放在模型根目录，附训练配方、来源数据和作业编号。
 - 在所属方向的 `autoresearch/` 下用唯一版本目录暂存并校验，完成后在同一文件系统内发布到正式目录。已有版本和其他来源的资产只作输入。单次作业的日志、评测录像和诊断写入 `A3_OUTPUTS`，可重建的作业缓存使用 `A3_SHARED_CACHE`。
 
-项目顶层 `plan/current.json` 是跨运行共用的研究计划，`runtime_paths.plan` 给出文件路径。Agent 通过 `plan(action="show")` 查看、`plan(action="update", revision=..., ...)` 修改长期方向、研究路线和执行步骤，用 `plan(action="review", ...)` 保存结果复盘与路线决策，普通文件工具不直接修改它。新运行、恢复和 Harness 升级都读取这份最新计划；先核对计划中的既有 job，再决定后续操作。Harness 在当前 trajectory 的 `plan-snapshots/` 保存开始、修订和停止时的历史快照。
+`.runtime/research-plan/current.json` 是跨运行共用的研究计划，`runtime_paths.plan` 给出文件路径。Agent 通过 `plan(action="show")` 查看、`plan(action="update", revision=..., ...)` 修改长期方向、研究路线和执行步骤，用 `plan(action="review", ...)` 保存结果复盘与路线决策，普通文件工具不直接修改它。新运行、恢复和 Harness 升级都读取这份最新计划；先核对计划中的既有 job，再决定后续操作。Harness 在当前 trajectory 的 `plan-snapshots/` 保存开始、修订和停止时的历史快照。
 
 接续与恢复清单、运行状态，以及 checkpoint、工具 journal、模型可见历史、执行日志、预检回执和上下文档案，也由 Harness 保存到该 `conversation/`。`context-history/...` 是相对 `runtime_paths.state` 的原文引用；`recall` 会沿引用检索完整工具输出，或拼接该根目录后用 `read` 分页核对。`research-receipts.json` 是程序保存的近期工具观察索引，普通文件工具只读。研究计划和结论仍分别使用 plan 和 memory 管理。
 
