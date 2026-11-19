@@ -1,11 +1,8 @@
 """Read-only alphaXiv MCP transport using an operator-owned credential."""
 
 import asyncio
-import json
 import os
-import sqlite3
 from dataclasses import dataclass, field
-from pathlib import Path
 
 import httpx2
 from mcp import ClientSession
@@ -19,21 +16,6 @@ class PaperServiceError(RuntimeError):
     """A failed paper lookup with no provider payload attached."""
 
 
-def cc_switch_token(path):
-    uri = Path(path).expanduser().resolve().as_uri() + "?mode=ro"
-    with sqlite3.connect(uri, uri=True) as db:
-        row = db.execute(
-            "SELECT server_config FROM mcp_servers WHERE id = ?", ("alphaxiv",)
-        ).fetchone()
-    if row:
-        config = json.loads(row[0])
-        if config.get("url") == ENDPOINT:
-            for name, value in config.get("headers", {}).items():
-                if name.lower() == "authorization" and value.startswith("Bearer "):
-                    return value.removeprefix("Bearer ").strip()
-    return ""
-
-
 @dataclass(frozen=True)
 class AlphaXiv:
     token: str = field(repr=False)
@@ -41,12 +23,6 @@ class AlphaXiv:
     @classmethod
     def from_env(cls):
         token = os.environ.get("A3_ALPHAXIV_TOKEN", "").strip()
-        path = os.environ.get("A3_ALPHAXIV_CC_SWITCH_DB", "").strip()
-        if not token and path:
-            try:
-                token = cc_switch_token(path)
-            except (OSError, ValueError, sqlite3.Error):
-                return None
         return cls(token) if token else None
 
     def call(self, name, arguments):

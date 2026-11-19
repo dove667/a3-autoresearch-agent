@@ -123,22 +123,19 @@ def test_delegation_is_async_and_report_evidence_can_activate_route(tmp_path):
     )
 
 
-def test_cc_switch_reuses_only_official_alpha_xiv_credentials(tmp_path):
-    import sqlite3
+def test_alpha_xiv_reads_only_the_configured_environment_token(tmp_path, monkeypatch):
+    from a3_research_agent.host.research.papers import AlphaXiv
 
-    from a3_research_agent.host.research.papers import ENDPOINT, cc_switch_token
+    monkeypatch.delenv("A3_ALPHAXIV_TOKEN", raising=False)
+    monkeypatch.setenv("A3_ALPHAXIV_CC_SWITCH_DB", str(tmp_path / "unused"))
+    from unittest.mock import patch
 
-    database = tmp_path / "cc-switch.db"
-    with sqlite3.connect(database) as db:
-        db.execute("CREATE TABLE mcp_servers (id TEXT, server_config TEXT)")
-        data = {"url": "https://other.example/mcp", "headers": {"Authorization": "Bearer demo"}}
-        db.execute("INSERT INTO mcp_servers VALUES (?, ?)", ("alphaxiv", json.dumps(data)))
-    assert cc_switch_token(database) == ""
-    with sqlite3.connect(database) as db:
-        db.execute(
-            "UPDATE mcp_servers SET server_config = ?", (json.dumps(data | {"url": ENDPOINT}),)
-        )
-    assert cc_switch_token(database) == "demo"
+    with patch("sqlite3.connect", side_effect=AssertionError("unexpected database access")):
+        assert AlphaXiv.from_env() is None
+        monkeypatch.setenv("A3_ALPHAXIV_TOKEN", "  fixture-token  ")
+        client = AlphaXiv.from_env()
+        assert client.token == "fixture-token"
+        assert "fixture-token" not in repr(client)
 
 
 def test_unread_sources_are_rejected_and_missing_lanes_remain_incomplete():
